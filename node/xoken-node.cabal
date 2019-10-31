@@ -1,0 +1,169 @@
+cabal-version: 2.0
+
+
+name:           xoken-node
+version:        0.1.0
+synopsis:       Storage and index for Bitcoin SV
+description:    Store blocks, transactions, and balances for Bitcoin or Bitcoin Cash, and make that information via REST API.
+category:       Bitcoin, Finance, Network
+homepage:       http://github.com/stoichammer/xoken-node#readme
+bug-reports:    http://github.com/stoichammer/xoken-node/issues
+author:         stoichammer
+maintainer:     stoichammer
+license:        PublicDomain
+license-file:   UNLICENSE
+build-type:     Simple
+extra-source-files:
+    README.md
+    CHANGELOG.md
+
+source-repository head
+  type: git
+  location: https://github.com/stoichammer/xoken-node.git
+
+library
+  exposed-modules:
+      Xoken.Node
+      Paths_xoken_node
+  other-modules:
+      Network.Xoken.Node.Block
+      Network.Xoken.Node.Data
+      Network.Xoken.Node.Data.Cached
+      Network.Xoken.Node.Data.ImportDB
+      Network.Xoken.Node.Data.KeyValue
+      Network.Xoken.Node.Data.Memory
+      Network.Xoken.Node.Data.RocksDB
+      Network.Xoken.Node.Logic
+      Network.Xoken.Node.Messages
+      Network.Xoken.Node.Web
+  autogen-modules:
+      Paths_xoken_node
+  hs-source-dirs:
+      src
+  build-depends:
+      aeson
+    , base >=4.9 && <5
+    , bytestring
+    , cereal
+    , conduit
+    , containers
+    , data-default
+    , hashable
+    , http-types
+    , monad-logger
+    , mtl
+    , network
+    , nqe
+    , random
+    , resourcet
+    , rocksdb-haskell
+    , rocksdb-query >=0.3.0
+    , scotty
+    , string-conversions
+    , text
+    , time
+    , transformers
+    , unliftio
+    , unordered-containers
+    , vector
+    , wai
+    , warp
+    , xoken-core
+    , xoken-p2p
+  default-language: Haskell2010
+
+executable xoken-node
+  main-is: Main.hs
+  other-modules:
+      Xoken.Node
+      Paths_xoken_node
+      Network.Xoken.Node.Block
+      Network.Xoken.Node.Data
+      Network.Xoken.Node.Data.Cached
+      Network.Xoken.Node.Data.ImportDB
+      Network.Xoken.Node.Data.KeyValue
+      Network.Xoken.Node.Data.Memory
+      Network.Xoken.Node.Data.RocksDB
+      Network.Xoken.Node.Logic
+      Network.Xoken.Node.Messages
+      Network.Xoken.Node.Web
+  hs-source-dirs:
+      app, src
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      aeson
+    , base >=4.9 && <5
+    , bytestring
+    , cereal
+    , conduit
+    , containers
+    , data-default
+    , filepath
+    , hashable
+    , http-types
+    , monad-logger
+    , mtl
+    , network
+    , nqe
+    , optparse-applicative
+    , random
+    , resourcet
+    , rocksdb-haskell
+    , rocksdb-query >=0.3.0
+    , scotty
+    , string-conversions
+    , text
+    , time
+    , transformers
+    , unliftio
+    , unordered-containers
+    , vector
+    , wai
+    , warp
+    , xoken-core
+    , xoken-p2p
+  default-language: Haskell2010
+
+test-suite xoken-node-test
+  type: exitcode-stdio-1.0
+  main-is: Spec.hs
+  other-modules:
+      Haskoin.StoreSpec
+      Network.Haskoin.Node.DataSpec
+      Paths_xoken_node
+  hs-source-dirs:
+      test
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      aeson
+    , base >=4.9 && <5
+    , bytestring
+    , cereal
+    , conduit
+    , containers
+    , data-default
+    , hashable
+    , hspec
+    , http-types
+    , monad-logger
+    , mtl
+    , network
+    , nqe
+    , random
+    , resourcet
+    , rocksdb-haskell
+    , rocksdb-query >=0.3.0
+    , scotty
+    , string-conversions
+    , text
+    , time
+    , transformers
+    , unliftio
+    , unordered-containers
+    , vector
+    , wai
+    , warp
+    , xoken-core
+    , xoken-p2p
+  default-language: Haskell2010
+  build-tool-depends: hspec-discover:hspec-discover

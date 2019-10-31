@@ -1,0 +1,97 @@
+cabal-version: 1.12
+
+
+name:           xoken-p2p
+version:        0.1.0
+synopsis:       Xoken P2P P2P library for Bitcoin SV
+description:    Xoken P2P P2P library for Bitcoin SV
+category:       Bitcoin, Finance, Network
+homepage:       http://github.com/haskoin/haskoin#readme
+bug-reports:    http://github.com/haskoin/haskoin/issues
+author:         stoichammer
+maintainer:     stoichammer
+license:        PublicDomain
+license-file:   UNLICENSE
+build-type:     Simple
+extra-source-files:
+    README.md
+    CHANGELOG.md
+
+source-repository head
+  type: git
+  location: https://github.com/haskoin/haskoin.git
+
+library
+  exposed-modules:
+      Network.Xoken.P2P.Chain
+      Network.Xoken.P2P.Common
+      Network.Xoken.P2P.Manager
+      Network.Xoken.P2P.Peer
+      Xoken.P2P
+  other-modules:
+      Paths_xoken_p2p
+  hs-source-dirs:
+      src
+  build-depends:
+      base >=4.9 && <5
+    , bytestring
+    , cereal
+    , conduit
+    , conduit-extra
+    , containers
+    , data-default
+    , hashable
+    , monad-logger
+    , mtl
+    , network
+    , nqe
+    , random
+    , resourcet
+    , rocksdb-haskell
+    , rocksdb-query
+    , string-conversions
+    , text
+    , time
+    , transformers
+    , unliftio
+    , unordered-containers
+    , xoken-core
+  default-language: Haskell2010
+
+test-suite spec
+  type: exitcode-stdio-1.0
+  main-is: Spec.hs
+  other-modules:
+      Haskoin.NodeSpec
+      Paths_xoken_p2p
+  hs-source-dirs:
+      test
+  build-depends:
+      HUnit
+    , base >=4.9 && <5
+    , bytestring
+    , cereal
+    , conduit
+    , conduit-extra
+    , containers
+    , data-default
+    , hashable
+    , hspec
+    , monad-logger
+    , mtl
+    , network
+    , nqe
+    , random
+    , resourcet
+    , rocksdb-haskell
+    , rocksdb-query
+    , safe
+    , string-conversions
+    , text
+    , time
+    , transformers
+    , unliftio
+    , unordered-containers
+    , xoken-core
+  default-language: Haskell2010
+  build-tool-depends: hspec-discover:hspec-discover

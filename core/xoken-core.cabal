@@ -1,0 +1,142 @@
+cabal-version: 1.12
+
+
+name:           xoken-core
+version:        0.1.0
+synopsis:       Bitcoin SV Haskell library
+category:       Bitcoin, Network
+homepage:       http://github.com/haskoin/haskoin#readme
+bug-reports:    http://github.com/haskoin/haskoin/issues
+author:         stoichammer
+license:        PublicDomain
+license-file:   UNLICENSE
+build-type:     Simple
+extra-source-files:
+    data/forkid_script_tests.json
+    data/forkid_sighash.json
+    data/script_tests.json
+    data/sig_nonstrict.json
+    data/sig_strict.json
+    data/sighash.json
+    README.md
+    CHANGELOG.md
+
+source-repository head
+  type: git
+  location: git://github.com/haskoin/haskoin.git
+
+library
+  exposed-modules:
+      Xoken
+      Network.Xoken.Address
+      Network.Xoken.Address.Base58
+      Network.Xoken.Address.CashAddr
+      Network.Xoken.Address.Bech32
+      Network.Xoken.Block
+      Network.Xoken.Block.Headers
+      Network.Xoken.Block.Merkle
+      Network.Xoken.Constants
+      Network.Xoken.Crypto
+      Network.Xoken.Keys
+      Network.Xoken.Network
+      Network.Xoken.Script
+      Network.Xoken.Test
+      Network.Xoken.Transaction
+      Network.Xoken.Transaction.Partial
+      Network.Xoken.Util
+  other-modules:
+      Network.Xoken.Block.Common
+      Network.Xoken.Crypto.Hash
+      Network.Xoken.Crypto.Signature
+      Network.Xoken.Keys.Common
+      Network.Xoken.Keys.Extended
+      Network.Xoken.Keys.Mnemonic
+      Network.Xoken.Network.Bloom
+      Network.Xoken.Network.Common
+      Network.Xoken.Network.Message
+      Network.Xoken.Script.Common
+      Network.Xoken.Script.SigHash
+      Network.Xoken.Script.Standard
+      Network.Xoken.Test.Address
+      Network.Xoken.Test.Block
+      Network.Xoken.Test.Crypto
+      Network.Xoken.Test.Keys
+      Network.Xoken.Test.Message
+      Network.Xoken.Test.Network
+      Network.Xoken.Test.Script
+      Network.Xoken.Test.Transaction
+      Network.Xoken.Test.Util
+      Network.Xoken.Transaction.Builder
+      Network.Xoken.Transaction.Common
+      Paths_xoken_core
+  hs-source-dirs:
+      src
+  build-depends:
+      QuickCheck
+    , aeson
+    , array
+    , base >=4.9 && <5
+    , base16-bytestring
+    , bytestring
+    , cereal
+    , conduit
+    , containers
+    , cryptonite
+    , entropy
+    , hashable
+    , memory
+    , mtl
+    , murmur3
+    , network
+    , scientific
+    , secp256k1-haskell
+    , split
+    , string-conversions
+    , text
+    , time
+    , transformers
+    , unordered-containers
+    , vector
+  default-language: Haskell2010
+
+test-suite spec
+  type: exitcode-stdio-1.0
+  main-is: Spec.hs
+  other-modules:
+      Network.Haskoin.Address.Bech32Spec
+      Network.Haskoin.Address.CashAddrSpec
+      Network.Haskoin.AddressSpec
+      Network.Haskoin.BlockSpec
+      Network.Haskoin.Crypto.HashSpec
+      Network.Haskoin.Crypto.SignatureSpec
+      Network.Haskoin.CryptoSpec
+      Network.Haskoin.Keys.ExtendedSpec
+      Network.Haskoin.Keys.MnemonicSpec
+      Network.Haskoin.KeysSpec
+      Network.Haskoin.NetworkSpec
+      Network.Haskoin.ScriptSpec
+      Network.Haskoin.Transaction.PartialSpec
+      Network.Haskoin.TransactionSpec
+      Network.Haskoin.UtilSpec
+      Paths_xoken_core
+  hs-source-dirs:
+      test
+  build-depends:
+      HUnit
+    , QuickCheck
+    , aeson
+    , base >=4.9 && <5
+    , bytestring
+    , cereal
+    , containers
+    , haskoin-core
+    , hspec
+    , mtl
+    , safe
+    , split
+    , string-conversions
+    , text
+    , unordered-containers
+    , vector
+  default-language: Haskell2010
+  build-tool-depends: hspec-discover:hspec-discover

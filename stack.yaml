@@ -1,0 +1,8 @@
+resolver: lts-14.7
+allow-newer: true
+packages:
+    - core
+    - node
+    - p2p
+extra-deps:
+  - rocksdb-query-0.3.0
