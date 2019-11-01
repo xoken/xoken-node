@@ -114,6 +114,7 @@ config = do
 
 networkReader :: String -> Either String Network
 networkReader s
+    | s == getNetworkName bsv = Right bsv
     | s == getNetworkName btc = Right btc
     | s == getNetworkName btcTest = Right btcTest
     | s == getNetworkName btcRegTest = Right btcRegTest
