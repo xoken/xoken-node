@@ -44,6 +44,7 @@ module Xoken.Node
     , newLayeredDB
     , withStore
     , runWeb
+    , setupIPCServer
     , store
     , getBestBlock
     , getBlocksAtHeight

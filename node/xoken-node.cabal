@@ -70,6 +70,12 @@ library
     , warp
     , xoken-core
     , xoken-p2p
+    , network-simple
+    ,  monad-loops
+    , binary
+    , zlib
+    , utf8-string
+    , base64-bytestring
   default-language: Haskell2010
 
 executable xoken-node
@@ -122,6 +128,12 @@ executable xoken-node
     , warp
     , xoken-core
     , xoken-p2p
+    , network-simple
+    ,  monad-loops
+    , binary
+    , zlib
+    , utf8-string
+    , base64-bytestring
   default-language: Haskell2010
 
 test-suite xoken-node-test

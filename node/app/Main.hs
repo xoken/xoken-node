@@ -219,7 +219,8 @@ run Config { configPort = port
                                 , webMaxLimits = limits
                                 , webReqLog = reqlog
                                 }
-                     in runWeb wcfg
+                     --in runWeb wcfg
+                     in setupIPCServer wcfg
   where
     l _ lvl
         | deb = True

@@ -9,28 +9,41 @@
 
 module Network.Xoken.Node.Web where
 
+import Codec.Compression.GZip as GZ
 import Conduit hiding (runResourceT)
 import Control.Applicative ((<|>))
 import Control.Arrow
 import Control.Exception ()
 import Control.Monad
 import Control.Monad.Logger
+import Control.Monad.Loops
 import Control.Monad.Reader (MonadReader, ReaderT)
 import qualified Control.Monad.Reader as R
 import Control.Monad.Trans.Maybe
 import Data.Aeson (ToJSON(..), (.=), object)
+import Data.Aeson as A
 import Data.Aeson.Encoding (encodingToLazyByteString, fromEncoding)
+import qualified Data.Binary as DB (encode)
 import Data.Bits
 import qualified Data.ByteString as B
 import Data.ByteString.Builder
 import qualified Data.ByteString.Lazy as L
 import qualified Data.ByteString.Lazy.Char8 as C
+
+import qualified Data.ByteString.UTF8 as BSU (toString)
+
+--import qualified Data.ByteString.Char8 as BSC (toString)
+import Data.ByteString.Base64 as B64
+
+--import Data.ByteString.Lazy.UTF8 as BLU
 import Data.Char
 import Data.Default
 import Data.Foldable
 import Data.Function
 import qualified Data.HashMap.Strict as H
+import Data.Int
 import Data.List
+import qualified Data.Map.Strict as M
 import Data.Maybe
 import Data.Serialize as Serialize
 import Data.String.Conversions
@@ -47,6 +60,8 @@ import Database.RocksDB as R
 import GHC.Generics
 import NQE
 import Network.HTTP.Types
+import Network.Simple.TCP as ST
+import Network.Socket
 import Network.Wai
 import Network.Wai.Handler.Warp
 import Network.Xoken.Node.Data
@@ -58,7 +73,31 @@ import Text.Read (readMaybe)
 import UnliftIO
 import UnliftIO.Resource
 import Web.Scotty.Internal.Types (ActionT(ActionT, runAM))
-import Web.Scotty.Trans as S
+import qualified Web.Scotty.Trans as S
+    ( Parsable
+    , ScottyError
+    , body
+    , defaultHandler
+    , finish
+    , get
+    , header
+    , middleware
+    , next
+    , notFound
+    , param
+    , parseParam
+    , post
+    , raise
+    , raw
+    , rescue
+    , scottyT
+    , setHeader
+    , showError
+    , status
+    , stream
+    , stringError
+    , text
+    )
 import Xoken
 import Xoken.P2P
 
@@ -87,7 +126,7 @@ instance Show Except where
 
 instance Exception Except
 
-instance ScottyError Except where
+instance S.ScottyError Except where
     stringError = StringError
     showError = T.Lazy.pack . show
 
@@ -114,6 +153,18 @@ instance BinSerial Except where
             3 -> UserError <$> Serialize.get
             4 -> StringError <$> Serialize.get
 
+data IPCMessage =
+    IPCMessage
+        { msgid :: Int
+        , mtype :: String
+        , params :: M.Map String String
+        }
+    deriving (Show, Generic)
+
+instance ToJSON IPCMessage
+
+instance FromJSON IPCMessage
+
 data WebConfig =
     WebConfig
         { webPort :: !Int
@@ -135,10 +186,10 @@ data MaxLimits =
         }
     deriving (Eq, Show)
 
-instance Parsable BlockHash where
+instance S.Parsable BlockHash where
     parseParam = maybe (Left "could not decode block hash") Right . hexToBlockHash . cs
 
-instance Parsable TxHash where
+instance S.Parsable TxHash where
     parseParam = maybe (Left "could not decode tx hash") Right . hexToTxHash . cs
 
 data StartParam
@@ -152,11 +203,11 @@ data StartParam
           { startParamTime :: !UnixTime
           }
 
-instance Parsable StartParam where
+instance S.Parsable StartParam where
     parseParam s = maybe (Left "could not decode start") Right (h <|> g <|> t)
       where
         h = do
-            x <- fmap B.reverse (decodeHex (cs s)) >>= eitherToMaybe . decode
+            x <- fmap B.reverse (decodeHex (cs s)) >>= eitherToMaybe . Serialize.decode
             return StartParamHash {startParamHash = x}
         g = do
             x <- readMaybe (cs s) :: Maybe Integer
@@ -189,11 +240,11 @@ defHandler :: Monad m => Network -> Except -> WebT m ()
 defHandler net e = do
     proto <- setupBin
     case e of
-        ThingNotFound -> status status404
-        BadRequest -> status status400
-        UserError _ -> status status400
-        StringError _ -> status status400
-        ServerError -> status status500
+        ThingNotFound -> S.status status404
+        BadRequest -> S.status status400
+        UserError _ -> S.status status400
+        StringError _ -> S.status status400
+        ServerError -> S.status status500
     protoSerial net proto e
 
 maybeSerial ::
@@ -202,7 +253,7 @@ maybeSerial ::
     -> Bool -- ^ binary
     -> Maybe a
     -> WebT m ()
-maybeSerial _ _ Nothing = raise ThingNotFound
+maybeSerial _ _ Nothing = S.raise ThingNotFound
 maybeSerial net proto (Just x) = S.raw $ serialAny net proto x
 
 protoSerial :: (Monad m, JsonSerial a, BinSerial a) => Network -> Bool -> a -> WebT m ()
@@ -223,7 +274,7 @@ scottyBestBlock net = do
 scottyBlock :: MonadLoggerIO m => Network -> WebT m ()
 scottyBlock net = do
     cors
-    block <- param "block"
+    block <- S.param "block"
     n <- parseNoTx
     proto <- setupBin
     res <-
@@ -235,24 +286,24 @@ scottyBlock net = do
 scottyBlockHeight :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
 scottyBlockHeight net = do
     cors
-    height <- param "height"
+    height <- S.param "height"
     n <- parseNoTx
     proto <- setupBin
     hs <- getBlocksAtHeight height
     db <- askDB
-    stream $ \io flush' -> do
+    S.stream $ \io flush' -> do
         runStream db . runConduit $ yieldMany hs .| concatMapMC getBlock .| mapC (pruneTx n) .| streamAny net proto io
         flush'
 
 scottyBlockHeights :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
 scottyBlockHeights net = do
     cors
-    heights <- param "heights"
+    heights <- S.param "heights"
     n <- parseNoTx
     proto <- setupBin
     bs <- concat <$> mapM getBlocksAtHeight (nub heights)
     db <- askDB
-    stream $ \io flush' -> do
+    S.stream $ \io flush' -> do
         runStream db . runConduit $
             yieldMany (nub heights) .| concatMapMC getBlocksAtHeight .| concatMapMC getBlock .| mapC (pruneTx n) .|
             streamAny net proto io
@@ -266,10 +317,10 @@ scottyBlockLatest net = do
     db <- askDB
     getBestBlock >>= \case
         Just h ->
-            stream $ \io flush' -> do
+            S.stream $ \io flush' -> do
                 runStream db . runConduit $ f n h 100 .| streamAny net proto io
                 flush'
-        Nothing -> raise ThingNotFound
+        Nothing -> S.raise ThingNotFound
   where
     f n h 0 = return ()
     f n h i =
@@ -284,11 +335,11 @@ scottyBlockLatest net = do
 scottyBlocks :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
 scottyBlocks net = do
     cors
-    blocks <- param "blocks"
+    blocks <- S.param "blocks"
     n <- parseNoTx
     proto <- setupBin
     db <- askDB
-    stream $ \io flush' -> do
+    S.stream $ \io flush' -> do
         runStream db . runConduit $
             yieldMany (nub blocks) .| concatMapMC getBlock .| mapC (pruneTx n) .| streamAny net proto io
         flush'
@@ -298,14 +349,14 @@ scottyMempool net = do
     cors
     proto <- setupBin
     db <- askDB
-    stream $ \io flush' -> do
+    S.stream $ \io flush' -> do
         runStream db . runConduit $ getMempoolStream .| streamAny net proto io
         flush'
 
 scottyTransaction :: MonadLoggerIO m => Network -> WebT m ()
 scottyTransaction net = do
     cors
-    txid <- param "txid"
+    txid <- S.param "txid"
     proto <- setupBin
     res <- getTransaction txid
     maybeSerial net proto res
@@ -313,7 +364,7 @@ scottyTransaction net = do
 scottyRawTransaction :: MonadLoggerIO m => Network -> WebT m ()
 scottyRawTransaction net = do
     cors
-    txid <- param "txid"
+    txid <- S.param "txid"
     proto <- setupBin
     res <- fmap transactionData <$> getTransaction txid
     maybeSerial net proto res
@@ -321,8 +372,8 @@ scottyRawTransaction net = do
 scottyTxAfterHeight :: MonadLoggerIO m => Network -> WebT m ()
 scottyTxAfterHeight net = do
     cors
-    txid <- param "txid"
-    height <- param "height"
+    txid <- S.param "txid"
+    height <- S.param "height"
     proto <- setupBin
     res <- cbAfterHeight 10000 height txid
     protoSerial net proto res
@@ -330,34 +381,34 @@ scottyTxAfterHeight net = do
 scottyTransactions :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
 scottyTransactions net = do
     cors
-    txids <- param "txids"
+    txids <- S.param "txids"
     proto <- setupBin
     db <- askDB
-    stream $ \io flush' -> do
+    S.stream $ \io flush' -> do
         runStream db . runConduit $ yieldMany (nub txids) .| concatMapMC getTransaction .| streamAny net proto io
         flush'
 
 scottyBlockTransactions :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
 scottyBlockTransactions net = do
     cors
-    h <- param "block"
+    h <- S.param "block"
     proto <- setupBin
     db <- askDB
     getBlock h >>= \case
         Just b ->
-            stream $ \io flush' -> do
+            S.stream $ \io flush' -> do
                 runStream db . runConduit $
                     yieldMany (blockDataTxs b) .| concatMapMC getTransaction .| streamAny net proto io
                 flush'
-        Nothing -> raise ThingNotFound
+        Nothing -> S.raise ThingNotFound
 
 scottyRawTransactions :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
 scottyRawTransactions net = do
     cors
-    txids <- param "txids"
+    txids <- S.param "txids"
     proto <- setupBin
     db <- askDB
-    stream $ \io flush' -> do
+    S.stream $ \io flush' -> do
         runStream db . runConduit $
             yieldMany (nub txids) .| concatMapMC getTransaction .| mapC transactionData .| streamAny net proto io
         flush'
@@ -365,17 +416,17 @@ scottyRawTransactions net = do
 scottyRawBlockTransactions :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
 scottyRawBlockTransactions net = do
     cors
-    h <- param "block"
+    h <- S.param "block"
     proto <- setupBin
     db <- askDB
     getBlock h >>= \case
         Just b ->
-            stream $ \io flush' -> do
+            S.stream $ \io flush' -> do
                 runStream db . runConduit $
                     yieldMany (blockDataTxs b) .| concatMapMC getTransaction .| mapC transactionData .|
                     streamAny net proto io
                 flush'
-        Nothing -> raise ThingNotFound
+        Nothing -> S.raise ThingNotFound
 
 scottyAddressTxs :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> MaxLimits -> Bool -> WebT m ()
 scottyAddressTxs net limits full = do
@@ -386,7 +437,7 @@ scottyAddressTxs net limits full = do
     l <- getLimit limits full
     proto <- setupBin
     db <- askDB
-    stream $ \io flush' -> do
+    S.stream $ \io flush' -> do
         runStream db . runConduit $ f proto o l s a io
         flush'
   where
@@ -402,7 +453,7 @@ scottyAddressesTxs net limits full = do
     l <- getLimit limits full
     proto <- setupBin
     db <- askDB
-    stream $ \io flush' -> do
+    S.stream $ \io flush' -> do
         runStream db . runConduit $ f proto l s as io
         flush'
   where
@@ -419,7 +470,7 @@ scottyAddressUnspent net limits = do
     l <- getLimit limits False
     proto <- setupBin
     db <- askDB
-    stream $ \io flush' -> do
+    S.stream $ \io flush' -> do
         runStream db . runConduit $ getAddressUnspentsLimit o l s a .| streamAny net proto io
         flush'
 
@@ -431,7 +482,7 @@ scottyAddressesUnspent net limits = do
     l <- getLimit limits False
     proto <- setupBin
     db <- askDB
-    stream $ \io flush' -> do
+    S.stream $ \io flush' -> do
         runStream db . runConduit $ getAddressesUnspentsLimit l s as .| streamAny net proto io
         flush'
 
@@ -471,7 +522,7 @@ scottyAddressesBalances net = do
                 }
         f _ (Just b) = b
     db <- askDB
-    stream $ \io flush' -> do
+    S.stream $ \io flush' -> do
         runStream db . runConduit $ yieldMany as .| mapMC (\a -> f a <$> getBalance a) .| streamAny net proto io
         flush'
 
@@ -482,7 +533,7 @@ scottyXpubBalances net max_limits = do
     proto <- setupBin
     derive <- parseDeriveAddrs net
     db <- askDB
-    stream $ \io flush' -> do
+    S.stream $ \io flush' -> do
         runStream db . runConduit $ xpubBals max_limits derive xpub .| streamAny net proto io
         flush'
 
@@ -496,7 +547,7 @@ scottyXpubTxs net limits full = do
     proto <- setupBin
     db <- askDB
     as <- liftIO . runStream db . runConduit $ xpubBals limits derive x .| mapC (balanceAddress . xPubBal) .| sinkList
-    stream $ \io flush' -> do
+    S.stream $ \io flush' -> do
         runStream db . runConduit $ f proto l s as io
         flush'
   where
@@ -513,7 +564,7 @@ scottyXpubUnspents net limits = do
     l <- getLimit limits False
     derive <- parseDeriveAddrs net
     db <- askDB
-    stream $ \io flush' -> do
+    S.stream $ \io flush' -> do
         runStream db . runConduit $ xpubUnspentLimit net limits l s derive x .| streamAny net proto io
         flush'
 
@@ -531,24 +582,24 @@ scottyPostTx :: (MonadUnliftIO m, MonadLoggerIO m) => Network -> Store -> Publis
 scottyPostTx net st pub = do
     cors
     proto <- setupBin
-    b <- body
+    b <- S.body
     let bin = eitherToMaybe . Serialize.decode
         hex = bin <=< decodeHex . cs . C.filter (not . isSpace)
     tx <-
         case hex b <|> bin (L.toStrict b) of
-            Nothing -> raise $ UserError "decode tx fail"
+            Nothing -> S.raise $ UserError "decode tx fail"
             Just x -> return x
     lift (publishTx net pub st tx) >>= \case
         Right () -> do
             protoSerial net proto (TxId (txHash tx))
         Left e -> do
             case e of
-                PubNoPeers -> status status500
-                PubTimeout -> status status500
-                PubPeerDisconnected -> status status500
-                PubReject _ -> status status400
+                PubNoPeers -> S.status status500
+                PubTimeout -> S.status status500
+                PubPeerDisconnected -> S.status status500
+                PubReject _ -> S.status status400
             protoSerial net proto (UserError (show e))
-            finish
+            S.finish
 
 scottyDbStats :: MonadLoggerIO m => WebT m ()
 scottyDbStats = do
@@ -557,15 +608,15 @@ scottyDbStats = do
     stats <- lift (getProperty db Stats)
     case stats of
         Nothing -> do
-            text "Could not get stats"
+            S.text "Could not get stats"
         Just txt -> do
-            text $ cs txt
+            S.text $ cs txt
 
 scottyEvents :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> Publisher StoreEvent -> WebT m ()
 scottyEvents net pub = do
     cors
     proto <- setupBin
-    stream $ \io flush' ->
+    S.stream $ \io flush' ->
         withSubscription pub $ \sub ->
             forever $
             flush' >> receive sub >>= \se -> do
@@ -596,8 +647,104 @@ scottyHealth net st = do
     cors
     proto <- setupBin
     h <- lift $ healthCheck net (storeManager st) (storeChain st)
-    when (not (healthOK h) || not (healthSynced h)) $ status status503
+    when (not (healthOK h) || not (healthSynced h)) $ S.status status503
     protoSerial net proto h
+
+handleRPCReqResp :: MVar Socket -> Int -> String -> Network -> Store -> IO ()
+handleRPCReqResp sockMVar mid encReq net st = do
+    printf "handleRPCReqResp(%d, %s)\n" mid (show encReq)
+    resp <- newEmptyMVar
+    -- let rpcCall = RPCCall (RPCReq mid (T.pack encReq)) (resp)
+    -- atomically $ writeTChan (rpcQ) rpcCall
+    -- rpcResp <- (readMVar resp)
+    -- let val = unpack (rPCResp_response rpcResp)
+    val <- getPeersInformation (storeManager st)
+    let comp = L.toStrict $ GZ.compress (A.encode val)
+    let base64 = B64.encode comp
+    let resp = BSU.toString base64
+    let body = A.encode (IPCMessage mid "RPC_RESP" (M.singleton "encResp" resp))
+    let ma = L.length body
+    let xa = Prelude.fromIntegral (ma) :: Int16
+    connSock <- takeMVar sockMVar
+    sendLazy connSock (DB.encode (xa :: Int16))
+    sendLazy connSock (body)
+    putMVar sockMVar connSock
+    return ()
+
+decodeIPCRequest :: MVar Socket -> L.ByteString -> Network -> Store -> IO ()
+decodeIPCRequest sockMVar req net st = do
+    let ipcReq = A.decode req :: Maybe IPCMessage
+    case ipcReq of
+        Just x -> do
+            printf "Decoded (%s)\n" (show x)
+            case (mtype x) of
+                "RPC_REQ" -> do
+                    case (M.lookup "encReq" (params x)) of
+                        Just enc -> do
+                            _ <- async (handleRPCReqResp (sockMVar) (msgid x) (enc) net st)
+                            return ()
+                        Nothing -> printf "Invalid payload.\n"
+                "SUB_REQ" -> do
+                    case (M.lookup "subject" (params x)) of
+                        Just su
+                            -- _ <- async (handleSubscribeReqResp sockMVar (pubSubQueue handler) (msgid x) su)
+                         -> do
+                            return ()
+                        Nothing -> printf "Invalid payload.\n"
+                "PUB_REQ" -> do
+                    case (M.lookup "subject" (params x)) of
+                        Just su -> do
+                            case (M.lookup "S.body" (params x)) of
+                                Just bdy
+                                    -- _ <- async (handlePublishReqResp sockMVar (pubSubQueue handler) (msgid x) su bdy)
+                                 -> do
+                                    return ()
+                                Nothing -> printf "Invalid payload.\n"
+                        Nothing -> printf "Invalid payload.\n"
+                __ -> printf "Invalid message type.\n"
+        Nothing -> printf "Decode 'IPCMessage' failed.\n" (show ipcReq)
+
+handleConnection :: Socket -> Network -> Store -> IO ()
+handleConnection connSock net st = do
+    continue <- liftIO $ newIORef True
+    whileM_ (liftIO $ readIORef continue) $ do
+        lenBytes <- ST.recv connSock 2
+        case lenBytes of
+            Just l -> do
+                let lenPrefix = runGet getWord16be l -- Char8.readInt l
+                case lenPrefix of
+                    Right a -> do
+                        payload <- ST.recv connSock (fromIntegral (toInteger a))
+                        case payload of
+                            Just y -> do
+                                sockMVar <- newMVar connSock
+                                decodeIPCRequest sockMVar (L.fromStrict y) net st
+                                return ()
+                            Nothing -> printf "Payload read error\n"
+                    Left _b -> printf "Length prefix corrupted.\n"
+            Nothing -> do
+                printf "Connection closed.\n"
+                writeIORef continue False
+
+setupIPCServer :: (MonadLoggerIO m, MonadUnliftIO m) => WebConfig -> m ()
+setupIPCServer WebConfig { webDB = db
+                         , webPort = port
+                         , webNetwork = net
+                         , webStore = st
+                         , webPublisher = pub
+                         , webMaxLimits = limits
+                         , webReqLog = reqlog
+                         } = do
+    req_logger <-
+        if reqlog
+            then Just <$> logIt
+            else return Nothing
+    liftIO $ printf "Starting TCP (IPC) server..."
+    _ <-
+        serve (Host "127.0.0.1") (show port) $ \(connSock, remoteAddr) -> do
+            putStrLn $ "TCP connection established from " ++ show remoteAddr
+            handleConnection connSock net st
+    return ()
 
 runWeb :: (MonadLoggerIO m, MonadUnliftIO m) => WebConfig -> m ()
 runWeb WebConfig { webDB = db
@@ -613,11 +760,11 @@ runWeb WebConfig { webDB = db
             then Just <$> logIt
             else return Nothing
     runner <- askRunInIO
-    scottyT port (runner . withLayeredDB db) $ do
+    S.scottyT (port + 1) (runner . withLayeredDB db) $ do
         case req_logger of
-            Just m -> middleware m
+            Just m -> S.middleware m
             Nothing -> return ()
-        defaultHandler (defHandler net)
+        S.defaultHandler (defHandler net)
         S.get "/block/best" $ scottyBestBlock net
         S.get "/block/:block" $ scottyBlock net
         S.get "/block/height/:height" $ scottyBlockHeight net
@@ -650,12 +797,12 @@ runWeb WebConfig { webDB = db
         S.get "/events" $ scottyEvents net pub
         S.get "/peers" $ scottyPeers net st
         S.get "/health" $ scottyHealth net st
-        notFound $ raise ThingNotFound
+        S.notFound $ S.raise ThingNotFound
 
 getStart :: MonadUnliftIO m => WebT m (Maybe BlockRef)
 getStart =
     runMaybeT $ do
-        s <- MaybeT $ (Just <$> param "height") `rescue` const (return Nothing)
+        s <- MaybeT $ (Just <$> S.param "height") `S.rescue` const (return Nothing)
         do case s of
                StartParamHash {startParamHash = h} -> start_tx h <|> start_block h
                StartParamHeight {startParamHeight = h} -> start_height h
@@ -680,14 +827,14 @@ getStart =
 
 getOffset :: Monad m => MaxLimits -> ActionT Except m Offset
 getOffset limits = do
-    o <- param "offset" `rescue` const (return 0)
-    when (maxLimitOffset limits > 0 && o > maxLimitOffset limits) . raise . UserError $
+    o <- S.param "offset" `S.rescue` const (return 0)
+    when (maxLimitOffset limits > 0 && o > maxLimitOffset limits) . S.raise . UserError $
         "offset exceeded: " <> show o <> " > " <> show (maxLimitOffset limits)
     return o
 
 getLimit :: Monad m => MaxLimits -> Bool -> ActionT Except m (Maybe Limit)
 getLimit limits full = do
-    l <- (Just <$> param "limit") `rescue` const (return Nothing)
+    l <- (Just <$> S.param "limit") `S.rescue` const (return Nothing)
     let m =
             if full
                 then if maxLimitFull limits > 0
@@ -707,28 +854,28 @@ getLimit limits full = do
                     else Just n
 
 parseAddress net = do
-    address <- param "address"
+    address <- S.param "address"
     case stringToAddr net address of
-        Nothing -> next
+        Nothing -> S.next
         Just a -> return a
 
 parseAddresses net = do
-    addresses <- param "addresses"
+    addresses <- S.param "addresses"
     let as = mapMaybe (stringToAddr net) addresses
-    unless (length as == length addresses) next
+    unless (length as == length addresses) S.next
     return as
 
-parseXpub :: (Monad m, ScottyError e) => Network -> ActionT e m XPubKey
+parseXpub :: (Monad m, S.ScottyError e) => Network -> ActionT e m XPubKey
 parseXpub net = do
-    t <- param "xpub"
+    t <- S.param "xpub"
     case xPubImport net t of
-        Nothing -> next
+        Nothing -> S.next
         Just x -> return x
 
-parseDeriveAddrs :: (Monad m, ScottyError e) => Network -> ActionT e m DeriveAddrs
+parseDeriveAddrs :: (Monad m, S.ScottyError e) => Network -> ActionT e m DeriveAddrs
 parseDeriveAddrs net
     | getSegWit net = do
-        t <- param "derive" `rescue` const (return "standard")
+        t <- S.param "derive" `S.rescue` const (return "standard")
         return $
             case (t :: Text) of
                 "segwit" -> deriveWitnessAddrs
@@ -736,14 +883,14 @@ parseDeriveAddrs net
                 _ -> deriveAddrs
     | otherwise = return deriveAddrs
 
-parseNoTx :: (Monad m, ScottyError e) => ActionT e m Bool
-parseNoTx = param "notx" `rescue` const (return False)
+parseNoTx :: (Monad m, S.ScottyError e) => ActionT e m Bool
+parseNoTx = S.param "notx" `S.rescue` const (return False)
 
 pruneTx False b = b
 pruneTx True b = b {blockDataTxs = take 1 (blockDataTxs b)}
 
 cors :: Monad m => ActionT e m ()
-cors = setHeader "Access-Control-Allow-Origin" "*"
+cors = S.setHeader "Access-Control-Allow-Origin" "*"
 
 serialAny ::
        (JsonSerial a, BinSerial a)
@@ -775,10 +922,10 @@ streamConduit io = mapM_C (liftIO . io)
 setupBin :: Monad m => ActionT Except m Bool
 setupBin =
     let p = do
-            setHeader "Content-Type" "application/octet-stream"
+            S.setHeader "Content-Type" "application/octet-S.stream"
             return True
         j = do
-            setHeader "Content-Type" "application/json"
+            S.setHeader "Content-Type" "application/json"
             return False
      in S.header "accept" >>= \case
             Nothing -> j
@@ -787,7 +934,7 @@ setupBin =
                     then p
                     else j
   where
-    is_binary = (== "application/octet-stream")
+    is_binary = (== "application/octet-S.stream")
 
 instance MonadLoggerIO m => MonadLoggerIO (WebT m) where
     askLoggerIO = lift askLoggerIO
