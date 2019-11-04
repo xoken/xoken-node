@@ -198,6 +198,8 @@ run Config { configPort = port
         $(logInfoS) "Main" "Populating cache (if active)..."
         ldb <- newLayeredDB db cdb
         $(logInfoS) "Main" "Finished populating cache"
+        ipcSvcHandler <- liftIO $ newIPCServiceHandler
+        async $ loopRPC ldb (rpcQueue ipcSvcHandler) net
         withPublisher $ \pub ->
             let scfg =
                     StoreConfig
@@ -219,8 +221,7 @@ run Config { configPort = port
                                 , webMaxLimits = limits
                                 , webReqLog = reqlog
                                 }
-                     --in runWeb wcfg
-                     in setupIPCServer wcfg
+                     in setupIPCServer wcfg ipcSvcHandler
   where
     l _ lvl
         | deb = True

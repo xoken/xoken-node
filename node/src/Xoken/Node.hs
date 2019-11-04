@@ -45,6 +45,9 @@ module Xoken.Node
     , withStore
     , runWeb
     , setupIPCServer
+    , rpcQueue
+    , newIPCServiceHandler
+    , loopRPC
     , store
     , getBestBlock
     , getBlocksAtHeight

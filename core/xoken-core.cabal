@@ -129,7 +129,7 @@ test-suite spec
     , bytestring
     , cereal
     , containers
-    , haskoin-core
+    --, haskoin-core
     , hspec
     , mtl
     , safe
