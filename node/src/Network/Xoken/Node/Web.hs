@@ -343,24 +343,12 @@ scottyBlockHeight net = do
         flush'
 
 xGetBlockHeight :: (MonadLoggerIO m, MonadUnliftIO m, StoreRead m) => Network -> m (L.ByteString)
-xGetBlockHeight net
-    -- cors
-    -- height <- liftIO $ S.param "height"
-    -- let n = parseNoTx
-    -- proto <- setupBin
-    --_ <- liftIO $ cors
- = do
+xGetBlockHeight net = do
     hs <- getBlocksAtHeight (1000 :: Word32)
-    -- db <- askDB
     res <- mapM getBlock hs
-    x <- mapM (maybeXXSerial net False) res
+    let ar = catMaybes res
+    let x = jsonSerialiseAny net (ar)
     return (x)
-    -- S.stream $
-    --return io
-    -- \io flush' -> do
-    -- runStream db .
-    -- runConduit $ yieldMany hs .| concatMapMC getBlock .| mapC (pruneTx n) -- .| streamAny net proto io
-    --    flush'
 
 scottyBlockHeights :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
 scottyBlockHeights net = do
@@ -725,11 +713,6 @@ handleRPCReqResp rpcQ sockMVar mid encReq = do
     atomically $ writeTChan (rpcQ) rpcCall
     rpcResp <- (readMVar resp)
     let resp = T.unpack (rPCResp_response rpcResp)
-    -- val <- getPeersInformation (storeManager st)
-    -- val <- xGetBlockHeight net
-    -- let comp = L.toStrict $ GZ.compress (A.encode val)
-    -- let base64 = B64.encode comp
-    -- let resp = BSU.toString base64
     let body = A.encode (IPCMessage mid "RPC_RESP" (M.singleton "encResp" resp))
     let ma = L.length body
     let xa = Prelude.fromIntegral (ma) :: Int16
@@ -814,24 +797,11 @@ goGetResource ldb rpcCall net = do
     let msg = T.unpack (rPCReq_request req)
     liftIO $ print (msg)
     runner <- askRunInIO
-    --val <- withRunInIO $ \runInIO -> xGetBlockHeight net
     val <- liftIO $ (runner . withLayeredDB ldb) $ xGetBlockHeight net
-    let comp = L.toStrict $ GZ.compress (A.encode val)
+    let comp = L.toStrict $ GZ.compress (val)
     let base64 = B64.encode comp
     let resp = BSU.toString base64
     liftIO $ (putMVar (response rpcCall) (RPCResp ind (T.pack (resp))))
-    -- case resource of
-    --     Left _ -> do
-    --         liftIO $ print "Exception: No peers available to issue RPC"
-    --         let errMsg = DT.pack "__EXCEPTION__NO_PEERS"
-    --         liftIO $ (putMVar (response rpcCall) (RPCResp ind errMsg))
-    --         return ()
-    --     Right (RpcError _) -> liftIO $ print "Exception: RPC error"
-    --     Right (RpcPayload _ str) -> do
-    --         liftIO $ print (str)
-    --         let respMsg = DT.pack str
-    --         liftIO $ (putMVar (response rpcCall) (RPCResp ind respMsg))
-    --         return ()
 
 loopRPC :: (MonadLoggerIO m, MonadUnliftIO m) => LayeredDB -> (TChan RPCCall) -> Network -> m ()
 loopRPC ldb queue net =
@@ -995,23 +965,8 @@ serialAny ::
 serialAny net True = runPutLazy . binSerial net
 serialAny net False = encodingToLazyByteString . jsonSerial net
 
-maybeXXSerial ::
-       (Monad m, JsonSerial a, BinSerial a)
-    => Network
-    -> Bool -- ^ binary
-    -> Maybe a
-    -> m (L.ByteString)
-maybeXXSerial _ _ Nothing = ThingNotFound
-maybeXXSerial net proto (Just x) = serialAny net proto x
-
-serialXXAny ::
-       (JsonSerial a, BinSerial a)
-    => Network
-    -> Bool -- ^ binary
-    -> a
-    -> m (L.ByteString)
-serialXXAny net True = runPutLazy . binSerial net
-serialXXAny net False = encodingToLazyByteString . jsonSerial net
+jsonSerialiseAny :: (JsonSerial a) => Network -> a -> L.ByteString
+jsonSerialiseAny net = encodingToLazyByteString . jsonSerial net
 
 streamAny ::
        (JsonSerial i, BinSerial i, MonadIO m)

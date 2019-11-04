@@ -97,6 +97,7 @@ library
     , transformers
     , unordered-containers
     , vector
+    , monad-loops
   default-language: Haskell2010
 
 test-suite spec
