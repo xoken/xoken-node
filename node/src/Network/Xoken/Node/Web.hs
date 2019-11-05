@@ -34,10 +34,11 @@ import Data.Word
 
 import qualified Data.ByteString.UTF8 as BSU (toString)
 
---import qualified Data.ByteString.Char8 as BSC (toString)
 import Data.ByteString.Base64 as B64
+import Data.ByteString.Base64.Lazy as B64L
 
---import Data.ByteString.Lazy.UTF8 as BLU
+--import qualified Data.ByteString.Char8 as BSC (pack, unpack)
+--import Data.ByteString.Lazy.UTF8 as BLU (pack, unpack)
 import Data.Char
 import Data.Default
 import Data.Foldable
@@ -342,9 +343,20 @@ scottyBlockHeight net = do
         runStream db . runConduit $ yieldMany hs .| concatMapMC getBlock .| mapC (pruneTx n) .| streamAny net proto io
         flush'
 
-xGetBlockHeight :: (MonadLoggerIO m, MonadUnliftIO m, StoreRead m) => Network -> m (L.ByteString)
-xGetBlockHeight net = do
-    hs <- getBlocksAtHeight (1000 :: Word32)
+xGetBlockHeight :: (MonadLoggerIO m, MonadUnliftIO m, StoreRead m) => Network -> Word32 -> m (L.ByteString)
+xGetBlockHeight net height = do
+    hs <- getBlocksAtHeight height
+    if length hs == 0
+        then return $ C.pack "{}"
+        else do
+            res <- getBlock (hs !! 0)
+            case res of
+                Just b -> return $ jsonSerialiseAny net (b)
+                Nothing -> return $ C.pack "{}"
+
+xGetBlocksHeights :: (MonadLoggerIO m, MonadUnliftIO m, StoreRead m) => Network -> [Word32] -> m (L.ByteString)
+xGetBlocksHeights net heights = do
+    hs <- concat <$> mapM getBlocksAtHeight (nub heights)
     res <- mapM getBlock hs
     let ar = catMaybes res
     let x = jsonSerialiseAny net (ar)
@@ -792,16 +804,24 @@ setupIPCServer config ipcSvcHandler = do
 
 goGetResource :: (MonadLoggerIO m, MonadUnliftIO m) => LayeredDB -> RPCCall -> Network -> m ()
 goGetResource ldb rpcCall net = do
-    let req = (request rpcCall)
-    let ind = rPCReq_key req
-    let msg = T.unpack (rPCReq_request req)
-    liftIO $ print (msg)
-    runner <- askRunInIO
-    val <- liftIO $ (runner . withLayeredDB ldb) $ xGetBlockHeight net
-    let comp = L.toStrict $ GZ.compress (val)
-    let base64 = B64.encode comp
-    let resp = BSU.toString base64
-    liftIO $ (putMVar (response rpcCall) (RPCResp ind (T.pack (resp))))
+    let ind = rPCReq_key (request rpcCall)
+    let bs = C.pack $ T.unpack (rPCReq_request (request rpcCall))
+    let jsonStr = GZ.decompress $ B64L.decodeLenient bs
+    liftIO $ print (jsonStr)
+    let rpcReq = A.decode jsonStr :: Maybe RPCRequest
+    case rpcReq of
+        Just x -> do
+            liftIO $ printf "RPC: (%s)\n" (method x)
+            runner <- askRunInIO
+            case (method x) of
+                "get_block_height" -> do
+                    val <- liftIO $ (runner . withLayeredDB ldb) $ xGetBlockHeight net (height x)
+                    let resp = BSU.toString $ B64.encode $ L.toStrict $ GZ.compress (val)
+                    liftIO $ (putMVar (response rpcCall) (RPCResp ind (T.pack (resp))))
+                "get_blocks_heights" -> do
+                    val <- liftIO $ (runner . withLayeredDB ldb) $ xGetBlocksHeights net (heights x)
+                    let resp = BSU.toString $ B64.encode $ L.toStrict $ GZ.compress (val)
+                    liftIO $ (putMVar (response rpcCall) (RPCResp ind (T.pack (resp))))
 
 loopRPC :: (MonadLoggerIO m, MonadUnliftIO m) => LayeredDB -> (TChan RPCCall) -> Network -> m ()
 loopRPC ldb queue net =

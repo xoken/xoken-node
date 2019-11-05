@@ -62,6 +62,26 @@ data LayeredDB =
         , layeredCache :: !(Maybe BlockDB)
         }
 
+data RPCRequest
+    = GetBlockHeight
+          { method :: String
+          , height :: Word32
+          }
+    | GetBlocksHeights
+          { method :: String
+          , heights :: [Word32]
+          }
+    deriving (Show, Generic)
+
+instance FromJSON RPCRequest where
+    parseJSON =
+        withObject "RPCRequest" $ \o -> do
+            method <- o .: "method"
+            case method of
+                "get_block_height" -> GetBlockHeight <$> o .: "method" <*> o .: "height"
+                "get_blocks_heights" -> GetBlocksHeights <$> o .: "method" <*> o .: "heights"
+                _ -> fail ("unknown method: " ++ method)
+
 type UnixTime = Word64
 
 type BlockPos = Word32
