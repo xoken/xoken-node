@@ -17,6 +17,7 @@ import Control.Applicative ((<|>))
 import Control.Arrow
 import Control.Exception ()
 import Control.Monad
+import Control.Monad.Extra
 import Control.Monad.Logger
 import Control.Monad.Loops
 import Control.Monad.Reader (MonadReader, ReaderT)
@@ -342,8 +343,7 @@ xGetBlocksHashes :: (MonadLoggerIO m, MonadUnliftIO m, StoreRead m) => Network -
 xGetBlocksHashes net hashes = do
     res <- mapM getBlock hashes
     let ar = catMaybes res
-    let x = jsonSerialiseAny net (ar)
-    return (x)
+    return $ jsonSerialiseAny net (ar)
 
 -- scottyBlockHeight :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
 -- scottyBlockHeight net = do
@@ -372,8 +372,7 @@ xGetBlocksHeights net heights = do
     hs <- concat <$> mapM getBlocksAtHeight (nub heights)
     res <- mapM getBlock hs
     let ar = catMaybes res
-    let x = jsonSerialiseAny net (ar)
-    return (x)
+    return $ jsonSerialiseAny net (ar)
 
 -- scottyBlockHeights :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
 -- scottyBlockHeights net = do
@@ -431,81 +430,130 @@ scottyMempool net = do
         runStream db . runConduit $ getMempoolStream .| streamAny net proto io
         flush'
 
-scottyTransaction :: MonadLoggerIO m => Network -> WebT m ()
-scottyTransaction net = do
-    cors
-    txid <- S.param "txid"
-    proto <- setupBin
+xGetTransaction :: (MonadLoggerIO m, MonadUnliftIO m, StoreRead m) => Network -> TxHash -> m (L.ByteString)
+xGetTransaction net txid = do
     res <- getTransaction txid
-    maybeSerial net proto res
+    case res of
+        Just x -> return $ jsonSerialiseAny net (x)
+        Nothing -> return $ C.pack "{}"
+    -- xGetBlocksHashes :: (MonadLoggerIO m, MonadUnliftIO m, StoreRead m) => Network -> [BlockHash] -> m (L.ByteString)
+    -- xGetBlocksHashes net hashes = do
+    --     res <- mapM getBlock hashes
+    --     let ar = catMaybes res
+    --     let x = jsonSerialiseAny net (ar)
+    --     return (x)
 
-scottyRawTransaction :: MonadLoggerIO m => Network -> WebT m ()
-scottyRawTransaction net = do
-    cors
-    txid <- S.param "txid"
-    proto <- setupBin
+-- scottyTransaction :: MonadLoggerIO m => Network -> WebT m ()
+-- scottyTransaction net = do
+--     cors
+--     txid <- S.param "txid"
+--     proto <- setupBin
+--     res <- getTransaction txid
+--     maybeSerial net proto res
+--
+xGetRawTransaction :: (MonadLoggerIO m, MonadUnliftIO m, StoreRead m) => Network -> TxHash -> m (L.ByteString)
+xGetRawTransaction net txid = do
     res <- fmap transactionData <$> getTransaction txid
-    maybeSerial net proto res
+    case res of
+        Just x -> return $ jsonSerialiseAny net (x)
+        Nothing -> return $ C.pack "{}"
 
-scottyTxAfterHeight :: MonadLoggerIO m => Network -> WebT m ()
-scottyTxAfterHeight net = do
-    cors
-    txid <- S.param "txid"
-    height <- S.param "height"
-    proto <- setupBin
+-- scottyRawTransaction :: MonadLoggerIO m => Network -> WebT m ()
+-- scottyRawTransaction net = do
+--     cors
+--     txid <- S.param "txid"
+--     proto <- setupBin
+--     res <- fmap transactionData <$> getTransaction txid
+--     maybeSerial net proto res
+xGetTxAfterHeight :: (MonadLoggerIO m, MonadUnliftIO m, StoreRead m) => Network -> TxHash -> Word32 -> m (L.ByteString)
+xGetTxAfterHeight net txid height = do
     res <- cbAfterHeight 10000 height txid
-    protoSerial net proto res
+    return $ jsonSerialiseAny net res
 
-scottyTransactions :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
-scottyTransactions net = do
-    cors
-    txids <- S.param "txids"
-    proto <- setupBin
-    db <- askDB
-    S.stream $ \io flush' -> do
-        runStream db . runConduit $ yieldMany (nub txids) .| concatMapMC getTransaction .| streamAny net proto io
-        flush'
+-- scottyTxAfterHeight :: MonadLoggerIO m => Network -> WebT m ()
+-- scottyTxAfterHeight net = do
+--     cors
+--     txid <- S.param "txid"
+--     height <- S.param "height"
+--     proto <- setupBin
+--     res <- cbAfterHeight 10000 height txid
+--     protoSerial net proto res
+xGetTransactions :: (MonadLoggerIO m, MonadUnliftIO m, StoreRead m) => Network -> [TxHash] -> m (L.ByteString)
+xGetTransactions net txids = do
+    res <- mapM getTransaction txids
+    let ar = catMaybes res
+    return $ jsonSerialiseAny net (ar)
 
-scottyBlockTransactions :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
-scottyBlockTransactions net = do
-    cors
-    h <- S.param "block"
-    proto <- setupBin
-    db <- askDB
-    getBlock h >>= \case
-        Just b ->
-            S.stream $ \io flush' -> do
-                runStream db . runConduit $
-                    yieldMany (blockDataTxs b) .| concatMapMC getTransaction .| streamAny net proto io
-                flush'
-        Nothing -> S.raise ThingNotFound
+-- scottyTransactions :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
+-- scottyTransactions net = do
+--     cors
+--     txids <- S.param "txids"
+--     proto <- setupBin
+--     db <- askDB
+--     S.stream $ \io flush' -> do
+--         runStream db . runConduit $ yieldMany (nub txids) .| concatMapMC getTransaction .| streamAny net proto io
+--         flush'
+xGetBlockTransactions :: (MonadLoggerIO m, MonadUnliftIO m, StoreRead m) => Network -> BlockHash -> m (L.ByteString)
+xGetBlockTransactions net hash = do
+    res <- getBlock hash
+    case res of
+        Just b -> do
+            txs <- mapM getTransaction (blockDataTxs b)
+            let ar = catMaybes txs
+            return $ jsonSerialiseAny net (ar)
+        Nothing -> return $ C.pack "{}"
 
-scottyRawTransactions :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
-scottyRawTransactions net = do
-    cors
-    txids <- S.param "txids"
-    proto <- setupBin
-    db <- askDB
-    S.stream $ \io flush' -> do
-        runStream db . runConduit $
-            yieldMany (nub txids) .| concatMapMC getTransaction .| mapC transactionData .| streamAny net proto io
-        flush'
+-- scottyBlockTransactions :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
+-- scottyBlockTransactions net = do
+--     cors
+--     h <- S.param "block"
+--     proto <- setupBin
+--     db <- askDB
+--     getBlock h >>= \case
+--         Just b ->
+--             S.stream $ \io flush' -> do
+--                 runStream db . runConduit $
+--                     yieldMany (blockDataTxs b) .| concatMapMC getTransaction .| streamAny net proto io
+--                 flush'
+--         Nothing -> S.raise ThingNotFound
+xGetRawTransactions :: (MonadLoggerIO m, MonadUnliftIO m, StoreRead m) => Network -> [TxHash] -> m (L.ByteString)
+xGetRawTransactions net txids = do
+    txs <- fmap transactionData <$> mapMaybeM getTransaction txids
+    return $ jsonSerialiseAny net (txs)
 
-scottyRawBlockTransactions :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
-scottyRawBlockTransactions net = do
-    cors
-    h <- S.param "block"
-    proto <- setupBin
-    db <- askDB
-    getBlock h >>= \case
-        Just b ->
-            S.stream $ \io flush' -> do
-                runStream db . runConduit $
-                    yieldMany (blockDataTxs b) .| concatMapMC getTransaction .| mapC transactionData .|
-                    streamAny net proto io
-                flush'
-        Nothing -> S.raise ThingNotFound
+-- scottyRawTransactions :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
+-- scottyRawTransactions net = do
+--     cors
+--     txids <- S.param "txids"
+--     proto <- setupBin
+--     db <- askDB
+--     S.stream $ \io flush' -> do
+--         runStream db . runConduit $
+--             yieldMany (nub txids) .| concatMapMC getTransaction .| mapC transactionData .| streamAny net proto io
+--         flush'
+xGetBlockRawTransactions :: (MonadLoggerIO m, MonadUnliftIO m, StoreRead m) => Network -> BlockHash -> m (L.ByteString)
+xGetBlockRawTransactions net hash = do
+    res <- getBlock hash
+    case res of
+        Just b -> do
+            txs <- fmap transactionData <$> mapMaybeM getTransaction (blockDataTxs b)
+            return $ jsonSerialiseAny net (txs)
+        Nothing -> return $ C.pack "{}"
 
+-- scottyRawBlockTransactions :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
+-- scottyRawBlockTransactions net = do
+--     cors
+--     h <- S.param "block"
+--     proto <- setupBin
+--     db <- askDB
+--     getBlock h >>= \case
+--         Just b ->
+--             S.stream $ \io flush' -> do
+--                 runStream db . runConduit $
+--                     yieldMany (blockDataTxs b) .| concatMapMC getTransaction .| mapC transactionData .|
+--                     streamAny net proto io
+--                 flush'
+--         Nothing -> S.raise ThingNotFound
 scottyAddressTxs :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> MaxLimits -> Bool -> WebT m ()
 scottyAddressTxs net limits full = do
     cors
@@ -907,13 +955,13 @@ runWeb WebConfig { webDB = db
         S.get "/block/latest" $ scottyBlockLatest net
         -- S.get "/blocks" $ scottyBlocks net
         S.get "/mempool" $ scottyMempool net
-        S.get "/transaction/:txid" $ scottyTransaction net
-        S.get "/transaction/:txid/raw" $ scottyRawTransaction net
-        S.get "/transaction/:txid/after/:height" $ scottyTxAfterHeight net
-        S.get "/transactions" $ scottyTransactions net
-        S.get "/transactions/raw" $ scottyRawTransactions net
-        S.get "/transactions/block/:block" $ scottyBlockTransactions net
-        S.get "/transactions/block/:block/raw" $ scottyRawBlockTransactions net
+        -- S.get "/transaction/:txid" $ scottyTransaction net
+        -- S.get "/transaction/:txid/raw" $ scottyRawTransaction net
+        -- S.get "/transaction/:txid/after/:height" $ scottyTxAfterHeight net
+        -- S.get "/transactions" $ scottyTransactions net
+        --S.get "/transactions/raw" $ scottyRawTransactions net
+        --S.get "/transactions/block/:block" $ scottyBlockTransactions net
+        --S.get "/transactions/block/:block/raw" $ scottyRawBlockTransactions net
         S.get "/address/:address/transactions" $ scottyAddressTxs net limits False
         S.get "/address/:address/transactions/full" $ scottyAddressTxs net limits True
         S.get "/address/transactions" $ scottyAddressesTxs net limits False

@@ -1,15 +1,18 @@
-module Network.Xoken.UtilSpec (spec) where
+module Network.Xoken.UtilSpec
+    ( spec
+    ) where
 
-import qualified Data.ByteString      as BS
-import           Data.Either          (fromLeft, fromRight, isLeft, isRight)
-import           Data.Foldable        (toList)
-import           Data.List            (permutations)
-import           Data.Maybe
-import qualified Data.Sequence        as Seq
-import           Network.Xoken.Test
-import           Network.Xoken.Util
-import           Test.Hspec
-import           Test.QuickCheck
+import qualified Data.ByteString as BS
+import Data.Either (fromLeft, fromRight, isLeft, isRight)
+import Data.Foldable (toList)
+import Data.List (permutations)
+import Data.Maybe
+import qualified Data.Sequence as Seq
+import Network.Xoken.Test
+import Network.Xoken.Util
+import Test.Hspec
+
+import Test.QuickCheck
 
 spec :: Spec
 spec =
@@ -18,12 +21,10 @@ spec =
         it "decodeHex . encodeHex" $ property $ forAll arbitraryBS fromToHex
         it "compare updateIndex with Data.Sequence" $ property testUpdateIndex
         it "matchTemplate" $ property testMatchTemplate
-        it "testing matchTemplate with two lists" $
-            property testMatchTemplateLen
+        it "testing matchTemplate with two lists" $ property testMatchTemplateLen
         it "either helper functions" $ property testEither
 
 {- Various utilities -}
-
 getPutInteger :: Integer -> Bool
 getPutInteger i = bsToInteger (integerToBS $ abs i) == abs i
 
@@ -31,8 +32,7 @@ fromToHex :: BS.ByteString -> Bool
 fromToHex bs = decodeHex (encodeHex bs) == Just bs
 
 testUpdateIndex :: [Int] -> Int -> Int -> Bool
-testUpdateIndex xs v i =
-    updateIndex i xs (const v) == toList (Seq.update i v $ Seq.fromList xs)
+testUpdateIndex xs v i = updateIndex i xs (const v) == toList (Seq.update i v $ Seq.fromList xs)
 
 testMatchTemplate :: [Int] -> Int -> Bool
 testMatchTemplate as i = catMaybes res == bs
@@ -53,12 +53,6 @@ testEither :: Either String Int -> Bool
 testEither e =
     case e of
         (Right v) ->
-            isRight e &&
-            not (isLeft e) &&
-            fromRight (error "Unexpected Left") e == v &&
-            eitherToMaybe e == Just v
+            isRight e && not (isLeft e) && fromRight (error "Unexpected Left") e == v && eitherToMaybe e == Just v
         (Left v) ->
-            isLeft e &&
-            not (isRight e) &&
-            fromLeft (error "Unexpected Right") e == v &&
-            isNothing (eitherToMaybe e)
+            isLeft e && not (isRight e) && fromLeft (error "Unexpected Right") e == v && isNothing (eitherToMaybe e)
