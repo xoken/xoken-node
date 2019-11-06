@@ -826,6 +826,13 @@ instance FromJSON BasicParseJsonRPCReq where
             basicMethod <- o .: "method"
             return BasicParseJsonRPCReq {..}
 
+dispatchResponse :: RPCCall -> Int -> String -> IO ()
+dispatchResponse rpcCall ind resp = do
+    (putMVar (response rpcCall) (RPCResp ind (T.pack (resp))))
+
+gzipCompressBase64Encode :: C.ByteString -> String
+gzipCompressBase64Encode val = BSU.toString $ B64.encode $ L.toStrict $ GZ.compress (val)
+
 goGetResource :: (MonadLoggerIO m, MonadUnliftIO m) => LayeredDB -> RPCCall -> Network -> m ()
 goGetResource ldb rpcCall net = do
     let ind = rPCReq_key (request rpcCall)
@@ -840,20 +847,16 @@ goGetResource ldb rpcCall net = do
             case (method x) of
                 "get_block_hash" -> do
                     val <- liftIO $ (runner . withLayeredDB ldb) $ xGetBlockHash net (blockhash (params x))
-                    let resp = BSU.toString $ B64.encode $ L.toStrict $ GZ.compress (val)
-                    liftIO $ (putMVar (response rpcCall) (RPCResp ind (T.pack (resp))))
+                    liftIO $ dispatchResponse rpcCall ind (gzipCompressBase64Encode (val))
                 "get_blocks_hashes" -> do
                     val <- liftIO $ (runner . withLayeredDB ldb) $ xGetBlocksHashes net (blockhashes (params x))
-                    let resp = BSU.toString $ B64.encode $ L.toStrict $ GZ.compress (val)
-                    liftIO $ (putMVar (response rpcCall) (RPCResp ind (T.pack (resp))))
+                    liftIO $ dispatchResponse rpcCall ind (gzipCompressBase64Encode (val))
                 "get_block_height" -> do
                     val <- liftIO $ (runner . withLayeredDB ldb) $ xGetBlockHeight net (height (params x))
-                    let resp = BSU.toString $ B64.encode $ L.toStrict $ GZ.compress (val)
-                    liftIO $ (putMVar (response rpcCall) (RPCResp ind (T.pack (resp))))
+                    liftIO $ dispatchResponse rpcCall ind (gzipCompressBase64Encode (val))
                 "get_blocks_heights" -> do
                     val <- liftIO $ (runner . withLayeredDB ldb) $ xGetBlocksHeights net (heights (params x))
-                    let resp = BSU.toString $ B64.encode $ L.toStrict $ GZ.compress (val)
-                    liftIO $ (putMVar (response rpcCall) (RPCResp ind (T.pack (resp))))
+                    liftIO $ dispatchResponse rpcCall ind (gzipCompressBase64Encode (val))
         Nothing -> do
             liftIO $ printf "Decode failed.\n"
             let mp = A.decode jsonStr :: Maybe BasicParseJsonRPCReq
@@ -861,14 +864,10 @@ goGetResource ldb rpcCall net = do
                 Just q -> do
                     let mid = basicId q -- M.lookup "id" q
                     let v = getJsonRpcErrorObj mid (Number (-32602)) "Invalid or missing params."
-                    let val = A.encode (v)
-                    let resp = BSU.toString $ B64.encode $ L.toStrict $ GZ.compress (val)
-                    liftIO $ (putMVar (response rpcCall) (RPCResp ind (T.pack (resp))))
+                    liftIO $ dispatchResponse rpcCall ind (gzipCompressBase64Encode (A.encode (v)))
                 Nothing -> do
                     let v = getJsonRpcErrorObj (Number 0) (Number (-32600)) "Invalid Request"
-                    let val = A.encode (v)
-                    let resp = BSU.toString $ B64.encode $ L.toStrict $ GZ.compress (val)
-                    liftIO $ (putMVar (response rpcCall) (RPCResp ind (T.pack (resp))))
+                    liftIO $ dispatchResponse rpcCall ind (gzipCompressBase64Encode (A.encode (v)))
 
 getJsonRpcErrorObj :: Value -> Value -> Value -> Value
 getJsonRpcErrorObj messageId errCode errMsg =
