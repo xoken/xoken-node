@@ -10,7 +10,7 @@ import Control.Monad
 import Control.Monad.Reader (MonadReader, ReaderT)
 import qualified Control.Monad.Reader as R
 import qualified Data.ByteString.Short as B.Short
-import Data.Function
+import qualified Data.Function as F
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as M
 import Data.IntMap.Strict (IntMap)
@@ -88,9 +88,7 @@ getBalanceH a = fmap (balValToBalance a) . M.lookup a . hBalance
 
 getMempoolH :: Monad m => BlockMem -> ConduitT i (UnixTime, TxHash) m ()
 getMempoolH db =
-    let ls =
-            sortBy (flip compare) . M.toList . M.map (M.keys . M.filter id) $
-            hMempool db
+    let ls = sortBy (flip compare) . M.toList . M.map (M.keys . M.filter F.id) $ hMempool db
      in yieldMany [(u, h) | (u, hs) <- ls, h <- hs]
 
 getOrphansH :: Monad m => BlockMem -> ConduitT i (UnixTime, Tx) m ()
@@ -112,8 +110,7 @@ getUnspentsH BlockMem {hUnspent = us} =
 
 getAddressTxsH :: Address -> Maybe BlockRef -> BlockMem -> [BlockTx]
 getAddressTxsH a mbr db =
-    dropWhile h .
-    sortBy (flip compare) . catMaybes . concatMap (uncurry f) . M.toList $
+    dropWhile h . sortBy (flip compare) . catMaybes . concatMap (uncurry f) . M.toList $
     M.lookupDefault M.empty a (hAddrTx db)
   where
     f b hm = map (uncurry (g b)) $ M.toList hm
@@ -125,13 +122,11 @@ getAddressTxsH a mbr db =
             Just br -> b > br
 
 getAddressBalancesH :: Monad m => BlockMem -> ConduitT i Balance m ()
-getAddressBalancesH BlockMem {hBalance = bm} =
-    yieldMany (M.toList bm) .| mapC (uncurry balValToBalance)
+getAddressBalancesH BlockMem {hBalance = bm} = yieldMany (M.toList bm) .| mapC (uncurry balValToBalance)
 
 getAddressUnspentsH :: Address -> Maybe BlockRef -> BlockMem -> [Unspent]
 getAddressUnspentsH a mbr db =
-    dropWhile h .
-    sortBy (flip compare) . catMaybes . concatMap (uncurry f) . M.toList $
+    dropWhile h . sortBy (flip compare) . catMaybes . concatMap (uncurry f) . M.toList $
     M.lookupDefault M.empty a (hAddrOut db)
   where
     f b hm = map (uncurry (g b)) $ M.toList hm
@@ -156,8 +151,7 @@ setBestH :: BlockHash -> BlockMem -> BlockMem
 setBestH h db = db {hBest = Just h}
 
 insertBlockH :: BlockData -> BlockMem -> BlockMem
-insertBlockH bd db =
-    db {hBlock = M.insert (headerHash (blockDataHeader bd)) bd (hBlock db)}
+insertBlockH bd db = db {hBlock = M.insert (headerHash (blockDataHeader bd)) bd (hBlock db)}
 
 setBlocksAtHeightH :: [BlockHash] -> BlockHeight -> BlockMem -> BlockMem
 setBlocksAtHeightH hs g db = db {hHeight = M.insert g hs (hHeight db)}
@@ -169,22 +163,14 @@ insertSpenderH :: OutPoint -> Spender -> BlockMem -> BlockMem
 insertSpenderH op s db =
     db
         { hSpender =
-              M.insertWith
-                  (<>)
-                  (outPointHash op)
-                  (I.singleton (fromIntegral (outPointIndex op)) (Just s))
-                  (hSpender db)
+              M.insertWith (<>) (outPointHash op) (I.singleton (fromIntegral (outPointIndex op)) (Just s)) (hSpender db)
         }
 
 deleteSpenderH :: OutPoint -> BlockMem -> BlockMem
 deleteSpenderH op db =
     db
         { hSpender =
-              M.insertWith
-                  (<>)
-                  (outPointHash op)
-                  (I.singleton (fromIntegral (outPointIndex op)) Nothing)
-                  (hSpender db)
+              M.insertWith (<>) (outPointHash op) (I.singleton (fromIntegral (outPointIndex op)) Nothing) (hSpender db)
         }
 
 setBalanceH :: Balance -> BlockMem -> BlockMem
@@ -194,47 +180,23 @@ setBalanceH bal db = db {hBalance = M.insert a b (hBalance db)}
 
 insertAddrTxH :: Address -> BlockTx -> BlockMem -> BlockMem
 insertAddrTxH a btx db =
-    let s =
-            M.singleton
-                a
-                (M.singleton
-                     (blockTxBlock btx)
-                     (M.singleton (blockTxHash btx) True))
+    let s = M.singleton a (M.singleton (blockTxBlock btx) (M.singleton (blockTxHash btx) True))
      in db {hAddrTx = M.unionWith (M.unionWith M.union) s (hAddrTx db)}
 
 deleteAddrTxH :: Address -> BlockTx -> BlockMem -> BlockMem
 deleteAddrTxH a btx db =
-    let s =
-            M.singleton
-                a
-                (M.singleton
-                     (blockTxBlock btx)
-                     (M.singleton (blockTxHash btx) False))
+    let s = M.singleton a (M.singleton (blockTxBlock btx) (M.singleton (blockTxHash btx) False))
      in db {hAddrTx = M.unionWith (M.unionWith M.union) s (hAddrTx db)}
 
 insertAddrUnspentH :: Address -> Unspent -> BlockMem -> BlockMem
 insertAddrUnspentH a u db =
-    let uns =
-            OutVal
-                { outValAmount = unspentAmount u
-                , outValScript = B.Short.fromShort (unspentScript u)
-                }
-        s =
-            M.singleton
-                a
-                (M.singleton
-                     (unspentBlock u)
-                     (M.singleton (unspentPoint u) (Just uns)))
+    let uns = OutVal {outValAmount = unspentAmount u, outValScript = B.Short.fromShort (unspentScript u)}
+        s = M.singleton a (M.singleton (unspentBlock u) (M.singleton (unspentPoint u) (Just uns)))
      in db {hAddrOut = M.unionWith (M.unionWith M.union) s (hAddrOut db)}
 
 deleteAddrUnspentH :: Address -> Unspent -> BlockMem -> BlockMem
 deleteAddrUnspentH a u db =
-    let s =
-            M.singleton
-                a
-                (M.singleton
-                     (unspentBlock u)
-                     (M.singleton (unspentPoint u) Nothing))
+    let s = M.singleton a (M.singleton (unspentBlock u) (M.singleton (unspentPoint u) Nothing))
      in db {hAddrOut = M.unionWith (M.unionWith M.union) s (hAddrOut db)}
 
 insertMempoolTxH :: TxHash -> UnixTime -> BlockMem -> BlockMem
@@ -248,8 +210,7 @@ deleteMempoolTxH h u db =
      in db {hMempool = M.unionWith M.union s (hMempool db)}
 
 insertOrphanTxH :: Tx -> UnixTime -> BlockMem -> BlockMem
-insertOrphanTxH tx u db =
-    db {hOrphans = M.insert (txHash tx) (Just (u, tx)) (hOrphans db)}
+insertOrphanTxH tx u db = db {hOrphans = M.insert (txHash tx) (Just (u, tx)) (hOrphans db)}
 
 deleteOrphanTxH :: TxHash -> BlockMem -> BlockMem
 deleteOrphanTxH h db = db {hOrphans = M.insert h Nothing (hOrphans db)}
@@ -257,8 +218,7 @@ deleteOrphanTxH h db = db {hOrphans = M.insert h Nothing (hOrphans db)}
 getUnspentH :: OutPoint -> BlockMem -> Maybe (Maybe Unspent)
 getUnspentH op db = do
     m <- M.lookup (outPointHash op) (hUnspent db)
-    fmap (unspentValToUnspent op) <$>
-        I.lookup (fromIntegral (outPointIndex op)) m
+    fmap (unspentValToUnspent op) <$> I.lookup (fromIntegral (outPointIndex op)) m
 
 insertUnspentH :: Unspent -> BlockMem -> BlockMem
 insertUnspentH u db =
@@ -267,9 +227,7 @@ insertUnspentH u db =
               M.insertWith
                   (<>)
                   (outPointHash (unspentPoint u))
-                  (I.singleton
-                       (fromIntegral (outPointIndex (unspentPoint u)))
-                       (Just (snd (unspentToUnspentVal u))))
+                  (I.singleton (fromIntegral (outPointIndex (unspentPoint u))) (Just (snd (unspentToUnspentVal u))))
                   (hUnspent db)
         }
 
@@ -277,11 +235,7 @@ deleteUnspentH :: OutPoint -> BlockMem -> BlockMem
 deleteUnspentH op db =
     db
         { hUnspent =
-              M.insertWith
-                  (<>)
-                  (outPointHash op)
-                  (I.singleton (fromIntegral (outPointIndex op)) Nothing)
-                  (hUnspent db)
+              M.insertWith (<>) (outPointHash op) (I.singleton (fromIntegral (outPointIndex op)) Nothing) (hUnspent db)
         }
 
 instance MonadIO m => StoreRead (ReaderT (TVar BlockMem) m) where

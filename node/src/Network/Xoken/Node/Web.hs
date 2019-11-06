@@ -7,6 +7,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE RecordWildCards #-}
 
 module Network.Xoken.Node.Web where
 
@@ -27,15 +28,15 @@ import Data.Aeson.Encoding (encodingToLazyByteString, fromEncoding)
 import qualified Data.Binary as DB (encode)
 import Data.Bits
 import qualified Data.ByteString as B
+import Data.ByteString.Base64 as B64
+import Data.ByteString.Base64.Lazy as B64L
 import Data.ByteString.Builder
 import qualified Data.ByteString.Lazy as L
 import qualified Data.ByteString.Lazy.Char8 as C
-import Data.Word
-
 import qualified Data.ByteString.UTF8 as BSU (toString)
-
-import Data.ByteString.Base64 as B64
-import Data.ByteString.Base64.Lazy as B64L
+import qualified Data.Map as Map (fromList)
+import Data.Word
+import qualified GHC.Exts as Exts
 
 --import qualified Data.ByteString.Char8 as BSC (pack, unpack)
 --import Data.ByteString.Lazy.UTF8 as BLU (pack, unpack)
@@ -101,7 +102,7 @@ import qualified Web.Scotty.Trans as S
     , stringError
     , text
     )
-import Xoken
+import Xoken hiding (msgType)
 import Xoken.P2P
 
 type WebT m = ActionT Except (ReaderT LayeredDB m)
@@ -191,9 +192,9 @@ data PubSubMsg
 
 data IPCMessage =
     IPCMessage
-        { msgid :: Int
-        , mtype :: String
-        , params :: M.Map String String
+        { msgId :: Int
+        , msgType :: String
+        , payload :: M.Map String String
         }
     deriving (Show, Generic)
 
@@ -319,30 +320,42 @@ scottyBestBlock net = do
             return $ pruneTx n b
     maybeSerial net proto res
 
-scottyBlock :: MonadLoggerIO m => Network -> WebT m ()
-scottyBlock net = do
-    cors
-    block <- S.param "block"
-    n <- parseNoTx
-    proto <- setupBin
-    res <-
-        runMaybeT $ do
-            b <- MaybeT $ getBlock block
-            return $ pruneTx n b
-    maybeSerial net proto res
+-- scottyBlock :: MonadLoggerIO m => Network -> WebT m ()
+-- scottyBlock net = do
+--     cors
+--     block <- S.param "block"
+--     n <- parseNoTx
+--     proto <- setupBin
+--     res <-
+--         runMaybeT $ do
+--             b <- MaybeT $ getBlock block
+--             return $ pruneTx n b
+--     maybeSerial net proto res
+xGetBlockHash :: (MonadLoggerIO m, MonadUnliftIO m, StoreRead m) => Network -> BlockHash -> m (L.ByteString)
+xGetBlockHash net hash = do
+    res <- getBlock hash
+    case res of
+        Just b -> return $ jsonSerialiseAny net (b)
+        Nothing -> return $ C.pack "{}"
 
-scottyBlockHeight :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
-scottyBlockHeight net = do
-    cors
-    height <- S.param "height"
-    n <- parseNoTx
-    proto <- setupBin
-    hs <- getBlocksAtHeight height
-    db <- askDB
-    S.stream $ \io flush' -> do
-        runStream db . runConduit $ yieldMany hs .| concatMapMC getBlock .| mapC (pruneTx n) .| streamAny net proto io
-        flush'
+xGetBlocksHashes :: (MonadLoggerIO m, MonadUnliftIO m, StoreRead m) => Network -> [BlockHash] -> m (L.ByteString)
+xGetBlocksHashes net hashes = do
+    res <- mapM getBlock hashes
+    let ar = catMaybes res
+    let x = jsonSerialiseAny net (ar)
+    return (x)
 
+-- scottyBlockHeight :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
+-- scottyBlockHeight net = do
+--     cors
+--     height <- S.param "height"
+--     n <- parseNoTx
+--     proto <- setupBin
+--     hs <- getBlocksAtHeight height
+--     db <- askDB
+--     S.stream $ \io flush' -> do
+--         runStream db . runConduit $ yieldMany hs .| concatMapMC getBlock .| mapC (pruneTx n) .| streamAny net proto io
+--         flush'
 xGetBlockHeight :: (MonadLoggerIO m, MonadUnliftIO m, StoreRead m) => Network -> Word32 -> m (L.ByteString)
 xGetBlockHeight net height = do
     hs <- getBlocksAtHeight height
@@ -362,20 +375,19 @@ xGetBlocksHeights net heights = do
     let x = jsonSerialiseAny net (ar)
     return (x)
 
-scottyBlockHeights :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
-scottyBlockHeights net = do
-    cors
-    heights <- S.param "heights"
-    n <- parseNoTx
-    proto <- setupBin
-    bs <- concat <$> mapM getBlocksAtHeight (nub heights)
-    db <- askDB
-    S.stream $ \io flush' -> do
-        runStream db . runConduit $
-            yieldMany (nub heights) .| concatMapMC getBlocksAtHeight .| concatMapMC getBlock .| mapC (pruneTx n) .|
-            streamAny net proto io
-        flush'
-
+-- scottyBlockHeights :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
+-- scottyBlockHeights net = do
+--     cors
+--     heights <- S.param "heights"
+--     n <- parseNoTx
+--     proto <- setupBin
+--     bs <- concat <$> mapM getBlocksAtHeight (nub heights)
+--     db <- askDB
+--     S.stream $ \io flush' -> do
+--         runStream db . runConduit $
+--             yieldMany (nub heights) .| concatMapMC getBlocksAtHeight .| concatMapMC getBlock .| mapC (pruneTx n) .|
+--             streamAny net proto io
+--         flush'
 scottyBlockLatest :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
 scottyBlockLatest net = do
     cors
@@ -399,18 +411,17 @@ scottyBlockLatest net = do
                     then return ()
                     else f n (prevBlock (blockDataHeader b)) (i - 1)
 
-scottyBlocks :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
-scottyBlocks net = do
-    cors
-    blocks <- S.param "blocks"
-    n <- parseNoTx
-    proto <- setupBin
-    db <- askDB
-    S.stream $ \io flush' -> do
-        runStream db . runConduit $
-            yieldMany (nub blocks) .| concatMapMC getBlock .| mapC (pruneTx n) .| streamAny net proto io
-        flush'
-
+-- scottyBlocks :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
+-- scottyBlocks net = do
+--     cors
+--     blocks <- S.param "blocks"
+--     n <- parseNoTx
+--     proto <- setupBin
+--     db <- askDB
+--     S.stream $ \io flush' -> do
+--         runStream db . runConduit $
+--             yieldMany (nub blocks) .| concatMapMC getBlock .| mapC (pruneTx n) .| streamAny net proto io
+--         flush'
 scottyMempool :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
 scottyMempool net = do
     cors
@@ -740,26 +751,26 @@ decodeIPCRequest ipcSvcHandler sockMVar req = do
     case ipcReq of
         Just x -> do
             printf "Decoded (%s)\n" (show x)
-            case (mtype x) of
+            case (msgType x) of
                 "RPC_REQ" -> do
-                    case (M.lookup "encReq" (params x)) of
+                    case (M.lookup "encReq" (payload x)) of
                         Just enc -> do
-                            _ <- async (handleRPCReqResp (rpcQueue ipcSvcHandler) (sockMVar) (msgid x) (enc))
+                            _ <- async (handleRPCReqResp (rpcQueue ipcSvcHandler) (sockMVar) (msgId x) (enc))
                             return ()
                         Nothing -> printf "Invalid payload.\n"
                 "SUB_REQ" -> do
-                    case (M.lookup "subject" (params x)) of
+                    case (M.lookup "subject" (payload x)) of
                         Just su
-                            -- _ <- async (handleSubscribeReqResp sockMVar (pubSubQueue handler) (msgid x) su)
+                            -- _ <- async (handleSubscribeReqResp sockMVar (pubSubQueue handler) (msgId x) su)
                          -> do
                             return ()
                         Nothing -> printf "Invalid payload.\n"
                 "PUB_REQ" -> do
-                    case (M.lookup "subject" (params x)) of
+                    case (M.lookup "subject" (payload x)) of
                         Just su -> do
-                            case (M.lookup "S.body" (params x)) of
+                            case (M.lookup "S.body" (payload x)) of
                                 Just bdy
-                                    -- _ <- async (handlePublishReqResp sockMVar (pubSubQueue handler) (msgid x) su bdy)
+                                    -- _ <- async (handlePublishReqResp sockMVar (pubSubQueue handler) (msgId x) su bdy)
                                  -> do
                                     return ()
                                 Nothing -> printf "Invalid payload.\n"
@@ -802,6 +813,19 @@ setupIPCServer config ipcSvcHandler = do
             handleConnection ipcSvcHandler connSock
     return ()
 
+data BasicParseJsonRPCReq =
+    BasicParseJsonRPCReq
+        { basicId :: Value
+        , basicMethod :: Value
+        }
+
+instance FromJSON BasicParseJsonRPCReq where
+    parseJSON =
+        withObject "BasicParseJsonRPCReq" $ \o -> do
+            basicId <- o .: "id"
+            basicMethod <- o .: "method"
+            return BasicParseJsonRPCReq {..}
+
 goGetResource :: (MonadLoggerIO m, MonadUnliftIO m) => LayeredDB -> RPCCall -> Network -> m ()
 goGetResource ldb rpcCall net = do
     let ind = rPCReq_key (request rpcCall)
@@ -814,14 +838,42 @@ goGetResource ldb rpcCall net = do
             liftIO $ printf "RPC: (%s)\n" (method x)
             runner <- askRunInIO
             case (method x) of
+                "get_block_hash" -> do
+                    val <- liftIO $ (runner . withLayeredDB ldb) $ xGetBlockHash net (blockhash (params x))
+                    let resp = BSU.toString $ B64.encode $ L.toStrict $ GZ.compress (val)
+                    liftIO $ (putMVar (response rpcCall) (RPCResp ind (T.pack (resp))))
+                "get_blocks_hashes" -> do
+                    val <- liftIO $ (runner . withLayeredDB ldb) $ xGetBlocksHashes net (blockhashes (params x))
+                    let resp = BSU.toString $ B64.encode $ L.toStrict $ GZ.compress (val)
+                    liftIO $ (putMVar (response rpcCall) (RPCResp ind (T.pack (resp))))
                 "get_block_height" -> do
-                    val <- liftIO $ (runner . withLayeredDB ldb) $ xGetBlockHeight net (height x)
+                    val <- liftIO $ (runner . withLayeredDB ldb) $ xGetBlockHeight net (height (params x))
                     let resp = BSU.toString $ B64.encode $ L.toStrict $ GZ.compress (val)
                     liftIO $ (putMVar (response rpcCall) (RPCResp ind (T.pack (resp))))
                 "get_blocks_heights" -> do
-                    val <- liftIO $ (runner . withLayeredDB ldb) $ xGetBlocksHeights net (heights x)
+                    val <- liftIO $ (runner . withLayeredDB ldb) $ xGetBlocksHeights net (heights (params x))
                     let resp = BSU.toString $ B64.encode $ L.toStrict $ GZ.compress (val)
                     liftIO $ (putMVar (response rpcCall) (RPCResp ind (T.pack (resp))))
+        Nothing -> do
+            liftIO $ printf "Decode failed.\n"
+            let mp = A.decode jsonStr :: Maybe BasicParseJsonRPCReq
+            case (mp) of
+                Just q -> do
+                    let mid = basicId q -- M.lookup "id" q
+                    let v = getJsonRpcErrorObj mid (Number (-32602)) "Invalid or missing params."
+                    let val = A.encode (v)
+                    let resp = BSU.toString $ B64.encode $ L.toStrict $ GZ.compress (val)
+                    liftIO $ (putMVar (response rpcCall) (RPCResp ind (T.pack (resp))))
+                Nothing -> do
+                    let v = getJsonRpcErrorObj (Number 0) (Number (-32600)) "Invalid Request"
+                    let val = A.encode (v)
+                    let resp = BSU.toString $ B64.encode $ L.toStrict $ GZ.compress (val)
+                    liftIO $ (putMVar (response rpcCall) (RPCResp ind (T.pack (resp))))
+
+getJsonRpcErrorObj :: Value -> Value -> Value -> Value
+getJsonRpcErrorObj messageId errCode errMsg =
+    Object $
+    Exts.fromList [("id", messageId), ("error", Object $ Exts.fromList [("code", errCode), ("message", errMsg)])]
 
 loopRPC :: (MonadLoggerIO m, MonadUnliftIO m) => LayeredDB -> (TChan RPCCall) -> Network -> m ()
 loopRPC ldb queue net =
@@ -850,11 +902,11 @@ runWeb WebConfig { webDB = db
             Nothing -> return ()
         S.defaultHandler (defHandler net)
         S.get "/block/best" $ scottyBestBlock net
-        S.get "/block/:block" $ scottyBlock net
-        S.get "/block/height/:height" $ scottyBlockHeight net
-        S.get "/block/heights" $ scottyBlockHeights net
+        -- S.get "/block/:block" $ scottyBlock net
+        -- S.get "/block/height/:height" $ scottyBlockHeight net
+        -- S.get "/block/heights" $ scottyBlockHeights net
         S.get "/block/latest" $ scottyBlockLatest net
-        S.get "/blocks" $ scottyBlocks net
+        -- S.get "/blocks" $ scottyBlocks net
         S.get "/mempool" $ scottyMempool net
         S.get "/transaction/:txid" $ scottyTransaction net
         S.get "/transaction/:txid/raw" $ scottyRawTransaction net
@@ -1275,7 +1327,7 @@ applyOffset :: Monad m => Offset -> ConduitT i i m ()
 applyOffset = dropC . fromIntegral
 
 applyLimit :: Monad m => Maybe Limit -> ConduitT i i m ()
-applyLimit Nothing = mapC id
+applyLimit Nothing = mapC Data.Function.id
 applyLimit (Just l) = takeC (fromIntegral l)
 
 conduitToQueue :: MonadIO m => TBQueue (Maybe a) -> ConduitT a Void m ()

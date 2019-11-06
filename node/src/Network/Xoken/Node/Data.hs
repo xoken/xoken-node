@@ -19,6 +19,7 @@ import qualified Data.ByteString as B
 import Data.ByteString.Short (ShortByteString)
 import qualified Data.ByteString.Short as B.Short
 import Data.Default
+import Data.Foldable
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as M
 import Data.Hashable
@@ -62,26 +63,58 @@ data LayeredDB =
         , layeredCache :: !(Maybe BlockDB)
         }
 
-data RPCRequest
-    = GetBlockHeight
-          { method :: String
-          , height :: Word32
-          }
-    | GetBlocksHeights
-          { method :: String
-          , heights :: [Word32]
-          }
+data RPCRequest =
+    RPCRequest
+        { method :: String
+        , id :: Int
+        , params :: RPCParams
+        }
     deriving (Show, Generic)
 
 instance FromJSON RPCRequest where
-    parseJSON =
-        withObject "RPCRequest" $ \o -> do
-            method <- o .: "method"
-            case method of
-                "get_block_height" -> GetBlockHeight <$> o .: "method" <*> o .: "height"
-                "get_blocks_heights" -> GetBlocksHeights <$> o .: "method" <*> o .: "heights"
-                _ -> fail ("unknown method: " ++ method)
+    parseJSON (Object v) = RPCRequest <$> v .: "method" <*> v .: "id" <*> v .: "params"
+    parseJSON _ = error "Can't parse RPCRequest"
 
+data RPCParams
+    = GetBlockHeight
+          { height :: Word32
+          }
+    | GetBlocksHeights
+          { heights :: [Word32]
+          }
+    | GetBlockHash
+          { blockhash :: BlockHash
+          }
+    | GetBlocksHashes
+          { blockhashes :: [BlockHash]
+          }
+    deriving (Show, Generic)
+
+instance FromJSON RPCParams where
+    parseJSON =
+        withObject "RPCParams" $ \o ->
+            asum
+                [ GetBlockHeight <$> o .: "height"
+                , GetBlocksHeights <$> o .: "heights"
+                , GetBlockHash <$> o .: "blockhash"
+                , GetBlocksHashes <$> o .: "blockhashes"
+                ]
+
+-- data RPCResponseError =
+--     RPCResponseError
+--         { id :: Int
+--         , error :: String
+--         }
+--instance FromJSON RPCRequest
+--     parseJSON =
+--         withObject "RPCRequest" $ \o -> do
+--             method <- o .: "method"
+--             case method of
+--                 "get_block_height" -> GetBlockHeight <$> o .: "method" <*> o .: "height"
+--                 "get_blocks_heights" -> GetBlocksHeights <$> o .: "method" <*> o .: "heights"
+--                 "get_block_hash" -> GetBlockHash <$> o .: "method" <*> o .: "blockhash"
+--                 "get_blocks_hashes" -> GetBlocksHashes <$> o .: "method" <*> o .: "blockhashes"
+--                 _ -> fail ("unknown method: " ++ method)
 type UnixTime = Word64
 
 type BlockPos = Word32
