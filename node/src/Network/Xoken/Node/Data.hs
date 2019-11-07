@@ -66,8 +66,8 @@ data LayeredDB =
 data RPCRequest =
     RPCRequest
         { method :: String
-        , id :: Int
-        , params :: RPCParams
+        , msgid :: Int
+        , params :: Value
         }
     deriving (Show, Generic)
 
@@ -75,46 +75,43 @@ instance FromJSON RPCRequest where
     parseJSON (Object v) = RPCRequest <$> v .: "method" <*> v .: "id" <*> v .: "params"
     parseJSON _ = error "Can't parse RPCRequest"
 
-data RPCParams
-    = GetBlockHeight
-          { height :: Word32
-          }
-    | GetBlocksHeights
-          { heights :: [Word32]
-          }
-    | GetBlockHash
-          { blockhash :: BlockHash
-          }
-    | GetBlocksHashes
-          { blockhashes :: [BlockHash]
-          }
+data GetBlockHeight =
+    GetBlockHeight
+        { height :: Word32
+        }
+
+instance FromJSON GetBlockHeight where
+    parseJSON (Object v) = GetBlockHeight <$> v .: "height"
+    parseJSON _ = error "Can't parse GetBlockHeight"
+
+data GetBlocksHeights =
+    GetBlocksHeights
+        { heights :: [Word32]
+        }
+
+instance FromJSON GetBlocksHeights where
+    parseJSON (Object v) = GetBlocksHeights <$> v .: "heights"
+    parseJSON _ = error "Can't parse GetBlocksHeights"
+
+data GetBlockHash =
+    GetBlockHash
+        { blockhash :: BlockHash
+        }
+
+instance FromJSON GetBlockHash where
+    parseJSON (Object v) = GetBlockHash <$> v .: "blockhash"
+    parseJSON _ = error "Can't parse GetBlockHash"
+
+data GetBlocksHashes =
+    GetBlocksHashes
+        { blockhashes :: [BlockHash]
+        }
     deriving (Show, Generic)
 
-instance FromJSON RPCParams where
-    parseJSON =
-        withObject "RPCParams" $ \o ->
-            asum
-                [ GetBlockHeight <$> o .: "height"
-                , GetBlocksHeights <$> o .: "heights"
-                , GetBlockHash <$> o .: "blockhash"
-                , GetBlocksHashes <$> o .: "blockhashes"
-                ]
+instance FromJSON GetBlocksHashes where
+    parseJSON (Object v) = GetBlocksHashes <$> v .: "blockhashes"
+    parseJSON _ = error "Can't parse GetBlocksHashes"
 
--- data RPCResponseError =
---     RPCResponseError
---         { id :: Int
---         , error :: String
---         }
---instance FromJSON RPCRequest
---     parseJSON =
---         withObject "RPCRequest" $ \o -> do
---             method <- o .: "method"
---             case method of
---                 "get_block_height" -> GetBlockHeight <$> o .: "method" <*> o .: "height"
---                 "get_blocks_heights" -> GetBlocksHeights <$> o .: "method" <*> o .: "heights"
---                 "get_block_hash" -> GetBlockHash <$> o .: "method" <*> o .: "blockhash"
---                 "get_blocks_hashes" -> GetBlocksHashes <$> o .: "method" <*> o .: "blockhashes"
---                 _ -> fail ("unknown method: " ++ method)
 type UnixTime = Word64
 
 type BlockPos = Word32
