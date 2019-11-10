@@ -554,6 +554,21 @@ xGetBlockRawTransactions net hash = do
 --                     streamAny net proto io
 --                 flush'
 --         Nothing -> S.raise ThingNotFound
+-- xGetAddressTxs ::
+--        (MonadLoggerIO m, MonadUnliftIO m, StoreRead m, StoreStream m)
+--     => Network
+--     -> Address
+--     -> BlockHeight
+--     -> Word32
+--     -> Offset
+--     -> Limit
+--     -> m ()
+-- xGetAddressTxs net addr blockHeight txIndex offset limit = do
+--     if limit == 0
+--         then runConduit $
+--              getAddressTxsFull offset (Just limit) (Just (BlockRef blockHeight txIndex)) addr .| streamTxs net
+--         else undefined -- getAddressTxsLimit offset (Just limit) (Just (BlockRef blockHeight txIndex)) addr
+--     --return $ jsonSerialiseAny net (txs)
 scottyAddressTxs :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> MaxLimits -> Bool -> WebT m ()
 scottyAddressTxs net limits full = do
     cors
@@ -869,7 +884,7 @@ gzipCompressBase64Encode :: C.ByteString -> String
 gzipCompressBase64Encode val = BSU.toString $ B64.encode $ L.toStrict $ GZ.compress (val)
 
 getMissingParamError :: Int -> C.ByteString
-getMissingParamError msgid = A.encode $ getJsonRpcErrorObj msgid (-32602) "Invalid or missing params."
+getMissingParamError msgid = A.encode $ getJsonRpcErrorObj msgid (-32602) "Invalid method parameter(s)."
 
 goGetResource :: (MonadLoggerIO m, MonadUnliftIO m) => LayeredDB -> RPCCall -> Network -> m ()
 goGetResource ldb rpcCall net = do
@@ -1086,6 +1101,26 @@ serialAny net False = encodingToLazyByteString . jsonSerial net
 
 jsonSerialiseAny :: (JsonSerial a) => Network -> a -> L.ByteString
 jsonSerialiseAny net = encodingToLazyByteString . jsonSerial net
+    -- __ <- jsonSerialiseAny net i
+
+--
+-- jsonSerialiseAny2 :: (JsonSerial a) => Network -> a -> ()
+-- jsonSerialiseAny2 net = do
+--     let x = encodingToLazyByteString . jsonSerial net
+--     return ()
+-- dumb :: (JsonSerial i, MonadIO m) => Network -> m ()
+-- dumb net = do
+--     jsonSerialiseAny net
+--     return ()
+-- streamTxs :: (JsonSerial i, MonadIO m) => Network -> ConduitT i Void m ()
+-- streamTxs net
+--     --let x = mapM (jsonSerialiseAny net)
+--  = do
+--     liftIO (putStrLn "I was called")
+--     takeWhileCE
+--     liftIO (putStrLn "I was called")
+streamIPC :: (JsonSerial i, BinSerial i, MonadIO m) => a -> ConduitT i Void m ()
+streamIPC = undefined
 
 streamAny ::
        (JsonSerial i, BinSerial i, MonadIO m)

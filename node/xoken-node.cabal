@@ -61,6 +61,7 @@ library
     , scotty
     , string-conversions
     , text
+    , network-conduit-tls
     , time
     , transformers
     , unliftio
@@ -70,8 +71,9 @@ library
     , warp
     , xoken-core
     , xoken-p2p
+    , arivi-p2p
     , network-simple
-    ,  monad-loops
+    , monad-loops
     , binary
     , zlib
     , utf8-string
@@ -119,6 +121,7 @@ executable xoken-node
     , rocksdb-query >=0.3.0
     , scotty
     , string-conversions
+    , arivi-p2p
     , text
     , time
     , transformers

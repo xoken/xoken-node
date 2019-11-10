@@ -4,5 +4,27 @@ packages:
     - core
     - node
     - p2p
+
 extra-deps:
-  - rocksdb-query-0.3.0
+    - ../arivi/p2p
+    - ../arivi/network
+    - ../arivi/utils
+    - ../arivi/crypto
+    - serialise-0.2.0.0
+    - cborg-0.2.0.0
+    - timers-updatable-0.2.0.2
+    - statsd-client-0.3.0.0
+    - time-units-1.0.0
+    - digest-pure-0.0.3
+    - DRBG-0.5.5
+    - stm-containers-1.0.1
+    - either-unwrap-1.1
+    - raaz-0.2.1
+    - rocksdb-query-0.3.0
+    - network-2.8.0.1
+    - queue-0.1.2
+    - stm-hamt-1.1.2
+    - primitive-0.6.4.0
+    - primitive-extras-0.6.6
+    - deferred-folds-0.6.12
+    - focus-1
