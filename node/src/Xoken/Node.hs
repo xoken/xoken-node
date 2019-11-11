@@ -100,6 +100,7 @@ import Data.Word (Word32)
 import Database.RocksDB as R
 import NQE
 import Network.Socket (SockAddr(..))
+import Network.Xoken.Node.AriviService
 import Network.Xoken.Node.Block
 import Network.Xoken.Node.Data
 import Network.Xoken.Node.Data.Cached

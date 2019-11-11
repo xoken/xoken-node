@@ -7,12 +7,32 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE UndecidableInstances #-}
 
+import Arivi.Crypto.Utils.PublicKey.Signature as ACUPS
+import Arivi.Crypto.Utils.PublicKey.Utils
+import Arivi.Env
+import Arivi.Network
+import Arivi.P2P
+import qualified Arivi.P2P.Config as Config
+import Arivi.P2P.P2PEnv as PE hiding (option)
+import Arivi.P2P.PubSub.Types
+import Arivi.P2P.RPC.Types
+import Arivi.P2P.ServiceRegistry
 import Conduit
 import Control.Arrow
+import Control.Concurrent (threadDelay)
 import Control.Exception ()
 import Control.Monad
+import Control.Monad.Base
+import Control.Monad.Catch
 import Control.Monad.Logger
+import Control.Monad.Logger
+import Control.Monad.Reader
+import Control.Monad.Trans.Control
 import Control.Monad.Trans.Maybe
 import Data.Aeson.Encoding (encodingToLazyByteString, fromEncoding)
 import Data.Bits
@@ -21,18 +41,28 @@ import qualified Data.ByteString.Lazy as L
 import qualified Data.ByteString.Lazy.Char8 as C
 import Data.Char
 import Data.Function
+import Data.Int
 import Data.List
+import Data.Map.Strict as M
 import Data.Maybe
 import Data.Serialize as Serialize
+import Data.String.Conv
 import Data.String.Conversions
-import qualified Data.Text.Lazy as T
+import qualified Data.Text as T
+import qualified Data.Text.Lazy as TL
+import Data.Typeable
 import Data.Version
 import Data.Word (Word32)
 import Database.RocksDB as R
 import NQE
 import Network.HTTP.Types
+import Network.Simple.TCP
+import Network.Xoken.Node.AriviService
 import Options.Applicative
 import Paths_xoken_node as P
+import StmContainers.Map as H
+import System.Directory (doesPathExist)
+import System.Environment (getArgs)
 import System.Exit
 import System.FilePath
 import System.IO.Unsafe
@@ -44,6 +74,81 @@ import Xoken
 import Xoken.Node
 import Xoken.P2P
 
+newtype AppM a =
+    AppM (ReaderT (ServiceEnv AppM ServiceResource ServiceTopic String String) (LoggingT IO) a)
+    deriving ( Functor
+             , Applicative
+             , Monad
+             , MonadReader (ServiceEnv AppM ServiceResource ServiceTopic String String)
+             , MonadIO
+             , MonadThrow
+             , MonadCatch
+             , MonadLogger
+             )
+
+deriving instance MonadBase IO AppM
+
+deriving instance MonadBaseControl IO AppM
+
+instance HasNetworkEnv AppM where
+    getEnv = asks (ariviNetworkEnv . nodeEndpointEnv . p2pEnv)
+
+instance HasSecretKey AppM
+
+instance HasKbucket AppM where
+    getKb = asks (kbucket . kademliaEnv . p2pEnv)
+
+instance HasStatsdClient AppM where
+    getStatsdClient = asks (statsdClient . p2pEnv)
+
+instance HasNodeEndpoint AppM where
+    getEndpointEnv = asks (nodeEndpointEnv . p2pEnv)
+    getNetworkConfig = asks (PE._networkConfig . nodeEndpointEnv . p2pEnv)
+    getHandlers = asks (handlers . nodeEndpointEnv . p2pEnv)
+    getNodeIdPeerMapTVarP2PEnv = asks (tvarNodeIdPeerMap . nodeEndpointEnv . p2pEnv)
+
+instance HasPRT AppM where
+    getPeerReputationHistoryTableTVar = asks (tvPeerReputationHashTable . prtEnv . p2pEnv)
+    getServicesReputationHashMapTVar = asks (tvServicesReputationHashMap . prtEnv . p2pEnv)
+    getP2PReputationHashMapTVar = asks (tvP2PReputationHashMap . prtEnv . p2pEnv)
+    getReputedVsOtherTVar = asks (tvReputedVsOther . prtEnv . p2pEnv)
+    getKClosestVsRandomTVar = asks (tvKClosestVsRandom . prtEnv . p2pEnv)
+
+runAppM :: ServiceEnv AppM ServiceResource ServiceTopic String String -> AppM a -> LoggingT IO a
+runAppM env (AppM app) = runReaderT app env
+
+defaultConfig :: FilePath -> IO ()
+defaultConfig path = do
+    (sk, _) <- ACUPS.generateKeyPair
+    let config =
+            Config.Config
+                5678
+                5678
+                sk
+                []
+                (generateNodeId sk)
+                "127.0.0.1"
+                (T.pack (path <> "/node.log"))
+                20
+                5
+                3
+                9090
+                9091
+    Config.makeConfig config (path <> "/config.yaml")
+
+runNode :: Config.Config -> IO ()
+runNode config = do
+    p2pEnv <- mkP2PEnv config globalHandlerRpc globalHandlerPubSub [AriviService] []
+    que <- atomically $ newTChan
+    mmap <- newTVarIO $ M.empty
+    let serviceEnv = ServiceEnv p2pEnv
+    runFileLoggingT (toS $ Config.logFile config) $ runAppM serviceEnv $ initP2P config
+    liftIO $ threadDelay 5999999999
+    return ()
+
+--
+--
+--
 data Config =
     Config
         { configDir :: !FilePath
@@ -65,7 +170,7 @@ defNetwork :: Network
 defNetwork = btc
 
 netNames :: String
-netNames = intercalate "|" (map getNetworkName allNets)
+netNames = intercalate "|" (Data.List.map getNetworkName allNets)
 
 defMaxLimits :: MaxLimits
 defMaxLimits =
@@ -76,7 +181,7 @@ config :: Parser Config
 config = do
     configDir <-
         option str $
-        metavar "DIR" <> long "dir" <> short 'd' <> help "Data directory" <> showDefault <> value myDirectory
+        metavar "DIR" <> long "dir" <> short 'd' <> help "Data directory" <> showDefault <> value "xoken-node"
     configPort <-
         option auto $
         metavar "INT" <> long "listen" <> short 'l' <> help "Listening port" <> showDefault <> value defPort
@@ -126,7 +231,7 @@ networkReader s
 peerReader :: String -> Either String (Host, Maybe Port)
 peerReader s = do
     let (host, p) = span (/= ':') s
-    when (null host) (Left "Peer name or address not defined")
+    when (Data.List.null host) (Left "Peer name or address not defined")
     port <-
         case p of
             [] -> return Nothing
@@ -137,17 +242,20 @@ peerReader s = do
             _ -> Left "Peer information could not be parsed"
     return (host, port)
 
-myDirectory :: FilePath
-myDirectory = unsafePerformIO $ getAppUserDataDirectory "xoken-node"
-
-{-# NOINLINE myDirectory #-}
 main :: IO ()
 main = do
+    putStrLn $ "Starting Xoken node"
+    let path = "."
+    b <- System.Directory.doesPathExist (path <> "/config.yaml")
+    unless b (defaultConfig path)
+    cnf <- Config.readConfig (path <> "/config.yaml")
+    runNode cnf
+    --
     conf <- liftIO (execParser opts)
     when (configVersion conf) . liftIO $ do
         putStrLn $ showVersion P.version
         exitSuccess
-    when (null (configPeers conf) && not (configDiscover conf)) . liftIO $
+    when (Data.List.null (configPeers conf) && not (configDiscover conf)) . liftIO $
         die "ERROR: Specify peers to connect or enable peer discovery."
     run conf
   where
@@ -171,7 +279,7 @@ run Config { configPort = port
            , configMaxLimits = limits
            , configReqLog = reqlog
            } =
-    runStderrLoggingT . filterLogger l . flip finally clear $ do
+    runStderrLoggingT . filterLogger l . flip UnliftIO.finally clear $ do
         $(logInfoS) "Main" $ "Creating working directory if not found: " <> cs wd
         createDirectoryIfMissing True wd
         db <-
@@ -204,7 +312,7 @@ run Config { configPort = port
             let scfg =
                     StoreConfig
                         { storeConfMaxPeers = 20
-                        , storeConfInitPeers = map (second (fromMaybe (getDefaultPort net))) peers
+                        , storeConfInitPeers = Data.List.map (second (fromMaybe (getDefaultPort net))) peers
                         , storeConfDiscover = disc
                         , storeConfDB = ldb
                         , storeConfNetwork = net

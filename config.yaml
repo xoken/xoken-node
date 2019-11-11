@@ -1,0 +1,12 @@
+logFile: ./node.log
+myIp: 127.0.0.1
+sbound: 20
+secretKey: ! "\x9CVd;AqJ\x0F\x142û\x81O9Ú\x8A(n\0W\x99È:®÷\x19b<Y\x9Aê{"
+trustedPeers: []
+pingThreshold: 5
+kademliaConcurrencyFactor: 3
+udpPort: 5682
+tcpPort: 5682
+ipcListenPort: 9090
+ipcRemotePort: 9091
+myNodeId: ! "-\v6ä¯\x18\x1A\x82=<î&\x1E[³f\t\x12\x9AÊ¹\x8F:\x97\x11á³\\\x94\x9EU\x98\x89ß·¯4\x06A\x82\x16n\bÄx\x9B¯¹Þ4\x15o³\x8FyÝaB\x83ÜeÓð#"
