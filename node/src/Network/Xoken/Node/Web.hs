@@ -332,14 +332,14 @@ scottyBestBlock net = do
 --             b <- MaybeT $ getBlock block
 --             return $ pruneTx n b
 --     maybeSerial net proto res
-xGetBlockHash :: (MonadLoggerIO m, MonadUnliftIO m, StoreRead m) => Network -> BlockHash -> m (L.ByteString)
+xGetBlockHash :: (MonadUnliftIO m, StoreRead m) => Network -> BlockHash -> m (L.ByteString)
 xGetBlockHash net hash = do
     res <- getBlock hash
     case res of
         Just b -> return $ jsonSerialiseAny net (b)
         Nothing -> return $ C.pack "{}"
 
-xGetBlocksHashes :: (MonadLoggerIO m, MonadUnliftIO m, StoreRead m) => Network -> [BlockHash] -> m (L.ByteString)
+xGetBlocksHashes :: (MonadUnliftIO m, StoreRead m) => Network -> [BlockHash] -> m (L.ByteString)
 xGetBlocksHashes net hashes = do
     res <- mapM getBlock hashes
     let ar = catMaybes res
@@ -356,7 +356,7 @@ xGetBlocksHashes net hashes = do
 --     S.stream $ \io flush' -> do
 --         runStream db . runConduit $ yieldMany hs .| concatMapMC getBlock .| mapC (pruneTx n) .| streamAny net proto io
 --         flush'
-xGetBlockHeight :: (MonadLoggerIO m, MonadUnliftIO m, StoreRead m) => Network -> Word32 -> m (L.ByteString)
+xGetBlockHeight :: (MonadUnliftIO m, StoreRead m) => Network -> Word32 -> m (L.ByteString)
 xGetBlockHeight net height = do
     hs <- getBlocksAtHeight height
     if length hs == 0
@@ -367,7 +367,7 @@ xGetBlockHeight net height = do
                 Just b -> return $ jsonSerialiseAny net (b)
                 Nothing -> return $ C.pack "{}"
 
-xGetBlocksHeights :: (MonadLoggerIO m, MonadUnliftIO m, StoreRead m) => Network -> [Word32] -> m (L.ByteString)
+xGetBlocksHeights :: (MonadUnliftIO m, StoreRead m) => Network -> [Word32] -> m (L.ByteString)
 xGetBlocksHeights net heights = do
     hs <- concat <$> mapM getBlocksAtHeight (nub heights)
     res <- mapM getBlock hs

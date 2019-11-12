@@ -141,10 +141,27 @@ runNode config = do
     p2pEnv <- mkP2PEnv config globalHandlerRpc globalHandlerPubSub [AriviService] []
     que <- atomically $ newTChan
     mmap <- newTVarIO $ M.empty
-    let serviceEnv = ServiceEnv p2pEnv
+    ldb <- getLayeredDB
+    let dbEnv = DBEnv ldb
+    let serviceEnv = ServiceEnv dbEnv p2pEnv
     runFileLoggingT (toS $ Config.logFile config) $ runAppM serviceEnv $ initP2P config
     liftIO $ threadDelay 5999999999
     return ()
+
+getLayeredDB :: IO (LayeredDB)
+getLayeredDB = do
+    dbh <-
+        open
+            ("/opt/xoken-node/bsv/db")
+            R.defaultOptions
+                { createIfMissing = True
+                , compression = SnappyCompression
+                , maxOpenFiles = -1
+                , writeBufferSize = 2 `shift` 30
+                }
+    let db = BlockDB {blockDB = dbh, blockDBopts = defaultReadOptions}
+    ldb <- newLayeredDB db Nothing
+    return (ldb)
 
 --
 --
@@ -306,30 +323,30 @@ run Config { configPort = port
         $(logInfoS) "Main" "Populating cache (if active)..."
         ldb <- newLayeredDB db cdb
         $(logInfoS) "Main" "Finished populating cache"
-        ipcSvcHandler <- liftIO $ newIPCServiceHandler
-        async $ loopRPC ldb (rpcQueue ipcSvcHandler) net
-        withPublisher $ \pub ->
-            let scfg =
-                    StoreConfig
-                        { storeConfMaxPeers = 20
-                        , storeConfInitPeers = Data.List.map (second (fromMaybe (getDefaultPort net))) peers
-                        , storeConfDiscover = disc
-                        , storeConfDB = ldb
-                        , storeConfNetwork = net
-                        , storeConfListen = (`sendSTM` pub) . Event
-                        }
-             in withStore scfg $ \str ->
-                    let wcfg =
-                            WebConfig
-                                { webPort = port
-                                , webNetwork = net
-                                , webDB = ldb
-                                , webPublisher = pub
-                                , webStore = str
-                                , webMaxLimits = limits
-                                , webReqLog = reqlog
-                                }
-                     in setupIPCServer wcfg ipcSvcHandler
+        -- ipcSvcHandler <- liftIO $ newIPCServiceHandler
+        -- async $ loopRPC ldb (rpcQueue ipcSvcHandler) net
+        -- withPublisher $ \pub ->
+        --     let scfg =
+        --             StoreConfig
+        --                 { storeConfMaxPeers = 20
+        --                 , storeConfInitPeers = Data.List.map (second (fromMaybe (getDefaultPort net))) peers
+        --                 , storeConfDiscover = disc
+        --                 , storeConfDB = ldb
+        --                 , storeConfNetwork = net
+        --                 , storeConfListen = (`sendSTM` pub) . Event
+        --                 }
+        --      in withStore scfg $ \str ->
+        --             let wcfg =
+        --                     WebConfig
+        --                         { webPort = port
+        --                         , webNetwork = net
+        --                         , webDB = ldb
+        --                         , webPublisher = pub
+        --                         , webStore = str
+        --                         , webMaxLimits = limits
+        --                         , webReqLog = reqlog
+        --                         }
+        --              in setupIPCServer wcfg ipcSvcHandler
   where
     l _ lvl
         | deb = True
