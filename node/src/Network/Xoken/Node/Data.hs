@@ -42,6 +42,10 @@ import UnliftIO.Exception
 import qualified Web.Scotty.Trans as Scotty
 import Xoken as H
 
+--
+import Data.Functor.Identity
+import qualified Database.CQL.IO as Q
+
 encodeShort :: Serialize a => a -> ShortByteString
 encodeShort = B.Short.toShort . S.encode
 
@@ -51,18 +55,17 @@ decodeShort bs =
         Left e -> error e
         Right a -> a
 
-data BlockDB =
-    BlockDB
-        { blockDB :: !DB
-        , blockDBopts :: !ReadOptions
-        }
-
-data LayeredDB =
-    LayeredDB
-        { layeredDB :: !BlockDB
-        , layeredCache :: !(Maybe BlockDB)
-        }
-
+--
+-- WILL BE REMOVED!!
+-- data BlockDB =
+--     BlockDB
+--         { blockDB :: !DB
+--         , blockDBopts :: !ReadOptions
+--         }
+-- data LayeredDB =
+--     LayeredDB
+--         { layeredDB :: !Q.ClientState
+--         }
 data RPCRequest =
     RPCRequest
         { method :: String
@@ -120,74 +123,73 @@ newtype InitException =
     IncorrectVersion Word32
     deriving (Show, Read, Eq, Ord, Exception)
 
-class StoreRead m where
-    isInitialized :: m (Either InitException Bool)
-    getBestBlock :: m (Maybe BlockHash)
-    getBlocksAtHeight :: BlockHeight -> m [BlockHash]
-    getBlock :: BlockHash -> m (Maybe BlockData)
-    getTxData :: TxHash -> m (Maybe TxData)
-    getOrphanTx :: TxHash -> m (Maybe (UnixTime, Tx))
-    getSpenders :: TxHash -> m (IntMap Spender)
-    getSpender :: OutPoint -> m (Maybe Spender)
-    getBalance :: Address -> m (Maybe Balance)
-    getUnspent :: OutPoint -> m (Maybe Unspent)
-
-class StoreWrite m where
-    setInit :: m ()
-    setBest :: BlockHash -> m ()
-    insertBlock :: BlockData -> m ()
-    setBlocksAtHeight :: [BlockHash] -> BlockHeight -> m ()
-    insertTx :: TxData -> m ()
-    insertSpender :: OutPoint -> Spender -> m ()
-    deleteSpender :: OutPoint -> m ()
-    insertAddrTx :: Address -> BlockTx -> m ()
-    deleteAddrTx :: Address -> BlockTx -> m ()
-    insertAddrUnspent :: Address -> Unspent -> m ()
-    deleteAddrUnspent :: Address -> Unspent -> m ()
-    insertMempoolTx :: TxHash -> UnixTime -> m ()
-    deleteMempoolTx :: TxHash -> UnixTime -> m ()
-    insertOrphanTx :: Tx -> UnixTime -> m ()
-    deleteOrphanTx :: TxHash -> m ()
-    setBalance :: Balance -> m ()
-    insertUnspent :: Unspent -> m ()
-    deleteUnspent :: OutPoint -> m ()
-
-getTransaction :: (Monad m, StoreRead m) => TxHash -> m (Maybe Transaction)
-getTransaction h =
-    runMaybeT $ do
-        d <- MaybeT $ getTxData h
-        sm <- lift $ getSpenders h
-        return $ toTransaction d sm
-
-blockAtOrBefore :: (Monad m, StoreRead m) => UnixTime -> m (Maybe BlockData)
-blockAtOrBefore q =
-    runMaybeT $ do
-        a <- g 0
-        b <- MaybeT getBestBlock >>= MaybeT . getBlock
-        f a b
-  where
-    f a b
-        | t b <= q = return b
-        | t a > q = mzero
-        | h b - h a == 1 = return a
-        | otherwise = do
-            let x = h a + (h b - h a) `div` 2
-            m <- g x
-            if t m > q
-                then f a m
-                else f m b
-    g x = MaybeT (listToMaybe <$> getBlocksAtHeight x) >>= MaybeT . getBlock
-    h = blockDataHeight
-    t = fromIntegral . blockTimestamp . blockDataHeader
-
-class StoreStream m where
-    getMempool :: ConduitT i (UnixTime, TxHash) m ()
-    getOrphans :: ConduitT i (UnixTime, Tx) m ()
-    getAddressUnspents :: Address -> Maybe BlockRef -> ConduitT i Unspent m ()
-    getAddressTxs :: Address -> Maybe BlockRef -> ConduitT i BlockTx m ()
-    getAddressBalances :: ConduitT i Balance m ()
-    getUnspents :: ConduitT i Unspent m ()
-
+-- class StoreRead m where
+--     isInitialized :: m (Either InitException Bool)
+--     getBestBlock :: m (Maybe BlockHash)
+--     getBlocksAtHeight :: BlockHeight -> m [BlockHash]
+--     getBlock :: BlockHash -> m (Maybe BlockData)
+--     getTxData :: TxHash -> m (Maybe TxData)
+--     getOrphanTx :: TxHash -> m (Maybe (UnixTime, Tx))
+--     getSpenders :: TxHash -> m (IntMap Spender)
+--     getSpender :: OutPoint -> m (Maybe Spender)
+--     getBalance :: Address -> m (Maybe Balance)
+--     getUnspent :: OutPoint -> m (Maybe Unspent)
+--
+-- class StoreWrite m where
+--     setInit :: m ()
+--     setBest :: BlockHash -> m ()
+--     insertBlock :: BlockData -> m ()
+--     setBlocksAtHeight :: [BlockHash] -> BlockHeight -> m ()
+--     insertTx :: TxData -> m ()
+--     insertSpender :: OutPoint -> Spender -> m ()
+--     deleteSpender :: OutPoint -> m ()
+--     insertAddrTx :: Address -> BlockTx -> m ()
+--     deleteAddrTx :: Address -> BlockTx -> m ()
+--     insertAddrUnspent :: Address -> Unspent -> m ()
+--     deleteAddrUnspent :: Address -> Unspent -> m ()
+--     insertMempoolTx :: TxHash -> UnixTime -> m ()
+--     deleteMempoolTx :: TxHash -> UnixTime -> m ()
+--     insertOrphanTx :: Tx -> UnixTime -> m ()
+--     deleteOrphanTx :: TxHash -> m ()
+--     setBalance :: Balance -> m ()
+--     insertUnspent :: Unspent -> m ()
+--     deleteUnspent :: OutPoint -> m ()
+--
+-- getTransaction :: (Monad m, StoreRead m) => TxHash -> m (Maybe Transaction)
+-- getTransaction h =
+--     runMaybeT $ do
+--         d <- MaybeT $ getTxData h
+--         sm <- lift $ getSpenders h
+--         return $ toTransaction d sm
+--
+-- blockAtOrBefore :: (Monad m, StoreRead m) => UnixTime -> m (Maybe BlockData)
+-- blockAtOrBefore q =
+--     runMaybeT $ do
+--         a <- g 0
+--         b <- MaybeT getBestBlock >>= MaybeT . getBlock
+--         f a b
+--   where
+--     f a b
+--         | t b <= q = return b
+--         | t a > q = mzero
+--         | h b - h a == 1 = return a
+--         | otherwise = do
+--             let x = h a + (h b - h a) `div` 2
+--             m <- g x
+--             if t m > q
+--                 then f a m
+--                 else f m b
+--     g x = MaybeT (listToMaybe <$> getBlocksAtHeight x) >>= MaybeT . getBlock
+--     h = blockDataHeight
+--     t = fromIntegral . blockTimestamp . blockDataHeader
+--
+-- class StoreStream m where
+--     getMempool :: ConduitT i (UnixTime, TxHash) m ()
+--     getOrphans :: ConduitT i (UnixTime, Tx) m ()
+--     getAddressUnspents :: Address -> Maybe BlockRef -> ConduitT i Unspent m ()
+--     getAddressTxs :: Address -> Maybe BlockRef -> ConduitT i BlockTx m ()
+--     getAddressBalances :: ConduitT i Balance m ()
+--     getUnspents :: ConduitT i Unspent m ()
 -- | Serialize such that ordering is inverted.
 putUnixTime w = putWord64be $ maxBound - w
 

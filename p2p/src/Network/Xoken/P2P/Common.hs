@@ -25,7 +25,8 @@ import Data.Maybe
 import Data.String.Conversions
 import Data.Time.Clock
 import Data.Word
-import Database.RocksDB (DB)
+
+-- import Database.RocksDB (DB)
 import NQE
 import Network.Socket hiding (send)
 import Network.Xoken.Block
@@ -35,6 +36,15 @@ import Network.Xoken.Transaction
 import System.Random
 import Text.Read
 import UnliftIO
+
+--
+import Data.Functor.Identity
+import qualified Database.CQL.IO as Q
+
+data LayeredDB =
+    LayeredDB
+        { layeredDB :: !Q.ClientState
+        }
 
 -- | Type alias for a combination of hostname and port.
 type HostPort = (Host, Port)
@@ -92,7 +102,7 @@ data NodeConfig =
     NodeConfig
         { nodeConfMaxPeers :: !Int
       -- ^ maximum number of connected peers allowed
-        , nodeConfDB :: !DB
+        , nodeConfDB :: !LayeredDB
       -- ^ database handler
         , nodeConfPeers :: ![HostPort]
       -- ^ static list of peers to connect to
@@ -113,7 +123,7 @@ data ManagerConfig =
     ManagerConfig
         { mgrConfMaxPeers :: !Int
       -- ^ maximum number of peers to connect to
-        , mgrConfDB :: !DB
+        , mgrConfDB :: !LayeredDB
       -- ^ database handler to store peer information
         , mgrConfPeers :: ![HostPort]
       -- ^ static list of peers to connect to
@@ -150,7 +160,7 @@ data ManagerMessage
 -- | Configuration for chain syncing process.
 data ChainConfig =
     ChainConfig
-        { chainConfDB :: !DB
+        { chainConfDB :: !LayeredDB
       -- ^ database handle
         , chainConfNetwork :: !Network
       -- ^ network constants

@@ -30,7 +30,6 @@ import Control.Monad
 import Control.Monad.Base
 import Control.Monad.Catch
 import Control.Monad.Logger
-import Control.Monad.Logger
 import Control.Monad.Reader
 import Control.Monad.Trans.Control
 import Control.Monad.Trans.Maybe
@@ -74,6 +73,11 @@ import Xoken
 import Xoken.Node
 import Xoken.P2P
 
+--
+import Data.Functor.Identity
+import qualified Database.CQL.IO as Q
+
+--import qualified System.Logger as Logger
 newtype AppM a =
     AppM (ReaderT (ServiceEnv AppM ServiceResource ServiceTopic String String) (LoggingT IO) a)
     deriving ( Functor
@@ -138,12 +142,21 @@ defaultConfig path = do
 
 runNode :: Config.Config -> IO ()
 runNode config = do
+    let logg = Q.stdoutLogger Q.LogWarn
+        stng = Q.setLogger logg Q.defSettings
+        qstr = "SELECT cql_version from system.local" :: Q.QueryString Q.R () (Identity T.Text)
+        p = Q.defQueryParams Q.One ()
+    conn <- Q.init stng
+    op <- Q.runClient conn (Q.query qstr p)
+    putStrLn $ "Connected to Cassandra-DB version " ++ show (runIdentity (op !! 0))
+    --
+    --
     p2pEnv <- mkP2PEnv config globalHandlerRpc globalHandlerPubSub [AriviService] []
-    que <- atomically $ newTChan
-    mmap <- newTVarIO $ M.empty
-    ldb <- getLayeredDB
-    let dbEnv = DBEnv ldb
-    let serviceEnv = ServiceEnv dbEnv p2pEnv
+    -- que <- atomically $ newTChan
+    -- mmap <- newTVarIO $ M.empty
+    -- ldb <- getLayeredDB
+    let dbEnv = DBEnv conn
+        serviceEnv = ServiceEnv dbEnv p2pEnv
     runFileLoggingT (toS $ Config.logFile config) $ runAppM serviceEnv $ initP2P config
     liftIO $ threadDelay 5999999999
     return ()
@@ -159,9 +172,9 @@ getLayeredDB = do
                 , maxOpenFiles = -1
                 , writeBufferSize = 2 `shift` 30
                 }
-    let db = BlockDB {blockDB = dbh, blockDBopts = defaultReadOptions}
-    ldb <- newLayeredDB db Nothing
-    return (ldb)
+    -- let db = BlockDB {blockDB = dbh, blockDBopts = defaultReadOptions}
+    -- ldb <- newLayeredDB db Nothing
+    return (undefined)
 
 --
 --
@@ -177,7 +190,6 @@ data Config =
         , configCache :: !FilePath
         , configDebug :: !Bool
         , configReqLog :: !Bool
-        , configMaxLimits :: !MaxLimits
         }
 
 defPort :: Int
@@ -189,11 +201,10 @@ defNetwork = btc
 netNames :: String
 netNames = intercalate "|" (Data.List.map getNetworkName allNets)
 
-defMaxLimits :: MaxLimits
-defMaxLimits =
-    MaxLimits
-        {maxLimitCount = 10000, maxLimitFull = 500, maxLimitOffset = 50000, maxLimitDefault = 100, maxLimitGap = 20}
-
+-- defMaxLimits :: MaxLimits
+-- defMaxLimits =
+--     MaxLimits
+--         {maxLimitCount = 10000, maxLimitFull = 500, maxLimitOffset = 50000, maxLimitDefault = 100, maxLimitGap = 20}
 config :: Parser Config
 config = do
     configDir <-
@@ -213,26 +224,26 @@ config = do
     configVersion <- switch $ long "version" <> short 'v' <> help "Show version"
     configDebug <- switch $ long "debug" <> help "Show debug messages"
     configReqLog <- switch $ long "reqlog" <> help "HTTP request logging"
-    maxLimitCount <-
-        option auto $
-        metavar "INT" <> long "maxlimit" <> help "Max limit for listings (0 for no limit)" <> showDefault <>
-        value (maxLimitCount defMaxLimits)
-    maxLimitFull <-
-        option auto $
-        metavar "INT" <> long "maxfull" <> help "Max limit for full listings (0 for no limit)" <> showDefault <>
-        value (maxLimitFull defMaxLimits)
-    maxLimitOffset <-
-        option auto $
-        metavar "INT" <> long "maxoffset" <> help "Max offset (0 for no limit)" <> showDefault <>
-        value (maxLimitOffset defMaxLimits)
-    maxLimitDefault <-
-        option auto $
-        metavar "INT" <> long "deflimit" <> help "Default limit (0 for max)" <> showDefault <>
-        value (maxLimitDefault defMaxLimits)
-    maxLimitGap <-
-        option auto $
-        metavar "INT" <> long "gap" <> help "Extended public key gap" <> showDefault <> value (maxLimitGap defMaxLimits)
-    pure Config {configMaxLimits = MaxLimits {..}, ..}
+    -- maxLimitCount <-
+    --     option auto $
+    --     metavar "INT" <> long "maxlimit" <> help "Max limit for listings (0 for no limit)" <> showDefault <>
+    --     value (maxLimitCount defMaxLimits)
+    -- maxLimitFull <-
+    --     option auto $
+    --     metavar "INT" <> long "maxfull" <> help "Max limit for full listings (0 for no limit)" <> showDefault <>
+    --     value (maxLimitFull defMaxLimits)
+    -- maxLimitOffset <-
+    --     option auto $
+    --     metavar "INT" <> long "maxoffset" <> help "Max offset (0 for no limit)" <> showDefault <>
+    --     value (maxLimitOffset defMaxLimits)
+    -- maxLimitDefault <-
+    --     option auto $
+    --     metavar "INT" <> long "deflimit" <> help "Default limit (0 for max)" <> showDefault <>
+    --     value (maxLimitDefault defMaxLimits)
+    -- maxLimitGap <-
+    --     option auto $
+    --     metavar "INT" <> long "gap" <> help "Extended public key gap" <> showDefault <> value (maxLimitGap defMaxLimits)
+    pure Config {..}
 
 networkReader :: String -> Either String Network
 networkReader s
@@ -268,6 +279,7 @@ main = do
     cnf <- Config.readConfig (path <> "/config.yaml")
     runNode cnf
     --
+    --
     conf <- liftIO (execParser opts)
     when (configVersion conf) . liftIO $ do
         putStrLn $ showVersion P.version
@@ -293,7 +305,6 @@ run Config { configPort = port
            , configCache = cache_path
            , configDir = db_dir
            , configDebug = deb
-           , configMaxLimits = limits
            , configReqLog = reqlog
            } =
     runStderrLoggingT . filterLogger l . flip UnliftIO.finally clear $ do
@@ -309,7 +320,8 @@ run Config { configPort = port
                            , maxOpenFiles = -1
                            , writeBufferSize = 2 `shift` 30
                            }
-               return BlockDB {blockDB = dbh, blockDBopts = defaultReadOptions}
+               undefined
+               -- return BlockDB {blockDB = dbh, blockDBopts = defaultReadOptions}
         cdb <-
             case cd of
                 Nothing -> return Nothing
@@ -319,9 +331,9 @@ run Config { configPort = port
                     $(logInfoS) "Main" $ "Creating cache directory: " <> cs ch
                     createDirectoryIfMissing True ch
                     dbh <- open ch R.defaultOptions {createIfMissing = True}
-                    return $ Just BlockDB {blockDB = dbh, blockDBopts = defaultReadOptions}
+                    return undefined -- $ Just BlockDB {blockDB = dbh, blockDBopts = defaultReadOptions}
         $(logInfoS) "Main" "Populating cache (if active)..."
-        ldb <- newLayeredDB db cdb
+        -- ldb <- newLayeredDB db cdb
         $(logInfoS) "Main" "Finished populating cache"
         -- ipcSvcHandler <- liftIO $ newIPCServiceHandler
         -- async $ loopRPC ldb (rpcQueue ipcSvcHandler) net

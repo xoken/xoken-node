@@ -56,6 +56,7 @@ library
     , unliftio
     , unordered-containers
     , xoken-core
+    , cql-io
   default-language: Haskell2010
 
 test-suite spec
@@ -93,5 +94,6 @@ test-suite spec
     , unliftio
     , unordered-containers
     , xoken-core
+    , cql-io
   default-language: Haskell2010
   build-tool-depends: hspec-discover:hspec-discover

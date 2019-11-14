@@ -30,6 +30,7 @@ module Xoken.P2P
     , ChainEvent(..)
     , PeerEvent(..)
     , PeerException(..)
+    , LayeredDB
     , withNode
     , node
     , managerGetPeers

@@ -21,7 +21,7 @@ module Network.Xoken.P2P.Manager
     ( manager
     ) where
 
-import Conduit
+-- import Conduit
 import Control.Monad
 import Control.Monad.Except
 import Control.Monad.Logger
@@ -41,9 +41,10 @@ import Data.Text (Text)
 import Data.Time.Clock
 import Data.Time.Clock.POSIX
 import Data.Word
-import Database.RocksDB (DB)
-import qualified Database.RocksDB as R
-import Database.RocksDB.Query as R
+
+-- import Database.RocksDB (DB)
+-- import qualified Database.RocksDB as R
+-- import Database.RocksDB.Query as R
 import NQE
 import Network.Socket (SockAddr(..))
 import Network.Xoken.P2P.Common
@@ -53,6 +54,10 @@ import UnliftIO
 import UnliftIO.Concurrent
 import UnliftIO.Resource as U
 import Xoken
+
+--
+import Data.Functor.Identity
+import qualified Database.CQL.IO as Q
 
 -- | Monad used by most functions in this module.
 type MonadManager m = (MonadLoggerIO m, MonadReader ManagerReader m)
@@ -92,7 +97,7 @@ manager cfg inbox =
     go = do
         db <- getManagerDB
         $(logDebugS) "Manager" "Initializing..."
-        initPeerDB db discover
+        initPeerDB (layeredDB db) discover
         putBestBlock <=< receiveMatch inbox $ \case
             ManagerBestBlock b -> Just b
             _ -> Nothing
@@ -135,13 +140,13 @@ loadStaticPeers = do
 loadPeersFromDB :: (MonadUnliftIO m, MonadManager m) => m ()
 loadPeersFromDB = do
     $(logDebugS) "Manager" "Loading peers from database"
-    db <- getManagerDB
-    xs <- matchingAsList db R.defaultReadOptions PeerAddressBase
-    let f (PeerAddress x, ()) = x
-        f _ = undefined
-        ys = map f xs
-    $(logInfoS) "Manager" $ "Loaded " <> cs (show (length ys)) <> " peers from database"
-    mapM_ newPeer ys
+    -- db <- getManagerDB
+    -- xs <- matchingAsList db R.defaultReadOptions PeerAddressBase
+    -- let f (PeerAddress x, ()) = x
+    --     f _ = undefined
+    --     ys = map f xs
+    -- $(logInfoS) "Manager" $ "Loaded " <> cs (show (length ys)) <> " peers from database"
+    -- mapM_ newPeer ys
 
 storePeersInDB :: (MonadUnliftIO m, MonadManager m) => m ()
 storePeersInDB = do
@@ -149,10 +154,10 @@ storePeersInDB = do
     os <- readTVarIO =<< asks onlinePeers
     ks <- readTVarIO =<< asks knownPeers
     let ps = map onlinePeerAddress os <> Set.toList ks
-        xs = map ((`insertOp` ()) . PeerAddress) ps
-    unless (null xs) $ do
-        $(logInfoS) "Manager" $ "Storing " <> cs (show (length xs)) <> " peers in database"
-        writeBatch db =<< (++ xs) <$> purgePeerDB db
+    undefined
+        -- xs = map ((`insertOp` ()) . PeerAddress) ps
+    -- unless (null xs) $ do $(logInfoS) "Manager" $ "Storing " <> cs (show (length xs)) <> " peers in database"
+        -- writeBatch db =<< (++ xs) <$> purgePeerDB db
 
 loadNetSeeds :: (MonadUnliftIO m, MonadManager m) => m ()
 loadNetSeeds = do
@@ -168,7 +173,7 @@ logConnectedPeers = do
     l <- length <$> getConnectedPeers
     $(logInfoS) "Manager" $ "Peers connected: " <> cs (show l) <> "/" <> cs (show m)
 
-getManagerDB :: MonadManager m => m DB
+getManagerDB :: MonadManager m => m LayeredDB
 getManagerDB = mgrConfDB <$> asks myConfig
 
 getOnlinePeers :: MonadManager m => m [OnlinePeer]
@@ -182,7 +187,7 @@ purgePeers = do
     db <- getManagerDB
     ops <- getOnlinePeers
     forM_ ops $ \OnlinePeer {onlinePeerMailbox = p} -> killPeer PurgingPeer p
-    writeBatch db =<< purgePeerDB db
+    -- writeBatch db =<< purgePeerDB db
 
 forwardMessage :: MonadManager m => Peer -> Message -> m ()
 forwardMessage p = managerEvent . PeerMessage p
@@ -431,20 +436,19 @@ data PeerAddress
     deriving (Eq, Ord, Show)
 
 -- | Database version key.
-data PeerDataVersionKey =
-    PeerDataVersionKey
-    deriving (Eq, Ord, Show)
-
-instance Serialize PeerDataVersionKey where
-    get = do
-        guard . (== 0x82) =<< S.getWord8
-        return PeerDataVersionKey
-    put PeerDataVersionKey = S.putWord8 0x82
-
-instance R.Key PeerDataVersionKey
-
-instance KeyValue PeerDataVersionKey Word32
-
+-- data PeerDataVersionKey =
+--     PeerDataVersionKey
+--     deriving (Eq, Ord, Show)
+--
+-- instance Serialize PeerDataVersionKey where
+--     get = do
+--         guard . (== 0x82) =<< S.getWord8
+--         return PeerDataVersionKey
+--     put PeerDataVersionKey = S.putWord8 0x82
+--
+-- instance R.Key PeerDataVersionKey
+--
+-- instance KeyValue PeerDataVersionKey Word32
 instance Serialize PeerAddress where
     get = do
         guard . (== 0x81) =<< S.getWord8
@@ -454,10 +458,9 @@ instance Serialize PeerAddress where
         encodeSockAddr a
     put PeerAddressBase = S.putWord8 0x81
 
-instance R.Key PeerAddress
-
-instance KeyValue PeerAddress ()
-
+-- instance R.Key PeerAddress
+--
+-- instance KeyValue PeerAddress ()
 -- | Add a peer.
 newPeer :: (MonadIO m, MonadManager m) => SockAddr -> m ()
 newPeer sa = do
@@ -468,27 +471,29 @@ newPeer sa = do
 
 -- | Initialize peer database, purging it of conflicting records if version
 -- doesn't match current one, or if peer discovery is disabled.
-initPeerDB :: MonadUnliftIO m => DB -> Bool -> m ()
-initPeerDB db discover = do
-    ver <- retrieve db def PeerDataVersionKey
-    when (ver /= Just versionPeerDB || not discover) $ writeBatch db =<< purgePeerDB db
-    R.insert db PeerDataVersionKey versionPeerDB
+initPeerDB :: MonadUnliftIO m => Q.ClientState -> Bool -> m ()
+initPeerDB db discover = undefined
+    -- do
+    -- ver <- retrieve db def PeerDataVersionKey
+    -- when (ver /= Just versionPeerDB || not discover) $ writeBatch db =<< purgePeerDB db
+    -- R.insert db PeerDataVersionKey versionPeerDB
 
 -- | Purge peer records from database.
-purgePeerDB :: MonadUnliftIO m => DB -> m [R.BatchOp]
-purgePeerDB db = (++) <$> purge_byte 0x81 <*> purge_byte 0x83
-  where
-    purge_byte byte =
-        U.runResourceT . R.withIterator db def $ \it -> do
-            R.iterSeek it $ B.singleton byte
-            recurse_delete it byte
-    recurse_delete it byte =
-        R.iterKey it >>= \case
-            Just k
-                | B.head k == byte -> do
-                    R.iterNext it
-                    (R.Del k :) <$> recurse_delete it byte
-            _ -> return []
+purgePeerDB :: MonadUnliftIO m => Q.ClientState -> m ()
+purgePeerDB db = undefined
+  --   (++) <$> purge_byte 0x81 <*> purge_byte 0x83
+  -- where
+  --   purge_byte byte =
+  --       U.runResourceT . R.withIterator db def $ \it -> do
+  --           R.iterSeek it $ B.singleton byte
+  --           recurse_delete it byte
+  --   recurse_delete it byte =
+  --       R.iterKey it >>= \case
+  --           Just k
+  --               | B.head k == byte -> do
+  --                   R.iterNext it
+  --                   (R.Del k :) <$> recurse_delete it byte
+  --           _ -> return []
 
 -- | Get static network seeds.
 networkSeeds :: Network -> [HostPort]

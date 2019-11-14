@@ -16,6 +16,10 @@ import UnliftIO.STM (TVar)
 import Xoken
 import Xoken.P2P
 
+--
+import Data.Functor.Identity
+import qualified Database.CQL.IO as Q
+
 -- | Mailbox for block store.
 type BlockStore = Mailbox BlockMessage
 

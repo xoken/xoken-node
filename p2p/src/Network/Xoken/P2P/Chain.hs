@@ -35,9 +35,10 @@ import Data.Serialize as S
 import Data.String.Conversions
 import Data.Time.Clock.POSIX
 import Data.Word
-import Database.RocksDB (DB)
-import qualified Database.RocksDB as R
-import Database.RocksDB.Query as R
+
+-- import Database.RocksDB (DB)
+-- import qualified Database.RocksDB as R
+-- import Database.RocksDB.Query as R
 import NQE
 import Network.Xoken.P2P.Common
 import System.Random
@@ -46,13 +47,17 @@ import UnliftIO.Concurrent
 import UnliftIO.Resource
 import Xoken
 
+--
+import Data.Functor.Identity
+import qualified Database.CQL.IO as Q
+
 type MonadChain m = (MonadLoggerIO m, MonadChainLogic ChainConfig Peer m)
 
 -- | Launch process to synchronize block headers in current thread.
 chain :: (MonadUnliftIO m, MonadLoggerIO m) => ChainConfig -> Inbox ChainMessage -> m ()
 chain cfg inbox = do
     st <- newTVarIO ChainState {chainSyncing = Nothing, mySynced = False, newPeers = []}
-    let rd = ChainReader {myReader = cfg, myChainDB = db, chainState = st}
+    let rd = ChainReader {myReader = cfg, myChainDB = (layeredDB db), chainState = st}
     withSyncLoop ch $ run `runReaderT` rd
   where
     net = chainConfNetwork cfg
@@ -203,20 +208,19 @@ dataVersion :: Word32
 dataVersion = 1
 
 -- | Database key for version.
-data ChainDataVersionKey =
-    ChainDataVersionKey
-    deriving (Eq, Ord, Show)
-
-instance R.Key ChainDataVersionKey
-
-instance KeyValue ChainDataVersionKey Word32
-
-instance Serialize ChainDataVersionKey where
-    get = do
-        guard . (== 0x92) =<< S.getWord8
-        return ChainDataVersionKey
-    put ChainDataVersionKey = S.putWord8 0x92
-
+-- data ChainDataVersionKey =
+--     ChainDataVersionKey
+--     deriving (Eq, Ord, Show)
+--
+-- instance R.Key ChainDataVersionKey
+--
+-- instance KeyValue ChainDataVersionKey Word32
+--
+-- instance Serialize ChainDataVersionKey where
+--     get = do
+--         guard . (== 0x92) =<< S.getWord8
+--         return ChainDataVersionKey
+--     put ChainDataVersionKey = S.putWord8 0x92
 data ChainSync p =
     ChainSync
         { chainSyncPeer :: !p
@@ -248,21 +252,20 @@ instance Serialize BlockHeaderKey where
         putWord8 0x90
         put bh
 
--- | Key for best block in database.
-data BestBlockKey =
-    BestBlockKey
-    deriving (Eq, Show)
-
-instance KeyValue BlockHeaderKey BlockNode
-
-instance KeyValue BestBlockKey BlockNode
-
-instance Serialize BestBlockKey where
-    get = do
-        guard . (== 0x91) =<< getWord8
-        return BestBlockKey
-    put BestBlockKey = putWord8 0x91
-
+-- -- | Key for best block in database.
+-- data BestBlockKey =
+--     BestBlockKey
+--     deriving (Eq, Show)
+--
+-- instance KeyValue BlockHeaderKey BlockNode
+--
+-- instance KeyValue BestBlockKey BlockNode
+--
+-- instance Serialize BestBlockKey where
+--     get = do
+--         guard . (== 0x91) =<< getWord8
+--         return BestBlockKey
+--     put BestBlockKey = putWord8 0x91
 -- | Type alias for monad commonly used in this module.
 type MonadChainLogic a p m = (BlockHeaders m, MonadReader (ChainReader a p) m)
 
@@ -271,7 +274,7 @@ data ChainReader a p =
     ChainReader
         { myReader :: !a
       -- ^ placeholder for upstream data
-        , myChainDB :: !DB
+        , myChainDB :: !Q.ClientState
       -- ^ database handle
         , chainState :: !(TVar (ChainState p))
       -- ^ mutable state for header synchronization
@@ -280,54 +283,62 @@ data ChainReader a p =
 instance (Monad m, MonadIO m, MonadReader (ChainReader a p) m) => BlockHeaders m where
     addBlockHeader bn = do
         db <- asks myChainDB
-        R.insert db (BlockHeaderKey (headerHash (nodeHeader bn))) bn
+        undefined
+        -- R.insert db (BlockHeaderKey (headerHash (nodeHeader bn))) bn
     getBlockHeader bh = do
         db <- asks myChainDB
-        retrieve db def (BlockHeaderKey bh)
+        undefined
+        -- retrieve db def (BlockHeaderKey bh)
     getBestBlockHeader = do
         db <- asks myChainDB
-        retrieve db def BestBlockKey >>= \case
-            Nothing -> error "Could not get best block from database"
-            Just b -> return b
+        undefined
+        -- retrieve db def BestBlockKey >>= \case
+        --     Nothing -> error "Could not get best block from database"
+        --     Just b -> return b
     setBestBlockHeader bn = do
         db <- asks myChainDB
-        R.insert db BestBlockKey bn
+        undefined
+        -- R.insert db BestBlockKey bn
     addBlockHeaders bns = do
         db <- asks myChainDB
-        writeBatch db (map f bns)
+        undefined
+        -- writeBatch db (map f bns)
       where
-        f bn = insertOp (BlockHeaderKey (headerHash (nodeHeader bn))) bn
+        f bn = undefined
+            -- insertOp (BlockHeaderKey (headerHash (nodeHeader bn))) bn
 
 -- | Initialize header database. If version is different from current, the
 -- database is purged of conflicting elements first.
 initChainDB :: (MonadChainLogic a p m, MonadUnliftIO m) => Network -> m ()
 initChainDB net = do
     db <- asks myChainDB
-    ver <- retrieve db def ChainDataVersionKey
-    when (ver /= Just dataVersion) $ purgeChainDB >>= writeBatch db
-    R.insert db ChainDataVersionKey dataVersion
-    retrieve db def BestBlockKey >>= \b ->
-        when (isNothing (b :: Maybe BlockNode)) $ do
-            addBlockHeader (genesisNode net)
-            setBestBlockHeader (genesisNode net)
+    undefined
+    -- ver <- retrieve db def ChainDataVersionKey
+    -- when (ver /= Just dataVersion) $ purgeChainDB >>= writeBatch db
+    -- R.insert db ChainDataVersionKey dataVersion
+    -- retrieve db def BestBlockKey >>= \b ->
+    --     when (isNothing (b :: Maybe BlockNode)) $ do
+    --         addBlockHeader (genesisNode net)
+    --         setBestBlockHeader (genesisNode net)
 
 -- | Purge database of elements having keys that may conflict with those used in
 -- this module.
-purgeChainDB :: (MonadChainLogic a p m, MonadUnliftIO m) => m [R.BatchOp]
+purgeChainDB :: (MonadChainLogic a p m, MonadUnliftIO m) => m () -- [R.BatchOp]
 purgeChainDB = do
     db <- asks myChainDB
-    runResourceT . R.withIterator db def $ \it -> do
-        R.iterSeek it $ B.singleton 0x90
-        recurse_delete it db
-  where
-    recurse_delete it db =
-        R.iterKey it >>= \case
-            Just k
-                | B.head k == 0x90 || B.head k == 0x91 -> do
-                    R.delete db def k
-                    R.iterNext it
-                    (R.Del k :) <$> recurse_delete it db
-            _ -> return []
+    undefined
+  --   runResourceT . R.withIterator db def $ \it -> do
+  --       R.iterSeek it $ B.singleton 0x90
+  --       recurse_delete it db
+  -- where
+  --   recurse_delete it db =
+  --       R.iterKey it >>= \case
+  --           Just k
+  --               | B.head k == 0x90 || B.head k == 0x91 -> do
+  --                   R.delete db def k
+  --                   R.iterNext it
+  --                   (R.Del k :) <$> recurse_delete it db
+  --           _ -> return []
 
 -- | Import a bunch of continuous headers. Returns 'True' if the number of
 -- headers is 2000, which means that there are possibly more headers to sync

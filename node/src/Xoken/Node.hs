@@ -31,57 +31,57 @@ module Xoken.Node
     , TxAfterHeight(..)
     , JsonSerial(..)
     , BinSerial(..)
-    , Except(..)
+    -- , Except(..)
     , TxId(..)
     , UnixTime
     , BlockPos
-    , BlockDB(..)
+    -- , BlockDB(..)
     , LayeredDB(..)
-    , WebConfig(..)
-    , MaxLimits(..)
-    , Offset
-    , Limit
-    , newLayeredDB
+    -- , WebConfig(..)
+    -- , MaxLimits(..)
+    -- , Offset
+    -- , Limit
+    -- , newLayeredDB
     , withStore
-    , runWeb
-    , setupIPCServer
-    , rpcQueue
-    , newIPCServiceHandler
-    , loopRPC
+    -- , runWeb
+    -- , setupIPCServer
+    -- , rpcQueue
+    -- , newIPCServiceHandler
+    -- , loopRPC
     , store
-    , getBestBlock
-    , getBlocksAtHeight
-    , getBlock
-    , getTransaction
+    -- , getBestBlock
+    -- , getBlocksAtHeight
+    -- , getBlock
+    -- , getTransaction
     , getTxData
-    , getSpenders
-    , getSpender
+    -- , getSpenders
+    -- , getSpender
     , fromTransaction
     , toTransaction
-    , getBalance
-    , getMempool
-    , getAddressUnspents
-    , getAddressUnspentsLimit
-    , getAddressesUnspentsLimit
-    , getAddressTxs
-    , getAddressTxsFull
-    , getAddressTxsLimit
-    , getAddressesTxsFull
-    , getAddressesTxsLimit
-    , getPeersInformation
-    , xpubBals
-    , xpubUnspent
-    , xpubUnspentLimit
-    , xpubSummary
-    , publishTx
+    -- , getBalance
+    -- , getMempool
+    -- , getAddressUnspents
+    -- , getAddressUnspentsLimit
+    -- , getAddressesUnspentsLimit
+    -- , getAddressTxs
+    -- , getAddressTxsFull
+    -- , getAddressTxsLimit
+    -- , getAddressesTxsFull
+    -- , getAddressesTxsLimit
+    -- , getPeersInformation
+    -- , xpubBals
+    -- , xpubUnspent
+    -- , xpubUnspentLimit
+    -- , xpubSummary
+    -- , publishTx
     , transactionData
     , isCoinbase
     , confirmed
-    , cbAfterHeight
-    , healthCheck
-    , withBlockMem
-    , withLayeredDB
-    , insertNubInSortedBy
+    -- , cbAfterHeight
+    -- , healthCheck
+    -- , withBlockMem
+    -- , withLayeredDB
+    -- , insertNubInSortedBy
     ) where
 
 import Conduit
@@ -134,7 +134,7 @@ store cfg mgri chi bsi = do
     let ncfg =
             NodeConfig
                 { nodeConfMaxPeers = storeConfMaxPeers cfg
-                , nodeConfDB = blockDB . layeredDB $ storeConfDB cfg
+                , nodeConfDB = storeConfDB cfg
                 , nodeConfPeers = storeConfInitPeers cfg
                 , nodeConfDiscover = storeConfDiscover cfg
                 , nodeConfEvents = storeDispatch b l

@@ -50,20 +50,28 @@ import Control.Monad.Loops
 import Control.Monad.Reader
 import Control.Monad.Reader (MonadReader, ReaderT)
 import Data.Aeson as A
+import Data.Aeson.Encoding (encodingToLazyByteString, fromEncoding)
 import Data.Binary as DB
 import Data.Bits
 import qualified Data.ByteString.Char8 ()
 import qualified Data.ByteString.Lazy as LBS
+import qualified Data.ByteString.Lazy as L
+import qualified Data.ByteString.UTF8 as BSU (toString)
 import Data.Hashable
 import Data.Int
+import Data.List
 import Data.Map.Strict as M
+import Data.Maybe
 import Data.Serialize
 import Data.Set as Set
-import Data.Text as DT
+import qualified Data.Text as DT
+import qualified Database.CQL.IO as Q
+import qualified GHC.Exts as Exts
 import GHC.Generics
 import Network.Simple.TCP as T
 import Network.Xoken.Node.Data
 import Network.Xoken.Node.Data.Cached
+import Network.Xoken.Node.Data.RocksDB
 import Network.Xoken.Node.Messages
 import System.Random
 import Text.Printf
@@ -84,7 +92,7 @@ instance Hashable ServiceResource
 
 data DBEnv =
     DBEnv
-        { keyValueDB :: LayeredDB
+        { keyValueDB :: Q.ClientState
         } --deriving(Eq, Ord, Show)
 
 class HasDBEnv env where
@@ -101,7 +109,67 @@ data ServiceEnv m r t rmsg pmsg =
 
 type HasService env m = (HasP2PEnv env m ServiceResource ServiceTopic String String, HasDBEnv env, MonadReader env m)
 
-goGetResource1 :: LayeredDB -> String -> Network -> IO (String)
+jsonSerialiseAny :: (JsonSerial a) => Network -> a -> L.ByteString
+jsonSerialiseAny net = encodingToLazyByteString . jsonSerial net
+    -- __ <- jsonSerialiseAny net i
+
+gzipCompressBase64Encode :: C.ByteString -> String
+gzipCompressBase64Encode val = BSU.toString $ B64.encode $ L.toStrict $ GZ.compress (val)
+
+getMissingParamError :: Int -> C.ByteString
+getMissingParamError msgid = A.encode $ getJsonRpcErrorObj msgid (-32602) "Invalid method parameter(s)."
+
+getJsonRpcErrorObj :: Int -> Int -> Value -> Value
+getJsonRpcErrorObj messageId errCode errMsg =
+    Object $
+    Exts.fromList
+        [ ("id", (Number $ fromIntegral messageId))
+        , ("error", Object $ Exts.fromList [("code", (Number $ fromIntegral errCode)), ("message", errMsg)])
+        ]
+
+xGetBlockHash :: (MonadUnliftIO m) => Network -> BlockHash -> m (L.ByteString)
+xGetBlockHash net hash = do
+    res <- liftIO $ getBlockDB hash
+    case res of
+        Just b -> return $ jsonSerialiseAny net (b)
+        Nothing -> return $ C.pack "{}"
+
+xGetBlocksHashes :: (MonadUnliftIO m) => Network -> [BlockHash] -> m (L.ByteString)
+xGetBlocksHashes net hashes = do
+    res <- mapM getBlockDB hashes
+    let ar = catMaybes res
+    return $ jsonSerialiseAny net (ar)
+
+-- scottyBlockHeight :: (MonadLoggerIO m, MonadUnliftIO m) => Network -> WebT m ()
+-- scottyBlockHeight net = do
+--     cors
+--     height <- S.param "height"
+--     n <- parseNoTx
+--     proto <- setupBin
+--     hs <- getBlocksAtHeight height
+--     db <- askDB
+--     S.stream $ \io flush' -> do
+--         runStream db . runConduit $ yieldMany hs .| concatMapMC getBlock .| mapC (pruneTx n) .| streamAny net proto io
+--         flush'
+xGetBlockHeight :: (MonadUnliftIO m) => Network -> Word32 -> m (L.ByteString)
+xGetBlockHeight net height = do
+    hs <- getBlocksAtHeightDB height
+    if length hs == 0
+        then return $ C.pack "{}"
+        else do
+            res <- getBlockDB (hs !! 0)
+            case res of
+                Just b -> return $ jsonSerialiseAny net (b)
+                Nothing -> return $ C.pack "{}"
+
+xGetBlocksHeights :: (MonadUnliftIO m) => Network -> [Word32] -> m (L.ByteString)
+xGetBlocksHeights net heights = do
+    hs <- concat <$> mapM getBlocksAtHeightDB (nub heights)
+    res <- mapM getBlockDB hs
+    let ar = catMaybes res
+    return $ jsonSerialiseAny net (ar)
+
+goGetResource1 :: Q.ClientState -> String -> Network -> IO (String)
 goGetResource1 ldb msg net = do
     let bs = C.pack $ msg
     let jsonStr = GZ.decompress $ B64L.decodeLenient bs
@@ -112,8 +180,7 @@ goGetResource1 ldb msg net = do
             liftIO $ printf "RPC: (%s)\n" (method x)
             runner <- askRunInIO
             val <-
-                liftIO $
-                (runner . withLayeredDB ldb) $ do
+                liftIO $ do
                     case (method x) of
                         "get_block_hash" -> do
                             let z = A.decode (A.encode (params x)) :: Maybe GetBlockHash
