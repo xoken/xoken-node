@@ -42,9 +42,9 @@ import Data.Time.Clock
 import Data.Time.Clock.POSIX
 import Data.Word
 
--- import Database.RocksDB (DB)
+-- -- import Database.RocksDB (DB)
 -- import qualified Database.RocksDB as R
--- import Database.RocksDB.Query as R
+-- -- import Database.RocksDB.Query as R
 import NQE
 import Network.Socket (SockAddr(..))
 import Network.Xoken.P2P.Common
@@ -97,7 +97,7 @@ manager cfg inbox =
     go = do
         db <- getManagerDB
         $(logDebugS) "Manager" "Initializing..."
-        initPeerDB (layeredDB db) discover
+        initPeerDB (keyValueDB db) discover
         putBestBlock <=< receiveMatch inbox $ \case
             ManagerBestBlock b -> Just b
             _ -> Nothing
@@ -173,7 +173,7 @@ logConnectedPeers = do
     l <- length <$> getConnectedPeers
     $(logInfoS) "Manager" $ "Peers connected: " <> cs (show l) <> "/" <> cs (show m)
 
-getManagerDB :: MonadManager m => m LayeredDB
+getManagerDB :: MonadManager m => m DBHandles
 getManagerDB = mgrConfDB <$> asks myConfig
 
 getOnlinePeers :: MonadManager m => m [OnlinePeer]

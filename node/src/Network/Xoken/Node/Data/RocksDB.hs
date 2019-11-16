@@ -11,8 +11,9 @@ import qualified Data.ByteString.Short as B.Short
 import Data.IntMap (IntMap)
 import qualified Data.IntMap.Strict as I
 import Data.Word
-import Database.RocksDB (DB, ReadOptions)
-import Database.RocksDB.Query
+
+-- import Database.RocksDB (DB, ReadOptions)
+-- import Database.RocksDB.Query
 import Network.Xoken.Node.Data
 import Network.Xoken.Node.Data.KeyValue
 import UnliftIO
@@ -28,9 +29,8 @@ dataVersion = 15
 --             | v == dataVersion -> return (Right True)
 --             | otherwise -> return (Left (IncorrectVersion v))
 --         Nothing -> return (Right False)
-setInitDB :: MonadIO m => DB -> m ()
-setInitDB db = insert db VersionKey dataVersion
-
+-- setInitDB :: MonadIO m => DB -> m ()
+-- setInitDB db = insert db VersionKey dataVersion
 getBestBlockDB :: MonadIO m => m (Maybe BlockHash)
 getBestBlockDB = undefined -- BestKey
 

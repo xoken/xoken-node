@@ -27,6 +27,7 @@ library
       Network.Xoken.P2P.Common
       Network.Xoken.P2P.Manager
       Network.Xoken.P2P.Peer
+
       Xoken.P2P
   other-modules:
       Paths_xoken_p2p

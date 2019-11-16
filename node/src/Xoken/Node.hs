@@ -36,7 +36,7 @@ module Xoken.Node
     , UnixTime
     , BlockPos
     -- , BlockDB(..)
-    , LayeredDB(..)
+    , DBHandles(..)
     -- , WebConfig(..)
     -- , MaxLimits(..)
     -- , Offset
@@ -97,7 +97,8 @@ import Data.Maybe
 import Data.Serialize (decode)
 import qualified Data.Text as T
 import Data.Word (Word32)
-import Database.RocksDB as R
+
+-- import Database.RocksDB as R
 import NQE
 import Network.Socket (SockAddr(..))
 import Network.Xoken.Node.AriviService
@@ -108,17 +109,20 @@ import Network.Xoken.Node.Data.Memory
 import Network.Xoken.Node.Data.RocksDB
 import Network.Xoken.Node.Messages
 import Network.Xoken.Node.Web
+
 import System.Random
 import UnliftIO
 import Xoken
 import Xoken.P2P
 
-withStore :: (MonadLoggerIO m, MonadUnliftIO m) => StoreConfig -> (Store -> m a) -> m a
-withStore cfg f = do
+-- -> (Store -> m a)
+withStore :: (MonadLoggerIO m, MonadUnliftIO m) => StoreConfig -> m ()
+withStore cfg = do
     mgri <- newInbox
     chi <- newInbox
-    withProcess (store cfg mgri chi) $ \(Process _ b) ->
-        f Store {storeManager = inboxToMailbox mgri, storeChain = inboxToMailbox chi, storeBlock = b}
+    bsi <- newInbox
+    store cfg mgri chi bsi -- $ \(Process _ b) ->
+        -- f Store {storeManager = inboxToMailbox mgri, storeChain = inboxToMailbox chi, storeBlock = b}
 
 -- | Run a Xoken Store instance. It will launch a network node and a
 -- 'BlockStore', connect to the network and start synchronizing blocks and

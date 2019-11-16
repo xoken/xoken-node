@@ -22,7 +22,8 @@ import Data.String
 import Data.String.Conversions (cs)
 import Data.Text (Text)
 import Data.Word
-import Database.RocksDB
+
+-- import Database.RocksDB
 import Network.Xoken.Block.Headers (computeSubsidy)
 import Network.Xoken.Node.Data
 import Network.Xoken.Node.Data.RocksDB

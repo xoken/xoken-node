@@ -7,7 +7,8 @@ module Network.Xoken.Node.Messages where
 
 import Data.ByteString (ByteString)
 import Data.Word
-import Database.RocksDB (DB)
+
+-- import Database.RocksDB (DB)
 import NQE
 import Network.Socket
 import Network.Xoken.Node.Data
@@ -43,7 +44,7 @@ data StoreConfig =
       -- ^ static set of peers to connect to
         , storeConfDiscover :: !Bool
       -- ^ discover new peers?
-        , storeConfDB :: !LayeredDB
+        , storeConfDB :: !DBHandles
       -- ^ RocksDB database handler
         , storeConfNetwork :: !Network
       -- ^ network constants
@@ -60,7 +61,7 @@ data BlockConfig =
       -- ^ chain from a running node
         , blockConfListener :: !(Listen StoreEvent)
       -- ^ listener for store events
-        , blockConfDB :: !LayeredDB
+        , blockConfDB :: !DBHandles
       -- ^ RocksDB database handle
         , blockConfNet :: !Network
       -- ^ network constants

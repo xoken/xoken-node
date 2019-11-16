@@ -33,7 +33,8 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.Lazy as T.Lazy
 import Data.Word
-import Database.RocksDB (DB, ReadOptions)
+
+-- import Database.RocksDB (DB, ReadOptions)
 import GHC.Generics
 import Network.Socket (SockAddr(SockAddrUnix))
 import Paths_xoken_node as P
@@ -62,9 +63,9 @@ decodeShort bs =
 --         { blockDB :: !DB
 --         , blockDBopts :: !ReadOptions
 --         }
--- data LayeredDB =
---     LayeredDB
---         { layeredDB :: !Q.ClientState
+-- data DBHandles =
+--     DBHandles
+--         { keyValueDB :: !Q.ClientState
 --         }
 data RPCRequest =
     RPCRequest

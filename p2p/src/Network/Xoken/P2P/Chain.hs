@@ -36,9 +36,9 @@ import Data.String.Conversions
 import Data.Time.Clock.POSIX
 import Data.Word
 
--- import Database.RocksDB (DB)
+-- -- import Database.RocksDB (DB)
 -- import qualified Database.RocksDB as R
--- import Database.RocksDB.Query as R
+-- -- import Database.RocksDB.Query as R
 import NQE
 import Network.Xoken.P2P.Common
 import System.Random
@@ -57,7 +57,7 @@ type MonadChain m = (MonadLoggerIO m, MonadChainLogic ChainConfig Peer m)
 chain :: (MonadUnliftIO m, MonadLoggerIO m) => ChainConfig -> Inbox ChainMessage -> m ()
 chain cfg inbox = do
     st <- newTVarIO ChainState {chainSyncing = Nothing, mySynced = False, newPeers = []}
-    let rd = ChainReader {myReader = cfg, myChainDB = (layeredDB db), chainState = st}
+    let rd = ChainReader {myReader = cfg, myChainDB = (keyValueDB db), chainState = st}
     withSyncLoop ch $ run `runReaderT` rd
   where
     net = chainConfNetwork cfg

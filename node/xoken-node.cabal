@@ -37,6 +37,10 @@ library
       Network.Xoken.Node.Messages
       Network.Xoken.Node.Web
       Network.Xoken.Node.AriviService
+      Network.Xoken.Node.P2P.BlockSync
+      Network.Xoken.Node.P2P.Types
+      Network.Xoken.Node.P2P.Env
+
   autogen-modules:
       Paths_xoken_node
   hs-source-dirs:
@@ -113,6 +117,9 @@ executable xoken-node
       Network.Xoken.Node.Messages
       Network.Xoken.Node.Web
       Network.Xoken.Node.AriviService
+      Network.Xoken.Node.P2P.BlockSync
+      Network.Xoken.Node.P2P.Types
+      Network.Xoken.Node.P2P.Env
   hs-source-dirs:
       app, src
   ghc-options: -threaded -rtsopts -with-rtsopts=-N

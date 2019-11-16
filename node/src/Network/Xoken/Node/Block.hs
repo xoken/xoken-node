@@ -22,7 +22,8 @@ import Data.Maybe
 import Data.String
 import Data.String.Conversions
 import Data.Time.Clock.System
-import Database.RocksDB
+
+-- import Database.RocksDB
 import NQE
 import Network.Xoken.Node.Data
 import Network.Xoken.Node.Data.ImportDB
@@ -65,9 +66,8 @@ type BlockT m = ReaderT BlockRead m
 --     => ReaderT ImportDB (ExceptT ImportException m) a
 --     -> ReaderT BlockRead m (Either ImportException a)
 -- runImport f = ReaderT $ \r -> runExceptT (runImportDB (blockConfDB (myConfig r)) f)
-runLayered :: ReaderT LayeredDB m a -> ReaderT BlockRead m a
-runLayered f = ReaderT $ \r -> runReaderT f (blockConfDB (myConfig r))
-
+-- runLayered :: ReaderT DBHandles m a -> ReaderT BlockRead m a
+-- runLayered f = ReaderT $ \r -> runReaderT f (blockConfDB (myConfig r))
 -- instance MonadIO m => StoreRead (ReaderT BlockRead m) where
 --     isInitialized = runLayered isInitialized
 --     getBestBlock = runLayered getBestBlock

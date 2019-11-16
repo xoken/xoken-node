@@ -18,7 +18,7 @@ import           Test.Hspec
 import           UnliftIO
 
 data TestStore = TestStore
-    { testStoreDB         :: !LayeredDB
+    { testStoreDB         :: !DBHandles
     , testStoreBlockStore :: !BlockStore
     , testStoreChain      :: !Chain
     , testStoreEvents     :: !(Inbox StoreEvent)
@@ -84,8 +84,8 @@ withTestStore net t f =
                         , compression = SnappyCompression
                         }
             let ldb =
-                    LayeredDB
-                        { layeredDB =
+                    DBHandles
+                        { keyValueDB =
                               BlockDB
                                   { blockDB = db
                                   , blockDBopts = defaultReadOptions
