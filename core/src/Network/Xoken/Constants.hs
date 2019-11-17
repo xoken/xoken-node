@@ -64,7 +64,7 @@ data Network =
         , getMaxBlockSize :: !Int
       -- | maximum amount of satoshi
         , getMaxSatoshi :: !Word64
-      -- | user agent string
+        -- | user agent string
         , getXokenUserAgent :: !ByteString
       -- | default port for P2P connections
         , getDefaultPort :: !Int
@@ -159,7 +159,7 @@ bsv =
             -- Hash 000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f
         , getMaxBlockSize = 20000000000
         , getMaxSatoshi = 2100000000000000
-        , getXokenUserAgent = "/xoken-bsv:" <> versionString <> "/"
+        , getXokenUserAgent = "Xoken BSV Mainnet, " <> versionString
         , getDefaultPort = 8333
         , getAllowMinDifficultyBlocks = False
         , getPowNoRetargetting = False
@@ -210,11 +210,109 @@ bsv =
         }
 
 bsvTest :: Network
-bsvTest = undefined
+bsvTest =
+    Network
+        { getNetworkName = "bsvtest"
+        , getNetworkIdent = "bsvTest"
+        , getAddrPrefix = 111
+        , getScriptPrefix = 196
+        , getSecretPrefix = 239
+        , getExtPubKeyPrefix = 0x043587cf
+        , getExtSecretPrefix = 0x04358394
+        , getNetworkMagic = 0xf4e5f3f4
+        , getGenesisHeader =
+              BlockHeader
+                  0x01
+                  "0000000000000000000000000000000000000000000000000000000000000000"
+                  "3ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a"
+                  1296688602
+                  0x1d00ffff
+                  414098458
+            -- Hash 000000000933ea01ad0ee984209779baaec3ced90fa3f408719526f8d77f4943
+        , getMaxBlockSize = 32000000
+        , getMaxSatoshi = 2100000000000000
+        , getXokenUserAgent = "Xoken BSV-Testnet, " <> versionString
+        , getDefaultPort = 18333
+        , getAllowMinDifficultyBlocks = True
+        , getPowNoRetargetting = False
+        , getPowLimit = 0x00000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+        , getBip34Block = (21111, "0000000023b3a96d3484e5abb3755c413e7d41500f8e2a5c3f0dd01299cd8ef8")
+        , getBip65Height = 581885
+        , getBip66Height = 330776
+        , getTargetTimespan = 14 * 24 * 60 * 60
+        , getTargetSpacing = 10 * 60
+        , getCheckpoints =
+              [ (546, "000000002a936ca763904c3c35fce2f3556c559c0214345d31b1bcebf76acb70")
+            -- UAHF fork block.
+              , (1155875, "00000000000e38fef93ed9582a7df43815d5c2ba9fd37ef70c9a0ea4a285b8f5")
+            -- Nov, 13. DAA activation block.
+              , (1188697, "0000000000170ed0918077bde7b4d36cc4c91be69fa09211f748240dabe047fb")
+              ]
+        , getSeeds =
+              [ "bitcoinsv.io"
+              , "testnet-seed.bitcoinsv.io"
+              , "cascharia.com"
+              , "testnet-seed.cascharia.com"
+              , "bitcoincloud.net"
+              , "testnet-seed.bitcoincloud.net"
+              ]
+        , getBip44Coin = 0
+        , getSigHashForkId = Nothing
+        , getEdaBlockHeight = Just 1155875
+        , getDaaBlockHeight = Just 1188697
+        , getSegWit = False
+        , getCashAddrPrefix = Nothing
+        , getBech32Prefix = Nothing
+        , getReplaceByFee = False
+        , getHalvingInterval = 210000
+        }
 
+-- | RegTest for Bitcoin Cash network.
 bsvSTN :: Network
-bsvSTN = undefined
+bsvSTN =
+    Network
+        { getNetworkName = "bsvstn"
+        , getNetworkIdent = "bsvSTN"
+        , getAddrPrefix = 111
+        , getScriptPrefix = 196
+        , getSecretPrefix = 239
+        , getExtPubKeyPrefix = 0x043587cf
+        , getExtSecretPrefix = 0x04358394
+        , getNetworkMagic = 0xfbcec4f9
+        , getGenesisHeader =
+              BlockHeader
+           -- 0f9188f13cb7b2c71f2a335e3a4fc328bf5beb436012afca590b1a11466e2206
+                  0x01
+                  "0000000000000000000000000000000000000000000000000000000000000000"
+                  "3ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a"
+                  1296688602
+                  0x207fffff
+                  2
+        , getMaxBlockSize = 1000000
+        , getMaxSatoshi = 2100000000000000
+        , getXokenUserAgent = "Xoken BSV-STN, " <> versionString
+        , getDefaultPort = 9333
+        , getAllowMinDifficultyBlocks = True
+        , getPowNoRetargetting = True
+        , getPowLimit = 0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+        , getBip34Block = (100000000, "0000000000000000000000000000000000000000000000000000000000000000")
+        , getBip65Height = 100000000
+        , getBip66Height = 100000000
+        , getTargetTimespan = 14 * 24 * 60 * 60
+        , getTargetSpacing = 10 * 60
+        , getCheckpoints = [(0, "0f9188f13cb7b2c71f2a335e3a4fc328bf5beb436012afca590b1a11466e2206")]
+        , getSeeds = ["bitcoinsv.io", "stn-seed.bitcoinsv.io"]
+        , getBip44Coin = 0
+        , getSigHashForkId = Nothing
+        , getEdaBlockHeight = Just 15
+        , getDaaBlockHeight = Just 2200
+        , getSegWit = False
+        , getCashAddrPrefix = Nothing
+        , getBech32Prefix = Nothing
+        , getReplaceByFee = False
+        , getHalvingInterval = 210000
+        }
 
 -- | List of all networks supported by this library.
 allNets :: [Network]
-allNets = [bsv, bsvTest, bsvSTN] --, btc, bch, btcTest, bchTest, btcRegTest, bchRegTest]
+allNets = [bsv, bsvTest, bsvSTN]
