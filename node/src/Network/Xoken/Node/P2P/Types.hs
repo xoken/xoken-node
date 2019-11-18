@@ -54,8 +54,8 @@ data BitcoinNodeConfig =
     BitcoinNodeConfig
         { bncMaxPeers :: !Int
       -- ^ maximum number of connected peers allowed
-        , bncDB :: !DatabaseHandles
-      -- ^ database handler
+      --   , bncDB :: !DatabaseHandles
+      -- -- ^ database handler
         , bncPeers :: ![HostPort]
       -- ^ static list of peers to connect to
         , bncDiscover :: !Bool

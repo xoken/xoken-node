@@ -290,7 +290,7 @@ fromSockAddr sa = go `catch` e
 
 -- | Our protocol version.
 myVersion :: Word32
-myVersion = 70012
+myVersion = 70015
 
 -- | Internal function used by peer to send a message to the peer manager.
 managerPeerMessage :: MonadIO m => Peer -> Message -> Manager -> m ()

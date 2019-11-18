@@ -23,7 +23,7 @@ extra-source-files:
 
 source-repository head
   type: git
-  location: git://github.com/haskoin/haskoin.git
+  location: git://github.com/stoichammer/
 
 library
   exposed-modules:
@@ -44,6 +44,8 @@ library
       Network.Xoken.Transaction
       Network.Xoken.Transaction.Partial
       Network.Xoken.Util
+      Network.Xoken.Network.Common
+      Network.Xoken.Network.Message
   other-modules:
       Network.Xoken.Block.Common
       Network.Xoken.Crypto.Hash
@@ -52,8 +54,7 @@ library
       Network.Xoken.Keys.Extended
       Network.Xoken.Keys.Mnemonic
       Network.Xoken.Network.Bloom
-      Network.Xoken.Network.Common
-      Network.Xoken.Network.Message
+      
       Network.Xoken.Script.Common
       Network.Xoken.Script.SigHash
       Network.Xoken.Script.Standard

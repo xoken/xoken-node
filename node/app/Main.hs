@@ -22,7 +22,6 @@ import Arivi.P2P.P2PEnv as PE hiding (option)
 import Arivi.P2P.PubSub.Types
 import Arivi.P2P.RPC.Types
 import Arivi.P2P.ServiceRegistry
-import Conduit
 import Control.Arrow
 import Control.Concurrent (threadDelay)
 import Control.Exception ()
@@ -40,6 +39,7 @@ import qualified Data.ByteString.Lazy as L
 import qualified Data.ByteString.Lazy.Char8 as C
 import Data.Char
 import Data.Function
+import Data.Functor.Identity
 import Data.Int
 import Data.List
 import Data.Map.Strict as M
@@ -52,12 +52,13 @@ import qualified Data.Text.Lazy as TL
 import Data.Typeable
 import Data.Version
 import Data.Word (Word32)
-
--- import Database.RocksDB as R
-import NQE
-import Network.HTTP.Types
+import qualified Database.CQL.IO as Q
 import Network.Simple.TCP
+import Network.Socket
 import Network.Xoken.Node.AriviService
+import Network.Xoken.Node.Env
+import Network.Xoken.Node.P2P.BlockSync
+import Network.Xoken.Node.P2P.Types
 import Options.Applicative
 import Paths_xoken_node as P
 import StmContainers.Map as H
@@ -67,18 +68,9 @@ import System.Exit
 import System.FilePath
 import System.IO.Unsafe
 import Text.Read (readMaybe)
-import UnliftIO
-import UnliftIO.Directory
-import Web.Scotty.Trans
 import Xoken
 import Xoken.Node
-import Xoken.P2P
 
---
-import Data.Functor.Identity
-import qualified Database.CQL.IO as Q
-
---import qualified System.Logger as Logger
 newtype AppM a =
     AppM (ReaderT (ServiceEnv AppM ServiceResource ServiceTopic String String) (LoggingT IO) a)
     deriving ( Functor
@@ -141,12 +133,13 @@ defaultConfig path = do
                 9091
     Config.makeConfig config (path <> "/config.yaml")
 
-runNode :: Config.Config -> DBHandles -> IO ()
-runNode config dbh = do
+runNode :: Config.Config -> DatabaseHandles -> BitcoinP2PEnv -> IO ()
+runNode config dbh bp2p = do
     p2pEnv <- mkP2PEnv config globalHandlerRpc globalHandlerPubSub [AriviService] []
     let dbEnv = DBEnv dbh
-        serviceEnv = ServiceEnv dbEnv p2pEnv
+        serviceEnv = ServiceEnv dbEnv p2pEnv bp2p
     runFileLoggingT (toS $ Config.logFile config) $ runAppM serviceEnv $ initP2P config
+    runFileLoggingT (toS $ Config.logFile config) $ runAppM serviceEnv $ setupPeerConnection
     liftIO $ threadDelay 5999999999
     return ()
 
@@ -172,7 +165,7 @@ defPort :: Int
 defPort = 3000
 
 defNetwork :: Network
-defNetwork = bsv
+defNetwork = bsvTest
 
 netNames :: String
 netNames = intercalate "|" (Data.List.map getNetworkName allNets)
@@ -230,67 +223,28 @@ main = do
     op <- Q.runClient conn (Q.query qstr p)
     putStrLn $ "Connected to Cassandra-DB version " ++ show (runIdentity (op !! 0))
     --
-    --
-    let path = "."
-    b <- System.Directory.doesPathExist (path <> "/config.yaml")
-    unless b (defaultConfig path)
-    cnf <- Config.readConfig (path <> "/config.yaml")
-    runNode cnf (DBHandles conn)
-    --
-    --
     conf <- liftIO (execParser opts)
     when (configVersion conf) . liftIO $ do
         putStrLn $ showVersion P.version
         exitSuccess
     when (Data.List.null (configPeers conf) && not (configDiscover conf)) . liftIO $
         die "ERROR: Specify peers to connect or enable peer discovery."
-    run conf (DBHandles conn)
+    --
+    let path = "."
+    b <- System.Directory.doesPathExist (path <> "/config.yaml")
+    unless b (defaultConfig path)
+    cnf <- Config.readConfig (path <> "/config.yaml")
+    let nodeConfig =
+            BitcoinNodeConfig
+                5 -- maximum connected peers allowed
+                [] -- static list of peers to connect to
+                False -- activate peer discovery
+                (NetworkAddress 0 (SockAddrInet 0 0)) -- local host n/w addr
+                (configNetwork conf) -- network constants
+                60 -- timeout in seconds
+    runNode cnf (DatabaseHandles conn) (BitcoinP2PEnv nodeConfig)
   where
     opts =
         info (helper <*> config) $
         fullDesc <> progDesc "Blockchain store and API" <>
         Options.Applicative.header ("xoken-node version " <> showVersion P.version)
-
-cacheDir :: Network -> FilePath -> Maybe FilePath
-cacheDir net "" = Nothing
-cacheDir net ch = Just (ch </> getNetworkName net </> "cache")
-
-run :: MonadUnliftIO m => Config -> DBHandles -> m ()
-run Config { configPort = port
-           , configNetwork = net
-           , configDiscover = disc
-           , configPeers = peers
-           , configCache = cache_path
-           , configDir = db_dir
-           , configDebug = deb
-           , configReqLog = reqlog
-           } ldb =
-    runStderrLoggingT . filterLogger l . flip UnliftIO.finally clear $ do
-        $(logInfoS) "Main" $ "Creating working directory if not found: " <> cs wd
-        createDirectoryIfMissing True wd
-        withPublisher $ \pub ->
-            let scfg =
-                    StoreConfig
-                        { storeConfMaxPeers = 20
-                        , storeConfInitPeers = Data.List.map (second (fromMaybe (getDefaultPort net))) peers
-                        , storeConfDiscover = disc
-                        , storeConfDB = ldb
-                        , storeConfNetwork = net
-                        , storeConfListen = (`sendSTM` pub) . Event
-                        }
-             in withStore scfg
-  where
-    l _ lvl
-        | deb = True
-        | otherwise = LevelInfo <= lvl
-    clear =
-        case cd of
-            Nothing -> return ()
-            Just ch -> do
-                $(logInfoS) "Main" $ "Deleting cache directory: " <> cs ch
-                removePathForcibly ch
-    wd = db_dir </> getNetworkName net
-    cd =
-        case cache_path of
-            "" -> Nothing
-            ch -> Just (ch </> getNetworkName net </> "cache")
