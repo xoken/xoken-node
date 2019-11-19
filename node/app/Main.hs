@@ -24,6 +24,8 @@ import Arivi.P2P.RPC.Types
 import Arivi.P2P.ServiceRegistry
 import Control.Arrow
 import Control.Concurrent (threadDelay)
+import Control.Concurrent.Async.Lifted (async)
+import Control.Concurrent.STM.TVar
 import Control.Exception ()
 import Control.Monad
 import Control.Monad.Base
@@ -138,8 +140,16 @@ runNode config dbh bp2p = do
     p2pEnv <- mkP2PEnv config globalHandlerRpc globalHandlerPubSub [AriviService] []
     let dbEnv = DBEnv dbh
         serviceEnv = ServiceEnv dbEnv p2pEnv bp2p
-    runFileLoggingT (toS $ Config.logFile config) $ runAppM serviceEnv $ initP2P config
-    runFileLoggingT (toS $ Config.logFile config) $ runAppM serviceEnv $ setupPeerConnection
+    runFileLoggingT (toS $ Config.logFile config) $
+        runAppM
+            serviceEnv
+            (do initP2P config
+                async $ setupPeerConnection
+                liftIO $ threadDelay (9 * 1000000)
+                liftIO $ putStrLn $ "............"
+                async $ postRequestMessages
+                async $ handleIncomingMessages)
+    -- runFileLoggingT (toS $ Config.logFile config) $ runAppM serviceEnv $ setupPeerConnection
     liftIO $ threadDelay 5999999999
     return ()
 
@@ -242,7 +252,8 @@ main = do
                 (NetworkAddress 0 (SockAddrInet 0 0)) -- local host n/w addr
                 (configNetwork conf) -- network constants
                 60 -- timeout in seconds
-    runNode cnf (DatabaseHandles conn) (BitcoinP2PEnv nodeConfig)
+    g <- newTVarIO M.empty
+    runNode cnf (DatabaseHandles conn) (BitcoinP2PEnv nodeConfig g)
   where
     opts =
         info (helper <*> config) $

@@ -46,15 +46,16 @@ library
       Network.Xoken.Util
       Network.Xoken.Network.Common
       Network.Xoken.Network.Message
-  other-modules:
-      Network.Xoken.Block.Common
       Network.Xoken.Crypto.Hash
+      Network.Xoken.Block.Common
+  other-modules:
+
+
       Network.Xoken.Crypto.Signature
       Network.Xoken.Keys.Common
       Network.Xoken.Keys.Extended
       Network.Xoken.Keys.Mnemonic
       Network.Xoken.Network.Bloom
-      
       Network.Xoken.Script.Common
       Network.Xoken.Script.SigHash
       Network.Xoken.Script.Standard

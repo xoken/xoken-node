@@ -9,8 +9,10 @@ module Network.Xoken.Node.Env where
 
 import Arivi.P2P.P2PEnv as PE hiding (option)
 import Codec.Serialise
+import Control.Concurrent.STM.TVar
 import Control.Monad.Reader
 import Data.Hashable
+import qualified Data.Map.Strict as M
 import Data.Time.Clock
 import Data.Word
 import qualified Database.CQL.IO as Q
@@ -28,7 +30,8 @@ import Text.Read
 data BitcoinP2PEnv =
     BitcoinP2PEnv
         { bitcoinNodeConfig :: !BitcoinNodeConfig
-        } --deriving(Eq, Ord, Show)
+        , bitcoinPeers :: !(TVar (M.Map SockAddr BitcoinPeer))
+        }
 
 class HasBitcoinP2PEnv env where
     getBitcoinP2PEnv :: env -> BitcoinP2PEnv
@@ -39,7 +42,7 @@ instance HasBitcoinP2PEnv (ServiceEnv m r t rmsg pmsg) where
 data DBEnv =
     DBEnv
         { dbHandles :: !DatabaseHandles
-        } --deriving(Eq, Ord, Show)
+        }
 
 class HasDBEnv env where
     getDBEnv :: env -> DBEnv

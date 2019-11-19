@@ -4,6 +4,7 @@
 
 module Network.Xoken.Node.P2P.Types where
 
+import Control.Concurrent.MVar
 import Data.Functor.Identity
 import Data.Time.Clock
 import Data.Word
@@ -35,8 +36,10 @@ data BitcoinPeer =
     BitcoinPeer
         { bpAddress :: !SockAddr
       -- ^ network address
-        , bpVerAck :: !Bool
-      -- ^ got version acknowledgement from peer
+        , bpSocket :: !(Maybe Socket)
+      -- ^ live stream socket
+        , bpSockLock :: !(MVar Bool)
+      -- ^ socket write lock
         , bpConnected :: !Bool
       -- ^ peer is connected and ready
         , bpVersion :: !(Maybe Version)
@@ -45,8 +48,6 @@ data BitcoinPeer =
       -- ^ random nonce sent during handshake
         , bpPing :: !(Maybe (UTCTime, Word64))
       -- ^ last sent ping time and nonce
-        , bpPings :: ![NominalDiffTime]
-      -- ^ last few ping rountrip duration
         }
 
 -- | General node configuration.

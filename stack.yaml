@@ -30,3 +30,4 @@ extra-deps:
     - focus-1
     - cql-io-1.1.1
     - tinylog-0.15.0
+    - streamly-0.6.1

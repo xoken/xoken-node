@@ -1,22 +1,15 @@
--- {-# LANGUAGE MonoLocalBinds #-}
--- {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE RecordWildCards #-}
 
 --
-module Network.Xoken.Node.AriviService
-    ( module Network.Xoken.Node.AriviService
-    ) where
+module Network.Xoken.Node.AriviService where
 
 import Arivi.P2P.MessageHandler.HandlerTypes (HasNetworkConfig, networkConfig)
 import Arivi.P2P.P2PEnv
@@ -28,15 +21,6 @@ import Arivi.P2P.RPC.Env
 import Arivi.P2P.RPC.Fetch
 import Arivi.P2P.Types hiding (msgType)
 import Codec.Compression.GZip as GZ
-import Data.ByteString.Base64 as B64
-import Data.ByteString.Base64.Lazy as B64L
-import qualified Data.ByteString.Lazy.Char8 as C
-
--- import Database.RocksDB as R
-import Network.Xoken.Node.Web
-import Xoken
-
---import AriviNetworkServiceHandler
 import Codec.Serialise
 import Conduit hiding (runResourceT)
 import Control.Concurrent (threadDelay)
@@ -49,14 +33,15 @@ import Control.Monad.IO.Class
 import Control.Monad.Logger
 import Control.Monad.Loops
 import Control.Monad.Reader
-import Control.Monad.Reader (MonadReader, ReaderT)
 import Data.Aeson as A
 import Data.Aeson.Encoding (encodingToLazyByteString, fromEncoding)
 import Data.Binary as DB
 import Data.Bits
+import Data.ByteString.Base64 as B64
+import Data.ByteString.Base64.Lazy as B64L
 import qualified Data.ByteString.Char8 ()
-import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString.Lazy as L
+import qualified Data.ByteString.Lazy.Char8 as C
 import qualified Data.ByteString.UTF8 as BSU (toString)
 import Data.Hashable
 import Data.Int
@@ -76,10 +61,12 @@ import Network.Xoken.Node.Data.RocksDB
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.Messages
 import Network.Xoken.Node.P2P.Types
+import Network.Xoken.Node.Web
 import System.Random
 import Text.Printf
 import UnliftIO
 import UnliftIO.Resource
+import Xoken
 import Xoken.P2P
 
 jsonSerialiseAny :: (JsonSerial a) => Network -> a -> L.ByteString
