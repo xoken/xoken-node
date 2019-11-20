@@ -145,7 +145,7 @@ runNode config dbh bp2p = do
             serviceEnv
             (do initP2P config
                 async $ setupPeerConnection
-                liftIO $ threadDelay (9 * 1000000)
+                liftIO $ threadDelay (20 * 1000000)
                 liftIO $ putStrLn $ "............"
                 async $ postRequestMessages
                 async $ handleIncomingMessages)

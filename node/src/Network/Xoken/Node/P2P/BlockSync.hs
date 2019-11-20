@@ -22,6 +22,7 @@ import Control.Monad
 import Control.Monad.Logger
 import Control.Monad.Reader
 import Control.Monad.STM
+import Control.Monad.State.Strict
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as C
 import qualified Data.ByteString.Lazy as BSL
@@ -39,8 +40,9 @@ import Data.Time.Clock.POSIX
 import Data.Word
 import Network.Socket
 import qualified Network.Socket.ByteString as SB (recv)
-import qualified Network.Socket.ByteString.Lazy as NB (recv, sendAll)
+import qualified Network.Socket.ByteString.Lazy as LB (recv, sendAll)
 import Network.Xoken.Block.Common
+import Network.Xoken.Block.Headers
 import Network.Xoken.Constants
 import Network.Xoken.Crypto.Hash
 import Network.Xoken.Network.Common -- (GetData(..), MessageCommand(..), NetworkAddress(..))
@@ -71,7 +73,7 @@ createSocketWithOptions options addr = do
 sendEncMessage :: MVar Bool -> Socket -> BSL.ByteString -> IO ()
 sendEncMessage writeLock sock msg = do
     a <- takeMVar writeLock
-    (NB.sendAll sock msg) `catch` (\(e :: IOException) -> putStrLn ("caught: " ++ show e))
+    (LB.sendAll sock msg) `catch` (\(e :: IOException) -> putStrLn ("caught: " ++ show e))
     putMVar writeLock a
 
 setupPeerConnection :: (HasService env m) => m ()
@@ -102,32 +104,43 @@ setupPeerConnection = do
             addrs
     return ()
 
+-- Helper Functions
+recvAll :: Socket -> Int -> IO B.ByteString
+recvAll sock len = do
+    msg <- SB.recv sock len
+    if B.length msg == len
+        then return msg
+        else B.append msg <$> recvAll sock (len - B.length msg)
+
 readNextMessage :: Network -> Socket -> IO (Maybe Message)
 readNextMessage net sock = do
-    res <- try $ (SB.recv sock 24)
+    res <- liftIO $ try $ (SB.recv sock 24)
     case res of
         Right hdr -> do
             case (decode hdr) of
-                Left _ -> do
-                    print "Error decoding incoming message header"
-                    print (show hdr)
+                Left e -> do
+                    liftIO $ print ("Error decoding incoming message header: " ++ e)
                     return Nothing
                 Right (MessageHeader _ _ len _) -> do
                     byts <-
                         if len == 0
                             then return hdr
                             else do
-                                rs <- try $ (SB.recv sock (fromIntegral len))
+                                rs <- liftIO $ try $ (recvAll sock (fromIntegral len))
                                 case rs of
-                                    Left (e :: IOException) -> throw e
-                                    Right y -> return $ hdr `B.append` y
+                                    Left (e :: IOException) -> do
+                                        liftIO $ print ("Error, reading: " ++ show e)
+                                        throw e
+                                    Right y -> do
+                                        liftIO $ print (B.length y)
+                                        return $ hdr `B.append` y
                     case runGet (getMessage net) $ byts of
                         Left e -> do
-                            print "Error, unexpected message header"
+                            liftIO $ print ("Error, unexpected message header: " ++ e)
                             return Nothing
                         Right msg -> return $ Just msg
         Left (e :: IOException) -> do
-            print ("socket read fail")
+            liftIO $ print ("socket read fail")
             return Nothing
 
 doVersionHandshake :: Network -> Socket -> SockAddr -> IO (Bool)
@@ -164,32 +177,51 @@ postRequestMessages :: (HasService env m) => m ()
 postRequestMessages = do
     bp2pEnv <- asks getBitcoinP2PEnv
     let net = bncNet $ bitcoinNodeConfig bp2pEnv
-    let hs =
-            case net of
-                bsv ->
-                    [ InvVector
-                          InvBlock
-                          (getBlockHash "00000000839a8e6886ab5951d76f411475428afc90947ee320161bbf18eb6048")
-                    ]
-                bsvTest ->
-                    [ InvVector
-                          InvBlock
-                          (getBlockHash "00000000839a8e6886ab5951d76f411475428afc90947ee320161bbf18eb6048")
-                    ]
-                bsvSTN ->
-                    [ InvVector
-                          InvBlock
-                          (getBlockHash "00000000afa9bda45866dcd7627190ccde60327d0a30b28efd57facf684167cd")
-                    ]
+    let bl =
+            GetHeaders
+                { getHeadersVersion = myVersion
+                , getHeadersBL = [headerHash $ getGenesisHeader net]
+                , getHeadersHashStop = "0000000000000000000000000000000000000000000000000000000000000000"
+                }
+    liftIO $ print (headerHash $ getGenesisHeader net)
+    liftIO $ print (myVersion)
+    -- GetHeaders (shortBlockHash (headerHash (getGenesisHeader net)))
     allpr <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
     let conpr = L.filter (\x -> bpConnected (snd x)) (M.toList allpr)
     let pr = snd $ conpr !! 0
     case (bpSocket pr) of
         Just q -> do
-            let em = runPut . putMessage net $ (MGetData $ GetData hs)
+            let em = runPut . putMessage net $ (MGetHeaders bl)
             liftIO $ sendEncMessage (bpSockLock pr) q (BSL.fromStrict em)
             liftIO $ print ("sending out get data: " ++ show (bpAddress pr))
         Nothing -> liftIO $ print ("Error sending, no connections available")
+    return ()
+
+messageHandler :: (HasService env m) => (Maybe Message) -> m (Maybe Message)
+messageHandler mm = do
+    case mm of
+        Just msg -> do
+            liftIO $ print (msgType msg)
+            case (msgType msg) of
+                MCGetHeaders -> do
+                    return mm
+                MCInv -> do
+                    return mm
+                MCTx -> do
+                    return mm
+                _ -> do
+                    liftIO $ print "unknown type"
+                    return Nothing
+        Nothing -> do
+            liftIO $ print "invalid message"
+            return Nothing
+
+readNextMessage' :: (HasService env m) => Network -> Socket -> m (Maybe Message)
+readNextMessage' net sock = liftIO $ readNextMessage net sock
+
+logMessage :: (HasService env m) => Message -> m ()
+logMessage mg = do
+    liftIO $ print (mg)
     return ()
 
 handleIncomingMessages :: (HasService env m) => m ()
@@ -201,8 +233,9 @@ handleIncomingMessages = do
     let pr = snd $ conpr !! 0
     case (bpSocket pr) of
         Just s -> do
-            liftIO $ print ("reading from: " ++ show (bpAddress pr))
-            liftIO $ runStream $ S.repeatM (readNextMessage net s) & S.mapM (print)
+            liftIO $ print ("reading from:  " ++ show (bpAddress pr))
+            runStream $ S.repeatM (readNextMessage' net s) & S.mapMaybeM (messageHandler) & S.mapM (logMessage)
                 -- & S.mapM undefined
+            undefined
         Nothing -> undefined
     return ()
