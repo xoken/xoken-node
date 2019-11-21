@@ -28,6 +28,7 @@ import qualified Data.ByteString.Char8 as C
 import qualified Data.ByteString.Lazy as BSL
 import Data.ByteString.Short
 import Data.Function ((&))
+import Data.Functor.Identity
 import Data.Int
 import qualified Data.List as L
 import qualified Data.Map.Strict as M
@@ -35,9 +36,11 @@ import Data.Maybe
 import Data.Serialize
 import Data.String.Conversions
 import Data.Text (Text)
+import qualified Data.Text as T
 import Data.Time.Clock
 import Data.Time.Clock.POSIX
 import Data.Word
+import qualified Database.CQL.IO as Q
 import Network.Socket
 import qualified Network.Socket.ByteString as SB (recv)
 import qualified Network.Socket.ByteString.Lazy as LB (recv, sendAll)
@@ -55,7 +58,14 @@ import Streamly.Prelude ((|:), nil)
 import qualified Streamly.Prelude as S
 import System.Random
 
---
+data MyException
+    = BlocksNotChainedException
+    | MessageParsingException
+    | KeyValueDBInsertException
+    deriving (Show)
+
+instance Exception MyException
+
 createSocket :: AddrInfo -> IO (Maybe Socket)
 createSocket = createSocketWithOptions []
 
@@ -197,23 +207,66 @@ postRequestMessages = do
         Nothing -> liftIO $ print ("Error sending, no connections available")
     return ()
 
+validateChainedBlockHeaders :: Headers -> Bool
+validateChainedBlockHeaders hdrs = do
+    let xs = headersList hdrs
+        pairs = zip xs (drop 1 xs)
+        res = map (\x -> (headerHash $ fst (fst x)) == (prevBlock $ fst (snd x))) pairs
+    if all (== True) res
+        then True
+        else False
+
+processHeaders :: (HasService env m) => Headers -> m ()
+processHeaders hdrs = do
+    dbe' <- asks getDBEnv
+    let conn = keyValDB $ dbHandles dbe'
+        qstr = "SELECT cql_version from system.local" :: Q.QueryString Q.R () (Identity T.Text)
+        p = Q.defQueryParams Q.One ()
+    op <- Q.runClient conn (Q.query qstr p)
+    liftIO $ putStrLn $ "fetched from DB -  " ++ show (runIdentity (op !! 0))
+    -- Do Get parent from DB (or genesis block)
+    case validateChainedBlockHeaders hdrs of
+        True -> do
+            liftIO $ print ("Block headers validated..")
+            let indexed = zip [0 ..] (headersList hdrs)
+                str = "insert INTO xoken.blocks (blockhash, header, height, transactions) values (?, ? , ? , ?)"
+                qstr = str :: Q.QueryString Q.W (Text, Text, Int32, Text) ()
+            w <-
+                mapM
+                    (\y -> do
+                         let par =
+                                 Q.defQueryParams
+                                     Q.One
+                                     (blockHashToHex (headerHash $ fst $ snd y), "headerrrr", (fst y) :: Int32, "")
+                         res <- liftIO $ try $ Q.runClient conn (Q.write qstr par)
+                         case res of
+                             Right () -> return ()
+                             Left (e :: SomeException) ->
+                                 liftIO $
+                                 print ("Error, Block headers [INSERT] Failed: " ++ show e) >>
+                                 throw KeyValueDBInsertException)
+                    indexed
+            return ()
+        False -> liftIO $ print ("Error: _BlocksNotChainedException_") >> throw BlocksNotChainedException
+    return ()
+
 messageHandler :: (HasService env m) => (Maybe Message) -> m (Maybe Message)
 messageHandler mm = do
     case mm of
         Just msg -> do
             liftIO $ print (msgType msg)
-            case (msgType msg) of
-                MCGetHeaders -> do
+            case (msg) of
+                MHeaders hdrs -> do
+                    processHeaders hdrs
                     return mm
-                MCInv -> do
+                MInv inv -> do
                     return mm
-                MCTx -> do
+                MTx tx -> do
                     return mm
                 _ -> do
-                    liftIO $ print "unknown type"
-                    return Nothing
+                    return mm
         Nothing -> do
-            liftIO $ print "invalid message"
+            liftIO $ print "Error, invalid message"
             return Nothing
 
 readNextMessage' :: (HasService env m) => Network -> Socket -> m (Maybe Message)
