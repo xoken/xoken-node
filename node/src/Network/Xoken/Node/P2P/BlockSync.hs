@@ -62,6 +62,8 @@ data MyException
     = BlocksNotChainedException
     | MessageParsingException
     | KeyValueDBInsertException
+    | BlockHashNotFoundInDB
+    | StaleBlockHeader
     deriving (Show)
 
 instance Exception MyException
@@ -216,15 +218,48 @@ validateChainedBlockHeaders hdrs = do
         then True
         else False
 
+markBestBlock :: [(Int32, BlockHeaderCount)] -> Q.ClientState -> IO ()
+markBestBlock indexed conn = do
+    let str = "insert INTO xoken.blocks (blockhash, header, height, transactions) values (?, ? , ? , ?)"
+        qstr = str :: Q.QueryString Q.W (Text, Text, Int32, Text) ()
+        par =
+            Q.defQueryParams
+                Q.One
+                ("best", blockHashToHex $ headerHash $ fst $ snd $ last indexed, (fst $ last indexed) :: Int32, "")
+    res <- try $ Q.runClient conn (Q.write (Q.prepared qstr) par)
+    case res of
+        Right () -> return ()
+        Left (e :: SomeException) ->
+            print ("Error: Marking [Best] blockhash failed: " ++ show e) >> throw KeyValueDBInsertException
+    return ()
+
 processHeaders :: (HasService env m) => Headers -> m ()
 processHeaders hdrs = do
     dbe' <- asks getDBEnv
-    let conn = keyValDB $ dbHandles dbe'
-        qstr = "SELECT cql_version from system.local" :: Q.QueryString Q.R () (Identity T.Text)
-        p = Q.defQueryParams Q.One ()
+    bp2pEnv <- asks getBitcoinP2PEnv
+    let net = bncNet $ bitcoinNodeConfig bp2pEnv
+        genesisHash = blockHashToHex $ headerHash $ getGenesisHeader net
+        conn = keyValDB $ dbHandles dbe'
+        str = "SELECT blockhash from xoken.blocks where blockhash = ?"
+        qstr = str :: Q.QueryString Q.R (Identity Text) (Identity T.Text)
+        headPrevHash = blockHashToHex $ prevBlock $ fst $ head $ headersList hdrs
+        lastPrevHash = blockHashToHex $ prevBlock $ fst $ last $ headersList hdrs
+        p = Q.defQueryParams Q.One $ Identity headPrevHash
+    if headPrevHash /= genesisHash
+        then do
+            op <- Q.runClient conn (Q.query qstr p)
+            if L.length op == 0
+                then throw BlockHashNotFoundInDB
+                else liftIO $ putStrLn $ "fetched from DB -  " ++ show (runIdentity (op !! 0))
+        else liftIO $ putStrLn $ "No issue, very first Headers set"
+    --
+    let p = Q.defQueryParams Q.One $ Identity lastPrevHash
     op <- Q.runClient conn (Q.query qstr p)
-    liftIO $ putStrLn $ "fetched from DB -  " ++ show (runIdentity (op !! 0))
-    -- Do Get parent from DB (or genesis block)
+    liftIO $ print (op)
+    if L.length op == 0
+        then liftIO $ print "LastPrevHash not found in DB, processing Headers set.."
+        else liftIO $ print "LastPrevHash found in DB, skipping Headers set!" >>= throw StaleBlockHeader
+    --
     case validateChainedBlockHeaders hdrs of
         True -> do
             liftIO $ print ("Block headers validated..")
@@ -238,14 +273,15 @@ processHeaders hdrs = do
                                  Q.defQueryParams
                                      Q.One
                                      (blockHashToHex (headerHash $ fst $ snd y), "headerrrr", (fst y) :: Int32, "")
-                         res <- liftIO $ try $ Q.runClient conn (Q.write qstr par)
+                         res <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr) par)
                          case res of
                              Right () -> return ()
                              Left (e :: SomeException) ->
                                  liftIO $
-                                 print ("Error, Block headers [INSERT] Failed: " ++ show e) >>
+                                 print ("Error: Block headers [INSERT] Failed: " ++ show e) >>
                                  throw KeyValueDBInsertException)
                     indexed
+            liftIO $ markBestBlock indexed conn
             return ()
         False -> liftIO $ print ("Error: _BlocksNotChainedException_") >> throw BlocksNotChainedException
     return ()
