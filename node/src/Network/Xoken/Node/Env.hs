@@ -9,6 +9,7 @@ module Network.Xoken.Node.Env where
 
 import Arivi.P2P.P2PEnv as PE hiding (option)
 import Codec.Serialise
+import Control.Concurrent.MVar
 import Control.Concurrent.STM.TVar
 import Control.Monad.Reader
 import Data.Hashable
@@ -31,6 +32,7 @@ data BitcoinP2PEnv =
     BitcoinP2PEnv
         { bitcoinNodeConfig :: !BitcoinNodeConfig
         , bitcoinPeers :: !(TVar (M.Map SockAddr BitcoinPeer))
+        , bestBlockUpdated :: !(MVar Bool)
         }
 
 class HasBitcoinP2PEnv env where

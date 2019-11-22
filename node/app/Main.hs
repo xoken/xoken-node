@@ -25,6 +25,7 @@ import Arivi.P2P.ServiceRegistry
 import Control.Arrow
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async.Lifted (async)
+import Control.Concurrent.MVar
 import Control.Concurrent.STM.TVar
 import Control.Exception ()
 import Control.Monad
@@ -147,7 +148,7 @@ runNode config dbh bp2p = do
                 async $ setupPeerConnection
                 liftIO $ threadDelay (20 * 1000000)
                 liftIO $ putStrLn $ "............"
-                async $ postRequestMessages
+                async $ runEgressStream
                 async $ handleIncomingMessages)
     -- runFileLoggingT (toS $ Config.logFile config) $ runAppM serviceEnv $ setupPeerConnection
     liftIO $ threadDelay 5999999999
@@ -253,7 +254,8 @@ main = do
                 (configNetwork conf) -- network constants
                 60 -- timeout in seconds
     g <- newTVarIO M.empty
-    runNode cnf (DatabaseHandles conn) (BitcoinP2PEnv nodeConfig g)
+    mv <- newMVar True
+    runNode cnf (DatabaseHandles conn) (BitcoinP2PEnv nodeConfig g mv)
   where
     opts =
         info (helper <*> config) $

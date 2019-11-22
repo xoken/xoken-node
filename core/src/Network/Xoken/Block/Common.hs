@@ -133,7 +133,9 @@ data BlockHeader =
                   -- | random nonce
         , bhNonce :: !Word32 --  4 bytes
         }
-    deriving (Eq, Ord, Show, Read, Generic, Hashable)-- 80 bytes
+    deriving (Eq, Ord, Show, Read, Generic, Hashable) -- 80 bytes
+
+instance ToJSON BlockHeader
 
 -- | Compute hash of 'BlockHeader'.
 headerHash :: BlockHeader -> BlockHash
@@ -149,13 +151,7 @@ instance Serialize BlockHeader where
         n <- getWord32le
         return
             BlockHeader
-                { blockVersion = v
-                , prevBlock = p
-                , merkleRoot = m
-                , blockTimestamp = t
-                , blockBits = b
-                , bhNonce = n
-                }
+                {blockVersion = v, prevBlock = p, merkleRoot = m, blockTimestamp = t, blockBits = b, bhNonce = n}
     put (BlockHeader v p m bt bb n) = do
         putWord32le v
         put p
@@ -274,10 +270,7 @@ decodeCompact nCompact =
         | nSize <= 3 = fromIntegral nWord
         | otherwise = fromIntegral nWord `shiftL` (8 * (nSize - 3))
     neg = nWord /= 0 && (nCompact .&. 0x00800000) /= 0
-    over =
-        nWord /= 0 &&
-        (nSize > 34 ||
-         nWord > 0xff && nSize > 33 || nWord > 0xffff && nSize > 32)
+    over = nWord /= 0 && (nSize > 34 || nWord > 0xff && nSize > 33 || nWord > 0xffff && nSize > 32)
 
 -- | Encode an 'Integer' to the compact number format used in the difficulty
 -- target of a block.
@@ -293,8 +286,7 @@ encodeCompact i = nCompact
          in f i'
     nCompact''' :: Word32
     nCompact'''
-        | nSize' <= 3 =
-            fromIntegral $ (low64 .&. i') `shiftL` (8 * (3 - nSize'))
+        | nSize' <= 3 = fromIntegral $ (low64 .&. i') `shiftL` (8 * (3 - nSize'))
         | otherwise = fromIntegral $ low64 .&. (i' `shiftR` (8 * (nSize' - 3)))
     nCompact'' :: Word32
     nSize :: Int

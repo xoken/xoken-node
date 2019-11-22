@@ -1,4 +1,6 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 {-|
 Module      : Network.Xoken.Crypto.Hash
@@ -32,10 +34,12 @@ module Network.Xoken.Crypto.Hash
 
 import Crypto.Hash (RIPEMD160(..), SHA1(..), SHA256(..), SHA512(..), hashWith)
 import Crypto.MAC.HMAC (HMAC, hmac)
+import Data.Aeson (FromJSON, ToJSON, Value(String), parseJSON, toJSON, withText)
 import Data.ByteArray (ByteArrayAccess)
 import qualified Data.ByteArray as BA
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import Data.ByteString.Char8 as C
 import Data.ByteString.Short (ShortByteString)
 import qualified Data.ByteString.Short as BSS
 import Data.Either (fromRight)
@@ -45,6 +49,7 @@ import qualified Data.Serialize.Get as Get
 import qualified Data.Serialize.Put as Put
 import Data.String (IsString, fromString)
 import Data.String.Conversions (cs)
+import Data.Text as T
 import Data.Word (Word32)
 import Network.Xoken.Util
 import Text.Read as R
@@ -70,6 +75,11 @@ newtype Hash256 =
         }
     deriving (Eq, Ord, Hashable)
 
+instance ToJSON Hash256 where
+    toJSON a = Data.Aeson.String $ encodeHex $ BSS.fromShort $ getHash256 a
+
+-- instance ToJSON ByteString where
+--     toJSON a = Data.Aeson.String $ T.pack (C.unpack a)
 -- | Type for 160-bit hashes.
 newtype Hash160 =
     Hash160
@@ -164,13 +174,11 @@ sha1 = Hash160 . BSS.toShort . BA.convert . hashWith SHA1
 
 -- | Compute two rounds of SHA-256.
 doubleSHA256 :: ByteArrayAccess b => b -> Hash256
-doubleSHA256 =
-    Hash256 . BSS.toShort . BA.convert . hashWith SHA256 . hashWith SHA256
+doubleSHA256 = Hash256 . BSS.toShort . BA.convert . hashWith SHA256 . hashWith SHA256
 
 -- | Compute SHA-256 followed by RIPMED-160.
 addressHash :: ByteArrayAccess b => b -> Hash160
-addressHash =
-    Hash160 . BSS.toShort . BA.convert . hashWith RIPEMD160 . hashWith SHA256
+addressHash = Hash160 . BSS.toShort . BA.convert . hashWith RIPEMD160 . hashWith SHA256
 
 {- CheckSum -}
 -- | Computes a 32 bit checksum.
@@ -182,13 +190,11 @@ checkSum32 =
 {- HMAC -}
 -- | Computes HMAC over SHA-512.
 hmac512 :: ByteString -> ByteString -> Hash512
-hmac512 key msg =
-    Hash512 $ BSS.toShort $ BA.convert (hmac key msg :: HMAC SHA512)
+hmac512 key msg = Hash512 $ BSS.toShort $ BA.convert (hmac key msg :: HMAC SHA512)
 
 -- | Computes HMAC over SHA-256.
 hmac256 :: (ByteArrayAccess k, ByteArrayAccess m) => k -> m -> Hash256
-hmac256 key msg =
-    Hash256 $ BSS.toShort $ BA.convert (hmac key msg :: HMAC SHA256)
+hmac256 key msg = Hash256 $ BSS.toShort $ BA.convert (hmac key msg :: HMAC SHA256)
 
 -- | Split a 'Hash512' into a pair of 'Hash256'.
 split512 :: Hash512 -> (Hash256, Hash256)
@@ -198,6 +204,4 @@ split512 h = (Hash256 (BSS.toShort a), Hash256 (BSS.toShort b))
 
 -- | Join a pair of 'Hash256' into a 'Hash512'.
 join512 :: (Hash256, Hash256) -> Hash512
-join512 (a, b) =
-    Hash512 . BSS.toShort $
-    BSS.fromShort (getHash256 a) `BS.append` BSS.fromShort (getHash256 b)
+join512 (a, b) = Hash512 . BSS.toShort $ BSS.fromShort (getHash256 a) `BS.append` BSS.fromShort (getHash256 b)
