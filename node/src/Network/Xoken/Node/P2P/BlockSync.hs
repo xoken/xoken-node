@@ -10,11 +10,12 @@
 module Network.Xoken.Node.P2P.BlockSync
     ( createSocket
     , setupPeerConnection
-    , handleIncomingMessages
+    , initPeerListeners
     , runEgressStream
     ) where
 
 import Control.Concurrent.Async (mapConcurrently)
+import Control.Concurrent.Async.Lifted as LA (async)
 import Control.Concurrent.MVar
 import Control.Concurrent.STM.TVar
 import Control.Exception
@@ -421,18 +422,22 @@ logMessage mg = do
     liftIO $ print (mg)
     return ()
 
-handleIncomingMessages :: (HasService env m) => m ()
-handleIncomingMessages = do
+initPeerListeners :: (HasService env m) => m ()
+initPeerListeners = do
     bp2pEnv <- asks getBitcoinP2PEnv
     let net = bncNet $ bitcoinNodeConfig bp2pEnv
     allpr <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
     let conpr = L.filter (\x -> bpConnected (snd x)) (M.toList allpr)
-    let pr = snd $ conpr !! 0
+    mapM_ (\pr -> LA.async $ handleIncomingMessages $ snd pr) conpr
+    return ()
+
+handleIncomingMessages :: (HasService env m) => BitcoinPeer -> m ()
+handleIncomingMessages pr = do
+    bp2pEnv <- asks getBitcoinP2PEnv
+    let net = bncNet $ bitcoinNodeConfig bp2pEnv
     case (bpSocket pr) of
         Just s -> do
             liftIO $ print ("reading from:  " ++ show (bpAddress pr))
             runStream $ S.repeatM (readNextMessage' net s) & S.mapM (messageHandler) & S.mapM (logMessage)
-                -- & S.mapM undefined
-            undefined
         Nothing -> undefined
     return ()

@@ -149,7 +149,7 @@ runNode config dbh bp2p = do
                 liftIO $ threadDelay (20 * 1000000)
                 liftIO $ putStrLn $ "............"
                 async $ runEgressStream
-                async $ handleIncomingMessages)
+                async $ initPeerListeners)
     -- runFileLoggingT (toS $ Config.logFile config) $ runAppM serviceEnv $ setupPeerConnection
     liftIO $ threadDelay 5999999999
     return ()
