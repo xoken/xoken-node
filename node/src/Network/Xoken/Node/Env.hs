@@ -24,10 +24,6 @@ import Network.Xoken.Transaction
 import System.Random
 import Text.Read
 
--- import Data.Functor.Identity
--- import Network.Xoken.Block
--- import Network.Xoken.Constants
--- import Network.Xoken.Network
 data BitcoinP2PEnv =
     BitcoinP2PEnv
         { bitcoinNodeConfig :: !BitcoinNodeConfig
