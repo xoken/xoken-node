@@ -101,6 +101,7 @@ library
     , tinylog
     , async
     , streamly
+    , lifted-base
   default-language: Haskell2010
 
 executable xoken-node
@@ -182,6 +183,7 @@ executable xoken-node
     , tinylog
     , async
     , streamly
+    , lifted-base
   default-language: Haskell2010
 
 test-suite xoken-node-test

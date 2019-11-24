@@ -19,6 +19,7 @@ import Control.Concurrent.Async.Lifted as LA (async)
 import Control.Concurrent.MVar
 import Control.Concurrent.STM.TVar
 import Control.Exception
+import qualified Control.Exception.Lifted as LE (try)
 import Control.Monad
 import Control.Monad.Logger
 import Control.Monad.Reader
@@ -227,21 +228,27 @@ sendRequestMessages msg = do
                 indices =
                     case L.length (getHeadersBL hdr) of
                         x
-                            | x >= 19 -> take 4 pds
-                            | x == 18 -> take 3 pds
-                            | x == 17 -> take 3 pds
-                            | x == 16 -> take 2 pds
-                            | x < 16 -> take 1 pds
-            mapM_
-                (\z -> do
-                     let pr = snd $ connPeers !! (z - 1)
-                     case (bpSocket pr) of
-                         Just q -> do
-                             let em = runPut . putMessage net $ msg
-                             liftIO $ sendEncMessage (bpSockLock pr) q (BSL.fromStrict em)
-                             liftIO $ print ("sending out get data: " ++ show (bpAddress pr))
-                         Nothing -> liftIO $ print ("Error sending, no connections available"))
-                indices
+                            | x > 18 -> take 4 pds
+                            | x > 16 -> take 3 pds
+                            | x <= 16 -> take 1 pds
+            liftIO $ print (md, pds, indices)
+            res <-
+                liftIO $
+                try $
+                mapM_
+                    (\z -> do
+                         let pr = snd $ connPeers !! z
+                         case (bpSocket pr) of
+                             Just q -> do
+                                 let em = runPut . putMessage net $ msg
+                                 liftIO $ sendEncMessage (bpSockLock pr) q (BSL.fromStrict em)
+                                 liftIO $ print ("sending out get data: " ++ show (bpAddress pr))
+                             Nothing -> liftIO $ print ("Error sending, no connections available"))
+                    indices
+            case res of
+                Right () -> return ()
+                Left (e :: SomeException) -> do
+                    liftIO $ print ("Error, sending out data: " ++ show e)
         ___ -> undefined
 
 msgOrder :: Message -> Message -> Ordering
@@ -252,7 +259,10 @@ msgOrder m1 m2 = do
 
 runEgressStream :: (HasService env m) => m ()
 runEgressStream = do
-    runStream $ (S.repeatM produceGetHeadersMessage) & (S.mapM sendRequestMessages)
+    res <- LE.try $ runStream $ (S.repeatM produceGetHeadersMessage) & (S.mapM sendRequestMessages)
+    case res of
+        Right () -> liftIO $ print ("okay")
+        Left (e :: SomeException) -> liftIO $ print ("[ERROR] runEgressStream " ++ show e)
         -- S.mergeBy msgOrder (S.repeatM produceGetHeadersMessage) (S.repeatM produceGetHeadersMessage) &
         --    S.mapM   sendRequestMessages
 
@@ -287,23 +297,20 @@ getBlockLocator conn net = do
         str = "SELECT height, blockhash from xoken.blocks_height where height in ?"
         qstr = str :: Q.QueryString Q.R (Identity [Int32]) ((Int32, T.Text))
         p = Q.defQueryParams Q.One $ Identity bl
+    print ("xxx")
     op <- Q.runClient conn (Q.query qstr p)
+    print ("yyy")
     if L.length op == 0
         then return [headerHash $ getGenesisHeader net]
         else do
-            print ("Best-block from DB: " ++ show ((op !! 0)))
-            case (hexToBlockHash $ snd (op !! 0)) of
-                Just x ->
-                    return $
-                    catMaybes $
-                    (map (\x ->
-                              case (hexToBlockHash $ snd x) of
-                                  Just y -> Just y
-                                  Nothing -> Nothing)
-                         op)
-                Nothing -> do
-                    print ("block hash seems invalid, startin over from genesis") -- not optimal, but unforseen case.
-                    return [headerHash $ getGenesisHeader net]
+            print ("Best-block from DB: " ++ (show $ last op))
+            return $
+                catMaybes $
+                (map (\x ->
+                          case (hexToBlockHash $ snd x) of
+                              Just y -> Just y
+                              Nothing -> Nothing)
+                     (reverse op))
 
 fetchBestBlock :: Q.ClientState -> Network -> IO ((BlockHash, Int32))
 fetchBestBlock conn net = do
@@ -312,7 +319,7 @@ fetchBestBlock conn net = do
         p = Q.defQueryParams Q.One $ Identity "best"
     op <- Q.runClient conn (Q.query qstr p)
     if L.length op == 0
-        then return ((headerHash $ getGenesisHeader net), 0)
+        then print ("Bestblock is genesis.") >> return ((headerHash $ getGenesisHeader net), 0)
         else do
             print ("Best-block from DB: " ++ show ((op !! 0)))
             case (hexToBlockHash $ fst (op !! 0)) of
@@ -346,48 +353,53 @@ processHeaders hdrs = do
     liftIO $ print (op)
     if L.length op == 0
         then liftIO $ print "LastPrevHash not in DB, processing Headers set.."
-        else liftIO $ print "LastPrevHash found in DB, skipping Headers set!" >>= throw StaleBlockHeader
+        else liftIO $ print "LastPrevHash found in DB, skipping Headers set!" --  >>= throw StaleBlockHeader -- for debugging only
     --
     case validateChainedBlockHeaders hdrs of
         True -> do
-            liftIO $ print ("Block headers validated..")
+            liftIO $ print ("Block headers validated.")
             bb <- liftIO $ fetchBestBlock conn net
             let indexed = zip [((snd bb) + 1) ..] (headersList hdrs)
                 str1 = "insert INTO xoken.blocks_hash (blockhash, header, height, transactions) values (?, ? , ? , ?)"
                 qstr1 = str1 :: Q.QueryString Q.W (Text, Text, Int32, Maybe Text) ()
                 str2 = "insert INTO xoken.blocks_height (height, blockhash, header, transactions) values (?, ? , ? , ?)"
                 qstr2 = str2 :: Q.QueryString Q.W (Int32, Text, Text, Maybe Text) ()
-            w <-
-                mapM
-                    (\y -> do
-                         let par1 =
-                                 Q.defQueryParams
-                                     Q.One
-                                     ( (blockHashToHex $ headerHash $ fst $ snd y)
-                                     , (T.pack $ LC.unpack $ A.encode $ fst $ snd y)
-                                     , (fst y)
-                                     , Nothing)
-                         let par2 =
-                                 Q.defQueryParams
-                                     Q.One
-                                     ( (fst y)
-                                     , (blockHashToHex $ headerHash $ fst $ snd y)
-                                     , (T.pack $ LC.unpack $ A.encode $ fst $ snd y)
-                                     , Nothing)
-                         res1 <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr1) par1)
-                         case res1 of
-                             Left (e :: SomeException) ->
-                                 liftIO $
-                                 print ("Error: INSERT into 'blocks_hash' failed: " ++ show e) >>
-                                 throw KeyValueDBInsertException
+            mapM_
+                (\y -> do
+                     let par1 =
+                             Q.defQueryParams
+                                 Q.One
+                                 ( (blockHashToHex $ headerHash $ fst $ snd y)
+                                 , (T.pack $ LC.unpack $ A.encode $ fst $ snd y)
+                                 , (fst y)
+                                 , Nothing)
+                     let par2 =
+                             Q.defQueryParams
+                                 Q.One
+                                 ( (fst y)
+                                 , (blockHashToHex $ headerHash $ fst $ snd y)
+                                 , (T.pack $ LC.unpack $ A.encode $ fst $ snd y)
+                                 , Nothing)
+                         -- liftIO $ print ("aaa")
+                     res1 <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr1) par1)
+                         -- liftIO $ print ("bbb")
+                     case res1 of
+                         Right () -> return ()
+                         Left (e :: SomeException) ->
+                             liftIO $
+                             print ("Error: INSERT into 'blocks_hash' failed: " ++ show e) >>=
+                             throw KeyValueDBInsertException
                          --
-                         res2 <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr2) par2)
-                         case res2 of
-                             Left (e :: SomeException) ->
-                                 liftIO $
-                                 print ("Error: INSERT into 'blocks_height' failed: " ++ show e) >>
-                                 throw KeyValueDBInsertException)
-                    indexed
+                     -- liftIO $ print ("ccc")
+                     res2 <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr2) par2)
+                     case res2 of
+                         Right () -> return ()
+                         Left (e :: SomeException) ->
+                             liftIO $
+                             print ("Error: INSERT into 'blocks_height' failed: " ++ show e) >>=
+                             throw KeyValueDBInsertException)
+                indexed
+            liftIO $ print ("done..")
             liftIO $ do
                 markBestBlock indexed conn
                 putMVar (bestBlockUpdated bp2pEnv) True
@@ -438,6 +450,10 @@ handleIncomingMessages pr = do
     case (bpSocket pr) of
         Just s -> do
             liftIO $ print ("reading from:  " ++ show (bpAddress pr))
-            runStream $ S.repeatM (readNextMessage' net s) & S.mapM (messageHandler) & S.mapM (logMessage)
+            res <-
+                LE.try $ runStream $ S.repeatM (readNextMessage' net s) & S.mapM (messageHandler) & S.mapM (logMessage)
+            case res of
+                Right () -> liftIO $ print ("okay")
+                Left (e :: SomeException) -> liftIO $ print ("[ERROR] handleIncomingMessages " ++ show e)
         Nothing -> undefined
     return ()
