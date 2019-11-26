@@ -62,16 +62,17 @@ import Streamly.Prelude ((|:), nil)
 import qualified Streamly.Prelude as S
 import System.Random
 
-data MyException
+data BlockSyncException
     = BlocksNotChainedException
     | MessageParsingException
     | KeyValueDBInsertException
     | BlockHashNotFoundInDB
-    | StaleBlockHeader
+    | DuplicateBlockHeader
     | InvalidMessageType
+    | EmptyHeadersMessage
     deriving (Show)
 
-instance Exception MyException
+instance Exception BlockSyncException
 
 createSocket :: AddrInfo -> IO (Maybe Socket)
 createSocket = createSocketWithOptions []
@@ -148,9 +149,7 @@ readNextMessage net sock = do
                                     Left (e :: IOException) -> do
                                         liftIO $ print ("Error, reading: " ++ show e)
                                         throw e
-                                    Right y -> do
-                                        liftIO $ print (B.length y)
-                                        return $ hdr `B.append` y
+                                    Right y -> return $ hdr `B.append` y
                     case runGet (getMessage net) $ byts of
                         Left e -> do
                             liftIO $ print ("Error, unexpected message header: " ++ e)
@@ -228,10 +227,8 @@ sendRequestMessages msg = do
                 indices =
                     case L.length (getHeadersBL hdr) of
                         x
-                            | x > 18 -> take 4 pds
-                            | x > 16 -> take 3 pds
-                            | x <= 16 -> take 1 pds
-            liftIO $ print (md, pds, indices)
+                            | x >= 19 -> take 4 pds -- 2^19 = blk ht 524288
+                            | x < 19 -> take 1 pds
             res <-
                 liftIO $
                 try $
@@ -261,7 +258,7 @@ runEgressStream :: (HasService env m) => m ()
 runEgressStream = do
     res <- LE.try $ runStream $ (S.repeatM produceGetHeadersMessage) & (S.mapM sendRequestMessages)
     case res of
-        Right () -> liftIO $ print ("okay")
+        Right () -> return ()
         Left (e :: SomeException) -> liftIO $ print ("[ERROR] runEgressStream " ++ show e)
         -- S.mergeBy msgOrder (S.repeatM produceGetHeadersMessage) (S.repeatM produceGetHeadersMessage) &
         --    S.mapM   sendRequestMessages
@@ -275,31 +272,25 @@ validateChainedBlockHeaders hdrs = do
         then True
         else False
 
-markBestBlock :: [(Int32, BlockHeaderCount)] -> Q.ClientState -> IO ()
-markBestBlock indexed conn = do
-    let str = "insert INTO xoken.blocks_hash (blockhash, header, height, transactions) values (?, ? , ? , ?)"
-        qstr = str :: Q.QueryString Q.W (Text, Text, Int32, Text) ()
-        par =
-            Q.defQueryParams
-                Q.One
-                ("best", blockHashToHex $ headerHash $ fst $ snd $ last indexed, (fst $ last indexed) :: Int32, "")
+markBestBlock :: Text -> Int32 -> Q.ClientState -> IO ()
+markBestBlock hash height conn = do
+    let str = "insert INTO xoken.proc_summary (name, strval, numval, boolval) values (? ,? ,?, ?)"
+        qstr = str :: Q.QueryString Q.W (Text, Text, Int32, Maybe Bool) ()
+        par = Q.defQueryParams Q.One ("best", hash, height :: Int32, Nothing)
     res <- try $ Q.runClient conn (Q.write (Q.prepared qstr) par)
     case res of
         Right () -> return ()
         Left (e :: SomeException) ->
             print ("Error: Marking [Best] blockhash failed: " ++ show e) >> throw KeyValueDBInsertException
-    return ()
 
 getBlockLocator :: Q.ClientState -> Network -> IO ([BlockHash])
 getBlockLocator conn net = do
     (hash, ht) <- fetchBestBlock conn net
-    let bl = filter (> 0) $ takeWhile (< ht) $ map (\x -> ht - (2 ^ x)) [0 .. 20] -- [1,2,4,8,16,32,64,... ,262144,524288,1048576]
+    let bl = L.insert ht $ filter (> 0) $ takeWhile (< ht) $ map (\x -> ht - (2 ^ x)) [0 .. 20] -- [1,2,4,8,16,32,64,... ,262144,524288,1048576]
         str = "SELECT height, blockhash from xoken.blocks_height where height in ?"
         qstr = str :: Q.QueryString Q.R (Identity [Int32]) ((Int32, T.Text))
         p = Q.defQueryParams Q.One $ Identity bl
-    print ("xxx")
     op <- Q.runClient conn (Q.query qstr p)
-    print ("yyy")
     if L.length op == 0
         then return [headerHash $ getGenesisHeader net]
         else do
@@ -314,7 +305,7 @@ getBlockLocator conn net = do
 
 fetchBestBlock :: Q.ClientState -> Network -> IO ((BlockHash, Int32))
 fetchBestBlock conn net = do
-    let str = "SELECT header, height from xoken.blocks_hash where blockhash = ?" -- clever hack to use header for best-block hash
+    let str = "SELECT strval, numval from xoken.proc_summary where name = ?"
         qstr = str :: Q.QueryString Q.R (Identity Text) ((T.Text, Int32))
         p = Q.defQueryParams Q.One $ Identity "best"
     op <- Q.runClient conn (Q.query qstr p)
@@ -332,65 +323,40 @@ processHeaders :: (HasService env m) => Headers -> m ()
 processHeaders hdrs = do
     dbe' <- asks getDBEnv
     bp2pEnv <- asks getBitcoinP2PEnv
-    let net = bncNet $ bitcoinNodeConfig bp2pEnv
-        genesisHash = blockHashToHex $ headerHash $ getGenesisHeader net
-        conn = keyValDB $ dbHandles dbe'
-        str = "SELECT blockhash from xoken.blocks_hash where blockhash = ?"
-        qstr = str :: Q.QueryString Q.R (Identity Text) (Identity T.Text)
-        headPrevHash = blockHashToHex $ prevBlock $ fst $ head $ headersList hdrs
-        lastPrevHash = blockHashToHex $ prevBlock $ fst $ last $ headersList hdrs
-        p = Q.defQueryParams Q.One $ Identity headPrevHash
-    if headPrevHash /= genesisHash
-        then do
-            op <- Q.runClient conn (Q.query qstr p)
-            if L.length op == 0
-                then throw BlockHashNotFoundInDB
-                else liftIO $ putStrLn $ "fetched from DB -  " ++ show (runIdentity (op !! 0))
-        else liftIO $ putStrLn $ "No issue, very first Headers set"
-    --
-    let p = Q.defQueryParams Q.One $ Identity lastPrevHash
-    op <- Q.runClient conn (Q.query qstr p)
-    liftIO $ print (op)
-    if L.length op == 0
-        then liftIO $ print "LastPrevHash not in DB, processing Headers set.."
-        else liftIO $ print "LastPrevHash found in DB, skipping Headers set!" --  >>= throw StaleBlockHeader -- for debugging only
-    --
+    if (L.length $ headersList hdrs) == 0
+        then liftIO $ print "Nothing to process!" >> throw EmptyHeadersMessage
+        else liftIO $ print $ "Processing Headers with " ++ show (L.length $ headersList hdrs) ++ " entries."
     case validateChainedBlockHeaders hdrs of
         True -> do
-            liftIO $ print ("Block headers validated.")
+            let net = bncNet $ bitcoinNodeConfig bp2pEnv
+                genesisHash = blockHashToHex $ headerHash $ getGenesisHeader net
+                conn = keyValDB $ dbHandles dbe'
+                headPrevHash = (blockHashToHex $ prevBlock $ fst $ head $ headersList hdrs)
             bb <- liftIO $ fetchBestBlock conn net
+            if (blockHashToHex $ fst bb) == genesisHash
+                then liftIO $ print ("First Headers set from genesis")
+                else if (blockHashToHex $ fst bb) == headPrevHash
+                         then liftIO $ print ("Links okay!")
+                         else liftIO $ print ("Does not match DB best-block") >> throw BlockHashNotFoundInDB -- likely a previously sync'd block
             let indexed = zip [((snd bb) + 1) ..] (headersList hdrs)
                 str1 = "insert INTO xoken.blocks_hash (blockhash, header, height, transactions) values (?, ? , ? , ?)"
                 qstr1 = str1 :: Q.QueryString Q.W (Text, Text, Int32, Maybe Text) ()
                 str2 = "insert INTO xoken.blocks_height (height, blockhash, header, transactions) values (?, ? , ? , ?)"
                 qstr2 = str2 :: Q.QueryString Q.W (Int32, Text, Text, Maybe Text) ()
+            liftIO $ print ("indexed " ++ show (L.length indexed))
             mapM_
                 (\y -> do
-                     let par1 =
-                             Q.defQueryParams
-                                 Q.One
-                                 ( (blockHashToHex $ headerHash $ fst $ snd y)
-                                 , (T.pack $ LC.unpack $ A.encode $ fst $ snd y)
-                                 , (fst y)
-                                 , Nothing)
-                     let par2 =
-                             Q.defQueryParams
-                                 Q.One
-                                 ( (fst y)
-                                 , (blockHashToHex $ headerHash $ fst $ snd y)
-                                 , (T.pack $ LC.unpack $ A.encode $ fst $ snd y)
-                                 , Nothing)
-                         -- liftIO $ print ("aaa")
+                     let hdrHash = blockHashToHex $ headerHash $ fst $ snd y
+                         hdrJson = T.pack $ LC.unpack $ A.encode $ fst $ snd y
+                         par1 = Q.defQueryParams Q.One (hdrHash, hdrJson, fst y, Nothing)
+                         par2 = Q.defQueryParams Q.One (fst y, hdrHash, hdrJson, Nothing)
                      res1 <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr1) par1)
-                         -- liftIO $ print ("bbb")
                      case res1 of
                          Right () -> return ()
                          Left (e :: SomeException) ->
                              liftIO $
                              print ("Error: INSERT into 'blocks_hash' failed: " ++ show e) >>=
                              throw KeyValueDBInsertException
-                         --
-                     -- liftIO $ print ("ccc")
                      res2 <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr2) par2)
                      case res2 of
                          Right () -> return ()
@@ -401,22 +367,38 @@ processHeaders hdrs = do
                 indexed
             liftIO $ print ("done..")
             liftIO $ do
-                markBestBlock indexed conn
+                markBestBlock (blockHashToHex $ headerHash $ fst $ snd $ last $ indexed) (fst $ last indexed) conn
                 putMVar (bestBlockUpdated bp2pEnv) True
             return ()
-        False -> liftIO $ print ("Error: _BlocksNotChainedException_") >> throw BlocksNotChainedException
+        False -> liftIO $ print ("Error: BlocksNotChainedException") >> throw BlocksNotChainedException
     return ()
 
 messageHandler :: (HasService env m) => (Maybe Message) -> m (MessageCommand)
 messageHandler mm = do
+    bp2pEnv <- asks getBitcoinP2PEnv
     case mm of
         Just msg -> do
-            liftIO $ print (msgType msg)
             case (msg) of
                 MHeaders hdrs -> do
-                    processHeaders hdrs
+                    liftIO $ takeMVar (headersWriteLock bp2pEnv)
+                    res <- LE.try $ processHeaders hdrs
+                    case res of
+                        Right () -> return ()
+                        Left BlockHashNotFoundInDB -> return ()
+                        Left EmptyHeadersMessage -> return ()
+                        Left e -> liftIO $ print ("[ERROR] Unhandled exception!" ++ show e) >> throw e
+                    liftIO $ putMVar (headersWriteLock bp2pEnv) True
                     return $ msgType msg
                 MInv inv -> do
+                    let lst = invList inv
+                    mapM_
+                        (\x ->
+                             if (invType x) == InvBlock
+                                 then do
+                                     liftIO $ print ("Unsolicited INV, a new Block: " ++ (show $ invHash x))
+                                     liftIO $ putMVar (bestBlockUpdated bp2pEnv) True -- will trigger a GetHeaders to peers
+                                 else return ())
+                        lst
                     return $ msgType msg
                 MTx tx -> do
                     return $ msgType msg
@@ -431,7 +413,7 @@ readNextMessage' net sock = liftIO $ readNextMessage net sock
 
 logMessage :: (HasService env m) => MessageCommand -> m ()
 logMessage mg = do
-    liftIO $ print (mg)
+    liftIO $ print ("processed: " ++ show mg)
     return ()
 
 initPeerListeners :: (HasService env m) => m ()
@@ -453,7 +435,7 @@ handleIncomingMessages pr = do
             res <-
                 LE.try $ runStream $ S.repeatM (readNextMessage' net s) & S.mapM (messageHandler) & S.mapM (logMessage)
             case res of
-                Right () -> liftIO $ print ("okay")
+                Right () -> return ()
                 Left (e :: SomeException) -> liftIO $ print ("[ERROR] handleIncomingMessages " ++ show e)
         Nothing -> undefined
     return ()

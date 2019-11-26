@@ -29,6 +29,7 @@ data BitcoinP2PEnv =
         { bitcoinNodeConfig :: !BitcoinNodeConfig
         , bitcoinPeers :: !(TVar (M.Map SockAddr BitcoinPeer))
         , bestBlockUpdated :: !(MVar Bool)
+        , headersWriteLock :: !(MVar Bool)
         }
 
 class HasBitcoinP2PEnv env where

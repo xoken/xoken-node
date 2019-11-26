@@ -255,7 +255,8 @@ main = do
                 60 -- timeout in seconds
     g <- newTVarIO M.empty
     mv <- newMVar True
-    runNode cnf (DatabaseHandles conn) (BitcoinP2PEnv nodeConfig g mv)
+    hl <- newMVar True
+    runNode cnf (DatabaseHandles conn) (BitcoinP2PEnv nodeConfig g mv hl)
   where
     opts =
         info (helper <*> config) $
