@@ -41,6 +41,7 @@ import Data.ByteString.Builder
 import qualified Data.ByteString.Lazy as L
 import qualified Data.ByteString.Lazy.Char8 as C
 import Data.Char
+import Data.Default
 import Data.Function
 import Data.Functor.Identity
 import Data.Int
@@ -55,6 +56,7 @@ import qualified Data.Text.Lazy as TL
 import Data.Typeable
 import Data.Version
 import Data.Word (Word32)
+import qualified Database.Bolt as BT
 import qualified Database.CQL.IO as Q
 import Network.Simple.TCP
 import Network.Socket
@@ -154,10 +156,6 @@ runNode config dbh bp2p = do
     liftIO $ threadDelay 5999999999
     return ()
 
-getLayeredDB :: IO (DBHandles)
-getLayeredDB = do
-    return (undefined)
-
 --
 data Config =
     Config
@@ -240,6 +238,10 @@ main = do
         exitSuccess
     when (Data.List.null (configPeers conf) && not (configDiscover conf)) . liftIO $
         die "ERROR: Specify peers to connect or enable peer discovery."
+    --
+    --
+    pipe <- BT.connect $ def {BT.user = "neo4j", BT.password = "admin123"}
+    --
     --
     let path = "."
     b <- System.Directory.doesPathExist (path <> "/config.yaml")

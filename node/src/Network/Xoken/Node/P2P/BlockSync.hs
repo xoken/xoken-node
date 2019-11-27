@@ -56,7 +56,6 @@ import Network.Xoken.Network.Common -- (GetData(..), MessageCommand(..), Network
 import Network.Xoken.Network.Message
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.P2P.Types
-import Network.Xoken.P2P.Common
 import Streamly
 import Streamly.Prelude ((|:), nil)
 import qualified Streamly.Prelude as S
@@ -439,3 +438,24 @@ handleIncomingMessages pr = do
                 Left (e :: SomeException) -> liftIO $ print ("[ERROR] handleIncomingMessages " ++ show e)
         Nothing -> undefined
     return ()
+
+--
+--
+-- | Create version data structure.
+buildVersion :: Network -> Word64 -> BlockHeight -> NetworkAddress -> NetworkAddress -> Word64 -> Version
+buildVersion net nonce height loc rmt time =
+    Version
+        { version = myVersion
+        , services = naServices loc
+        , timestamp = time
+        , addrRecv = rmt
+        , addrSend = loc
+        , verNonce = nonce
+        , userAgent = VarString (getXokenUserAgent net)
+        , startHeight = height
+        , relay = True
+        }
+
+-- | Our protocol version.
+myVersion :: Word32
+myVersion = 70015

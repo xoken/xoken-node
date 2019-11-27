@@ -21,104 +21,15 @@ source-repository head
   type: git
   location: https://github.com/stoichammer/xoken-node.git
 
-library
-  exposed-modules:
-      Xoken.Node
-      Paths_xoken_node
-  other-modules:
-      Network.Xoken.Node.Block
-      Network.Xoken.Node.Data
-      Network.Xoken.Node.Data.Cached
-      Network.Xoken.Node.Data.ImportDB
-      Network.Xoken.Node.Data.KeyValue
-      Network.Xoken.Node.Data.Memory
-      Network.Xoken.Node.Data.RocksDB
-      Network.Xoken.Node.Logic
-      Network.Xoken.Node.Messages
-      Network.Xoken.Node.Web
-      Network.Xoken.Node.AriviService
-      Network.Xoken.Node.P2P.BlockSync
-      Network.Xoken.Node.P2P.Types
-      Network.Xoken.Node.Env
 
-  autogen-modules:
-      Paths_xoken_node
-  hs-source-dirs:
-      src
-  build-depends:
-      aeson
-    , base >=4.9 && <5
-    , bytestring
-    , cereal
-    , conduit
-    , containers
-    , data-default
-    , hashable
-    , http-types
-    , monad-logger
-    , mtl
-    , network
-    , nqe
-    , random
-    , resourcet
-    , rocksdb-haskell
-    , rocksdb-query >=0.3.0
-    , scotty
-    , string-conversions
-    , text
-    , network-conduit-tls
-    , time
-    , transformers
-    , unliftio
-    , unordered-containers
-    , vector
-    , wai
-    , warp
-    , xoken-core
-    , xoken-p2p
-    , arivi-p2p
-    , network-simple
-    , monad-loops
-    , binary
-    , zlib
-    , utf8-string
-    , base64-bytestring
-    , extra
-    , serialise
-    , lifted-async
-    , stm
-    , arivi-crypto
-    , arivi-p2p
-    , arivi-utils
-    , arivi-network
-    , string-conv
-    , stm-containers
-    , directory
-    , transformers-base
-    , exceptions
-    , monad-control
-    , cql-io
-    , tinylog
-    , async
-    , streamly
-    , lifted-base
-  default-language: Haskell2010
 
 executable xoken-node
   main-is: Main.hs
   other-modules:
       Xoken.Node
       Paths_xoken_node
-      Network.Xoken.Node.Block
       Network.Xoken.Node.Data
-      Network.Xoken.Node.Data.Cached
-      Network.Xoken.Node.Data.ImportDB
-      Network.Xoken.Node.Data.KeyValue
-      Network.Xoken.Node.Data.Memory
-      Network.Xoken.Node.Data.RocksDB
       Network.Xoken.Node.Logic
-      Network.Xoken.Node.Messages
-      Network.Xoken.Node.Web
       Network.Xoken.Node.AriviService
       Network.Xoken.Node.P2P.BlockSync
       Network.Xoken.Node.P2P.Types
@@ -158,7 +69,6 @@ executable xoken-node
     , wai
     , warp
     , xoken-core
-    , xoken-p2p
     , network-simple
     ,  monad-loops
     , binary
@@ -184,6 +94,7 @@ executable xoken-node
     , async
     , streamly
     , lifted-base
+    , hasbolt >=0.1.3.6
   default-language: Haskell2010
 
 test-suite xoken-node-test
@@ -226,7 +137,6 @@ test-suite xoken-node-test
     , wai
     , warp
     , xoken-core
-    , xoken-p2p
     , arivi-crypto
     , arivi-p2p
     , arivi-utils

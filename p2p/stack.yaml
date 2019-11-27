@@ -1,9 +1,0 @@
-resolver: lts-14.7
-
-packages:
-    - .
-    - ../core
-#    - secp256k1
-#    - zlib
-extra-deps:
-  # - xoken-core-0.1.0

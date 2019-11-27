@@ -56,19 +56,18 @@ import qualified GHC.Exts as Exts
 import GHC.Generics
 import Network.Simple.TCP as T
 import Network.Xoken.Node.Data
-import Network.Xoken.Node.Data.Cached
-import Network.Xoken.Node.Data.RocksDB
+
 import Network.Xoken.Node.Env
-import Network.Xoken.Node.Messages
+
 import Network.Xoken.Node.P2P.Types
-import Network.Xoken.Node.Web
+
 import System.Random
 import Text.Printf
 import UnliftIO
 import UnliftIO.Resource
 import Xoken
-import Xoken.P2P
 
+-- import Xoken.P2P
 jsonSerialiseAny :: (JsonSerial a) => Network -> a -> L.ByteString
 jsonSerialiseAny net = encodingToLazyByteString . jsonSerial net
     -- __ <- jsonSerialiseAny net i
@@ -89,34 +88,34 @@ getJsonRpcErrorObj messageId errCode errMsg =
 
 xGetBlockHash :: (MonadUnliftIO m) => Network -> BlockHash -> m (L.ByteString)
 xGetBlockHash net hash = do
-    res <- liftIO $ getBlockDB hash
+    res <- undefined -- liftIO $ getBlockDB hash
     case res of
-        Just b -> return $ jsonSerialiseAny net (b)
+        Just b -> return undefined -- $ jsonSerialiseAny net (b)
         Nothing -> return $ C.pack "{}"
 
 xGetBlocksHashes :: (MonadUnliftIO m) => Network -> [BlockHash] -> m (L.ByteString)
 xGetBlocksHashes net hashes = do
-    res <- mapM getBlockDB hashes
+    res <- undefined -- mapM getBlockDB hashes
     let ar = catMaybes res
-    return $ jsonSerialiseAny net (ar)
+    return undefined -- $ jsonSerialiseAny net (ar)
 
 xGetBlockHeight :: (MonadUnliftIO m) => Network -> Word32 -> m (L.ByteString)
 xGetBlockHeight net height = do
-    hs <- getBlocksAtHeightDB height
-    if length hs == 0
+    hs <- undefined -- getBlocksAtHeightDB height
+    if undefined -- length hs == undefined -- 0
         then return $ C.pack "{}"
         else do
-            res <- getBlockDB (hs !! 0)
+            res <- undefined -- getBlockDB (hs !! 0)
             case res of
-                Just b -> return $ jsonSerialiseAny net (b)
+                Just b -> return undefined -- $ jsonSerialiseAny net (b)
                 Nothing -> return $ C.pack "{}"
 
 xGetBlocksHeights :: (MonadUnliftIO m) => Network -> [Word32] -> m (L.ByteString)
 xGetBlocksHeights net heights = do
-    hs <- concat <$> mapM getBlocksAtHeightDB (nub heights)
-    res <- mapM getBlockDB hs
+    hs <- undefined -- concat <$> mapM getBlocksAtHeightDB (nub heights)
+    res <- undefined -- mapM getBlockDB hs
     let ar = catMaybes res
-    return $ jsonSerialiseAny net (ar)
+    return undefined -- $ jsonSerialiseAny net (ar)
 
 goGetResource1 :: Q.ClientState -> String -> Network -> IO (String)
 goGetResource1 ldb msg net = do
