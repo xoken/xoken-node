@@ -46,6 +46,8 @@ import Data.Function
 import Data.Functor.Identity
 import Data.Int
 import Data.List
+import Data.Pool
+
 import Data.Map.Strict as M
 import Data.Maybe
 import Data.Serialize as Serialize
@@ -62,7 +64,10 @@ import Network.Simple.TCP
 import Network.Socket
 import Network.Xoken.Node.AriviService
 import Network.Xoken.Node.Env
+import Network.Xoken.Node.GraphDB
 import Network.Xoken.Node.P2P.BlockSync
+import Network.Xoken.Node.P2P.ChainSync
+import Network.Xoken.Node.P2P.PeerManager
 import Network.Xoken.Node.P2P.Types
 import Options.Applicative
 import Paths_xoken_node as P
@@ -240,7 +245,10 @@ main = do
         die "ERROR: Specify peers to connect or enable peer discovery."
     --
     --
-    pipe <- BT.connect $ def {BT.user = "neo4j", BT.password = "admin123"}
+    let gdbConfig = def {BT.user = "neo4j", BT.password = "admin123"}
+    gdbState <- constructState gdbConfig
+    a <- withResource (pool gdbState) (`BT.run` queryGraph 12)
+    print ("result: " ++ show a)
     --
     --
     let path = "."
