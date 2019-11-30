@@ -17,20 +17,16 @@ import Network.Xoken.Test.Transaction
 import Test.QuickCheck
 
 -- | Block full or arbitrary transactions.
-arbitraryBlock :: Network -> Gen Block
-arbitraryBlock net = do
-    h <- arbitraryBlockHeader
-    c <- choose (0, 10)
-    txs <- vectorOf c (arbitraryTx net)
-    return $ Block h txs
-
+-- arbitraryBlock :: Network -> Gen Block
+-- arbitraryBlock net = do
+--     h <- arbitraryBlockHeader
+--     c <- choose (0, 10)
+--     txs <- vectorOf c (arbitraryTx net)
+--     return $ Block h txs
 -- | Block header with random hash.
 arbitraryBlockHeader :: Gen BlockHeader
 arbitraryBlockHeader =
-    BlockHeader <$> arbitrary <*> arbitraryBlockHash <*> arbitraryHash256 <*>
-    arbitrary <*>
-    arbitrary <*>
-    arbitrary
+    BlockHeader <$> arbitrary <*> arbitraryBlockHash <*> arbitraryHash256 <*> arbitrary <*> arbitrary <*> arbitrary
 
 -- | Arbitrary block hash.
 arbitraryBlockHash :: Gen BlockHash
@@ -38,20 +34,15 @@ arbitraryBlockHash = BlockHash <$> arbitraryHash256
 
 -- | Arbitrary 'GetBlocks' object with at least one block hash.
 arbitraryGetBlocks :: Gen GetBlocks
-arbitraryGetBlocks =
-    GetBlocks <$> arbitrary <*> listOf1 arbitraryBlockHash <*>
-    arbitraryBlockHash
+arbitraryGetBlocks = GetBlocks <$> arbitrary <*> listOf1 arbitraryBlockHash <*> arbitraryBlockHash
 
 -- | Arbitrary 'GetHeaders' object with at least one block header.
 arbitraryGetHeaders :: Gen GetHeaders
-arbitraryGetHeaders =
-    GetHeaders <$> arbitrary <*> listOf1 arbitraryBlockHash <*>
-    arbitraryBlockHash
+arbitraryGetHeaders = GetHeaders <$> arbitrary <*> listOf1 arbitraryBlockHash <*> arbitraryBlockHash
 
 -- | Arbitrary 'Headers' object with at least one block header.
 arbitraryHeaders :: Gen Headers
-arbitraryHeaders =
-    Headers <$> listOf1 ((,) <$> arbitraryBlockHeader <*> arbitraryVarInt)
+arbitraryHeaders = Headers <$> listOf1 ((,) <$> arbitraryBlockHeader <*> arbitraryVarInt)
 
 -- | Arbitrary 'MerkleBlock' with at least one hash.
 arbitraryMerkleBlock :: Gen MerkleBlock

@@ -5,6 +5,8 @@
 module Network.Xoken.Node.P2P.Types where
 
 import Control.Concurrent.MVar
+import Control.Concurrent.STM
+import qualified Data.ByteString as B
 import Data.Functor.Identity
 import Data.Time.Clock
 import Data.Word
@@ -12,6 +14,7 @@ import qualified Database.CQL.IO as Q
 import Network.Socket hiding (send)
 import Network.Xoken.Block
 import Network.Xoken.Constants
+import Network.Xoken.Crypto.Hash
 import Network.Xoken.Network
 import Network.Xoken.Transaction
 import System.Random
@@ -48,6 +51,7 @@ data BitcoinPeer =
       -- ^ random nonce sent during handshake
         , bpPing :: !(Maybe (UTCTime, Word64))
       -- ^ last sent ping time and nonce
+        , bpBlockIngest :: TVar (Maybe BlockIngestState)
         }
 
 -- | General node configuration.
@@ -68,3 +72,13 @@ data BitcoinNodeConfig =
         , bncTimeout :: !Int
       -- ^ timeout in seconds
         }
+
+data BlockIngestState =
+    BlockIngestState
+        { unspentBytes :: !B.ByteString
+        , payloadLeft :: !Int
+        , txTotalCount :: !Int
+        , txProcessed :: !Int
+        , checksum :: !CheckSum32
+        }
+    deriving (Show)

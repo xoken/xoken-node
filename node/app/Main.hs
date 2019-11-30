@@ -26,6 +26,7 @@ import Control.Arrow
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async.Lifted (async)
 import Control.Concurrent.MVar
+import Control.Concurrent.QSem
 import Control.Concurrent.STM.TVar
 import Control.Exception ()
 import Control.Monad
@@ -46,10 +47,9 @@ import Data.Function
 import Data.Functor.Identity
 import Data.Int
 import Data.List
-import Data.Pool
-
 import Data.Map.Strict as M
 import Data.Maybe
+import Data.Pool
 import Data.Serialize as Serialize
 import Data.String.Conv
 import Data.String.Conversions
@@ -155,8 +155,9 @@ runNode config dbh bp2p = do
                 async $ setupPeerConnection
                 liftIO $ threadDelay (20 * 1000000)
                 liftIO $ putStrLn $ "............"
-                async $ runEgressStream
-                async $ initPeerListeners)
+                async $ initPeerListeners
+                async $ runEgressChainSync
+                async $ runEgressBlockSync)
     -- runFileLoggingT (toS $ Config.logFile config) $ runAppM serviceEnv $ setupPeerConnection
     liftIO $ threadDelay 5999999999
     return ()
@@ -266,7 +267,8 @@ main = do
     g <- newTVarIO M.empty
     mv <- newMVar True
     hl <- newMVar True
-    runNode cnf (DatabaseHandles conn) (BitcoinP2PEnv nodeConfig g mv hl)
+    bl <- newQSem 4
+    runNode cnf (DatabaseHandles conn) (BitcoinP2PEnv nodeConfig g mv hl bl)
   where
     opts =
         info (helper <*> config) $

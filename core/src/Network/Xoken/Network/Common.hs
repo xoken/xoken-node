@@ -40,6 +40,7 @@ module Network.Xoken.Network.Common
     , commandToString
     , stringToCommand
     , putVarInt
+    , getVarIntBytesUsed
     ) where
 
 import Control.Monad (forM_, liftM2, replicateM, unless)
@@ -327,9 +328,7 @@ reject :: MessageCommand -> RejectCode -> ByteString -> Reject
 reject cmd code reason = Reject cmd code (VarString reason) B.empty
 
 instance Serialize Reject where
-    get =
-        S.get >>= \(VarString bs) ->
-            Reject (stringToCommand bs) <$> S.get <*> S.get <*> maybeData
+    get = S.get >>= \(VarString bs) -> Reject (stringToCommand bs) <$> S.get <*> S.get <*> maybeData
       where
         maybeData =
             isEmpty >>= \done ->
@@ -368,6 +367,13 @@ instance Serialize VarInt where
         | otherwise = do
             putWord8 0xff
             putWord64le x
+
+getVarIntBytesUsed :: Word64 -> Int
+getVarIntBytesUsed vi
+    | vi < 0xfd = 1
+    | vi <= 0xffff = 2
+    | vi <= 0xffffffff = 4
+    | otherwise = 8
 
 putVarInt :: Integral a => a -> Put
 putVarInt = put . VarInt . fromIntegral
@@ -415,10 +421,7 @@ data Version =
 
 instance Serialize Version where
     get =
-        Version <$> getWord32le <*> getWord64le <*> getWord64le <*> S.get <*>
-        S.get <*>
-        getWord64le <*>
-        S.get <*>
+        Version <$> getWord32le <*> getWord64le <*> getWord64le <*> S.get <*> S.get <*> getWord64le <*> S.get <*>
         getWord32le <*>
         (go =<< isEmpty)
       where
@@ -461,6 +464,7 @@ data MessageCommand
     | MCGetBlocks
     | MCGetHeaders
     | MCTx
+    | MCConfTx
     | MCBlock
     | MCMerkleBlock
     | MCHeaders

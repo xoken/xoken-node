@@ -12,7 +12,7 @@ Portability : POSIX
 Common data types and functions to handle blocks from the block chain.
 -}
 module Network.Xoken.Block.Common
-    ( Block(..)
+    ( DefBlock(..)
     , BlockHeight
     , Timestamp
     , BlockHeader(..)
@@ -42,6 +42,7 @@ import Data.String (IsString, fromString)
 import Data.String.Conversions (cs)
 import Data.Text (Text)
 import Data.Word (Word32)
+import Data.Word
 import GHC.Generics
 import Network.Xoken.Crypto.Hash
 import Network.Xoken.Network.Common
@@ -55,24 +56,39 @@ type BlockHeight = Word32
 -- | Block timestamp as Unix time (seconds since 1970-01-01 00:00 UTC).
 type Timestamp = Word32
 
+-- -- | Block header and transactions.
+-- data Block =
+--     Block
+--         { blockHeader :: !BlockHeader
+--         , blockTxns :: ![Tx]
+--         }
+--     deriving (Eq, Show, Read, Generic, Hashable)
+-- instance Serialize Block where
+--     get = do
+--         header <- get
+--         (VarInt c) <- get
+--         txs <- replicateM (fromIntegral c) get
+--         return $ Block header txs
+--     put (Block h txs) = do
+--         put h
+--         putVarInt $ length txs
+--         forM_ txs put
 -- | Block header and transactions.
-data Block =
-    Block
-        { blockHeader :: !BlockHeader
-        , blockTxns :: ![Tx]
+data DefBlock =
+    DefBlock
+        { defBlockHeader :: !BlockHeader
+        , txnCount :: Word64
         }
-    deriving (Eq, Show, Read, Generic, Hashable)
+    deriving (Eq, Show, Read, Generic)
 
-instance Serialize Block where
+instance Serialize DefBlock where
     get = do
         header <- get
         (VarInt c) <- get
-        txs <- replicateM (fromIntegral c) get
-        return $ Block header txs
-    put (Block h txs) = do
+        return $ DefBlock header c
+    put (DefBlock h len) = do
         put h
-        putVarInt $ length txs
-        forM_ txs put
+        putVarInt len
 
 -- | Block header hash. To be serialized reversed for display purposes.
 newtype BlockHash =

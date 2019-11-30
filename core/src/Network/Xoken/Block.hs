@@ -21,7 +21,7 @@ module Network.Xoken.Block
     , initialChain
     , genesisMap
     , genesisNode
-    , genesisBlock
+    -- , genesisBlock
     , connectBlocks
     , connectBlock
     , parentBlock

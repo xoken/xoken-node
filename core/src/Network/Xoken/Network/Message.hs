@@ -15,20 +15,15 @@ module Network.Xoken.Network.Message
     , msgType
     , putMessage
     , getMessage
+    , getDeflatedBlock
+    , getConfirmedTx
     ) where
 
 import Control.Monad (unless)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.Serialize (Serialize, encode, get, put)
-import Data.Serialize.Get
-    ( Get
-    , getByteString
-    , getWord32be
-    , getWord32le
-    , isolate
-    , lookAhead
-    )
+import Data.Serialize.Get (Get, getByteString, getWord32be, getWord32le, isolate, lookAhead, lookAheadM)
 import Data.Serialize.Put (Putter, putByteString, putWord32be, putWord32le)
 import Data.Word (Word32)
 import Network.Xoken.Block.Common
@@ -78,7 +73,8 @@ data Message
     | MGetBlocks !GetBlocks
     | MGetHeaders !GetHeaders
     | MTx !Tx
-    | MBlock !Block
+    | MConfTx !Tx
+    | MBlock !DefBlock
     | MMerkleBlock !MerkleBlock
     | MHeaders !Headers
     | MGetAddr
@@ -105,6 +101,7 @@ msgType (MNotFound _) = MCNotFound
 msgType (MGetBlocks _) = MCGetBlocks
 msgType (MGetHeaders _) = MCGetHeaders
 msgType (MTx _) = MCTx
+msgType (MConfTx _) = MCConfTx
 msgType (MBlock _) = MCBlock
 msgType (MMerkleBlock _) = MCMerkleBlock
 msgType (MHeaders _) = MCHeaders
@@ -120,17 +117,19 @@ msgType MSendHeaders = MCSendHeaders
 msgType MGetAddr = MCGetAddr
 msgType (MOther c _) = MCOther c
 
+getDeflatedBlock :: Get (Maybe DefBlock)
+getDeflatedBlock = lookAheadM $ Just <$> get
+
+getConfirmedTx :: Get (Maybe Tx)
+getConfirmedTx = lookAheadM $ Just <$> get
+
 -- | Deserializer for network messages.
 getMessage :: Network -> Get Message
 getMessage net = do
     (MessageHeader mgc cmd len chk) <- get
     bs <- lookAhead $ getByteString $ fromIntegral len
-    unless
-        (mgc == getNetworkMagic net)
-        (fail $ "get: Invalid network magic bytes: " ++ show mgc)
-    unless
-        (checkSum32 bs == chk)
-        (fail $ "get: Invalid message checksum: " ++ show chk)
+    unless (mgc == getNetworkMagic net) (fail $ "get: Invalid network magic bytes: " ++ show mgc)
+    unless (checkSum32 bs == chk) (fail $ "get: Invalid message checksum: " ++ show chk)
     if len > 0
         then isolate (fromIntegral len) $
              case cmd of
@@ -142,7 +141,7 @@ getMessage net = do
                  MCGetBlocks -> MGetBlocks <$> get
                  MCGetHeaders -> MGetHeaders <$> get
                  MCTx -> MTx <$> get
-                 MCBlock -> MBlock <$> get
+                 -- MCBlock -> MBlock <$> get
                  MCMerkleBlock -> MMerkleBlock <$> get
                  MCHeaders -> MHeaders <$> get
                  MCFilterLoad -> MFilterLoad <$> get
@@ -174,7 +173,7 @@ putMessage net msg = do
                 MGetBlocks m -> (MCGetBlocks, encode m)
                 MGetHeaders m -> (MCGetHeaders, encode m)
                 MTx m -> (MCTx, encode m)
-                MBlock m -> (MCBlock, encode m)
+                -- MBlock m -> (MCBlock, encode m)
                 MMerkleBlock m -> (MCMerkleBlock, encode m)
                 MHeaders m -> (MCHeaders, encode m)
                 MGetAddr -> (MCGetAddr, BS.empty)

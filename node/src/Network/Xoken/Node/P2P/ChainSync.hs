@@ -8,7 +8,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Network.Xoken.Node.P2P.ChainSync
-    ( runEgressStream
+    ( runEgressChainSync
     , processHeaders
     ) where
 
@@ -60,18 +60,6 @@ import Streamly
 import Streamly.Prelude ((|:), nil)
 import qualified Streamly.Prelude as S
 import System.Random
-
-data ChainSyncException
-    = BlocksNotChainedException
-    | MessageParsingException
-    | KeyValueDBInsertException
-    | BlockHashNotFoundInDB
-    | DuplicateBlockHeader
-    | InvalidMessageType
-    | EmptyHeadersMessage
-    deriving (Show)
-
-instance Exception ChainSyncException
 
 produceGetHeadersMessage :: (HasService env m) => m (Message)
 produceGetHeadersMessage = do
@@ -138,12 +126,12 @@ msgOrder m1 m2 = do
         then LT
         else GT
 
-runEgressStream :: (HasService env m) => m ()
-runEgressStream = do
+runEgressChainSync :: (HasService env m) => m ()
+runEgressChainSync = do
     res <- LE.try $ runStream $ (S.repeatM produceGetHeadersMessage) & (S.mapM sendRequestMessages)
     case res of
         Right () -> return ()
-        Left (e :: SomeException) -> liftIO $ print ("[ERROR] runEgressStream " ++ show e)
+        Left (e :: SomeException) -> liftIO $ print ("[ERROR] runEgressChainSync " ++ show e)
         -- S.mergeBy msgOrder (S.repeatM produceGetHeadersMessage) (S.repeatM produceGetHeadersMessage) &
         --    S.mapM   sendRequestMessages
 
@@ -208,7 +196,7 @@ processHeaders hdrs = do
     dbe' <- asks getDBEnv
     bp2pEnv <- asks getBitcoinP2PEnv
     if (L.length $ headersList hdrs) == 0
-        then liftIO $ print "Nothing to process!" >> throw EmptyHeadersMessage
+        then liftIO $ print "Nothing to process!" >>= throw EmptyHeadersMessage
         else liftIO $ print $ "Processing Headers with " ++ show (L.length $ headersList hdrs) ++ " entries."
     case validateChainedBlockHeaders hdrs of
         True -> do

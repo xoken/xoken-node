@@ -57,6 +57,27 @@ import Streamly.Prelude ((|:), nil)
 import qualified Streamly.Prelude as S
 import System.Random
 
+data ChainSyncException
+    = BlocksNotChainedException
+    | MessageParsingException
+    | KeyValueDBInsertException
+    | BlockHashNotFoundInDB
+    | DuplicateBlockHeader
+    | InvalidMessageType
+    | EmptyHeadersMessage
+    deriving (Show)
+
+instance Exception ChainSyncException
+
+data PeerMessageException
+    = SocketReadFailure
+    | DeflatedBlockParseError
+    | ConfirmedTxParseException
+    | PeerSocketNotConnected
+    deriving (Show)
+
+instance Exception PeerMessageException
+
 --
 --
 -- | Create version data structure.
