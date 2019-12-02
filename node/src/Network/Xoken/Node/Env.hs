@@ -20,6 +20,7 @@ import Data.Word
 import qualified Database.CQL.IO as Q
 import GHC.Generics
 import Network.Socket hiding (send)
+import Network.Xoken.Block.Common
 import Network.Xoken.Node.P2P.Types
 import Network.Xoken.Transaction
 import System.Random
@@ -32,6 +33,7 @@ data BitcoinP2PEnv =
         , bestBlockUpdated :: !(MVar Bool)
         , headersWriteLock :: !(MVar Bool)
         , blockFetchBalance :: !QSem
+        , blockSyncStatus :: !(TVar (M.Map BlockHash (Maybe (Bool, UTCTime))))
         }
 
 class HasBitcoinP2PEnv env where

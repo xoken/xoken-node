@@ -48,6 +48,7 @@ library
       Network.Xoken.Network.Message
       Network.Xoken.Crypto.Hash
       Network.Xoken.Block.Common
+      Network.Xoken.Transaction.Common
   other-modules:
 
 
@@ -69,7 +70,6 @@ library
       Network.Xoken.Test.Transaction
       Network.Xoken.Test.Util
       Network.Xoken.Transaction.Builder
-      Network.Xoken.Transaction.Common
       Paths_xoken_core
   hs-source-dirs:
       src

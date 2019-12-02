@@ -123,21 +123,32 @@ readNextMessage :: Network -> Socket -> Maybe BlockIngestState -> IO ((Maybe Mes
 readNextMessage net sock blkIng = do
     case blkIng of
         Just blin -> do
-            let ln = (1024 * 100) - (B.length $ unspentBytes blin)
-            txbyt <- recvAll sock ln
-            case runGetState (MTx <$> Data.Serialize.get) txbyt ln of
+            liftIO $ print ("BlockIngestState parsing tx: " ++ show blin)
+            let maxChunk = (1024 * 100) - (B.length $ unspentBytes blin)
+                len =
+                    if payloadLeft blin < maxChunk
+                        then (payloadLeft blin) - (B.length $ unspentBytes blin)
+                        else maxChunk
+            liftIO $ print ("bytes prev unspent " ++ show (B.length $ unspentBytes blin))
+            liftIO $ print ("no. new bytes to read " ++ show len)
+            nbyt <- recvAll sock len
+            let txbyt = (unspentBytes blin) `B.append` nbyt
+            case runGetState (getConfirmedTx) txbyt 0 of
                 Left e -> throw ConfirmedTxParseException
                 Right (tx, unused) -> do
-                    liftIO $ print ("Conf.Tx: " ++ show tx)
-                    let bio =
-                            BlockIngestState
-                                { unspentBytes = unused
-                                , payloadLeft = payloadLeft blin - (ln - B.length unused)
-                                , txTotalCount = txTotalCount blin
-                                , txProcessed = 1 + txProcessed blin
-                                , checksum = checksum blin
-                                }
-                    return (Just tx, Just bio)
+                    case tx of
+                        Just t -> do
+                            liftIO $ print ("Conf.Tx: " ++ show tx ++ " unused: " ++ show (B.length unused))
+                            let bio =
+                                    BlockIngestState
+                                        { unspentBytes = unused
+                                        , payloadLeft = payloadLeft blin - (len - B.length unused)
+                                        , txTotalCount = txTotalCount blin
+                                        , txProcessed = 1 + txProcessed blin
+                                        , checksum = checksum blin
+                                        }
+                            return (Just $ MTx t, Just bio)
+                        Nothing -> throw ConfirmedTxParseException
         Nothing -> do
             hdr <- recvAll sock 24
             case (decode hdr) of
@@ -148,16 +159,19 @@ readNextMessage net sock blkIng = do
                     if cmd == MCBlock
                         then do
                             byts <- recvAll sock (88) -- 80 byte Block header + VarInt (max 8 bytes) Tx count
-                            case runGetState (getDeflatedBlock) byts 88 of
+                            case runGetState (getDeflatedBlock) byts 0 of
                                 Left e -> do
                                     liftIO $ print ("Error, unexpected message header: " ++ e)
                                     throw MessageParsingException
                                 Right (blk, unused) -> do
                                     case blk of
                                         Just b -> do
+                                            liftIO $
+                                                print
+                                                    ("DefBlock: " ++ show blk ++ " unused: " ++ show (B.length unused))
                                             let bi =
                                                     BlockIngestState
-                                                        { unspentBytes = unused -- B.drop (80 + (8 - used)) byts
+                                                        { unspentBytes = unused
                                                         , payloadLeft = fromIntegral (len) - (88 - B.length unused)
                                                         , txTotalCount = fromIntegral $ txnCount b
                                                         , txProcessed = 0
@@ -179,14 +193,6 @@ readNextMessage net sock blkIng = do
                                         throw MessageParsingException
                                 Right msg -> do
                                     return (Just msg, Nothing)
-                -- Left (e :: IOException) -> do
-                --     liftIO $ print ("socket read fail") >>= throw SocketReadFailure
-            --
-            -- do
-            --     let z = runGet (MTx <$> Data.Serialize.get) $ byts
-            --     liftIO $ print ("first Tx: ")
-            --     return (Just z)
-            --
 
 doVersionHandshake :: Network -> Socket -> SockAddr -> IO (Bool)
 doVersionHandshake net sock sa = do
@@ -246,6 +252,12 @@ messageHandler mm = do
                         lst
                     return $ msgType msg
                 MTx tx -> do
+                    res <- LE.try $ processTransaction tx
+                    case res of
+                        Right () -> return ()
+                        Left BlockHashNotFoundInDB -> return ()
+                        Left EmptyHeadersMessage -> return ()
+                        Left e -> liftIO $ print ("[ERROR] Unhandled exception!" ++ show e) >> throw e
                     return $ msgType msg
                 MBlock blk -> do
                     res <- LE.try $ processBlock blk
@@ -274,6 +286,7 @@ readNextMessage' net peer = do
                                 then Nothing
                                 else blkIng
                     liftIO $ atomically $ writeTVar (bpBlockIngest peer) up
+                    liftIO $ print ("writing tvar " ++ show up)
                 Nothing -> return ()
             return msg
         Nothing -> throw PeerSocketNotConnected

@@ -267,8 +267,9 @@ main = do
     g <- newTVarIO M.empty
     mv <- newMVar True
     hl <- newMVar True
-    bl <- newQSem 4
-    runNode cnf (DatabaseHandles conn) (BitcoinP2PEnv nodeConfig g mv hl bl)
+    bl <- newQSem 12 -- allows 12 outstanding blocks
+    st <- newTVarIO M.empty
+    runNode cnf (DatabaseHandles conn) (BitcoinP2PEnv nodeConfig g mv hl bl st)
   where
     opts =
         info (helper <*> config) $

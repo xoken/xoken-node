@@ -9,9 +9,11 @@
 
 module Network.Xoken.Node.P2P.BlockSync
     ( processBlock
+    , processTransaction
     , runEgressBlockSync
     ) where
 
+import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (mapConcurrently)
 import Control.Concurrent.Async.Lifted as LA (async)
 import Control.Concurrent.MVar
@@ -41,6 +43,7 @@ import Data.String.Conversions
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Clock
+import Data.Time.Clock
 import Data.Time.Clock.POSIX
 import Data.Word
 import qualified Database.CQL.IO as Q
@@ -57,91 +60,136 @@ import Network.Xoken.Node.Env
 import Network.Xoken.Node.GraphDB
 import Network.Xoken.Node.P2P.Common
 import Network.Xoken.Node.P2P.Types
+import Network.Xoken.Transaction.Common
 import Streamly
 import Streamly.Prelude ((|:), nil)
 import qualified Streamly.Prelude as S
 import System.Random
 
-produceGetHeadersMessage :: (HasService env m) => m (Message)
-produceGetHeadersMessage = do
+produceGetDataMessage :: (HasService env m) => m (Maybe Message)
+produceGetDataMessage = do
     liftIO $ print ("producing - called.")
     bp2pEnv <- asks getBitcoinP2PEnv
-    dbe' <- asks getDBEnv
-    liftIO $ waitQSem (blockFetchBalance bp2pEnv)
-    let conn = keyValDB $ dbHandles dbe'
-    let net = bncNet $ bitcoinNodeConfig bp2pEnv
-    bl <- liftIO $ getNextBatch conn net
-    let gd = GetData $ map (\x -> InvVector InvBlock $ getBlockHash x) bl
-    liftIO $ print ("block-locator: " ++ show bl)
-    return (MGetData gd)
+    (fl, bl) <- getNextBlockToSync
+    case bl of
+        Just b -> do
+            if fl == True
+                then liftIO $ waitQSem (blockFetchBalance bp2pEnv)
+                else return ()
+            t <- liftIO $ getCurrentTime
+            liftIO $ atomically $ modifyTVar (blockSyncStatus bp2pEnv) (M.insert b $ Just (False, t))
+            let gd = GetData $ [InvVector InvBlock $ getBlockHash b]
+            liftIO $ print ("GetData req: " ++ show gd)
+            return (Just $ MGetData gd)
+        Nothing -> do
+            liftIO $ print ("producing - empty ...")
+            liftIO $ threadDelay (1000000 * 10)
+            return Nothing
 
-sendRequestMessages :: (HasService env m) => Message -> m ()
-sendRequestMessages msg = do
-    liftIO $ print ("sendRequestMessages - called.")
-    bp2pEnv <- asks getBitcoinP2PEnv
-    dbe' <- asks getDBEnv
-    let conn = keyValDB $ dbHandles dbe'
-    let net = bncNet $ bitcoinNodeConfig bp2pEnv
-    allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
-    let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
-    case msg of
-        MGetData gd -> do
-            let fbh = getHash256 $ invHash $ last $ getDataList gd
-                md = BSS.index fbh $ (BSS.length fbh) - 1
-                pd = fromIntegral md `mod` L.length connPeers
-            let pr = snd $ connPeers !! pd
-            case (bpSocket pr) of
-                Just s -> do
-                    let em = runPut . putMessage net $ msg
-                    res <- liftIO $ try $ sendEncMessage (bpSockLock pr) s (BSL.fromStrict em)
-                    case res of
-                        Right () -> return ()
-                        Left (e :: SomeException) -> do
-                            liftIO $ print ("Error, sending out data: " ++ show e)
-                    liftIO $ print ("sending out GetData: " ++ show (bpAddress pr))
-                Nothing -> liftIO $ print ("Error sending, no connections available")
+sendRequestMessages :: (HasService env m) => Maybe Message -> m ()
+sendRequestMessages mmsg = do
+    case mmsg of
+        Just msg -> do
+            liftIO $ print ("sendRequestMessages - called.")
+            bp2pEnv <- asks getBitcoinP2PEnv
+            dbe' <- asks getDBEnv
+            let conn = keyValDB $ dbHandles dbe'
+            let net = bncNet $ bitcoinNodeConfig bp2pEnv
+            allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
+            let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
+            case msg of
+                MGetData gd -> do
+                    let fbh = getHash256 $ invHash $ last $ getDataList gd
+                        md = BSS.index fbh $ (BSS.length fbh) - 1
+                        pd = fromIntegral md `mod` L.length connPeers
+                    let pr = snd $ connPeers !! pd
+                    case (bpSocket pr) of
+                        Just s -> do
+                            let em = runPut . putMessage net $ msg
+                            res <- liftIO $ try $ sendEncMessage (bpSockLock pr) s (BSL.fromStrict em)
+                            case res of
+                                Right () -> return ()
+                                Left (e :: SomeException) -> liftIO $ print ("Error, sending out data: " ++ show e)
+                            liftIO $ print ("sending out GetData: " ++ show (bpAddress pr))
+                        Nothing -> liftIO $ print ("Error sending, no connections available")
+                ___ -> return ()
+        Nothing -> do
+            liftIO $ print ("graceful ignore...")
             return ()
-        ___ -> undefined
 
 runEgressBlockSync :: (HasService env m) => m ()
 runEgressBlockSync = do
-    res <- LE.try $ runStream $ (S.repeatM produceGetHeadersMessage) & (S.mapM sendRequestMessages)
+    res <- LE.try $ runStream $ (S.repeatM produceGetDataMessage) & (S.mapM sendRequestMessages)
     case res of
         Right () -> return ()
         Left (e :: SomeException) -> liftIO $ print ("[ERROR] runEgressChainSync " ++ show e)
-        -- S.mergeBy msgOrder (S.repeatM produceGetHeadersMessage) (S.repeatM produceGetHeadersMessage) &
+        -- S.mergeBy msgOrder (S.repeatM produceGetDataMessage) (S.repeatM produceGetDataMessage) &
         --    S.mapM   sendRequestMessages
 
-markBestSyncedBlock :: Text -> Int32 -> Q.ClientState -> IO ()
-markBestSyncedBlock hash height conn = do
-    let str = "insert INTO xoken.proc_summary (name, strval, numval, boolval) values (? ,? ,?, ?)"
-        qstr = str :: Q.QueryString Q.W (Text, Text, Int32, Maybe Bool) ()
-        par = Q.defQueryParams Q.One ("best-synced", hash, height :: Int32, Nothing)
-    res <- try $ Q.runClient conn (Q.write (Q.prepared qstr) par)
-    case res of
-        Right () -> return ()
-        Left (e :: SomeException) ->
-            print ("Error: Marking [Best] blockhash failed: " ++ show e) >> throw KeyValueDBInsertException
-
-getNextBatch :: Q.ClientState -> Network -> IO ([BlockHash])
-getNextBatch conn net = do
-    (hash, ht) <- fetchBestSyncedBlock conn net
-    let bt = L.insert ht $ map (\x -> ht + x) [1 .. 4]
-        str = "SELECT height, blockhash from xoken.blocks_height where height in ?"
-        qstr = str :: Q.QueryString Q.R (Identity [Int32]) ((Int32, T.Text))
-        p = Q.defQueryParams Q.One $ Identity bt
-    op <- Q.runClient conn (Q.query qstr p)
-    if L.length op == 0
-        then return [headerHash $ getGenesisHeader net]
+-- markBestSyncedBlock :: Text -> Int32 -> Q.ClientState -> IO ()
+-- markBestSyncedBlock hash height conn = do
+--     let str = "insert INTO xoken.proc_summary (name, strval, numval, boolval) values (? ,? ,?, ?)"
+--         qstr = str :: Q.QueryString Q.W (Text, Text, Int32, Maybe Bool) ()
+--         par = Q.defQueryParams Q.One ("best-synced", hash, height :: Int32, Nothing)
+--     res <- try $ Q.runClient conn (Q.write (Q.prepared qstr) par)
+--     case res of
+--         Right () -> return ()
+--         Left (e :: SomeException) ->
+--             print ("Error: Marking [Best] blockhash failed: " ++ show e) >> throw KeyValueDBInsertException
+getNextBlockToSync :: (HasService env m) => m (Bool, Maybe BlockHash)
+getNextBlockToSync = do
+    bp2pEnv <- asks getBitcoinP2PEnv
+    dbe' <- asks getDBEnv
+    let conn = keyValDB $ dbHandles dbe'
+    let net = bncNet $ bitcoinNodeConfig bp2pEnv
+    sy <- liftIO $ readTVarIO $ blockSyncStatus bp2pEnv
+    tm <- liftIO $ getCurrentTime
+    -- reload cache
+    if M.size sy == 0
+        then do
+            (hash, ht) <- liftIO $ fetchBestSyncedBlock conn net
+            let bks = map (\x -> ht + x) [1 .. 200] -- cache size of 200 
+            let str = "SELECT height, blockhash from xoken.blocks_height where height in ?"
+                qstr = str :: Q.QueryString Q.R (Identity [Int32]) ((Int32, T.Text))
+                p = Q.defQueryParams Q.One $ Identity (bks)
+            op <- Q.runClient conn (Q.query qstr p)
+            if L.length op == 0
+                then do
+                    liftIO $ print ("Synced fully!")
+                    return (False, Nothing)
+                else do
+                    liftIO $ print ("Cache reload: " ++ (show $ op))
+                    let z = catMaybes $ map (\x -> hexToBlockHash $ snd x) (reverse op)
+                        p = map (\x -> (x, Nothing)) z
+                    liftIO $ atomically $ writeTVar (blockSyncStatus bp2pEnv) (M.fromList p)
+                    return (True, Just $ fst $ p !! 0)
         else do
-            print ("Best-block from DB: " ++ (show $ op))
-            return $
-                catMaybes $
-                (map (\x ->
-                          case (hexToBlockHash $ snd x) of
-                              Just y -> Just y
-                              Nothing -> Nothing)
-                     (reverse op))
+            let (sent, unsent) =
+                    M.partition
+                        (\x ->
+                             case x of
+                                 Just z -> not $ fst z
+                                 Nothing -> False)
+                        (sy)
+            if M.size sent == 0
+                then return (True, Just $ fst (M.elemAt 0 unsent))
+                else do
+                    let expired =
+                            M.filter
+                                (\x ->
+                                     case x of
+                                         Just z ->
+                                             (not $ fst z) && ((diffUTCTime tm (snd z) > (300 :: NominalDiffTime)))
+                                         Nothing -> False)
+                                (sent)
+                    if M.size expired == 0
+                        then if M.size unsent == 0
+                                 -- empty the cache, cache-miss gracefully
+                                 then do
+                                     liftIO $ atomically $ writeTVar (blockSyncStatus bp2pEnv) M.empty
+                                     return (False, Nothing)
+                                 else return (True, Just $ fst (M.elemAt 0 unsent))
+                        else return (False, Just $ fst (M.elemAt 0 expired))
 
 fetchBestSyncedBlock :: Q.ClientState -> Network -> IO ((BlockHash, Int32))
 fetchBestSyncedBlock conn net = do
@@ -159,11 +207,20 @@ fetchBestSyncedBlock conn net = do
                     print ("block hash seems invalid, startin over from genesis") -- not optimal, but unforseen case.
                     return ((headerHash $ getGenesisHeader net), 0)
 
+processTransaction :: (HasService env m) => Tx -> m ()
+processTransaction tx = do
+    dbe' <- asks getDBEnv
+    bp2pEnv <- asks getBitcoinP2PEnv
+    liftIO $ print ("processing Transaction! " ++ show tx)
+    return ()
+
 processBlock :: (HasService env m) => DefBlock -> m ()
 processBlock dblk = do
     dbe' <- asks getDBEnv
     bp2pEnv <- asks getBitcoinP2PEnv
-    liftIO $ print ("Nothing to process!" ++ show dblk)
+    liftIO $ print ("processing deflated Block! " ++ show dblk)
+    liftIO $ signalQSem (blockFetchBalance bp2pEnv)
+    return ()
     -- if (L.length $ headersList hdrs) == 0
     --     then liftIO $ print "Nothing to process!" >> throw EmptyHeadersMessage
     --     else liftIO $ print $ "Processing Headers with " ++ show (L.length $ headersList hdrs) ++ " entries."
@@ -209,7 +266,6 @@ processBlock dblk = do
     --         liftIO $ print ("done..")
     --         liftIO $ do
     --             markBestSyncedBlock (blockHashToHex $ headerHash $ fst $ snd $ last $ indexed) (fst $ last indexed) conn
-    --             signalQSem (blockFetchBalance bp2pEnv)
+    --
     --         return ()
     --     False -> liftIO $ print ("Error: BlocksNotChainedException") >> throw BlocksNotChainedException
-    return ()

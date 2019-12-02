@@ -76,8 +76,7 @@ instance ToJSON TxHash where
 
 -- | Transaction hash excluding signatures.
 nosigTxHash :: Tx -> TxHash
-nosigTxHash tx =
-    TxHash $ doubleSHA256 $ S.encode tx {txIn = map clearInput $ txIn tx}
+nosigTxHash tx = TxHash $ doubleSHA256 $ S.encode tx {txIn = map clearInput $ txIn tx}
   where
     clearInput ti = ti {scriptInput = B.empty}
 
@@ -127,10 +126,10 @@ instance IsString Tx where
         e = error "Could not read transaction from hex string"
 
 instance Serialize Tx where
-    get = parseWitnessTx <|> parseLegacyTx
-    put tx
-        | null (txWitness tx) = putLegacyTx tx
-        | otherwise = putWitnessTx tx
+    get = parseLegacyTx
+    put tx = putLegacyTx tx
+        -- | null (txWitness tx) = putLegacyTx tx
+        -- | otherwise = putWitnessTx tx
 
 putInOut :: Tx -> Put
 putInOut tx = do
@@ -146,16 +145,15 @@ putLegacyTx tx = do
     putInOut tx
     putWord32le (txLockTime tx)
 
--- | Witness transaciton serializer.
-putWitnessTx :: Tx -> Put
-putWitnessTx tx = do
-    putWord32le (txVersion tx)
-    putWord8 0x00
-    putWord8 0x01
-    putInOut tx
-    putWitnessData (txWitness tx)
-    putWord32le (txLockTime tx)
-
+-- -- | Witness transaciton serializer.
+-- putWitnessTx :: Tx -> Put
+-- putWitnessTx tx = do
+--     putWord32le (txVersion tx)
+--     putWord8 0x00
+--     putWord8 0x01
+--     putInOut tx
+--     putWitnessData (txWitness tx)
+--     putWord32le (txLockTime tx)
 -- | Non-SegWit transaction deseralizer.
 parseLegacyTx :: Get Tx
 parseLegacyTx = do
@@ -163,60 +161,47 @@ parseLegacyTx = do
     is <- replicateList =<< S.get
     os <- replicateList =<< S.get
     l <- getWord32le
-    return
-        Tx
-            { txVersion = v
-            , txIn = is
-            , txOut = os
-            , txWitness = []
-            , txLockTime = l
-            }
+    return Tx {txVersion = v, txIn = is, txOut = os, txWitness = [], txLockTime = l}
   where
     replicateList (VarInt c) = replicateM (fromIntegral c) S.get
 
--- | Witness transaction deserializer.
-parseWitnessTx :: Get Tx
-parseWitnessTx = do
-    v <- getWord32le
-    m <- getWord8
-    f <- getWord8
-    guard $ m == 0x00
-    guard $ f == 0x01
-    is <- replicateList =<< S.get
-    os <- replicateList =<< S.get
-    w <- parseWitnessData $ length is
-    l <- getWord32le
-    return
-        Tx {txVersion = v, txIn = is, txOut = os, txWitness = w, txLockTime = l}
-  where
-    replicateList (VarInt c) = replicateM (fromIntegral c) S.get
-
--- | Witness data deserializer. Requires count of inputs.
-parseWitnessData :: Int -> Get WitnessData
-parseWitnessData n = replicateM n parseWitnessStack
-  where
-    parseWitnessStack = do
-        VarInt i <- S.get
-        replicateM (fromIntegral i) parseWitnessStackItem
-    parseWitnessStackItem = do
-        VarInt i <- S.get
-        getByteString $ fromIntegral i
-
+-- -- | Witness transaction deserializer.
+-- parseWitnessTx :: Get Tx
+-- parseWitnessTx = do
+--     v <- getWord32le
+--     m <- getWord8
+--     f <- getWord8
+--     guard $ m == 0x00
+--     guard $ f == 0x01
+--     is <- replicateList =<< S.get
+--     os <- replicateList =<< S.get
+--     w <- parseWitnessData $ length is
+--     l <- getWord32le
+--     return Tx {txVersion = v, txIn = is, txOut = os, txWitness = w, txLockTime = l}
+--   where
+--     replicateList (VarInt c) = replicateM (fromIntegral c) S.get
+-- -- | Witness data deserializer. Requires count of inputs.
+-- parseWitnessData :: Int -> Get WitnessData
+-- parseWitnessData n = replicateM n parseWitnessStack
+--   where
+--     parseWitnessStack = do
+--         VarInt i <- S.get
+--         replicateM (fromIntegral i) parseWitnessStackItem
+--     parseWitnessStackItem = do
+--         VarInt i <- S.get
+--         getByteString $ fromIntegral i
 -- | Witness data serializer.
-putWitnessData :: WitnessData -> Put
-putWitnessData = mapM_ putWitnessStack
-  where
-    putWitnessStack ws = do
-        putVarInt $ length ws
-        mapM_ putWitnessStackItem ws
-    putWitnessStackItem bs = do
-        putVarInt $ B.length bs
-        putByteString bs
-
+-- putWitnessData :: WitnessData -> Put
+-- putWitnessData = mapM_ putWitnessStack
+--   where
+--     putWitnessStack ws = do
+--         putVarInt $ length ws
+--         mapM_ putWitnessStackItem ws
+--     putWitnessStackItem bs = do
+--         putVarInt $ B.length bs
+--         putByteString bs
 instance FromJSON Tx where
-    parseJSON =
-        withText "Tx" $
-        maybe mzero return . (eitherToMaybe . S.decode <=< decodeHex)
+    parseJSON = withText "Tx" $ maybe mzero return . (eitherToMaybe . S.decode <=< decodeHex)
 
 instance ToJSON Tx where
     toJSON = A.String . encodeHex . S.encode
@@ -274,9 +259,7 @@ data OutPoint =
     deriving (Show, Read, Eq, Ord, Generic, Hashable)
 
 instance FromJSON OutPoint where
-    parseJSON =
-        withText "OutPoint" $
-        maybe mzero return . (eitherToMaybe . S.decode <=< decodeHex)
+    parseJSON = withText "OutPoint" $ maybe mzero return . (eitherToMaybe . S.decode <=< decodeHex)
 
 instance ToJSON OutPoint where
     toJSON = A.String . encodeHex . S.encode
@@ -291,10 +274,7 @@ instance Serialize OutPoint where
 nullOutPoint :: OutPoint
 nullOutPoint =
     OutPoint
-        { outPointHash =
-              "0000000000000000000000000000000000000000000000000000000000000000"
-        , outPointIndex = maxBound
-        }
+        {outPointHash = "0000000000000000000000000000000000000000000000000000000000000000", outPointIndex = maxBound}
 
 -- | Transaction from Genesis block.
 genesisTx :: Tx
@@ -308,8 +288,7 @@ genesisTx = Tx 1 [txin] [txout] [] locktime
         decodeHex $
         fromString $
         "04ffff001d0104455468652054696d65732030332f4a616e2f323030392043686" ++
-        "16e63656c6c6f72206f6e206272696e6b206f66207365636f6e64206261696c6f" ++
-        "757420666f722062616e6b73"
+        "16e63656c6c6f72206f6e206272696e6b206f66207365636f6e64206261696c6f" ++ "757420666f722062616e6b73"
     output =
         PayPK $
         fromString $
