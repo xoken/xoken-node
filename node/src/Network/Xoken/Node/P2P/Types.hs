@@ -76,9 +76,10 @@ data BitcoinNodeConfig =
 data BlockIngestState =
     BlockIngestState
         { unspentBytes :: !B.ByteString
-        , payloadLeft :: !Int
+        , txPayloadLeft :: !Int
         , txTotalCount :: !Int
         , txProcessed :: !Int
+        , blockHash :: BlockHash
         , checksum :: !CheckSum32
         }
     deriving (Show)

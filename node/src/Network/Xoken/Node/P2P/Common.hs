@@ -69,6 +69,12 @@ data ChainSyncException
 
 instance Exception ChainSyncException
 
+data BlockSyncException =
+    InvalidBlockIngestState
+    deriving (Show)
+
+instance Exception BlockSyncException
+
 data PeerMessageException
     = SocketReadFailure
     | DeflatedBlockParseError

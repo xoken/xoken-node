@@ -33,3 +33,4 @@ extra-deps:
     - streamly-0.6.1
     - hasbolt-0.1.3.6
     - resource-pool-0.2.3.2
+    - cql-4.0.1

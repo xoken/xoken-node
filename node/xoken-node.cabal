@@ -101,6 +101,7 @@ executable xoken-node
     , lifted-base
     , hasbolt >=0.1.3.6
     , resource-pool
+    , cql
   default-language: Haskell2010
 
 test-suite xoken-node-test

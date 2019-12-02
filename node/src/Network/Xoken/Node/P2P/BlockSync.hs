@@ -9,7 +9,7 @@
 
 module Network.Xoken.Node.P2P.BlockSync
     ( processBlock
-    , processTransaction
+    , processConfTransaction
     , runEgressBlockSync
     ) where
 
@@ -39,6 +39,7 @@ import qualified Data.List as L
 import qualified Data.Map.Strict as M
 import Data.Maybe
 import Data.Serialize
+import Data.Serialize as S
 import Data.String.Conversions
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -47,6 +48,7 @@ import Data.Time.Clock
 import Data.Time.Clock.POSIX
 import Data.Word
 import qualified Database.CQL.IO as Q
+import Database.CQL.Protocol
 import Network.Socket
 import qualified Network.Socket.ByteString as SB (recv)
 import qualified Network.Socket.ByteString.Lazy as LB (recv, sendAll)
@@ -148,7 +150,7 @@ getNextBlockToSync = do
     if M.size sy == 0
         then do
             (hash, ht) <- liftIO $ fetchBestSyncedBlock conn net
-            let bks = map (\x -> ht + x) [1 .. 200] -- cache size of 200 
+            let bks = map (\x -> ht + x) [1 .. 200] -- cache size of 200
             let str = "SELECT height, blockhash from xoken.blocks_height where height in ?"
                 qstr = str :: Q.QueryString Q.R (Identity [Int32]) ((Int32, T.Text))
                 p = Q.defQueryParams Q.One $ Identity (bks)
@@ -207,11 +209,24 @@ fetchBestSyncedBlock conn net = do
                     print ("block hash seems invalid, startin over from genesis") -- not optimal, but unforseen case.
                     return ((headerHash $ getGenesisHeader net), 0)
 
-processTransaction :: (HasService env m) => Tx -> m ()
-processTransaction tx = do
+processConfTransaction :: (HasService env m) => Tx -> BlockHash -> Int -> m ()
+processConfTransaction tx bhash txind = do
     dbe' <- asks getDBEnv
     bp2pEnv <- asks getBitcoinP2PEnv
     liftIO $ print ("processing Transaction! " ++ show tx)
+    let conn = keyValDB $ dbHandles dbe'
+        str1 =
+            "insert INTO xoken.blockindex (blockhash, txindex, txid, serialized, deserialized) values (?, ? , ? , ?, ?)"
+        qstr1 = str1 :: Q.QueryString Q.W (Text, Int32, Text, Blob, Maybe Text) ()
+        sr = runPutLazy $ putLazyByteString $ S.encodeLazy tx
+        par1 =
+            Q.defQueryParams Q.One (blockHashToHex bhash, fromIntegral txind, txHashToHex $ txHash tx, Blob sr, Nothing)
+    res1 <- liftIO $ try $ Q.runClient conn (Q.write (qstr1) par1)
+    case res1 of
+        Right () -> return ()
+        Left (e :: SomeException) ->
+            liftIO $ print ("Error: INSERT into 'blocks_hash' failed: " ++ show e) >>= throw KeyValueDBInsertException
+    --
     return ()
 
 processBlock :: (HasService env m) => DefBlock -> m ()

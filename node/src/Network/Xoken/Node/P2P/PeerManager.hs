@@ -111,13 +111,16 @@ setupPeerConnection = do
 -- Helper Functions
 recvAll :: Socket -> Int -> IO B.ByteString
 recvAll sock len = do
-    res <- try $ SB.recv sock len
-    case res of
-        Left (e :: IOException) -> liftIO $ print ("socket read fail: " ++ show e) >>= throw SocketReadFailure
-        Right msg ->
-            if B.length msg == len
-                then return msg
-                else B.append msg <$> recvAll sock (len - B.length msg)
+    if len > 0
+        then do
+            res <- try $ SB.recv sock len
+            case res of
+                Left (e :: IOException) -> liftIO $ print ("socket read fail: " ++ show e) >>= throw SocketReadFailure
+                Right msg ->
+                    if B.length msg == len
+                        then return msg
+                        else B.append msg <$> recvAll sock (len - B.length msg)
+        else return (B.empty)
 
 readNextMessage :: Network -> Socket -> Maybe BlockIngestState -> IO ((Maybe Message, Maybe BlockIngestState))
 readNextMessage net sock blkIng = do
@@ -126,11 +129,12 @@ readNextMessage net sock blkIng = do
             liftIO $ print ("BlockIngestState parsing tx: " ++ show blin)
             let maxChunk = (1024 * 100) - (B.length $ unspentBytes blin)
                 len =
-                    if payloadLeft blin < maxChunk
-                        then (payloadLeft blin) - (B.length $ unspentBytes blin)
+                    if txPayloadLeft blin < maxChunk
+                        then (txPayloadLeft blin) - (B.length $ unspentBytes blin)
                         else maxChunk
-            liftIO $ print ("bytes prev unspent " ++ show (B.length $ unspentBytes blin))
-            liftIO $ print ("no. new bytes to read " ++ show len)
+            liftIO $ print (" | Tx payload left " ++ show (txPayloadLeft blin))
+            liftIO $ print (" | Bytes prev unspent " ++ show (B.length $ unspentBytes blin))
+            liftIO $ print (" | Bytes to read " ++ show len)
             nbyt <- recvAll sock len
             let txbyt = (unspentBytes blin) `B.append` nbyt
             case runGetState (getConfirmedTx) txbyt 0 of
@@ -142,9 +146,10 @@ readNextMessage net sock blkIng = do
                             let bio =
                                     BlockIngestState
                                         { unspentBytes = unused
-                                        , payloadLeft = payloadLeft blin - (len - B.length unused)
+                                        , txPayloadLeft = txPayloadLeft blin - (B.length txbyt - B.length unused)
                                         , txTotalCount = txTotalCount blin
                                         , txProcessed = 1 + txProcessed blin
+                                        , blockHash = blockHash blin
                                         , checksum = checksum blin
                                         }
                             return (Just $ MTx t, Just bio)
@@ -172,9 +177,10 @@ readNextMessage net sock blkIng = do
                                             let bi =
                                                     BlockIngestState
                                                         { unspentBytes = unused
-                                                        , payloadLeft = fromIntegral (len) - (88 - B.length unused)
+                                                        , txPayloadLeft = fromIntegral (len) - (88 - B.length unused)
                                                         , txTotalCount = fromIntegral $ txnCount b
                                                         , txProcessed = 0
+                                                        , blockHash = headerHash $ defBlockHeader b
                                                         , checksum = cks
                                                         }
                                             return (Just $ MBlock b, Just bi)
@@ -224,8 +230,8 @@ doVersionHandshake net sock sa = do
             print "Error, unexpected message (1) during handshake"
             return False
 
-messageHandler :: (HasService env m) => (Maybe Message) -> m (MessageCommand)
-messageHandler mm = do
+messageHandler :: (HasService env m) => (Maybe Message, Maybe BlockIngestState) -> m (MessageCommand)
+messageHandler (mm, blkIng) = do
     bp2pEnv <- asks getBitcoinP2PEnv
     case mm of
         Just msg -> do
@@ -252,13 +258,18 @@ messageHandler mm = do
                         lst
                     return $ msgType msg
                 MTx tx -> do
-                    res <- LE.try $ processTransaction tx
-                    case res of
-                        Right () -> return ()
-                        Left BlockHashNotFoundInDB -> return ()
-                        Left EmptyHeadersMessage -> return ()
-                        Left e -> liftIO $ print ("[ERROR] Unhandled exception!" ++ show e) >> throw e
-                    return $ msgType msg
+                    case blkIng of
+                        Just bi -> do
+                            res <- LE.try $ processConfTransaction tx (blockHash bi) (txProcessed bi)
+                            case res of
+                                Right () -> return ()
+                                Left BlockHashNotFoundInDB -> return ()
+                                Left EmptyHeadersMessage -> return ()
+                                Left e -> liftIO $ print ("[ERROR] Unhandled exception!" ++ show e) >> throw e
+                            return $ msgType msg
+                        Nothing -> do
+                            liftIO $ print ("[???] Unconfirmed Tx ")
+                            return $ msgType msg
                 MBlock blk -> do
                     res <- LE.try $ processBlock blk
                     case res of
@@ -273,7 +284,7 @@ messageHandler mm = do
             liftIO $ print "Error, invalid message"
             throw InvalidMessageType
 
-readNextMessage' :: (HasService env m) => Network -> BitcoinPeer -> m (Maybe Message)
+readNextMessage' :: (HasService env m) => Network -> BitcoinPeer -> m ((Maybe Message, Maybe BlockIngestState))
 readNextMessage' net peer = do
     case bpSocket peer of
         Just sock -> do
@@ -288,7 +299,7 @@ readNextMessage' net peer = do
                     liftIO $ atomically $ writeTVar (bpBlockIngest peer) up
                     liftIO $ print ("writing tvar " ++ show up)
                 Nothing -> return ()
-            return msg
+            return (msg, blkIng)
         Nothing -> throw PeerSocketNotConnected
 
 initPeerListeners :: (HasService env m) => m ()
