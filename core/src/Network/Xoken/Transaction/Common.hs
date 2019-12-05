@@ -34,12 +34,13 @@ import Control.Monad ((<=<), forM_, guard, liftM2, mzero, replicateM)
 import Data.Aeson as A
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as B
+import qualified Data.ByteString.Char8 as C
 import Data.Hashable (Hashable)
 import Data.Maybe (fromMaybe, maybe)
 import Data.Serialize as S
 import Data.String (IsString, fromString)
 import Data.String.Conversions (cs)
-import Data.Text (Text)
+import qualified Data.Text as T
 import Data.Word (Word32, Word64)
 import GHC.Generics
 import Network.Xoken.Crypto.Hash
@@ -81,11 +82,11 @@ nosigTxHash tx = TxHash $ doubleSHA256 $ S.encode tx {txIn = map clearInput $ tx
     clearInput ti = ti {scriptInput = B.empty}
 
 -- | Convert transaction hash to hex form, reversing bytes.
-txHashToHex :: TxHash -> Text
+txHashToHex :: TxHash -> T.Text
 txHashToHex (TxHash h) = encodeHex (B.reverse (S.encode h))
 
 -- | Convert transaction hash from hex, reversing bytes.
-hexToTxHash :: Text -> Maybe TxHash
+hexToTxHash :: T.Text -> Maybe TxHash
 hexToTxHash hex = do
     bs <- B.reverse <$> decodeHex hex
     h <- either (const Nothing) Just (S.decode bs)
@@ -110,7 +111,7 @@ data Tx =
       -- | list of transaction outputs
         , txOut :: ![TxOut]
       -- | witness data for the transaction
-        , txWitness :: !WitnessData
+    --    , txWitness :: !WitnessData
       -- | earliest mining height or time
         , txLockTime :: !Word32
         }
@@ -118,8 +119,9 @@ data Tx =
 
 -- | Compute transaction hash.
 txHash :: Tx -> TxHash
-txHash tx = TxHash (doubleSHA256 (S.encode tx {txWitness = []}))
+txHash tx = TxHash (doubleSHA256 (S.encode tx))
 
+-- txHash tx = TxHash (doubleSHA256 (S.encode tx {txWitness = []}))
 instance IsString Tx where
     fromString = fromMaybe e . (eitherToMaybe . S.decode <=< decodeHex) . cs
       where
@@ -145,66 +147,21 @@ putLegacyTx tx = do
     putInOut tx
     putWord32le (txLockTime tx)
 
--- -- | Witness transaciton serializer.
--- putWitnessTx :: Tx -> Put
--- putWitnessTx tx = do
---     putWord32le (txVersion tx)
---     putWord8 0x00
---     putWord8 0x01
---     putInOut tx
---     putWitnessData (txWitness tx)
---     putWord32le (txLockTime tx)
--- | Non-SegWit transaction deseralizer.
 parseLegacyTx :: Get Tx
 parseLegacyTx = do
     v <- getWord32le
     is <- replicateList =<< S.get
     os <- replicateList =<< S.get
     l <- getWord32le
-    return Tx {txVersion = v, txIn = is, txOut = os, txWitness = [], txLockTime = l}
+    return Tx {txVersion = v, txIn = is, txOut = os, txLockTime = l}
   where
     replicateList (VarInt c) = replicateM (fromIntegral c) S.get
 
--- -- | Witness transaction deserializer.
--- parseWitnessTx :: Get Tx
--- parseWitnessTx = do
---     v <- getWord32le
---     m <- getWord8
---     f <- getWord8
---     guard $ m == 0x00
---     guard $ f == 0x01
---     is <- replicateList =<< S.get
---     os <- replicateList =<< S.get
---     w <- parseWitnessData $ length is
---     l <- getWord32le
---     return Tx {txVersion = v, txIn = is, txOut = os, txWitness = w, txLockTime = l}
---   where
---     replicateList (VarInt c) = replicateM (fromIntegral c) S.get
--- -- | Witness data deserializer. Requires count of inputs.
--- parseWitnessData :: Int -> Get WitnessData
--- parseWitnessData n = replicateM n parseWitnessStack
---   where
---     parseWitnessStack = do
---         VarInt i <- S.get
---         replicateM (fromIntegral i) parseWitnessStackItem
---     parseWitnessStackItem = do
---         VarInt i <- S.get
---         getByteString $ fromIntegral i
--- | Witness data serializer.
--- putWitnessData :: WitnessData -> Put
--- putWitnessData = mapM_ putWitnessStack
---   where
---     putWitnessStack ws = do
---         putVarInt $ length ws
---         mapM_ putWitnessStackItem ws
---     putWitnessStackItem bs = do
---         putVarInt $ B.length bs
---         putByteString bs
 instance FromJSON Tx where
     parseJSON = withText "Tx" $ maybe mzero return . (eitherToMaybe . S.decode <=< decodeHex)
 
-instance ToJSON Tx where
-    toJSON = A.String . encodeHex . S.encode
+instance ToJSON Tx
+    -- toJSON = A.String . encodeHex . S.encode
 
 -- | Data type representing a transaction input.
 data TxIn =
@@ -248,6 +205,13 @@ instance Serialize TxOut where
         putVarInt $ B.length s
         putByteString s
 
+instance ToJSON TxOut
+
+instance ToJSON TxIn
+
+instance ToJSON ByteString where
+    toJSON a = A.String $ encodeHex a -- T.pack (C.unpack a)
+
 -- | The 'OutPoint' refers to a transaction output being spent.
 data OutPoint =
     OutPoint
@@ -261,8 +225,8 @@ data OutPoint =
 instance FromJSON OutPoint where
     parseJSON = withText "OutPoint" $ maybe mzero return . (eitherToMaybe . S.decode <=< decodeHex)
 
-instance ToJSON OutPoint where
-    toJSON = A.String . encodeHex . S.encode
+instance ToJSON OutPoint
+    -- toJSON = A.String . encodeHex . S.encode
 
 instance Serialize OutPoint where
     get = do
@@ -278,7 +242,7 @@ nullOutPoint =
 
 -- | Transaction from Genesis block.
 genesisTx :: Tx
-genesisTx = Tx 1 [txin] [txout] [] locktime
+genesisTx = Tx 1 [txin] [txout] locktime
   where
     txin = TxIn outpoint inputBS maxBound
     txout = TxOut 5000000000 (encodeOutputBS output)

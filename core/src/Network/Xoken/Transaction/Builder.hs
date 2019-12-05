@@ -47,30 +47,13 @@ import Control.Arrow (first)
 import Control.Monad (foldM, mzero, unless, when)
 import Control.Monad.Identity (runIdentity)
 import Crypto.Secp256k1
-import Data.Aeson
-    ( FromJSON
-    , ToJSON
-    , Value(Object)
-    , (.:)
-    , (.:?)
-    , (.=)
-    , object
-    , parseJSON
-    , toJSON
-    )
+import Data.Aeson (FromJSON, ToJSON, Value(Object), (.:), (.:?), (.=), object, parseJSON, toJSON)
 import qualified Data.ByteString as B
 import Data.Conduit (ConduitT, Void, (.|), await, runConduit)
 import Data.Conduit.List (sourceList)
 import Data.Hashable
 import Data.List (find, nub)
-import Data.Maybe
-    ( catMaybes
-    , fromJust
-    , fromMaybe
-    , isJust
-    , mapMaybe
-    , maybeToList
-    )
+import Data.Maybe (catMaybes, fromJust, fromMaybe, isJust, mapMaybe, maybeToList)
 import Data.Serialize (encode)
 import Data.String.Conversions (cs)
 import Data.Text (Text)
@@ -100,10 +83,9 @@ chooseCoins ::
     -> Int -- ^ number of outputs (including change)
     -> Bool -- ^ try to find better solutions
     -> [c] -- ^ list of ordered coins to choose from
-    -> Either String ([c], Word64)-- ^ coin selection and change
+    -> Either String ([c], Word64) -- ^ coin selection and change
 chooseCoins target fee nOut continue coins =
-    runIdentity . runConduit $
-    sourceList coins .| chooseCoinsSink target fee nOut continue
+    runIdentity . runConduit $ sourceList coins .| chooseCoinsSink target fee nOut continue
 
 -- | Coin selection algorithm for normal (non-multisig) transactions. This
 -- function returns the selected coins together with the amount of change to
@@ -115,11 +97,9 @@ chooseCoinsSink ::
     -> Word64 -- ^ fee per byte
     -> Int -- ^ number of outputs (including change)
     -> Bool -- ^ try to find better solution
-    -> ConduitT c Void m (Either String ([c], Word64))-- ^ coin selection and change
+    -> ConduitT c Void m (Either String ([c], Word64)) -- ^ coin selection and change
 chooseCoinsSink target fee nOut continue
-    | target > 0 =
-        maybeToEither err <$>
-        greedyAddSink target (guessTxFee fee nOut) continue
+    | target > 0 = maybeToEither err <$> greedyAddSink target (guessTxFee fee nOut) continue
     | otherwise = return $ Left "chooseCoins: Target must be > 0"
   where
     err = "chooseCoins: No solution found"
@@ -136,10 +116,9 @@ chooseMSCoins ::
     -> Int -- ^ number of outputs (including change)
     -> Bool -- ^ try to find better solution
     -> [c]
-    -> Either String ([c], Word64)-- ^ coin selection change amount
+    -> Either String ([c], Word64) -- ^ coin selection change amount
 chooseMSCoins target fee ms nOut continue coins =
-    runIdentity . runConduit $
-    sourceList coins .| chooseMSCoinsSink target fee ms nOut continue
+    runIdentity . runConduit $ sourceList coins .| chooseMSCoinsSink target fee ms nOut continue
 
 -- | Coin selection algorithm for multisig transactions. This function returns
 -- the selected coins together with the amount of change to send back to
@@ -153,11 +132,9 @@ chooseMSCoinsSink ::
     -> (Int, Int) -- ^ m of n multisig
     -> Int -- ^ number of outputs (including change)
     -> Bool -- ^ try to find better solution
-    -> ConduitT c Void m (Either String ([c], Word64))-- ^ coin selection and change
+    -> ConduitT c Void m (Either String ([c], Word64)) -- ^ coin selection and change
 chooseMSCoinsSink target fee ms nOut continue
-    | target > 0 =
-        maybeToEither err <$>
-        greedyAddSink target (guessMSTxFee fee ms nOut) continue
+    | target > 0 = maybeToEither err <$> greedyAddSink target (guessMSTxFee fee ms nOut) continue
     | otherwise = return $ Left "chooseMSCoins: Target must be > 0"
   where
     err = "chooseMSCoins: No solution found"
@@ -173,7 +150,7 @@ greedyAddSink ::
     => Word64 -- ^ value to send
     -> (Int -> Word64) -- ^ coin count to fee function
     -> Bool -- ^ try to find better solutions
-    -> ConduitT c Void m (Maybe ([c], Word64))-- ^ coin selection and change
+    -> ConduitT c Void m (Maybe ([c], Word64)) -- ^ coin selection and change
 greedyAddSink target guessFee continue = go [] 0 [] 0
     -- The goal is the value we must reach (including the fee) for a certain
     -- amount of selected coins.
@@ -196,13 +173,9 @@ greedyAddSink target guessFee continue = go [] 0 [] 0
                                       then go [] 0 (coin : acc) (val + aTot)
                         -- Otherwise, we stop here and return the previous
                         -- solution
-                                      else return $
-                                           Just (ps, pTot - goal (length ps))
+                                      else return $ Just (ps, pTot - goal (length ps))
                     -- Otherwise, return this solution
-                             else return $
-                                  Just
-                                      ( coin : acc
-                                      , val + aTot - goal (length acc + 1))
+                             else return $ Just (coin : acc, val + aTot - goal (length acc + 1))
                 -- We have not yet reached the goal. Add the coin to the
                 -- accumulator
                     else go (coin : acc) (val + aTot) ps pTot
@@ -221,8 +194,7 @@ guessTxFee byteFee nOut nIn = byteFee * fromIntegral (guessTxSize nIn [] nOut 0)
 
 -- | Same as 'guessTxFee' but for multisig transactions.
 guessMSTxFee :: Word64 -> (Int, Int) -> Int -> Int -> Word64
-guessMSTxFee byteFee ms nOut nIn =
-    byteFee * fromIntegral (guessTxSize 0 (replicate nIn ms) nOut 0)
+guessMSTxFee byteFee ms nOut nIn = byteFee * fromIntegral (guessTxSize 0 (replicate nIn ms) nOut 0)
 
 -- | Computes an upper bound on the size of a transaction based on some known
 -- properties of the transaction.
@@ -252,9 +224,7 @@ guessMSSize (m, n)
  = 40 + fromIntegral (B.length $ encode $ VarInt $ fromIntegral scp) + scp
     -- OP_M + n*PubKey + OP_N + OP_CHECKMULTISIG
   where
-    rdm =
-        fromIntegral $
-        B.length $ encode $ opPushData $ B.replicate (n * 34 + 3) 0
+    rdm = fromIntegral $ B.length $ encode $ opPushData $ B.replicate (n * 34 + 3) 0
     -- Redeem + m*sig + OP_0
     scp = rdm + m * 73 + 1
 
@@ -273,7 +243,7 @@ buildAddrTx net xs ys = buildTx xs =<< mapM f ys
 -- | Build a transaction by providing a list of outpoints as inputs
 -- and a list of 'ScriptOutput' and amounts as outputs.
 buildTx :: [OutPoint] -> [(ScriptOutput, Word64)] -> Either String Tx
-buildTx xs ys = mapM fo ys >>= \os -> return $ Tx 1 (map fi xs) os [] 0
+buildTx xs ys = mapM fo ys >>= \os -> return $ Tx 1 (map fi xs) os 0
   where
     fi outPoint = TxIn outPoint B.empty maxBound
     fo (o, v)
@@ -297,8 +267,7 @@ data SigInput =
 instance ToJSON SigInput where
     toJSON (SigInput so val op sh rdm) =
         object $
-        ["pkscript" .= so, "value" .= val, "outpoint" .= op, "sighash" .= sh] ++
-        ["redeem" .= r | r <- maybeToList rdm]
+        ["pkscript" .= so, "value" .= val, "outpoint" .= op, "sighash" .= sh] ++ ["redeem" .= r | r <- maybeToList rdm]
 
 instance FromJSON SigInput where
     parseJSON (Object o) = do
@@ -330,8 +299,7 @@ signTx net otx sigis allKeys
 
 -- | Produce a structured representation of a deterministic (RFC-6979) signature over an input.
 makeSignature :: Network -> Tx -> Int -> SigInput -> SecKeyI -> TxSignature
-makeSignature net tx i (SigInput so val _ sh rdmM) key =
-    TxSignature (signHash (secKeyData key) m) sh
+makeSignature net tx i (SigInput so val _ sh rdmM) key = TxSignature (signHash (secKeyData key) m) sh
   where
     m = txSigHash net tx (encodeOutput $ fromMaybe so rdmM) val i sh
 
@@ -341,7 +309,7 @@ signInput net tx i sigIn@(SigInput so val _ sh rdmM) key = do
     let sig = makeSignature net tx i sigIn key
     si <- buildInput net tx i so val rdmM sig $ derivePubKeyI key
     let ins = updateIndex i (txIn tx) (f si)
-    return $ Tx (txVersion tx) ins (txOut tx) [] (txLockTime tx)
+    return $ Tx (txVersion tx) ins (txOut tx) (txLockTime tx)
   where
     f si x = x {scriptInput = encodeInputBS si}
 
@@ -357,27 +325,17 @@ findSigInput si ti = mapMaybe g $ zip (matchTemplate si ti f) [0 ..]
 
 -- | Find from the list of provided private keys which one is required to sign
 -- the 'ScriptOutput'.
-sigKeys ::
-       ScriptOutput -> Maybe RedeemScript -> [SecKey] -> Either String [SecKeyI]
+sigKeys :: ScriptOutput -> Maybe RedeemScript -> [SecKey] -> Either String [SecKeyI]
 sigKeys so rdmM keys =
     case (so, rdmM) of
-        (PayPK p, Nothing) ->
-            return . map fst . maybeToList $ find ((== p) . snd) zipKeys
+        (PayPK p, Nothing) -> return . map fst . maybeToList $ find ((== p) . snd) zipKeys
         (PayPKHash h, Nothing) ->
-            return . map fst . maybeToList $
-            find ((== h) . getAddrHash160 . pubKeyAddr . snd) zipKeys
-        (PayMulSig ps r, Nothing) ->
-            return $ map fst $ take r $ filter ((`elem` ps) . snd) zipKeys
+            return . map fst . maybeToList $ find ((== h) . getAddrHash160 . pubKeyAddr . snd) zipKeys
+        (PayMulSig ps r, Nothing) -> return $ map fst $ take r $ filter ((`elem` ps) . snd) zipKeys
         (PayScriptHash _, Just rdm) -> sigKeys rdm Nothing keys
         _ -> Left "sigKeys: Could not decode output script"
   where
-    zipKeys =
-        [ (prv, pub)
-        | k <- keys
-        , t <- [True, False]
-        , let prv = wrapSecKey t k
-        , let pub = derivePubKeyI prv
-        ]
+    zipKeys = [(prv, pub) | k <- keys, t <- [True, False], let prv = wrapSecKey t k, let pub = derivePubKeyI prv]
 
 -- | Construct an input for a transaction given a signature, public key and data
 -- about the previous output.
@@ -413,14 +371,12 @@ buildInput net tx i so val rdmM sig pub = do
             Right (RegularInput (SpendMulSig xs)) -> xs
             _ -> []
     out = encodeOutput so
-    f (TxSignature x sh) p =
-        verifyHashSig (txSigHash net tx out val i sh) x (pubKeyPoint p)
+    f (TxSignature x sh) p = verifyHashSig (txSigHash net tx out val i sh) x (pubKeyPoint p)
     f TxSignatureEmpty _ = False
 
 {- Merge multisig transactions -}
 -- | Merge partially-signed multisig transactions.
-mergeTxs ::
-       Network -> [Tx] -> [(ScriptOutput, Word64, OutPoint)] -> Either String Tx
+mergeTxs :: Network -> [Tx] -> [(ScriptOutput, Word64, OutPoint)] -> Either String Tx
 mergeTxs net txs os
     | null txs = Left "Transaction list is empty"
     | length (nub emptyTxs) /= 1 = Left "Transactions do not match"
@@ -428,22 +384,14 @@ mergeTxs net txs os
     | otherwise = foldM (mergeTxInput net txs) (head emptyTxs) outs
   where
     zipOp = zip (matchTemplate os (txIn $ head txs) f) [0 ..]
-    outs =
-        map (first $ (\(o, v, _) -> (o, v)) . fromJust) $
-        filter (isJust . fst) zipOp
+    outs = map (first $ (\(o, v, _) -> (o, v)) . fromJust) $ filter (isJust . fst) zipOp
     f (_, _, o) txin = o == prevOutput txin
     emptyTxs = map (\tx -> foldl clearInput tx outs) txs
     ins is i = updateIndex i is (\ti -> ti {scriptInput = B.empty})
-    clearInput tx (_, i) =
-        Tx (txVersion tx) (ins (txIn tx) i) (txOut tx) [] (txLockTime tx)
+    clearInput tx (_, i) = Tx (txVersion tx) (ins (txIn tx) i) (txOut tx) (txLockTime tx)
 
 -- | Merge input from partially-signed multisig transactions.
-mergeTxInput ::
-       Network
-    -> [Tx]
-    -> Tx
-    -> ((ScriptOutput, Word64), Int)
-    -> Either String Tx
+mergeTxInput :: Network -> [Tx] -> Tx -> ((ScriptOutput, Word64), Int) -> Either String Tx
 mergeTxInput net txs tx ((so, val), i)
     -- Ignore transactions with empty inputs
  = do
@@ -453,14 +401,12 @@ mergeTxInput net txs tx ((so, val), i)
     unless (all (== rdm) $ map snd sigRes) $ Left "Redeem scripts do not match"
     si <- encodeInputBS <$> go (nub $ concatMap fst sigRes) so rdm
     let ins' = updateIndex i (txIn tx) (\ti -> ti {scriptInput = si})
-    return $ Tx (txVersion tx) ins' (txOut tx) [] (txLockTime tx)
+    return $ Tx (txVersion tx) ins' (txOut tx) (txLockTime tx)
   where
     go allSigs out rdmM =
         case out of
             PayMulSig msPubs r ->
-                let sigs =
-                        take r $
-                        catMaybes $ matchTemplate allSigs msPubs $ f out
+                let sigs = take r $ catMaybes $ matchTemplate allSigs msPubs $ f out
                  in return $ RegularInput $ SpendMulSig sigs
             PayScriptHash _ ->
                 case rdmM of
@@ -472,21 +418,15 @@ mergeTxInput net txs tx ((so, val), i)
     extractSigs si =
         case decodeInputBS net si of
             Right (RegularInput (SpendMulSig sigs)) -> Right (sigs, Nothing)
-            Right (ScriptHashInput (SpendMulSig sigs) rdm) ->
-                Right (sigs, Just rdm)
+            Right (ScriptHashInput (SpendMulSig sigs) rdm) -> Right (sigs, Just rdm)
             _ -> Left "Invalid script input type"
-    f out (TxSignature x sh) p =
-        verifyHashSig
-            (txSigHash net tx (encodeOutput out) val i sh)
-            x
-            (pubKeyPoint p)
+    f out (TxSignature x sh) p = verifyHashSig (txSigHash net tx (encodeOutput out) val i sh) x (pubKeyPoint p)
     f _ TxSignatureEmpty _ = False
 
 {- Tx verification -}
 -- | Verify if a transaction is valid and all of its inputs are standard.
 verifyStdTx :: Network -> Tx -> [(ScriptOutput, Word64, OutPoint)] -> Bool
-verifyStdTx net tx xs =
-    not (null (txIn tx)) && all go (zip (matchTemplate xs (txIn tx) f) [0 ..])
+verifyStdTx net tx xs = not (null (txIn tx)) && all go (zip (matchTemplate xs (txIn tx) f) [0 ..])
   where
     f (_, _, o) txin = o == prevOutput txin
     go (Just (so, val, _), i) = verifyStdInput net tx i so val
@@ -501,52 +441,32 @@ verifyStdInput net tx i = go (scriptInput $ txIn tx !! i)
         case dec inp of
             Right (RegularInput (SpendPK (TxSignature sig sh))) ->
                 case so of
-                    PayPK pub ->
-                        verifyHashSig
-                            (txSigHash net tx out val i sh)
-                            sig
-                            (pubKeyPoint pub)
+                    PayPK pub -> verifyHashSig (txSigHash net tx out val i sh) sig (pubKeyPoint pub)
                     _ -> False
             Right (RegularInput (SpendPKHash (TxSignature sig sh) pub)) ->
                 case so of
                     PayPKHash h ->
                         pubKeyAddr pub == p2pkhAddr h &&
-                        verifyHashSig
-                            (txSigHash net tx out val i sh)
-                            sig
-                            (pubKeyPoint pub)
+                        verifyHashSig (txSigHash net tx out val i sh) sig (pubKeyPoint pub)
                     _ -> False
             Right (RegularInput (SpendMulSig sigs)) ->
                 case so of
-                    PayMulSig pubs r ->
-                        countMulSig net tx out val i (map pubKeyPoint pubs) sigs ==
-                        r
+                    PayMulSig pubs r -> countMulSig net tx out val i (map pubKeyPoint pubs) sigs == r
                     _ -> False
             Right (ScriptHashInput si rdm) ->
                 case so of
                     PayScriptHash h ->
-                        payToScriptAddress rdm == p2shAddr h &&
-                        go (encodeInputBS $ RegularInput si) rdm val
+                        payToScriptAddress rdm == p2shAddr h && go (encodeInputBS $ RegularInput si) rdm val
                     _ -> False
             _ -> False
       where
         out = encodeOutput so
 
 -- | Count the number of valid signatures for a multi-signature transaction.
-countMulSig ::
-       Network
-    -> Tx
-    -> Script
-    -> Word64
-    -> Int
-    -> [PubKey]
-    -> [TxSignature]
-    -> Int
+countMulSig :: Network -> Tx -> Script -> Word64 -> Int -> [PubKey] -> [TxSignature] -> Int
 countMulSig _ _ _ _ _ [] _ = 0
 countMulSig _ _ _ _ _ _ [] = 0
-countMulSig net tx out val i (_:pubs) (TxSignatureEmpty:rest) =
-    countMulSig net tx out val i pubs rest
+countMulSig net tx out val i (_:pubs) (TxSignatureEmpty:rest) = countMulSig net tx out val i pubs rest
 countMulSig net tx out val i (pub:pubs) sigs@(TxSignature sig sh:rest)
-    | verifyHashSig (txSigHash net tx out val i sh) sig pub =
-        1 + countMulSig net tx out val i pubs rest
+    | verifyHashSig (txSigHash net tx out val i sh) sig pub = 1 + countMulSig net tx out val i pubs rest
     | otherwise = countMulSig net tx out val i pubs sigs

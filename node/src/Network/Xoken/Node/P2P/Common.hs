@@ -61,25 +61,29 @@ data ChainSyncException
     = BlocksNotChainedException
     | MessageParsingException
     | KeyValueDBInsertException
-    | BlockHashNotFoundInDB
-    | DuplicateBlockHeader
-    | InvalidMessageType
-    | EmptyHeadersMessage
+    | BlockHashNotFoundException
+    | DuplicateBlockHeaderException
+    | InvalidMessageTypeException
+    | EmptyHeadersMessageException
     deriving (Show)
 
 instance Exception ChainSyncException
 
-data BlockSyncException =
-    InvalidBlockIngestState
+data BlockSyncException
+    = InvalidStreamStateException
+    | InvalidBlockIngestStateException
+    | InvalidMetaDataException
+    | InvalidBlockHashException
+    | InvalidDeflatedBlockException
     deriving (Show)
 
 instance Exception BlockSyncException
 
 data PeerMessageException
-    = SocketReadFailure
-    | DeflatedBlockParseError
+    = SocketReadException
+    | DeflatedBlockParseException
     | ConfirmedTxParseException
-    | PeerSocketNotConnected
+    | PeerSocketNotConnectedException
     deriving (Show)
 
 instance Exception PeerMessageException
@@ -121,3 +125,15 @@ logMessage :: (HasService env m) => MessageCommand -> m ()
 logMessage mg = do
     liftIO $ print ("processed: " ++ show mg)
     return ()
+
+getTextVal :: (Maybe Bool, Maybe Int32, Maybe Int64, Maybe T.Text) -> Maybe T.Text
+getTextVal (_, _, _, txt) = txt
+
+getBoolVal :: (Maybe Bool, Maybe Int32, Maybe Int64, Maybe T.Text) -> Maybe Bool
+getBoolVal (b, _, _, _) = b
+
+getIntVal :: (Maybe Bool, Maybe Int32, Maybe Int64, Maybe T.Text) -> Maybe Int32
+getIntVal (_, i, _, _) = i
+
+getBigIntVal :: (Maybe Bool, Maybe Int32, Maybe Int64, Maybe T.Text) -> Maybe Int64
+getBigIntVal (_, _, ts, _) = ts

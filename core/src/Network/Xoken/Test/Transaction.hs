@@ -48,15 +48,11 @@ arbitraryOutPoint = OutPoint <$> arbitraryTxHash <*> arbitrary
 
 -- | Arbitrary 'TxOut'.
 arbitraryTxOut :: Network -> Gen TxOut
-arbitraryTxOut net =
-    TxOut <$> (getTestCoin <$> arbitrarySatoshi net) <*>
-    (encodeOutputBS <$> arbitraryScriptOutput net)
+arbitraryTxOut net = TxOut <$> (getTestCoin <$> arbitrarySatoshi net) <*> (encodeOutputBS <$> arbitraryScriptOutput net)
 
 -- | Arbitrary 'TxIn'.
 arbitraryTxIn :: Network -> Gen TxIn
-arbitraryTxIn net =
-    TxIn <$> arbitraryOutPoint <*> (encodeInputBS <$> arbitraryScriptInput net) <*>
-    arbitrary
+arbitraryTxIn net = TxIn <$> arbitraryOutPoint <*> (encodeInputBS <$> arbitraryScriptInput net) <*> arbitrary
 
 -- | Arbitrary transaction. Can be regular or with witnesses.
 arbitraryTx :: Network -> Gen Tx
@@ -90,7 +86,7 @@ arbitraryWLTx net wit = do
         if wit
             then vectorOf (length uniqueInps) (listOf arbitraryBS)
             else return []
-    Tx <$> arbitrary <*> pure uniqueInps <*> pure outs <*> pure w <*> arbitrary
+    Tx <$> arbitrary <*> pure uniqueInps <*> pure outs <*> arbitrary
 
 -- | Arbitrary transaction containing only inputs of type 'SpendPKHash',
 -- 'SpendScriptHash' (multisig) and outputs of type 'PayPKHash' and 'PaySH'.
@@ -101,7 +97,7 @@ arbitraryAddrOnlyTx net = do
     no <- choose (0, 5)
     inps <- vectorOf ni (arbitraryAddrOnlyTxIn net)
     outs <- vectorOf no (arbitraryAddrOnlyTxOut net)
-    Tx <$> arbitrary <*> pure inps <*> pure outs <*> pure [] <*> arbitrary
+    Tx <$> arbitrary <*> pure inps <*> pure outs <*> arbitrary
 
 -- | Like 'arbitraryAddrOnlyTx' without empty signatures in the inputs.
 arbitraryAddrOnlyTxFull :: Network -> Gen Tx
@@ -110,7 +106,7 @@ arbitraryAddrOnlyTxFull net = do
     no <- choose (0, 5)
     inps <- vectorOf ni (arbitraryAddrOnlyTxInFull net)
     outs <- vectorOf no (arbitraryAddrOnlyTxOut net)
-    Tx <$> arbitrary <*> pure inps <*> pure outs <*> pure [] <*> arbitrary
+    Tx <$> arbitrary <*> pure inps <*> pure outs <*> arbitrary
 
 -- | Arbitrary TxIn that can only be of type 'SpendPKHash' or 'SpendScriptHash'
 -- (multisig). Only compressed public keys are used.
@@ -122,8 +118,7 @@ arbitraryAddrOnlyTxIn net = do
 -- | like 'arbitraryAddrOnlyTxIn' with no empty signatures.
 arbitraryAddrOnlyTxInFull :: Network -> Gen TxIn
 arbitraryAddrOnlyTxInFull net = do
-    inp <-
-        oneof [arbitraryPKHashInputFullC net, arbitraryMulSigSHInputFullC net]
+    inp <- oneof [arbitraryPKHashInputFullC net, arbitraryMulSigSHInputFullC net]
     TxIn <$> arbitraryOutPoint <*> pure (encodeInputBS inp) <*> arbitrary
 
 -- | Arbitrary 'TxOut' that can only be of type 'PayPKHash' or 'PaySH'.
@@ -186,11 +181,7 @@ arbitraryMSSigInput net = do
 arbitrarySHSigInput :: Network -> Gen (SigInput, [SecKeyI])
 arbitrarySHSigInput net = do
     (SigInput rdm val op sh _, ks) <-
-        oneof
-            [ f <$> arbitraryPKSigInput net
-            , f <$> arbitraryPKHashSigInput net
-            , arbitraryMSSigInput net
-            ]
+        oneof [f <$> arbitraryPKSigInput net, f <$> arbitraryPKHashSigInput net, arbitraryMSSigInput net]
     let out = PayScriptHash $ getAddrHash160 $ payToScriptAddress rdm
     return (SigInput out val op sh $ Just rdm, ks)
   where
@@ -209,7 +200,7 @@ arbitrarySigningData net = do
     outs <- vectorOf no (arbitraryTxOut net)
     l <- arbitrary
     perm <- choose (0, length inps - 1)
-    let tx = Tx v (permutations inps !! perm) outs [] l
+    let tx = Tx v (permutations inps !! perm) outs l
         keys = concatMap snd uSigis
     return (tx, map fst uSigis, keys)
 
@@ -223,11 +214,10 @@ arbitraryEmptyTx net = do
     ops <- vectorOf ni arbitraryOutPoint
     t <- arbitrary
     s <- arbitrary
-    return $ Tx v (map (\op -> TxIn op BS.empty s) (nub ops)) outs [] t
+    return $ Tx v (map (\op -> TxIn op BS.empty s) (nub ops)) outs t
 
 -- | Arbitrary partially-signed transactions.
-arbitraryPartialTxs ::
-       Network -> Gen ([Tx], [(ScriptOutput, Word64, OutPoint, Int, Int)])
+arbitraryPartialTxs :: Network -> Gen ([Tx], [(ScriptOutput, Word64, OutPoint, Int, Int)])
 arbitraryPartialTxs net = do
     tx <- arbitraryEmptyTx net
     res <-
@@ -240,8 +230,7 @@ arbitraryPartialTxs net = do
     singleSig so val rdmM tx op prv = do
         sh <- arbitraryValidSigHash net
         let sigi = SigInput so val op sh rdmM
-        return . fromRight (error "Colud not decode transaction") $
-            signTx net tx [sigi] [prv]
+        return . fromRight (error "Colud not decode transaction") $ signTx net tx [sigi] [prv]
     arbitraryData = do
         (m, n) <- arbitraryMSParam
         val <- getTestCoin <$> arbitrarySatoshi net
@@ -253,10 +242,5 @@ arbitraryPartialTxs net = do
         let so = PayMulSig pubKeys m
         elements
             [ (so, val, Nothing, prvKeys, m, n)
-            , ( PayScriptHash $ getAddrHash160 $ payToScriptAddress so
-              , val
-              , Just so
-              , prvKeys
-              , m
-              , n)
+            , (PayScriptHash $ getAddrHash160 $ payToScriptAddress so, val, Just so, prvKeys, m, n)
             ]

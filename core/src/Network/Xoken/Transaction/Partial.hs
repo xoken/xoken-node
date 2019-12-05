@@ -58,15 +58,7 @@ import Network.Xoken.Script
     , toP2SH
     , toP2WSH
     )
-import Network.Xoken.Transaction
-    ( Tx(..)
-    , TxOut
-    , WitnessStack
-    , outPointIndex
-    , prevOutput
-    , scriptInput
-    , scriptOutput
-    )
+import Network.Xoken.Transaction (Tx(..), TxOut, WitnessStack, outPointIndex, prevOutput, scriptInput, scriptOutput)
 import Network.Xoken.Util (eitherToMaybe)
 
 -- | PSBT data type as specified in [BIP-174](https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki). This
@@ -127,10 +119,7 @@ data Key =
 instance Hashable Key
 
 -- | Take two 'PartiallySignedTransaction's and merge them. The 'unsignedTransaction' field in both must be the same.
-merge ::
-       PartiallySignedTransaction
-    -> PartiallySignedTransaction
-    -> Maybe PartiallySignedTransaction
+merge :: PartiallySignedTransaction -> PartiallySignedTransaction -> Maybe PartiallySignedTransaction
 merge psbt1 psbt2
     | unsignedTransaction psbt1 == unsignedTransaction psbt2 =
         Just $
@@ -172,16 +161,13 @@ mergeOutput a b =
 
 -- | Take partial signatures from all of the 'Input's and finalize the signature.
 complete :: PartiallySignedTransaction -> PartiallySignedTransaction
-complete psbt =
-    psbt {inputs = map (completeInput . analyzeInputs) (indexed $ inputs psbt)}
+complete psbt = psbt {inputs = map (completeInput . analyzeInputs) (indexed $ inputs psbt)}
   where
-    analyzeInputs (i, input) =
-        (outputScript =<< witnessUtxo input <|> nonWitScript, input)
+    analyzeInputs (i, input) = (outputScript =<< witnessUtxo input <|> nonWitScript, input)
       where
         nonWitScript = getPrevOut i =<< nonWitnessUtxo input
     getPrevOut i tx =
-        (txOut tx !!?) . fromIntegral . outPointIndex . prevOutput =<<
-        txIn (unsignedTransaction psbt) !!? i
+        (txOut tx !!?) . fromIntegral . outPointIndex . prevOutput =<< txIn (unsignedTransaction psbt) !!? i
     xs !!? i = lookup i $ indexed xs
     outputScript = eitherToMaybe . decodeOutputBS . scriptOutput
     completeInput (Nothing, input) = input
@@ -190,26 +176,15 @@ complete psbt =
     indexed = zip [0 ..]
 
 completeSig :: Input -> ScriptOutput -> Input
-completeSig input (PayPK k) =
-    input
-        { finalScriptSig =
-              eitherToMaybe . S.decode =<< HashMap.lookup k (partialSigs input)
-        }
+completeSig input (PayPK k) = input {finalScriptSig = eitherToMaybe . S.decode =<< HashMap.lookup k (partialSigs input)}
 completeSig input (PayPKHash h)
     | [(k, sig)] <- HashMap.toList $ partialSigs input
-    , PubKeyAddress h == pubKeyAddr k =
-        input
-            { finalScriptSig =
-                  Just $ Script [opPushData sig, opPushData (S.encode k)]
-            }
+    , PubKeyAddress h == pubKeyAddr k = input {finalScriptSig = Just $ Script [opPushData sig, opPushData (S.encode k)]}
 completeSig input (PayMulSig pubKeys m)
     | length sigs >= m = input {finalScriptSig = finalSig}
   where
     sigs = collectSigs m pubKeys input
-    finalSig =
-        Script .
-        (OP_0 :) . (map opPushData sigs <>) . pure . opPushData . S.encode <$>
-        inputRedeemScript input
+    finalSig = Script . (OP_0 :) . (map opPushData sigs <>) . pure . opPushData . S.encode <$> inputRedeemScript input
 completeSig input (PayScriptHash h)
     | Just rdmScript <- inputRedeemScript input
     , PayScriptHash h == toP2SH rdmScript
@@ -220,21 +195,17 @@ completeSig input (PayWitnessPKHash h)
     , PubKeyAddress h == pubKeyAddr k =
         input
             { finalScriptWitness = Just [sig, S.encode k]
-            , finalScriptSig =
-                  Script . pure . opPushData . S.encode <$>
-                  inputRedeemScript input
+            , finalScriptSig = Script . pure . opPushData . S.encode <$> inputRedeemScript input
             }
 completeSig input (PayWitnessScriptHash h)
     | Just witScript <- inputWitnessScript input
     , PayWitnessScriptHash h == toP2WSH witScript
-    , Right decodedScript <- decodeOutput witScript =
-        completeWitnessSig input decodedScript
+    , Right decodedScript <- decodeOutput witScript = completeWitnessSig input decodedScript
 completeSig input _ = input
 
 completeWitnessSig :: Input -> ScriptOutput -> Input
 completeWitnessSig input script@(PayMulSig pubKeys m)
-    | length sigs >= m =
-        input {finalScriptWitness = Just finalWit, finalScriptSig = finalSig}
+    | length sigs >= m = input {finalScriptWitness = Just finalWit, finalScriptSig = finalSig}
   where
     sigs = collectSigs m pubKeys input
     finalSig = Script . pure . opPushData . S.encode <$> inputRedeemScript input
@@ -244,32 +215,27 @@ completeWitnessSig input _ = input
 collectSigs :: Int -> [PubKeyI] -> Input -> [ByteString]
 collectSigs m pubKeys input = take m . reverse $ foldl' lookupKey [] pubKeys
   where
-    lookupKey sigs key =
-        maybe sigs (: sigs) $ HashMap.lookup key (partialSigs input)
+    lookupKey sigs key = maybe sigs (: sigs) $ HashMap.lookup key (partialSigs input)
 
 -- | Take a finalized 'PartiallySignedTransaction' and produce the signed final transaction.  You may need to call
 -- 'complete' on the 'PartiallySignedTransaction' before producing the final transaction.
 finalTransaction :: PartiallySignedTransaction -> Tx
-finalTransaction psbt =
-    setInputs . foldl' finalizeInput ([], []) $ zip (txIn tx) (inputs psbt)
+finalTransaction psbt = setInputs . foldl' finalizeInput ([], []) $ zip (txIn tx) (inputs psbt)
   where
     tx = unsignedTransaction psbt
     hasWitness = any (isJust . finalScriptWitness) (inputs psbt)
     setInputs (ins, witData) =
         tx
             { txIn = reverse ins
-            , txWitness =
-                  if hasWitness
-                      then reverse witData
-                      else []
+            -- , txWitness =
+            --       if hasWitness
+            --           then reverse witData
+            --           else []
             }
-    finalizeInput (ins, witData) (txInput, psbtInput) =
-        maybe finalWitness finalScript $ finalScriptSig psbtInput
+    finalizeInput (ins, witData) (txInput, psbtInput) = maybe finalWitness finalScript $ finalScriptSig psbtInput
       where
-        finalScript script =
-            (txInput {scriptInput = encode script} : ins, [] : witData)
-        finalWitness =
-            (ins, fromMaybe [] (finalScriptWitness psbtInput) : witData)
+        finalScript script = (txInput {scriptInput = encode script} : ins, [] : witData)
+        finalWitness = (ins, fromMaybe [] (finalScriptWitness psbtInput) : witData)
 
 -- | Take an unsigned transaction and produce an empty 'PartiallySignedTransaction'
 emptyPSBT :: Tx -> PartiallySignedTransaction
@@ -283,17 +249,7 @@ emptyPSBT tx =
 
 emptyInput :: Input
 emptyInput =
-    Input
-        Nothing
-        Nothing
-        HashMap.empty
-        Nothing
-        Nothing
-        Nothing
-        HashMap.empty
-        Nothing
-        Nothing
-        (UnknownMap HashMap.empty)
+    Input Nothing Nothing HashMap.empty Nothing Nothing Nothing HashMap.empty Nothing Nothing (UnknownMap HashMap.empty)
 
 emptyOutput :: Output
 emptyOutput = Output Nothing Nothing HashMap.empty (UnknownMap HashMap.empty)
@@ -310,20 +266,14 @@ instance Serialize PartiallySignedTransaction where
         guard $ globalUnsignedTxType == 0x00
         unsignedTransaction <- getSizedBytes
         guard $ all (B.null . scriptInput) (txIn unsignedTransaction)
-        guard $ null (txWitness unsignedTransaction)
+        -- guard $ null (txWitness unsignedTransaction)
         globalUnknown <- get
         globalEnd <- getWord8
         guard $ globalEnd == 0x00
         inputs <- replicateM (length $ txIn unsignedTransaction) get
         outputs <- replicateM (length $ txOut unsignedTransaction) get
-        return
-            PartiallySignedTransaction
-                {unsignedTransaction, globalUnknown, inputs, outputs}
-    put PartiallySignedTransaction { unsignedTransaction
-                                   , globalUnknown
-                                   , inputs
-                                   , outputs
-                                   } = do
+        return PartiallySignedTransaction {unsignedTransaction, globalUnknown, inputs, outputs}
+    put PartiallySignedTransaction {unsignedTransaction, globalUnknown, inputs, outputs} = do
         putByteString "psbt"
         putWord8 0xff -- Header separator
         putWord8 0x01 -- Key size
@@ -358,17 +308,12 @@ instance Serialize UnknownMap where
             if isEnd == 0x00
                 then return (UnknownMap m)
                 else getItem m
-    put (UnknownMap m) =
-        void $ HashMap.traverseWithKey (\k v -> put k >> put (VarString v)) m
+    put (UnknownMap m) = void $ HashMap.traverseWithKey (\k v -> put k >> put (VarString v)) m
 
 instance Serialize Input where
     get = getMap getInputItem setInputUnknown emptyInput
       where
-        setInputUnknown f input =
-            input
-                { inputUnknown =
-                      UnknownMap $ f (unknownMap $ inputUnknown input)
-                }
+        setInputUnknown f input = input {inputUnknown = UnknownMap $ f (unknownMap $ inputUnknown input)}
     put Input { nonWitnessUtxo
               , witnessUtxo
               , partialSigs
@@ -401,16 +346,8 @@ instance Serialize Input where
 instance Serialize Output where
     get = getMap getOutputItem setOutputUnknown emptyOutput
       where
-        setOutputUnknown f output =
-            output
-                { outputUnknown =
-                      UnknownMap $ f (unknownMap $ outputUnknown output)
-                }
-    put Output { outputRedeemScript
-               , outputWitnessScript
-               , outputHDKeypaths
-               , outputUnknown
-               } = do
+        setOutputUnknown f output = output {outputUnknown = UnknownMap $ f (unknownMap $ outputUnknown output)}
+    put Output {outputRedeemScript, outputWitnessScript, outputHDKeypaths, outputUnknown} = do
         whenJust (putKeyValue OutRedeemScript) outputRedeemScript
         whenJust (putKeyValue OutWitnessScript) outputWitnessScript
         putHDPath OutBIP32Derivation outputHDKeypaths
@@ -439,8 +376,7 @@ getMap ::
     -> Get a
 getMap getMapItem setUnknown = go
   where
-    getItem keySize m (Right t) =
-        getMapItem (fromIntegral keySize - 1) m t >>= go
+    getItem keySize m (Right t) = getMapItem (fromIntegral keySize - 1) m t >>= go
     getItem keySize m (Left t) = do
         k <- getBytes (fromIntegral keySize - 1)
         VarString v <- get
@@ -494,8 +430,7 @@ getInputItem 0 input@Input {inputWitnessScript = Nothing} InWitnessScript = do
     return $ input {inputWitnessScript = Just script}
 getInputItem keySize input InBIP32Derivation = do
     (k, v) <- getHDPath keySize
-    return $
-        input {inputHDKeypaths = HashMap.insert k v (inputHDKeypaths input)}
+    return $ input {inputHDKeypaths = HashMap.insert k v (inputHDKeypaths input)}
 getInputItem 0 input@Input {finalScriptSig = Nothing} InFinalScriptSig = do
     script <- getSizedBytes
     return $ input {finalScriptSig = Just script}
@@ -507,9 +442,7 @@ getInputItem 0 input@Input {finalScriptWitness = Nothing} InFinalScriptWitness =
         VarInt n <- get
         replicateM (fromIntegral n) get
 getInputItem keySize input inputType =
-    fail $
-    "Incorrect key size for input item or item already existed: " <>
-    show (keySize, input, inputType)
+    fail $ "Incorrect key size for input item or item already existed: " <> show (keySize, input, inputType)
 
 getOutputItem :: Int -> Output -> OutputType -> Get Output
 getOutputItem 0 output@Output {outputRedeemScript = Nothing} OutRedeemScript = do
@@ -520,12 +453,9 @@ getOutputItem 0 output@Output {outputWitnessScript = Nothing} OutWitnessScript =
     return $ output {outputWitnessScript = Just script}
 getOutputItem keySize output OutBIP32Derivation = do
     (k, v) <- getHDPath keySize
-    return $
-        output {outputHDKeypaths = HashMap.insert k v (outputHDKeypaths output)}
+    return $ output {outputHDKeypaths = HashMap.insert k v (outputHDKeypaths output)}
 getOutputItem keySize output outputType =
-    fail $
-    "Incorrect key size for output item or item already existed: " <>
-    show (keySize, output, outputType)
+    fail $ "Incorrect key size for output item or item already existed: " <> show (keySize, output, outputType)
 
 getHDPath :: Int -> Get (PubKeyI, (Fingerprint, [KeyIndex]))
 getHDPath keySize = (,) <$> isolate keySize get <*> (unPSBTHDPath <$> get)
@@ -544,10 +474,7 @@ instance Serialize PSBTHDPath where
         VarInt valueSize <- get
         guard $ valueSize `mod` 4 == 0
         let numIndices = (fromIntegral valueSize - 4) `div` 4
-        PSBTHDPath <$>
-            isolate
-                (fromIntegral valueSize)
-                ((,) <$> getWord32le <*> getKeyIndexList numIndices)
+        PSBTHDPath <$> isolate (fromIntegral valueSize) ((,) <$> getWord32le <*> getKeyIndexList numIndices)
       where
         getKeyIndexList n = replicateM n getWord32le
     put (PSBTHDPath (fp, kis)) = putVarInt (B.length bs) >> putByteString bs

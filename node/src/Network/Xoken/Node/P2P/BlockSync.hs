@@ -6,6 +6,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TupleSections #-}
 
 module Network.Xoken.Node.P2P.BlockSync
     ( processBlock
@@ -35,6 +36,7 @@ import Data.ByteString.Short as BSS
 import Data.Function ((&))
 import Data.Functor.Identity
 import Data.Int
+import qualified Data.IntMap as I
 import qualified Data.List as L
 import qualified Data.Map.Strict as M
 import Data.Maybe
@@ -58,6 +60,7 @@ import Network.Xoken.Constants
 import Network.Xoken.Crypto.Hash
 import Network.Xoken.Network.Common
 import Network.Xoken.Network.Message
+import Network.Xoken.Node.Data
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.GraphDB
 import Network.Xoken.Node.P2P.Common
@@ -70,7 +73,7 @@ import System.Random
 
 produceGetDataMessage :: (HasService env m) => m (Maybe Message)
 produceGetDataMessage = do
-    liftIO $ print ("producing - called.")
+    liftIO $ print ("produceGetDataMessage - called.")
     bp2pEnv <- asks getBitcoinP2PEnv
     (fl, bl) <- getNextBlockToSync
     case bl of
@@ -124,13 +127,13 @@ runEgressBlockSync = do
     res <- LE.try $ runStream $ (S.repeatM produceGetDataMessage) & (S.mapM sendRequestMessages)
     case res of
         Right () -> return ()
-        Left (e :: SomeException) -> liftIO $ print ("[ERROR] runEgressChainSync " ++ show e)
+        Left (e :: SomeException) -> liftIO $ print ("[ERROR] runEgressBlockSync " ++ show e)
         -- S.mergeBy msgOrder (S.repeatM produceGetDataMessage) (S.repeatM produceGetDataMessage) &
         --    S.mapM   sendRequestMessages
 
 -- markBestSyncedBlock :: Text -> Int32 -> Q.ClientState -> IO ()
 -- markBestSyncedBlock hash height conn = do
---     let str = "insert INTO xoken.proc_summary (name, strval, numval, boolval) values (? ,? ,?, ?)"
+--     let str = "insert INTO xoken.misc_store (name, strval, numval, boolval) values (? ,? ,?, ?)"
 --         qstr = str :: Q.QueryString Q.W (Text, Text, Int32, Maybe Bool) ()
 --         par = Q.defQueryParams Q.One ("best-synced", hash, height :: Int32, Nothing)
 --     res <- try $ Q.runClient conn (Q.write (Q.prepared qstr) par)
@@ -151,7 +154,7 @@ getNextBlockToSync = do
         then do
             (hash, ht) <- liftIO $ fetchBestSyncedBlock conn net
             let bks = map (\x -> ht + x) [1 .. 200] -- cache size of 200
-            let str = "SELECT height, blockhash from xoken.blocks_height where height in ?"
+            let str = "SELECT block_height, block_hash from xoken.blocks_by_height where block_height in ?"
                 qstr = str :: Q.QueryString Q.R (Identity [Int32]) ((Int32, T.Text))
                 p = Q.defQueryParams Q.One $ Identity (bks)
             op <- Q.runClient conn (Q.query qstr p)
@@ -195,38 +198,51 @@ getNextBlockToSync = do
 
 fetchBestSyncedBlock :: Q.ClientState -> Network -> IO ((BlockHash, Int32))
 fetchBestSyncedBlock conn net = do
-    let str = "SELECT strval, numval from xoken.proc_summary where name = ?"
-        qstr = str :: Q.QueryString Q.R (Identity Text) ((T.Text, Int32))
+    let str = "SELECT value from xoken.misc_store where key = ?"
+        qstr = str :: Q.QueryString Q.R (Identity Text) (Identity (Maybe Bool, Maybe Int32, Maybe Int64, Maybe T.Text))
         p = Q.defQueryParams Q.One $ Identity "best-synced"
-    op <- Q.runClient conn (Q.query qstr p)
-    if L.length op == 0
+    iop <- Q.runClient conn (Q.query qstr p)
+    if L.length iop == 0
         then print ("Best-synced-block is genesis.") >> return ((headerHash $ getGenesisHeader net), 0)
         else do
-            print ("Best-synced-block from DB: " ++ show ((op !! 0)))
-            case (hexToBlockHash $ fst (op !! 0)) of
-                Just x -> return (x, snd (op !! 0))
-                Nothing -> do
-                    print ("block hash seems invalid, startin over from genesis") -- not optimal, but unforseen case.
-                    return ((headerHash $ getGenesisHeader net), 0)
+            let record = runIdentity $ iop !! 0
+            print ("Best-synced-block from DB: " ++ (show record))
+            case getTextVal record of
+                Just tx -> do
+                    case (hexToBlockHash $ tx) of
+                        Just x -> do
+                            case getIntVal record of
+                                Just y -> return (x, y)
+                                Nothing -> throw InvalidMetaDataException
+                        Nothing -> throw InvalidBlockHashException
+                Nothing -> throw InvalidMetaDataException
 
-processConfTransaction :: (HasService env m) => Tx -> BlockHash -> Int -> m ()
-processConfTransaction tx bhash txind = do
+processConfTransaction :: (HasService env m) => Tx -> BlockHash -> Int -> Int -> m ()
+processConfTransaction tx bhash blkht txind = do
     dbe' <- asks getDBEnv
     bp2pEnv <- asks getBitcoinP2PEnv
     liftIO $ print ("processing Transaction! " ++ show tx)
     let conn = keyValDB $ dbHandles dbe'
-        str1 =
-            "insert INTO xoken.blockindex (blockhash, txindex, txid, serialized, deserialized) values (?, ? , ? , ?, ?)"
-        qstr1 = str1 :: Q.QueryString Q.W (Text, Int32, Text, Blob, Maybe Text) ()
-        sr = runPutLazy $ putLazyByteString $ S.encodeLazy tx
+        str1 = "insert INTO xoken.transactions ( tx_id, block_info, tx_serialized ) values (?, ?, ?)"
+            -- blockhash, txindex, txid, serialized, deserialized
+        qstr1 = str1 :: Q.QueryString Q.W (Text, ((Text, Int32), Int32), Blob) ()
+        -- blkref = BlockRef 100 (fromIntegral txind) -- TODO: replace dummy value
+        -- sps = map (\x -> Spender (outPointHash $ prevOutput x) (outPointIndex $ prevOutput x)) (txIn tx)
+        -- txdt = TxData blkref tx I.empty False False (fromIntegral 999)
         par1 =
-            Q.defQueryParams Q.One (blockHashToHex bhash, fromIntegral txind, txHashToHex $ txHash tx, Blob sr, Nothing)
+            Q.defQueryParams
+                Q.One
+                ( txHashToHex $ txHash tx
+                , ((blockHashToHex bhash, fromIntegral txind), fromIntegral blkht)
+                , Blob $ runPutLazy $ putLazyByteString $ S.encodeLazy tx)
+                -- , Blob $ A.encode tx)
+    liftIO $ print (show (txHash tx))
+    liftIO $ LC.putStrLn $ A.encode tx
     res1 <- liftIO $ try $ Q.runClient conn (Q.write (qstr1) par1)
     case res1 of
         Right () -> return ()
         Left (e :: SomeException) ->
-            liftIO $ print ("Error: INSERT into 'blocks_hash' failed: " ++ show e) >>= throw KeyValueDBInsertException
-    --
+            liftIO $ print ("Error: INSERTing into 'blocks_by_hash': " ++ show e) >>= throw KeyValueDBInsertException
     return ()
 
 processBlock :: (HasService env m) => DefBlock -> m ()
@@ -237,7 +253,7 @@ processBlock dblk = do
     liftIO $ signalQSem (blockFetchBalance bp2pEnv)
     return ()
     -- if (L.length $ headersList hdrs) == 0
-    --     then liftIO $ print "Nothing to process!" >> throw EmptyHeadersMessage
+    --     then liftIO $ print "Nothing to process!" >> throw EmptyHeadersMessageException
     --     else liftIO $ print $ "Processing Headers with " ++ show (L.length $ headersList hdrs) ++ " entries."
     -- case undefined of
     --     True -> do
@@ -250,11 +266,11 @@ processBlock dblk = do
     --             then liftIO $ print ("First Headers set from genesis")
     --             else if (blockHashToHex $ fst bb) == headPrevHash
     --                      then liftIO $ print ("Links okay!")
-    --                      else liftIO $ print ("Does not match DB best-block") >> throw BlockHashNotFoundInDB -- likely a previously sync'd block
+    --                      else liftIO $ print ("Does not match DB best-block") >> throw BlockHashNotFoundException -- likely a previously sync'd block
     --         let indexed = zip [((snd bb) + 1) ..] (headersList hdrs)
     --             str1 = "insert INTO xoken.blocks_hash (blockhash, header, height, transactions) values (?, ? , ? , ?)"
     --             qstr1 = str1 :: Q.QueryString Q.W (Text, Text, Int32, Maybe Text) ()
-    --             str2 = "insert INTO xoken.blocks_height (height, blockhash, header, transactions) values (?, ? , ? , ?)"
+    --             str2 = "insert INTO xoken.blocks_by_height (height, blockhash, header, transactions) values (?, ? , ? , ?)"
     --             qstr2 = str2 :: Q.QueryString Q.W (Int32, Text, Text, Maybe Text) ()
     --         liftIO $ print ("indexed " ++ show (L.length indexed))
     --         mapM_
@@ -275,7 +291,7 @@ processBlock dblk = do
     --                      Right () -> return ()
     --                      Left (e :: SomeException) ->
     --                          liftIO $
-    --                          print ("Error: INSERT into 'blocks_height' failed: " ++ show e) >>=
+    --                          print ("Error: INSERT into 'blocks_by_height' failed: " ++ show e) >>=
     --                          throw KeyValueDBInsertException)
     --             indexed
     --         liftIO $ print ("done..")

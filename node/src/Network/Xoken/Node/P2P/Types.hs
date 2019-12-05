@@ -51,7 +51,8 @@ data BitcoinPeer =
       -- ^ random nonce sent during handshake
         , bpPing :: !(Maybe (UTCTime, Word64))
       -- ^ last sent ping time and nonce
-        , bpBlockIngest :: TVar (Maybe BlockIngestState)
+        , ingressStreamState :: !(TVar (Maybe IngressStreamState))
+      -- ^ Block stream processing state
         }
 
 -- | General node configuration.
@@ -59,8 +60,6 @@ data BitcoinNodeConfig =
     BitcoinNodeConfig
         { bncMaxPeers :: !Int
       -- ^ maximum number of connected peers allowed
-      --   , bncDB :: !DatabaseHandles
-      -- -- ^ database handler
         , bncPeers :: ![HostPort]
       -- ^ static list of peers to connect to
         , bncDiscover :: !Bool
@@ -73,13 +72,24 @@ data BitcoinNodeConfig =
       -- ^ timeout in seconds
         }
 
+data BlockInfo =
+    BlockInfo
+        { blockHash :: !BlockHash
+        , blockHeight :: !Int
+        }
+
+data IngressStreamState =
+    IngressStreamState
+        { blockIngest :: BlockIngestState
+        , blockInfo :: Maybe BlockInfo
+        }
+
 data BlockIngestState =
     BlockIngestState
         { unspentBytes :: !B.ByteString
         , txPayloadLeft :: !Int
         , txTotalCount :: !Int
         , txProcessed :: !Int
-        , blockHash :: BlockHash
         , checksum :: !CheckSum32
         }
     deriving (Show)

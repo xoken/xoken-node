@@ -99,23 +99,10 @@ instance Enum SigHashFlag where
 -- default value for 'SIGHASH_ANYONECANPAY' is unset (false).
 newtype SigHash =
     SigHash Word32
-    deriving ( Eq
-             , Ord
-             , Enum
-             , Bits
-             , Num
-             , Real
-             , Integral
-             , Show
-             , Read
-             , Generic
-             , Hashable
-             )
+    deriving (Eq, Ord, Enum, Bits, Num, Real, Integral, Show, Read, Generic, Hashable)
 
 instance J.FromJSON SigHash where
-    parseJSON =
-        J.withScientific "sighash" $
-        maybe mzero (return . SigHash) . toBoundedInteger
+    parseJSON = J.withScientific "sighash" $ maybe mzero (return . SigHash) . toBoundedInteger
 
 instance J.ToJSON SigHash where
     toJSON = J.Number . fromIntegral
@@ -170,8 +157,7 @@ isSigHashSingle = (== sigHashSingle) . (.&. 0x1f)
 
 -- | Returns 'True' if the 'SigHash' has the value 'SIGHASH_UNKNOWN'.
 isSigHashUnknown :: SigHash -> Bool
-isSigHashUnknown =
-    (`notElem` [sigHashAll, sigHashNone, sigHashSingle]) . (.&. 0x1f)
+isSigHashUnknown = (`notElem` [sigHashAll, sigHashNone, sigHashSingle]) . (.&. 0x1f)
 
 -- | Add a fork id to a 'SigHash'.
 sigHashAddForkId :: SigHash -> Word32 -> SigHash
@@ -179,8 +165,7 @@ sigHashAddForkId sh w = (fromIntegral w `shiftL` 8) .|. (sh .&. 0x000000ff)
 
 -- | Add fork id of a particular network to a 'SigHash'.
 sigHashAddNetworkId :: Network -> SigHash -> SigHash
-sigHashAddNetworkId net =
-    (`sigHashAddForkId` fromMaybe 0 (getSigHashForkId net))
+sigHashAddNetworkId net = (`sigHashAddForkId` fromMaybe 0 (getSigHashForkId net))
 
 -- | Get fork id from 'SigHash'.
 sigHashGetForkId :: SigHash -> Word32
@@ -196,14 +181,13 @@ txSigHash ::
     -> SigHash -- ^ what to sign
     -> Hash256 -- ^ hash to be signed
 txSigHash net tx out v i sh
-    | hasForkIdFlag sh && isJust (getSigHashForkId net) =
-        txSigHashForkId net tx out v i sh
+    | hasForkIdFlag sh && isJust (getSigHashForkId net) = txSigHashForkId net tx out v i sh
     | otherwise = do
         let newIn = buildInputs (txIn tx) fout i sh
         -- When SigSingle and input index > outputs, then sign integer 1
         fromMaybe one $ do
             newOut <- buildOutputs (txOut tx) i sh
-            let newTx = Tx (txVersion tx) newIn newOut [] (txLockTime tx)
+            let newTx = Tx (txVersion tx) newIn newOut (txLockTime tx)
             return $
                 doubleSHA256 $
                 runPut $ do
@@ -261,19 +245,15 @@ txSigHashForkId net tx out v i sh =
         putWord32le $ fromIntegral $ sigHashAddNetworkId net sh
   where
     hashPrevouts
-        | not $ hasAnyoneCanPayFlag sh =
-            doubleSHA256 $ runPut $ mapM_ (put . prevOutput) $ txIn tx
+        | not $ hasAnyoneCanPayFlag sh = doubleSHA256 $ runPut $ mapM_ (put . prevOutput) $ txIn tx
         | otherwise = zeros
     hashSequence
-        | not (hasAnyoneCanPayFlag sh) &&
-              not (isSigHashSingle sh) && not (isSigHashNone sh) =
+        | not (hasAnyoneCanPayFlag sh) && not (isSigHashSingle sh) && not (isSigHashNone sh) =
             doubleSHA256 $ runPut $ mapM_ (putWord32le . txInSequence) $ txIn tx
         | otherwise = zeros
     hashOutputs
-        | not (isSigHashSingle sh) && not (isSigHashNone sh) =
-            doubleSHA256 $ runPut $ mapM_ put $ txOut tx
-        | isSigHashSingle sh && i < length (txOut tx) =
-            doubleSHA256 $ encode $ txOut tx !! i
+        | not (isSigHashSingle sh) && not (isSigHashNone sh) = doubleSHA256 $ runPut $ mapM_ put $ txOut tx
+        | isSigHashSingle sh && i < length (txOut tx) = doubleSHA256 $ encode $ txOut tx !! i
         | otherwise = zeros
     putScript s = do
         let encodedScript = encode s
@@ -296,8 +276,7 @@ data TxSignature
 -- | Serialize a 'TxSignature'.
 encodeTxSig :: TxSignature -> ByteString
 encodeTxSig TxSignatureEmpty = error "Can not encode an empty signature"
-encodeTxSig (TxSignature sig sh) =
-    runPut $ putSig sig >> putWord8 (fromIntegral sh)
+encodeTxSig (TxSignature sig sh) = runPut $ putSig sig >> putWord8 (fromIntegral sh)
 
 -- | Deserialize a 'TxSignature'.
 decodeTxSig :: Network -> ByteString -> Either String TxSignature
@@ -305,8 +284,7 @@ decodeTxSig net bs =
     case decodeStrictSig $ BS.init bs of
         Just sig -> do
             let sh = fromIntegral $ BS.last bs
-            when (isSigHashUnknown sh) $
-                Left "Non-canonical signature: unknown hashtype byte"
+            when (isSigHashUnknown sh) $ Left "Non-canonical signature: unknown hashtype byte"
             when (isNothing (getSigHashForkId net) && hasForkIdFlag sh) $
                 Left "Non-canonical signature: invalid network for forkId"
             return $ TxSignature sig sh

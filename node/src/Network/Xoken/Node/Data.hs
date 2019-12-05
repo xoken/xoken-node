@@ -634,7 +634,7 @@ toTransaction t sm =
         , transactionTime = txDataTime t
         }
   where
-    ws = take (length (txIn (txData t))) $ map Just (txWitness (txData t)) <> repeat Nothing
+    ws = take (length (txIn (txData t))) $ map Just ([]) <> repeat Nothing
     f n i = toInput i (I.lookup n (txDataPrevs t)) (ws !! n)
     ins = zipWith f [0 ..] (txIn (txData t))
     g n o = toOutput o (I.lookup n sm)
@@ -687,7 +687,7 @@ transactionData t =
         { txVersion = transactionVersion t
         , txIn = map i (transactionInputs t)
         , txOut = map o (transactionOutputs t)
-        , txWitness = mapMaybe inputWitness (transactionInputs t)
+        -- , txWitness = mapMaybe inputWitness (transactionInputs t)
         , txLockTime = transactionLockTime t
         }
   where
@@ -717,7 +717,7 @@ transactionPairs net dtx =
     ["rbf" .= transactionRBF dtx | getReplaceByFee net] ++ ["weight" .= w | getSegWit net]
   where
     w =
-        let b = B.length $ S.encode (transactionData dtx) {txWitness = []}
+        let b = B.length $ S.encode (transactionData dtx) -- {txWitness = []}
             x = B.length $ S.encode (transactionData dtx)
          in b * 3 + x
 

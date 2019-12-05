@@ -63,7 +63,7 @@ import System.Random
 
 produceGetHeadersMessage :: (HasService env m) => m (Message)
 produceGetHeadersMessage = do
-    liftIO $ print ("producing - called.")
+    liftIO $ print ("produceGetHeadersMessage - called.")
     bp2pEnv <- asks getBitcoinP2PEnv
     dbe' <- asks getDBEnv
     liftIO $ takeMVar (bestBlockUpdated bp2pEnv) -- be blocked until a new best-block is updated in DB.
@@ -146,9 +146,9 @@ validateChainedBlockHeaders hdrs = do
 
 markBestBlock :: Text -> Int32 -> Q.ClientState -> IO ()
 markBestBlock hash height conn = do
-    let str = "insert INTO xoken.proc_summary (name, strval, numval, boolval) values (? ,? ,?, ?)"
-        qstr = str :: Q.QueryString Q.W (Text, Text, Int32, Maybe Bool) ()
-        par = Q.defQueryParams Q.One ("best", hash, height :: Int32, Nothing)
+    let str = "insert INTO xoken.misc_store (key, value) values (? , ?)"
+        qstr = str :: Q.QueryString Q.W (Text, (Maybe Bool, Int32, Maybe Int64, Text)) ()
+        par = Q.defQueryParams Q.One ("best-block", (Nothing, height, Nothing, hash))
     res <- try $ Q.runClient conn (Q.write (Q.prepared qstr) par)
     case res of
         Right () -> return ()
@@ -159,7 +159,7 @@ getBlockLocator :: Q.ClientState -> Network -> IO ([BlockHash])
 getBlockLocator conn net = do
     (hash, ht) <- fetchBestBlock conn net
     let bl = L.insert ht $ filter (> 0) $ takeWhile (< ht) $ map (\x -> ht - (2 ^ x)) [0 .. 20] -- [1,2,4,8,16,32,64,... ,262144,524288,1048576]
-        str = "SELECT height, blockhash from xoken.blocks_height where height in ?"
+        str = "SELECT block_height, block_hash from xoken.blocks_by_height where block_height in ?"
         qstr = str :: Q.QueryString Q.R (Identity [Int32]) ((Int32, T.Text))
         p = Q.defQueryParams Q.One $ Identity bl
     op <- Q.runClient conn (Q.query qstr p)
@@ -177,26 +177,31 @@ getBlockLocator conn net = do
 
 fetchBestBlock :: Q.ClientState -> Network -> IO ((BlockHash, Int32))
 fetchBestBlock conn net = do
-    let str = "SELECT strval, numval from xoken.proc_summary where name = ?"
-        qstr = str :: Q.QueryString Q.R (Identity Text) ((T.Text, Int32))
-        p = Q.defQueryParams Q.One $ Identity "best"
-    op <- Q.runClient conn (Q.query qstr p)
-    if L.length op == 0
+    let str = "SELECT value from xoken.misc_store where key = ?"
+        qstr = str :: Q.QueryString Q.R (Identity Text) (Identity (Maybe Bool, Maybe Int32, Maybe Int64, Maybe T.Text))
+        p = Q.defQueryParams Q.One $ Identity "best-block"
+    iop <- Q.runClient conn (Q.query qstr p)
+    if L.length iop == 0
         then print ("Bestblock is genesis.") >> return ((headerHash $ getGenesisHeader net), 0)
         else do
-            print ("Best-block from DB: " ++ show ((op !! 0)))
-            case (hexToBlockHash $ fst (op !! 0)) of
-                Just x -> return (x, snd (op !! 0))
-                Nothing -> do
-                    print ("block hash seems invalid, startin over from genesis") -- not optimal, but unforseen case.
-                    return ((headerHash $ getGenesisHeader net), 0)
+            let record = runIdentity $ iop !! 0
+            print ("Best-block from DB: " ++ show (record))
+            case getTextVal record of
+                Just tx -> do
+                    case (hexToBlockHash $ tx) of
+                        Just x -> do
+                            case getIntVal record of
+                                Just y -> return (x, y)
+                                Nothing -> throw InvalidMetaDataException
+                        Nothing -> throw InvalidBlockHashException
+                Nothing -> throw InvalidMetaDataException
 
 processHeaders :: (HasService env m) => Headers -> m ()
 processHeaders hdrs = do
     dbe' <- asks getDBEnv
     bp2pEnv <- asks getBitcoinP2PEnv
     if (L.length $ headersList hdrs) == 0
-        then liftIO $ print "Nothing to process!" >>= throw EmptyHeadersMessage
+        then liftIO $ print "Nothing to process!" >>= throw EmptyHeadersMessageException
         else liftIO $ print $ "Processing Headers with " ++ show (L.length $ headersList hdrs) ++ " entries."
     case validateChainedBlockHeaders hdrs of
         True -> do
@@ -209,19 +214,19 @@ processHeaders hdrs = do
                 then liftIO $ print ("First Headers set from genesis")
                 else if (blockHashToHex $ fst bb) == headPrevHash
                          then liftIO $ print ("Links okay!")
-                         else liftIO $ print ("Does not match DB best-block") >> throw BlockHashNotFoundInDB -- likely a previously sync'd block
+                         else liftIO $ print ("Does not match DB best-block") >> throw BlockHashNotFoundException -- likely a previously sync'd block
             let indexed = zip [((snd bb) + 1) ..] (headersList hdrs)
-                str1 = "insert INTO xoken.blocks_hash (blockhash, header, height, transactions) values (?, ? , ? , ?)"
-                qstr1 = str1 :: Q.QueryString Q.W (Text, Text, Int32, Maybe Text) ()
-                str2 = "insert INTO xoken.blocks_height (height, blockhash, header, transactions) values (?, ? , ? , ?)"
-                qstr2 = str2 :: Q.QueryString Q.W (Int32, Text, Text, Maybe Text) ()
+                str1 = "insert INTO xoken.blocks_by_hash (block_hash, block_header, block_height) values (?, ? , ? )"
+                qstr1 = str1 :: Q.QueryString Q.W (Text, Text, Int32) ()
+                str2 = "insert INTO xoken.blocks_by_height (block_height, block_hash, block_header) values (?, ? , ? )"
+                qstr2 = str2 :: Q.QueryString Q.W (Int32, Text, Text) ()
             liftIO $ print ("indexed " ++ show (L.length indexed))
             mapM_
                 (\y -> do
                      let hdrHash = blockHashToHex $ headerHash $ fst $ snd y
                          hdrJson = T.pack $ LC.unpack $ A.encode $ fst $ snd y
-                         par1 = Q.defQueryParams Q.One (hdrHash, hdrJson, fst y, Nothing)
-                         par2 = Q.defQueryParams Q.One (fst y, hdrHash, hdrJson, Nothing)
+                         par1 = Q.defQueryParams Q.One (hdrHash, hdrJson, fst y)
+                         par2 = Q.defQueryParams Q.One (fst y, hdrHash, hdrJson)
                      res1 <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr1) par1)
                      case res1 of
                          Right () -> return ()
@@ -234,7 +239,7 @@ processHeaders hdrs = do
                          Right () -> return ()
                          Left (e :: SomeException) ->
                              liftIO $
-                             print ("Error: INSERT into 'blocks_height' failed: " ++ show e) >>=
+                             print ("Error: INSERT into 'blocks_by_height' failed: " ++ show e) >>=
                              throw KeyValueDBInsertException)
                 indexed
             liftIO $ print ("done..")
