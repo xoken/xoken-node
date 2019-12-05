@@ -82,8 +82,10 @@ produceGetDataMessage = do
                 then liftIO $ waitQSem (blockFetchBalance bp2pEnv)
                 else return ()
             t <- liftIO $ getCurrentTime
-            liftIO $ atomically $ modifyTVar (blockSyncStatus bp2pEnv) (M.insert b $ Just (False, t))
-            let gd = GetData $ [InvVector InvBlock $ getBlockHash b]
+            liftIO $
+                atomically $
+                modifyTVar (blockSyncStatusMap bp2pEnv) (M.insert (blockHash b) $ (RequestSent t, blockHeight b))
+            let gd = GetData $ [InvVector InvBlock $ getBlockHash $ blockHash b]
             liftIO $ print ("GetData req: " ++ show gd)
             return (Just $ MGetData gd)
         Nothing -> do
@@ -141,13 +143,13 @@ runEgressBlockSync = do
 --         Right () -> return ()
 --         Left (e :: SomeException) ->
 --             print ("Error: Marking [Best] blockhash failed: " ++ show e) >> throw KeyValueDBInsertException
-getNextBlockToSync :: (HasService env m) => m (Bool, Maybe BlockHash)
+getNextBlockToSync :: (HasService env m) => m (Bool, Maybe BlockInfo)
 getNextBlockToSync = do
     bp2pEnv <- asks getBitcoinP2PEnv
     dbe' <- asks getDBEnv
     let conn = keyValDB $ dbHandles dbe'
     let net = bncNet $ bitcoinNodeConfig bp2pEnv
-    sy <- liftIO $ readTVarIO $ blockSyncStatus bp2pEnv
+    sy <- liftIO $ readTVarIO $ blockSyncStatusMap bp2pEnv
     tm <- liftIO $ getCurrentTime
     -- reload cache
     if M.size sy == 0
@@ -164,37 +166,35 @@ getNextBlockToSync = do
                     return (False, Nothing)
                 else do
                     liftIO $ print ("Cache reload: " ++ (show $ op))
-                    let z = catMaybes $ map (\x -> hexToBlockHash $ snd x) (reverse op)
-                        p = map (\x -> (x, Nothing)) z
-                    liftIO $ atomically $ writeTVar (blockSyncStatus bp2pEnv) (M.fromList p)
-                    return (True, Just $ fst $ p !! 0)
-        else do
-            let (sent, unsent) =
-                    M.partition
-                        (\x ->
-                             case x of
-                                 Just z -> not $ fst z
-                                 Nothing -> False)
-                        (sy)
-            if M.size sent == 0
-                then return (True, Just $ fst (M.elemAt 0 unsent))
-                else do
-                    let expired =
-                            M.filter
+                    let z =
+                            catMaybes $
+                            map
                                 (\x ->
-                                     case x of
-                                         Just z ->
-                                             (not $ fst z) && ((diffUTCTime tm (snd z) > (300 :: NominalDiffTime)))
-                                         Nothing -> False)
-                                (sent)
-                    if M.size expired == 0
-                        then if M.size unsent == 0
-                                 -- empty the cache, cache-miss gracefully
-                                 then do
-                                     liftIO $ atomically $ writeTVar (blockSyncStatus bp2pEnv) M.empty
-                                     return (False, Nothing)
-                                 else return (True, Just $ fst (M.elemAt 0 unsent))
-                        else return (False, Just $ fst (M.elemAt 0 expired))
+                                     case (hexToBlockHash $ snd x) of
+                                         Just h -> Just (h, fromIntegral $ fst x)
+                                         Nothing -> Nothing)
+                                (op)
+                        p = map (\x -> (fst x, (RequestQueued, snd x))) z
+                    liftIO $ atomically $ writeTVar (blockSyncStatusMap bp2pEnv) (M.fromList p)
+                    let e = p !! 0
+                    return (True, Just $ BlockInfo (fst e) (snd $ snd e))
+        else do
+            let (unsent, _others) = M.partition (\x -> fst x == RequestQueued) sy
+            let (received, sent) = M.partition (\x -> fst x == BlockReceived) _others
+            if M.size sent == 0 && M.size unsent == 0
+                    -- all blocks received, empty the cache, cache-miss gracefully
+                then do
+                    liftIO $ atomically $ writeTVar (blockSyncStatusMap bp2pEnv) M.empty
+                    return (False, Nothing)
+                else if M.size unsent > 0
+                         then return (True, Just $ BlockInfo (fst $ M.elemAt 0 unsent) (snd $ snd $ M.elemAt 0 unsent))
+                         else do
+                             let expired = M.filter (\((RequestSent t), _) -> (diffUTCTime tm t > 300)) sent
+                             if M.size expired == 0
+                                 then return (False, Nothing)
+                                 else return
+                                          ( False
+                                          , Just $ BlockInfo (fst $ M.elemAt 0 expired) (snd $ snd $ M.elemAt 0 expired))
 
 fetchBestSyncedBlock :: Q.ClientState -> Network -> IO ((BlockHash, Int32))
 fetchBestSyncedBlock conn net = do
@@ -218,7 +218,7 @@ fetchBestSyncedBlock conn net = do
                 Nothing -> throw InvalidMetaDataException
 
 processConfTransaction :: (HasService env m) => Tx -> BlockHash -> Int -> Int -> m ()
-processConfTransaction tx bhash blkht txind = do
+processConfTransaction tx bhash txind blkht = do
     dbe' <- asks getDBEnv
     bp2pEnv <- asks getBitcoinP2PEnv
     liftIO $ print ("processing Transaction! " ++ show tx)

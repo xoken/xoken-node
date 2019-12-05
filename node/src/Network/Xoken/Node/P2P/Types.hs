@@ -75,7 +75,7 @@ data BitcoinNodeConfig =
 data BlockInfo =
     BlockInfo
         { blockHash :: !BlockHash
-        , blockHeight :: !Int
+        , blockHeight :: !BlockHeight
         }
 
 data IngressStreamState =
@@ -93,3 +93,9 @@ data BlockIngestState =
         , checksum :: !CheckSum32
         }
     deriving (Show)
+
+data BlockSyncStatus
+    = RequestSent !UTCTime
+    | RequestQueued
+    | BlockReceived
+    deriving (Eq, Ord, Show)

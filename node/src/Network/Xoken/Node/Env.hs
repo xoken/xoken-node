@@ -33,7 +33,7 @@ data BitcoinP2PEnv =
         , bestBlockUpdated :: !(MVar Bool)
         , headersWriteLock :: !(MVar Bool)
         , blockFetchBalance :: !QSem
-        , blockSyncStatus :: !(TVar (M.Map BlockHash (Maybe (Bool, UTCTime))))
+        , blockSyncStatusMap :: !(TVar (M.Map BlockHash (BlockSyncStatus, BlockHeight)))
         }
 
 class HasBitcoinP2PEnv env where

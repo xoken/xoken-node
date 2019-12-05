@@ -264,7 +264,11 @@ messageHandler peer (mm, ingss) = do
                                 Just bf -> do
                                     res <-
                                         LE.try $
-                                        processConfTransaction tx (blockHash bf) (txProcessed bi) (blockHeight bf)
+                                        processConfTransaction
+                                            tx
+                                            (blockHash bf)
+                                            (txProcessed bi)
+                                            (fromIntegral $ blockHeight bf)
                                     case res of
                                         Right () -> return ()
                                         Left BlockHashNotFoundException -> return ()
@@ -302,6 +306,7 @@ readNextMessage' peer = do
             (msg, ingressState) <- liftIO $ readNextMessage net sock prevIngresState
             case ingressState of
                 Just iss -> do
+                    mp <- liftIO $ readTVarIO $ blockSyncStatusMap bp2pEnv
                     let ingst = blockIngest iss
                         up =
                             if txProcessed ingst == 0
@@ -309,8 +314,11 @@ readNextMessage' peer = do
                                     case msg of
                                         Just (MBlock blk) -- setup state
                                          -> do
-                                            let bing = BlockInfo (headerHash $ defBlockHeader blk) (99999)
-                                            Just (IngressStreamState ingst $ Just bing)
+                                            let hh = headerHash $ defBlockHeader blk
+                                                mht = M.lookup hh mp
+                                            case mht of
+                                                Just (_, ht) -> Just (IngressStreamState ingst $ Just $ BlockInfo hh ht)
+                                                Nothing -> throw InvalidBlockSyncStatusMapException
                                         Nothing -> throw InvalidDeflatedBlockException
                                 else if txTotalCount ingst == txProcessed ingst
                                          then Nothing -- reset state
