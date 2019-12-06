@@ -76,6 +76,7 @@ data BlockSyncException
     | InvalidBlockHashException
     | InvalidDeflatedBlockException
     | InvalidBlockSyncStatusMapException
+    | InvalidBlockInfoException
     deriving (Show)
 
 instance Exception BlockSyncException

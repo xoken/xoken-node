@@ -138,7 +138,7 @@ readNextMessage net sock ingss = do
             nbyt <- recvAll sock len
             let txbyt = (unspentBytes blin) `B.append` nbyt
             case runGetState (getConfirmedTx) txbyt 0 of
-                Left e -> throw ConfirmedTxParseException
+                Left e -> liftIO $ print (txbyt) >>= throw ConfirmedTxParseException
                 Right (tx, unused) -> do
                     case tx of
                         Just t -> do
@@ -152,7 +152,7 @@ readNextMessage net sock ingss = do
                                         , checksum = checksum blin
                                         }
                             return (Just $ MTx t, Just $ IngressStreamState bio $ blockInfo iss)
-                        Nothing -> throw ConfirmedTxParseException
+                        Nothing -> liftIO $ print (txbyt) >>= throw ConfirmedTxParseException
         Nothing -> do
             hdr <- recvAll sock 24
             case (decode hdr) of
@@ -308,23 +308,33 @@ readNextMessage' peer = do
                 Just iss -> do
                     mp <- liftIO $ readTVarIO $ blockSyncStatusMap bp2pEnv
                     let ingst = blockIngest iss
-                        up =
-                            if txProcessed ingst == 0
+                    case msg of
+                        Just (MBlock blk) -- setup state
+                         -> do
+                            let hh = headerHash $ defBlockHeader blk
+                                ht =
+                                    case (M.lookup hh mp) of
+                                        Just (_, h) -> h
+                                        Nothing -> throw InvalidBlockSyncStatusMapException
+                            liftIO $
+                                atomically $
+                                writeTVar (ingressStreamState peer) $
+                                Just (IngressStreamState ingst $ Just $ BlockInfo hh ht)
+                        Just (MTx ctx) -- setup state
+                         -> do
+                            if txTotalCount ingst == txProcessed ingst
                                 then do
-                                    case msg of
-                                        Just (MBlock blk) -- setup state
-                                         -> do
-                                            let hh = headerHash $ defBlockHeader blk
-                                                mht = M.lookup hh mp
-                                            case mht of
-                                                Just (_, ht) -> Just (IngressStreamState ingst $ Just $ BlockInfo hh ht)
-                                                Nothing -> throw InvalidBlockSyncStatusMapException
-                                        Nothing -> throw InvalidDeflatedBlockException
-                                else if txTotalCount ingst == txProcessed ingst
-                                         then Nothing -- reset state
-                                         else ingressState -- retain state
-                    liftIO $ atomically $ writeTVar (ingressStreamState peer) $ up
-                    liftIO $ print ("writing tvar ")
+                                    case blockInfo iss of
+                                        Just bi ->
+                                            liftIO $
+                                            atomically $
+                                            modifyTVar
+                                                (blockSyncStatusMap bp2pEnv)
+                                                (M.insert (blockHash bi) $ (BlockReceived, blockHeight bi)) -- mark block received
+                                        Nothing -> throw InvalidBlockInfoException
+                                    liftIO $ atomically $ writeTVar (ingressStreamState peer) $ Nothing -- reset state
+                                else liftIO $ atomically $ writeTVar (ingressStreamState peer) $ ingressState -- retain state
+                        Nothing -> throw InvalidDeflatedBlockException
                 Nothing -> return ()
             return (msg, ingressState)
         Nothing -> throw PeerSocketNotConnectedException

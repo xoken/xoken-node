@@ -90,7 +90,7 @@ produceGetDataMessage = do
             return (Just $ MGetData gd)
         Nothing -> do
             liftIO $ print ("producing - empty ...")
-            liftIO $ threadDelay (1000000 * 10)
+            liftIO $ threadDelay (1000000 * 5)
             return Nothing
 
 sendRequestMessages :: (HasService env m) => Maybe Message -> m ()
@@ -133,16 +133,17 @@ runEgressBlockSync = do
         -- S.mergeBy msgOrder (S.repeatM produceGetDataMessage) (S.repeatM produceGetDataMessage) &
         --    S.mapM   sendRequestMessages
 
--- markBestSyncedBlock :: Text -> Int32 -> Q.ClientState -> IO ()
--- markBestSyncedBlock hash height conn = do
---     let str = "insert INTO xoken.misc_store (name, strval, numval, boolval) values (? ,? ,?, ?)"
---         qstr = str :: Q.QueryString Q.W (Text, Text, Int32, Maybe Bool) ()
---         par = Q.defQueryParams Q.One ("best-synced", hash, height :: Int32, Nothing)
---     res <- try $ Q.runClient conn (Q.write (Q.prepared qstr) par)
---     case res of
---         Right () -> return ()
---         Left (e :: SomeException) ->
---             print ("Error: Marking [Best] blockhash failed: " ++ show e) >> throw KeyValueDBInsertException
+markBestSyncedBlock :: Text -> Int32 -> Q.ClientState -> IO ()
+markBestSyncedBlock hash height conn = do
+    let str = "insert INTO xoken.misc_store (key, value) values (? , ?)"
+        qstr = str :: Q.QueryString Q.W (Text, (Maybe Bool, Int32, Maybe Int64, Text)) ()
+        par = Q.defQueryParams Q.One ("best-synced", (Nothing, height, Nothing, hash))
+    res <- try $ Q.runClient conn (Q.write (Q.prepared qstr) par)
+    case res of
+        Right () -> return ()
+        Left (e :: SomeException) ->
+            print ("Error: Marking [Best-Synced] blockhash failed: " ++ show e) >> throw KeyValueDBInsertException
+
 getNextBlockToSync :: (HasService env m) => m (Bool, Maybe BlockInfo)
 getNextBlockToSync = do
     bp2pEnv <- asks getBitcoinP2PEnv
@@ -155,7 +156,7 @@ getNextBlockToSync = do
     if M.size sy == 0
         then do
             (hash, ht) <- liftIO $ fetchBestSyncedBlock conn net
-            let bks = map (\x -> ht + x) [1 .. 200] -- cache size of 200
+            let bks = map (\x -> ht + x) [1 .. 100] -- cache size of 200
             let str = "SELECT block_height, block_hash from xoken.blocks_by_height where block_height in ?"
                 qstr = str :: Q.QueryString Q.R (Identity [Int32]) ((Int32, T.Text))
                 p = Q.defQueryParams Q.One $ Identity (bks)
@@ -184,7 +185,9 @@ getNextBlockToSync = do
             if M.size sent == 0 && M.size unsent == 0
                     -- all blocks received, empty the cache, cache-miss gracefully
                 then do
+                    let lelm = last $ L.sortOn (snd . snd) (M.toList sy)
                     liftIO $ atomically $ writeTVar (blockSyncStatusMap bp2pEnv) M.empty
+                    liftIO $ markBestSyncedBlock (blockHashToHex $ fst $ lelm) (fromIntegral $ snd $ snd $ lelm) conn
                     return (False, Nothing)
                 else if M.size unsent > 0
                          then return (True, Just $ BlockInfo (fst $ M.elemAt 0 unsent) (snd $ snd $ M.elemAt 0 unsent))
