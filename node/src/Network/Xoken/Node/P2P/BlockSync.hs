@@ -84,8 +84,8 @@ produceGetDataMessage = do
             t <- liftIO $ getCurrentTime
             liftIO $
                 atomically $
-                modifyTVar (blockSyncStatusMap bp2pEnv) (M.insert (blockHash b) $ (RequestSent t, blockHeight b))
-            let gd = GetData $ [InvVector InvBlock $ getBlockHash $ blockHash b]
+                modifyTVar (blockSyncStatusMap bp2pEnv) (M.insert (biBlockHash b) $ (RequestSent t, biBlockHeight b))
+            let gd = GetData $ [InvVector InvBlock $ getBlockHash $ biBlockHash b]
             liftIO $ print ("GetData req: " ++ show gd)
             return (Just $ MGetData gd)
         Nothing -> do
@@ -113,7 +113,7 @@ sendRequestMessages mmsg = do
                     case (bpSocket pr) of
                         Just s -> do
                             let em = runPut . putMessage net $ msg
-                            res <- liftIO $ try $ sendEncMessage (bpSockLock pr) s (BSL.fromStrict em)
+                            res <- liftIO $ try $ sendEncMessage (bpWriteMsgLock pr) s (BSL.fromStrict em)
                             case res of
                                 Right () -> return ()
                                 Left (e :: SomeException) -> liftIO $ print ("Error, sending out data: " ++ show e)
@@ -130,8 +130,6 @@ runEgressBlockSync = do
     case res of
         Right () -> return ()
         Left (e :: SomeException) -> liftIO $ print ("[ERROR] runEgressBlockSync " ++ show e)
-        -- S.mergeBy msgOrder (S.repeatM produceGetDataMessage) (S.repeatM produceGetDataMessage) &
-        --    S.mapM   sendRequestMessages
 
 markBestSyncedBlock :: Text -> Int32 -> Q.ClientState -> IO ()
 markBestSyncedBlock hash height conn = do
@@ -166,7 +164,7 @@ getNextBlockToSync = do
                     liftIO $ print ("Synced fully!")
                     return (False, Nothing)
                 else do
-                    liftIO $ print ("Cache reload: " ++ (show $ op))
+                    liftIO $ print ("Reloading cache.")
                     let z =
                             catMaybes $
                             map

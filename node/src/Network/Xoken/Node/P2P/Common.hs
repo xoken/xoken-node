@@ -74,7 +74,7 @@ data BlockSyncException
     | InvalidBlockIngestStateException
     | InvalidMetaDataException
     | InvalidBlockHashException
-    | InvalidDeflatedBlockException
+    | UnexpectedDuringBlockProcException
     | InvalidBlockSyncStatusMapException
     | InvalidBlockInfoException
     deriving (Show)

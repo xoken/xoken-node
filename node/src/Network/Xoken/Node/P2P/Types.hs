@@ -41,8 +41,10 @@ data BitcoinPeer =
       -- ^ network address
         , bpSocket :: !(Maybe Socket)
       -- ^ live stream socket
-        , bpSockLock :: !(MVar Bool)
-      -- ^ socket write lock
+        , bpReadMsgLock :: !(MVar Bool)
+      -- ^  read message lock
+        , bpWriteMsgLock :: !(MVar Bool)
+      -- ^ write message lock
         , bpConnected :: !Bool
       -- ^ peer is connected and ready
         , bpVersion :: !(Maybe Version)
@@ -51,7 +53,7 @@ data BitcoinPeer =
       -- ^ random nonce sent during handshake
         , bpPing :: !(Maybe (UTCTime, Word64))
       -- ^ last sent ping time and nonce
-        , ingressStreamState :: !(TVar (Maybe IngressStreamState))
+        , bpIngressState :: !(TVar (Maybe IngressStreamState))
       -- ^ Block stream processing state
         }
 
@@ -74,23 +76,25 @@ data BitcoinNodeConfig =
 
 data BlockInfo =
     BlockInfo
-        { blockHash :: !BlockHash
-        , blockHeight :: !BlockHeight
+        { biBlockHash :: !BlockHash
+        , biBlockHeight :: !BlockHeight
         }
+    deriving (Show)
 
 data IngressStreamState =
     IngressStreamState
-        { blockIngest :: BlockIngestState
-        , blockInfo :: Maybe BlockInfo
+        { issBlockIngest :: !BlockIngestState
+        , issBlockInfo :: !(Maybe BlockInfo)
         }
+    deriving (Show)
 
 data BlockIngestState =
     BlockIngestState
-        { unspentBytes :: !B.ByteString
-        , txPayloadLeft :: !Int
-        , txTotalCount :: !Int
-        , txProcessed :: !Int
-        , checksum :: !CheckSum32
+        { binUnspentBytes :: !B.ByteString
+        , binTxPayloadLeft :: !Int
+        , binTxTotalCount :: !Int
+        , binTxProcessed :: !Int
+        , binChecksum :: !CheckSum32
         }
     deriving (Show)
 

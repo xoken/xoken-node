@@ -6,6 +6,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE BangPatterns #-}
 
 module Network.Xoken.Node.P2P.ChainSync
     ( runEgressChainSync
@@ -110,7 +111,7 @@ sendRequestMessages msg = do
                          case (bpSocket pr) of
                              Just q -> do
                                  let em = runPut . putMessage net $ msg
-                                 liftIO $ sendEncMessage (bpSockLock pr) q (BSL.fromStrict em)
+                                 liftIO $ sendEncMessage (bpWriteMsgLock pr) q (BSL.fromStrict em)
                                  liftIO $ print ("sending out GetHeaders: " ++ show (bpAddress pr))
                              Nothing -> liftIO $ print ("Error sending, no connections available"))
                     indices
