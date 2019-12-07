@@ -52,7 +52,7 @@ import Network.Xoken.Block.Common
 import Network.Xoken.Block.Headers
 import Network.Xoken.Constants
 import Network.Xoken.Crypto.Hash
-import Network.Xoken.Network.Common -- (GetData(..), MessageCommand(..), NetworkAddress(..))
+import Network.Xoken.Network.Common
 import Network.Xoken.Network.Message
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.GraphDB
@@ -90,7 +90,6 @@ setupPeerConnection = do
     liftIO $ print (show seeds)
     let sd = map (\x -> Just (x :: HostName)) seeds
     addrs <- liftIO $ mapConcurrently (\x -> head <$> getAddrInfo (Just hints) (x) (Just (show port))) sd
-    ss <- liftIO $ newTVarIO Nothing
     res <-
         liftIO $
         mapConcurrently
@@ -98,6 +97,7 @@ setupPeerConnection = do
                  sock <- createSocket y
                  rl <- newMVar True
                  wl <- newMVar True
+                 ss <- liftIO $ newTVarIO Nothing
                  case sock of
                      Just sx -> do
                          fl <- doVersionHandshake net sx $ addrAddress y
@@ -124,11 +124,11 @@ recvAll sock len = do
         else return (B.empty)
 
 readNextMessage :: Network -> Socket -> Maybe IngressStreamState -> IO ((Maybe Message, Maybe IngressStreamState))
-readNextMessage net sock !ingss = do
+readNextMessage net sock ingss = do
     case ingss of
         Just iss -> do
             liftIO $ print ("IngressStreamState parsing tx: " ++ show iss)
-            let !blin = issBlockIngest iss
+            let blin = issBlockIngest iss
                 maxChunk = (1024 * 100) - (B.length $ binUnspentBytes blin)
                 len =
                     if binTxPayloadLeft blin < maxChunk
@@ -141,6 +141,7 @@ readNextMessage net sock !ingss = do
             let txbyt = (binUnspentBytes blin) `B.append` nbyt
             case runGetState (getConfirmedTx) txbyt 0 of
                 Left e -> do
+                    liftIO $ print ("(error) repeating IngressStreamState: " ++ show iss)
                     liftIO $ print (T.unpack $ encodeHex txbyt)
                     case runGet (getMessage net) txbyt of
                         Left e -> do
@@ -149,11 +150,11 @@ readNextMessage net sock !ingss = do
                                 throw MessageParsingException
                         Right msg -> liftIO $ print ("actual type was :" ++ (show $ msgType msg))
                     throw ConfirmedTxParseException
-                Right (tx, !unused) -> do
+                Right (tx, unused) -> do
                     case tx of
                         Just t -> do
                             liftIO $ print ("Conf.Tx: " ++ show tx ++ " unused: " ++ show (B.length unused))
-                            let bio =
+                            let !bio =
                                     BlockIngestState
                                         { binUnspentBytes = unused
                                         , binTxPayloadLeft = binTxPayloadLeft blin - (B.length txbyt - B.length unused)
@@ -183,7 +184,7 @@ readNextMessage net sock !ingss = do
                                             liftIO $
                                                 print
                                                     ("DefBlock: " ++ show blk ++ " unused: " ++ show (B.length unused))
-                                            let bi =
+                                            let !bi =
                                                     BlockIngestState
                                                         { binUnspentBytes = unused
                                                         , binTxPayloadLeft = fromIntegral (len) - (88 - B.length unused)
@@ -269,7 +270,7 @@ messageHandler peer (mm, ingss) = do
                     case ingss of
                         Just iss -> do
                             let bi = issBlockIngest iss
-                            let binfo = issBlockInfo iss -- liftIO $ readTVarIO (issBlockInfo $ bpIngressState peer)
+                            let binfo = issBlockInfo iss
                             case binfo of
                                 Just bf -> do
                                     res <-
@@ -289,10 +290,7 @@ messageHandler peer (mm, ingss) = do
                         Nothing -> do
                             liftIO $ print ("[???] Unconfirmed Tx ")
                             return $ msgType msg
-                MBlock blk
-                    -- ss <- liftIO $ readTVarIO $ bpIngressState peer
-                    -- headerHash $ defBlockHeader blk
-                 -> do
+                MBlock blk -> do
                     res <- LE.try $ processBlock blk
                     case res of
                         Right () -> return ()
@@ -312,9 +310,9 @@ readNextMessage' peer = do
     let net = bncNet $ bitcoinNodeConfig bp2pEnv
     case bpSocket peer of
         Just sock -> do
-            rl <- liftIO $ takeMVar $ bpReadMsgLock peer
+            liftIO $ takeMVar $ bpReadMsgLock peer
             !prevIngressState <- liftIO $ readTVarIO $ bpIngressState peer
-            (msg, !ingressState) <- liftIO $ readNextMessage net sock prevIngressState
+            (msg, ingressState) <- liftIO $ readNextMessage net sock prevIngressState
             case ingressState of
                 Just iss -> do
                     mp <- liftIO $ readTVarIO $ blockSyncStatusMap bp2pEnv
@@ -327,19 +325,16 @@ readNextMessage' peer = do
                                     case (M.lookup hh mp) of
                                         Just (_, h) -> h
                                         Nothing -> throw InvalidBlockSyncStatusMapException
-                            liftIO $
-                                atomically $
-                                writeTVar (bpIngressState peer) $
-                                Just (IngressStreamState ingst $ Just $ BlockInfo hh ht)
-                        Just (MTx ctx) -- setup state
-                         -> do
+                                !iz = Just (IngressStreamState ingst $ Just $ BlockInfo hh ht)
+                            liftIO $ atomically $ writeTVar (bpIngressState peer) $ iz
+                        Just (MTx ctx) -> do
                             if binTxTotalCount ingst == binTxProcessed ingst
                                 then do
                                     case issBlockInfo iss of
                                         Just bi ->
                                             liftIO $
                                             atomically $
-                                            modifyTVar
+                                            modifyTVar'
                                                 (blockSyncStatusMap bp2pEnv)
                                                 (M.insert (biBlockHash bi) $ (BlockReceived, biBlockHeight bi)) -- mark block received
                                         Nothing -> throw InvalidBlockInfoException
@@ -347,7 +342,7 @@ readNextMessage' peer = do
                                 else liftIO $ atomically $ writeTVar (bpIngressState peer) $ ingressState -- retain state
                         otherwise -> throw UnexpectedDuringBlockProcException
                 Nothing -> return ()
-            liftIO $ putMVar (bpReadMsgLock peer) rl
+            liftIO $ putMVar (bpReadMsgLock peer) True
             return (msg, ingressState)
         Nothing -> throw PeerSocketNotConnectedException
 
