@@ -65,8 +65,8 @@ import System.Random
 produceGetHeadersMessage :: (HasService env m) => m (Message)
 produceGetHeadersMessage = do
     liftIO $ print ("produceGetHeadersMessage - called.")
-    bp2pEnv <- asks getBitcoinP2PEnv
-    dbe' <- asks getDBEnv
+    bp2pEnv <- getBitcoinP2PEnv
+    dbe' <- getDBEnv
     liftIO $ takeMVar (bestBlockUpdated bp2pEnv) -- be blocked until a new best-block is updated in DB.
     let conn = keyValDB $ dbHandles dbe'
     let net = bncNet $ bitcoinNodeConfig bp2pEnv
@@ -83,8 +83,8 @@ produceGetHeadersMessage = do
 sendRequestMessages :: (HasService env m) => Message -> m ()
 sendRequestMessages msg = do
     liftIO $ print ("sendRequestMessages - called.")
-    bp2pEnv <- asks getBitcoinP2PEnv
-    dbe' <- asks getDBEnv
+    bp2pEnv <- getBitcoinP2PEnv
+    dbe' <- getDBEnv
     let conn = keyValDB $ dbHandles dbe'
     let net = bncNet $ bitcoinNodeConfig bp2pEnv
     allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
@@ -199,8 +199,8 @@ fetchBestBlock conn net = do
 
 processHeaders :: (HasService env m) => Headers -> m ()
 processHeaders hdrs = do
-    dbe' <- asks getDBEnv
-    bp2pEnv <- asks getBitcoinP2PEnv
+    dbe' <- getDBEnv
+    bp2pEnv <- getBitcoinP2PEnv
     if (L.length $ headersList hdrs) == 0
         then liftIO $ print "Nothing to process!" >>= throw EmptyHeadersMessageException
         else liftIO $ print $ "Processing Headers with " ++ show (L.length $ headersList hdrs) ++ " entries."

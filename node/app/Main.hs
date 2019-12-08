@@ -77,6 +77,8 @@ import System.Environment (getArgs)
 import System.Exit
 import System.FilePath
 import System.IO.Unsafe
+import qualified System.Logger as LG
+import qualified System.Logger.Class as LG
 import Text.Read (readMaybe)
 import Xoken
 import Xoken.Node
@@ -96,6 +98,12 @@ newtype AppM a =
 deriving instance MonadBase IO AppM
 
 deriving instance MonadBaseControl IO AppM
+
+instance HasBitcoinP2PEnv AppM where
+    getBitcoinP2PEnv = asks bitcoinP2PEnv
+
+instance HasDBEnv AppM where
+    getDBEnv = asks dbEnv
 
 instance HasNetworkEnv AppM where
     getEnv = asks (ariviNetworkEnv . nodeEndpointEnv . p2pEnv)
@@ -153,13 +161,11 @@ runNode config dbh bp2p = do
             serviceEnv
             (do initP2P config
                 async $ setupPeerConnection
-                liftIO $ threadDelay (20 * 1000000)
+                liftIO $ threadDelay (12 * 1000000)
                 liftIO $ putStrLn $ "............"
                 async $ initPeerListeners
                 async $ runEgressChainSync
-                async $ runEgressBlockSync)
-    -- runFileLoggingT (toS $ Config.logFile config) $ runAppM serviceEnv $ setupPeerConnection
-    liftIO $ threadDelay 5999999999
+                runEgressBlockSync)
     return ()
 
 --
@@ -269,7 +275,8 @@ main = do
     hl <- newMVar True
     bl <- newQSem 12 -- allows 12 outstanding blocks
     st <- newTVarIO M.empty
-    runNode cnf (DatabaseHandles conn) (BitcoinP2PEnv nodeConfig g mv hl bl st)
+    lg <- LG.create LG.StdOut
+    runNode cnf (DatabaseHandles conn) (BitcoinP2PEnv nodeConfig g mv hl bl st lg)
   where
     opts =
         info (helper <*> config) $

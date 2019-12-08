@@ -74,7 +74,7 @@ import System.Random
 produceGetDataMessage :: (HasService env m) => m (Maybe Message)
 produceGetDataMessage = do
     liftIO $ print ("produceGetDataMessage - called.")
-    bp2pEnv <- asks getBitcoinP2PEnv
+    bp2pEnv <- getBitcoinP2PEnv
     (fl, bl) <- getNextBlockToSync
     case bl of
         Just b -> do
@@ -90,7 +90,7 @@ produceGetDataMessage = do
             return (Just $ MGetData gd)
         Nothing -> do
             liftIO $ print ("producing - empty ...")
-            liftIO $ threadDelay (1000000 * 5)
+            liftIO $ threadDelay (1000000 * 1)
             return Nothing
 
 sendRequestMessages :: (HasService env m) => Maybe Message -> m ()
@@ -98,8 +98,8 @@ sendRequestMessages mmsg = do
     case mmsg of
         Just msg -> do
             liftIO $ print ("sendRequestMessages - called.")
-            bp2pEnv <- asks getBitcoinP2PEnv
-            dbe' <- asks getDBEnv
+            bp2pEnv <- getBitcoinP2PEnv
+            dbe' <- getDBEnv
             let conn = keyValDB $ dbHandles dbe'
             let net = bncNet $ bitcoinNodeConfig bp2pEnv
             allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
@@ -144,8 +144,8 @@ markBestSyncedBlock hash height conn = do
 
 getNextBlockToSync :: (HasService env m) => m (Bool, Maybe BlockInfo)
 getNextBlockToSync = do
-    bp2pEnv <- asks getBitcoinP2PEnv
-    dbe' <- asks getDBEnv
+    bp2pEnv <- getBitcoinP2PEnv
+    dbe' <- getDBEnv
     let conn = keyValDB $ dbHandles dbe'
     let net = bncNet $ bitcoinNodeConfig bp2pEnv
     sy <- liftIO $ readTVarIO $ blockSyncStatusMap bp2pEnv
@@ -220,8 +220,8 @@ fetchBestSyncedBlock conn net = do
 
 processConfTransaction :: (HasService env m) => Tx -> BlockHash -> Int -> Int -> m ()
 processConfTransaction tx bhash txind blkht = do
-    dbe' <- asks getDBEnv
-    bp2pEnv <- asks getBitcoinP2PEnv
+    dbe' <- getDBEnv
+    bp2pEnv <- getBitcoinP2PEnv
     liftIO $ print ("processing Transaction! " ++ show tx)
     let conn = keyValDB $ dbHandles dbe'
         str1 = "insert INTO xoken.transactions ( tx_id, block_info, tx_serialized ) values (?, ?, ?)"
@@ -248,8 +248,8 @@ processConfTransaction tx bhash txind blkht = do
 
 processBlock :: (HasService env m) => DefBlock -> m ()
 processBlock dblk = do
-    dbe' <- asks getDBEnv
-    bp2pEnv <- asks getBitcoinP2PEnv
+    dbe' <- getDBEnv
+    bp2pEnv <- getBitcoinP2PEnv
     liftIO $ print ("processing deflated Block! " ++ show dblk)
     liftIO $ signalQSem (blockFetchBalance bp2pEnv)
     return ()

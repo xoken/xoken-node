@@ -83,6 +83,7 @@ instance Exception BlockSyncException
 
 data PeerMessageException
     = SocketReadException
+    | SocketConnectException SockAddr
     | DeflatedBlockParseException
     | ConfirmedTxParseException
     | PeerSocketNotConnectedException

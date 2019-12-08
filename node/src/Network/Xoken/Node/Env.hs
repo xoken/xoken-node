@@ -23,6 +23,7 @@ import Network.Socket hiding (send)
 import Network.Xoken.Block.Common
 import Network.Xoken.Node.P2P.Types
 import Network.Xoken.Transaction
+import System.Logger
 import System.Random
 import Text.Read
 
@@ -34,24 +35,19 @@ data BitcoinP2PEnv =
         , headersWriteLock :: !(MVar Bool)
         , blockFetchBalance :: !QSem
         , blockSyncStatusMap :: !(TVar (M.Map BlockHash (BlockSyncStatus, BlockHeight)))
+        , logger :: Logger
         }
 
-class HasBitcoinP2PEnv env where
-    getBitcoinP2PEnv :: env -> BitcoinP2PEnv
-
-instance HasBitcoinP2PEnv (ServiceEnv m r t rmsg pmsg) where
-    getBitcoinP2PEnv = bitcoinP2PEnv
+class HasBitcoinP2PEnv m where
+    getBitcoinP2PEnv :: m (BitcoinP2PEnv)
 
 data DBEnv =
     DBEnv
         { dbHandles :: !DatabaseHandles
         }
 
-class HasDBEnv env where
-    getDBEnv :: env -> DBEnv
-
-instance HasDBEnv (ServiceEnv m r t rmsg pmsg) where
-    getDBEnv = dbEnv
+class HasDBEnv m where
+    getDBEnv :: m (DBEnv)
 
 data ServiceEnv m r t rmsg pmsg =
     ServiceEnv
@@ -73,7 +69,4 @@ instance Serialise ServiceResource
 instance Hashable ServiceResource
 
 type HasService env m
-     = ( HasDBEnv env
-       , HasP2PEnv env m ServiceResource ServiceTopic String String
-       , HasBitcoinP2PEnv env
-       , MonadReader env m)
+     = (HasDBEnv m, HasP2PEnv env m ServiceResource ServiceTopic String String, HasBitcoinP2PEnv m, MonadReader env m)

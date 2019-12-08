@@ -64,6 +64,8 @@ import Network.Xoken.Util
 import Streamly
 import Streamly.Prelude ((|:), nil)
 import qualified Streamly.Prelude as S
+import System.Logger as LG
+import System.Logger.Message
 import System.Random
 
 createSocket :: AddrInfo -> IO (Maybe Socket)
@@ -76,37 +78,40 @@ createSocketWithOptions options addr = do
     res <- try $ connect sock (addrAddress addr)
     case res of
         Right () -> return $ Just sock
-        Left (e :: IOException) -> do
-            print ("TCP socket connect fail: " ++ show (addrAddress addr))
-            return Nothing
+        Left (e :: IOException) -> throw $ SocketConnectException (addrAddress addr)
 
 setupPeerConnection :: (HasService env m) => m ()
 setupPeerConnection = do
-    bp2pEnv <- asks getBitcoinP2PEnv
-    let net = bncNet $ bitcoinNodeConfig bp2pEnv
+    bp2pEnv <- getBitcoinP2PEnv
+    let lg = logger bp2pEnv
+        net = bncNet $ bitcoinNodeConfig bp2pEnv
         seeds = getSeeds net
         hints = defaultHints {addrSocketType = Stream}
         port = getDefaultPort net
-    liftIO $ print (show seeds)
+    debug lg $ msg $ show seeds
     let sd = map (\x -> Just (x :: HostName)) seeds
     addrs <- liftIO $ mapConcurrently (\x -> head <$> getAddrInfo (Just hints) (x) (Just (show port))) sd
     res <-
-        liftIO $
-        mapConcurrently
-            (\y -> do
-                 sock <- createSocket y
-                 rl <- newMVar True
-                 wl <- newMVar True
-                 ss <- liftIO $ newTVarIO Nothing
-                 case sock of
-                     Just sx -> do
-                         fl <- doVersionHandshake net sx $ addrAddress y
-                         let bp = BitcoinPeer (addrAddress y) sock rl wl fl Nothing 99999 Nothing ss
-                         atomically $ modifyTVar (bitcoinPeers bp2pEnv) (M.insert (addrAddress y) bp)
-                     Nothing -> do
-                         let bp = BitcoinPeer (addrAddress y) sock rl wl False Nothing 99999 Nothing ss
-                         atomically $ modifyTVar (bitcoinPeers bp2pEnv) (M.insert (addrAddress y) bp))
+        LE.try $
+        mapM_
+            (\y ->
+                 LA.async $ do
+                     sock <- liftIO $ createSocket y
+                     rl <- liftIO $ newMVar True
+                     wl <- liftIO $ newMVar True
+                     ss <- liftIO $ newTVarIO Nothing
+                     case sock of
+                         Just sx -> do
+                             fl <- doVersionHandshake net sx $ addrAddress y
+                             let bp = BitcoinPeer (addrAddress y) sock rl wl fl Nothing 99999 Nothing ss
+                             liftIO $ atomically $ modifyTVar (bitcoinPeers bp2pEnv) (M.insert (addrAddress y) bp)
+                         Nothing -> do
+                             let bp = BitcoinPeer (addrAddress y) sock rl wl False Nothing 99999 Nothing ss
+                             liftIO $ atomically $ modifyTVar (bitcoinPeers bp2pEnv) (M.insert (addrAddress y) bp))
             addrs
+    case res of
+        Right () -> return ()
+        Left (SocketConnectException addr) -> err lg $ msg ("SocketConnectException: " ++ show addr)
     return ()
 
 -- Helper Functions
@@ -116,44 +121,45 @@ recvAll sock len = do
         then do
             res <- try $ SB.recv sock len
             case res of
-                Left (e :: IOException) -> liftIO $ print ("socket read fail: " ++ show e) >>= throw SocketReadException
+                Left (e :: IOException) -> throw SocketReadException
                 Right msg ->
                     if B.length msg == len
                         then return msg
                         else B.append msg <$> recvAll sock (len - B.length msg)
         else return (B.empty)
 
-readNextMessage :: Network -> Socket -> Maybe IngressStreamState -> IO ((Maybe Message, Maybe IngressStreamState))
+readNextMessage ::
+       (HasBitcoinP2PEnv m, MonadIO m)
+    => Network
+    -> Socket
+    -> Maybe IngressStreamState
+    -> m ((Maybe Message, Maybe IngressStreamState))
 readNextMessage net sock ingss = do
+    p2pEnv <- getBitcoinP2PEnv
+    let lg = logger p2pEnv
     case ingss of
         Just iss -> do
-            liftIO $ print ("IngressStreamState parsing tx: " ++ show iss)
+            debug lg $ msg ("IngressStreamState parsing tx: " ++ show iss)
             let blin = issBlockIngest iss
                 maxChunk = (1024 * 100) - (B.length $ binUnspentBytes blin)
                 len =
                     if binTxPayloadLeft blin < maxChunk
                         then (binTxPayloadLeft blin) - (B.length $ binUnspentBytes blin)
                         else maxChunk
-            liftIO $ print (" | Tx payload left " ++ show (binTxPayloadLeft blin))
-            liftIO $ print (" | Bytes prev unspent " ++ show (B.length $ binUnspentBytes blin))
-            liftIO $ print (" | Bytes to read " ++ show len)
-            nbyt <- recvAll sock len
+            debug lg $ msg (" | Tx payload left " ++ show (binTxPayloadLeft blin))
+            debug lg $ msg (" | Bytes prev unspent " ++ show (B.length $ binUnspentBytes blin))
+            debug lg $ msg (" | Bytes to read " ++ show len)
+            nbyt <- liftIO $ recvAll sock len
             let txbyt = (binUnspentBytes blin) `B.append` nbyt
             case runGetState (getConfirmedTx) txbyt 0 of
                 Left e -> do
-                    liftIO $ print ("(error) repeating IngressStreamState: " ++ show iss)
-                    liftIO $ print (T.unpack $ encodeHex txbyt)
-                    case runGet (getMessage net) txbyt of
-                        Left e -> do
-                            liftIO $ do
-                                print "Error, message hdr truly garbled!"
-                                throw MessageParsingException
-                        Right msg -> liftIO $ print ("actual type was :" ++ (show $ msgType msg))
+                    debug lg $ msg $ ("(error) IngressStreamState: " ++ show iss)
+                    debug lg $ msg $ (encodeHex txbyt)
                     throw ConfirmedTxParseException
                 Right (tx, unused) -> do
                     case tx of
                         Just t -> do
-                            liftIO $ print ("Conf.Tx: " ++ show tx ++ " unused: " ++ show (B.length unused))
+                            debug lg $ msg ("Conf.Tx: " ++ show tx ++ " unused: " ++ show (B.length unused))
                             let !bio =
                                     BlockIngestState
                                         { binUnspentBytes = unused
@@ -163,27 +169,28 @@ readNextMessage net sock ingss = do
                                         , binChecksum = binChecksum blin
                                         }
                             return (Just $ MTx t, Just $ IngressStreamState bio $ issBlockInfo iss)
-                        Nothing -> liftIO $ print (txbyt) >>= throw ConfirmedTxParseException
+                        Nothing -> do
+                            debug lg $ msg (txbyt)
+                            throw ConfirmedTxParseException
         Nothing -> do
-            hdr <- recvAll sock 24
+            hdr <- liftIO $ recvAll sock 24
             case (decode hdr) of
                 Left e -> do
-                    liftIO $ print ("Error decoding incoming message header: " ++ e)
+                    err lg $ msg ("Error decoding incoming message header: " ++ e)
                     throw MessageParsingException
                 Right (MessageHeader _ cmd len cks) -> do
                     if cmd == MCBlock
                         then do
-                            byts <- recvAll sock (88) -- 80 byte Block header + VarInt (max 8 bytes) Tx count
+                            byts <- liftIO $ recvAll sock (88) -- 80 byte Block header + VarInt (max 8 bytes) Tx count
                             case runGetState (getDeflatedBlock) byts 0 of
                                 Left e -> do
-                                    liftIO $ print ("Error, unexpected message header: " ++ e)
+                                    err lg $ msg ("Error, unexpected message header: " ++ e)
                                     throw MessageParsingException
                                 Right (blk, unused) -> do
                                     case blk of
                                         Just b -> do
-                                            liftIO $
-                                                print
-                                                    ("DefBlock: " ++ show blk ++ " unused: " ++ show (B.length unused))
+                                            debug lg $
+                                                msg ("DefBlock: " ++ show blk ++ " unused: " ++ show (B.length unused))
                                             let !bi =
                                                     BlockIngestState
                                                         { binUnspentBytes = unused
@@ -199,29 +206,29 @@ readNextMessage net sock ingss = do
                                 if len == 0
                                     then return hdr
                                     else do
-                                        b <- recvAll sock (fromIntegral len)
+                                        b <- liftIO $ recvAll sock (fromIntegral len)
                                         return (hdr `B.append` b)
                             case runGet (getMessage net) byts of
-                                Left e -> do
-                                    liftIO $ do
-                                        print "Error, unexpected message hdr: "
-                                        throw MessageParsingException
+                                Left e -> throw MessageParsingException
                                 Right msg -> do
                                     return (Just msg, Nothing)
 
-doVersionHandshake :: Network -> Socket -> SockAddr -> IO (Bool)
+doVersionHandshake :: (HasBitcoinP2PEnv m, MonadIO m) => Network -> Socket -> SockAddr -> m (Bool)
 doVersionHandshake net sock sa = do
+    p2pEnv <- getBitcoinP2PEnv
+    let lg = logger p2pEnv
     g <- liftIO $ getStdGen
     now <- round <$> liftIO getPOSIXTime
-    myaddr <- head <$> getAddrInfo (Just defaultHints {addrSocketType = Stream}) (Just "192.168.0.106") (Just "3000")
+    myaddr <-
+        liftIO $ head <$> getAddrInfo (Just defaultHints {addrSocketType = Stream}) (Just "192.168.0.106") (Just "3000")
     let nonce = fst (random g :: (Word64, StdGen))
         ad = NetworkAddress 0 $ addrAddress myaddr -- (SockAddrInet 0 0)
         bb = 1 :: Word32 -- ### TODO: getBestBlock ###
         rmt = NetworkAddress 0 sa
         ver = buildVersion net nonce bb ad rmt now
         em = runPut . putMessage net $ (MVersion ver)
-    mv <- (newMVar True)
-    sendEncMessage mv sock (BSL.fromStrict em)
+    mv <- liftIO $ (newMVar True)
+    liftIO $ sendEncMessage mv sock (BSL.fromStrict em)
     (hs1, _) <- readNextMessage net sock Nothing
     case hs1 of
         Just (MVersion __) -> do
@@ -229,19 +236,20 @@ doVersionHandshake net sock sa = do
             case hs2 of
                 Just MVerAck -> do
                     let em2 = runPut . putMessage net $ (MVerAck)
-                    sendEncMessage mv sock (BSL.fromStrict em2)
-                    print ("Version handshake complete: " ++ show sa)
+                    liftIO $ sendEncMessage mv sock (BSL.fromStrict em2)
+                    debug lg $ msg ("Version handshake complete: " ++ show sa)
                     return True
                 __ -> do
-                    print "Error, unexpected message (2) during handshake"
+                    debug lg $ msg $ val "Error, unexpected message (2) during handshake"
                     return False
         __ -> do
-            print "Error, unexpected message (1) during handshake"
+            debug lg $ msg $ val "Error, unexpected message (1) during handshake"
             return False
 
 messageHandler :: (HasService env m) => BitcoinPeer -> (Maybe Message, Maybe IngressStreamState) -> m (MessageCommand)
 messageHandler peer (mm, ingss) = do
-    bp2pEnv <- asks getBitcoinP2PEnv
+    bp2pEnv <- getBitcoinP2PEnv
+    let lg = logger bp2pEnv
     case mm of
         Just msg -> do
             case (msg) of
@@ -252,7 +260,7 @@ messageHandler peer (mm, ingss) = do
                         Right () -> return ()
                         Left BlockHashNotFoundException -> return ()
                         Left EmptyHeadersMessageException -> return ()
-                        Left e -> liftIO $ print ("[ERROR] Unhandled exception!" ++ show e) >> throw e
+                        Left e -> debug lg $ LG.msg ("[ERROR] Unhandled exception!" ++ show e) >> throw e
                     liftIO $ putMVar (headersWriteLock bp2pEnv) True
                     return $ msgType msg
                 MInv inv -> do
@@ -261,7 +269,7 @@ messageHandler peer (mm, ingss) = do
                         (\x ->
                              if (invType x) == InvBlock
                                  then do
-                                     liftIO $ print ("Unsolicited INV, a new Block: " ++ (show $ invHash x))
+                                     debug lg $ LG.msg ("Unsolicited INV, a new Block: " ++ (show $ invHash x))
                                      liftIO $ putMVar (bestBlockUpdated bp2pEnv) True -- will trigger a GetHeaders to peers
                                  else return ())
                         lst
@@ -284,11 +292,12 @@ messageHandler peer (mm, ingss) = do
                                         Right () -> return ()
                                         Left BlockHashNotFoundException -> return ()
                                         Left EmptyHeadersMessageException -> return ()
-                                        Left e -> liftIO $ print ("[ERROR] Unhandled exception!" ++ show e) >> throw e
+                                        Left e ->
+                                            debug lg $ LG.msg ("[ERROR] Unhandled exception!" ++ show e) >> throw e
                                     return $ msgType msg
                                 Nothing -> throw InvalidStreamStateException
                         Nothing -> do
-                            liftIO $ print ("[???] Unconfirmed Tx ")
+                            debug lg $ LG.msg $ val ("[???] Unconfirmed Tx ")
                             return $ msgType msg
                 MBlock blk -> do
                     res <- LE.try $ processBlock blk
@@ -296,23 +305,23 @@ messageHandler peer (mm, ingss) = do
                         Right () -> return ()
                         Left BlockHashNotFoundException -> return ()
                         Left EmptyHeadersMessageException -> return ()
-                        Left e -> liftIO $ print ("[ERROR] Unhandled exception!" ++ show e) >> throw e
+                        Left e -> debug lg $ LG.msg ("[ERROR] Unhandled exception!" ++ show e) >> throw e
                     return $ msgType msg
                 _ -> do
                     return $ msgType msg
         Nothing -> do
-            liftIO $ print "Error, invalid message"
+            debug lg $ LG.msg $ val "Error, invalid message"
             throw InvalidMessageTypeException
 
 readNextMessage' :: (HasService env m) => BitcoinPeer -> m ((Maybe Message, Maybe IngressStreamState))
 readNextMessage' peer = do
-    bp2pEnv <- asks getBitcoinP2PEnv
+    bp2pEnv <- getBitcoinP2PEnv
     let net = bncNet $ bitcoinNodeConfig bp2pEnv
     case bpSocket peer of
         Just sock -> do
             liftIO $ takeMVar $ bpReadMsgLock peer
             !prevIngressState <- liftIO $ readTVarIO $ bpIngressState peer
-            (msg, ingressState) <- liftIO $ readNextMessage net sock prevIngressState
+            (msg, ingressState) <- readNextMessage net sock prevIngressState
             case ingressState of
                 Just iss -> do
                     mp <- liftIO $ readTVarIO $ blockSyncStatusMap bp2pEnv
@@ -348,7 +357,7 @@ readNextMessage' peer = do
 
 initPeerListeners :: (HasService env m) => m ()
 initPeerListeners = do
-    bp2pEnv <- asks getBitcoinP2PEnv
+    bp2pEnv <- getBitcoinP2PEnv
     allpr <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
     let conpr = L.filter (\x -> bpConnected (snd x)) (M.toList allpr)
     mapM_ (\pr -> LA.async $ handleIncomingMessages $ snd pr) conpr
@@ -356,11 +365,14 @@ initPeerListeners = do
 
 handleIncomingMessages :: (HasService env m) => BitcoinPeer -> m ()
 handleIncomingMessages pr = do
-    bp2pEnv <- asks getBitcoinP2PEnv
-    liftIO $ print ("reading from:  " ++ show (bpAddress pr))
+    bp2pEnv <- getBitcoinP2PEnv
+    let lg = logger bp2pEnv
+    debug lg $ msg $ (val "reading from: ") +++ show (bpAddress pr)
     res <-
         LE.try $
         runStream $ asyncly $ S.repeatM (readNextMessage' pr) & S.mapM (messageHandler pr) & S.mapM (logMessage)
     case res of
         Right () -> return ()
-        Left (e :: SomeException) -> liftIO $ print ("[ERROR] handleIncomingMessages " ++ show e) >> return ()
+        Left (e :: SomeException) -> do
+            debug lg $ msg $ (val "[ERROR] handleIncomingMessages ") +++ (show e)
+            return ()
