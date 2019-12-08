@@ -124,7 +124,7 @@ sendEncMessage writeLock sock msg = do
     (LB.sendAll sock msg) `catch` (\(e :: IOException) -> putStrLn ("caught: " ++ show e))
     putMVar writeLock a
 
-logMessage :: (HasService env m) => MessageCommand -> m ()
+logMessage :: (HasXokenNodeEnv env m, MonadIO m) => MessageCommand -> m ()
 logMessage mg = do
     liftIO $ print ("processed: " ++ show mg)
     return ()

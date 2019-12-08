@@ -28,8 +28,10 @@ import System.Logger
 import System.Random
 import Text.Read
 
+import Control.Monad.Catch
+
 type HasXokenNodeEnv env m
-     = (HasBitcoinP2P m, HasDatabaseHandles m, HasLogger m, MonadReader env m, MonadBaseControl IO m)
+     = (HasBitcoinP2P m, HasDatabaseHandles m, HasLogger m, MonadReader env m, MonadBaseControl IO m, MonadThrow m)
 
 data XokenNodeEnv =
     XokenNodeEnv

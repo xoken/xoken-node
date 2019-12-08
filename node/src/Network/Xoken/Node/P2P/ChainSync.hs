@@ -62,7 +62,7 @@ import Streamly.Prelude ((|:), nil)
 import qualified Streamly.Prelude as S
 import System.Random
 
-produceGetHeadersMessage :: (HasService env m) => m (Message)
+produceGetHeadersMessage :: (HasXokenNodeEnv env m, MonadIO m) => m (Message)
 produceGetHeadersMessage = do
     liftIO $ print ("produceGetHeadersMessage - called.")
     bp2pEnv <- getBitcoinP2P
@@ -80,7 +80,7 @@ produceGetHeadersMessage = do
     liftIO $ print ("block-locator: " ++ show bl)
     return (MGetHeaders gh)
 
-sendRequestMessages :: (HasService env m) => Message -> m ()
+sendRequestMessages :: (HasXokenNodeEnv env m, MonadIO m) => Message -> m ()
 sendRequestMessages msg = do
     liftIO $ print ("sendRequestMessages - called.")
     bp2pEnv <- getBitcoinP2P
@@ -127,7 +127,7 @@ msgOrder m1 m2 = do
         then LT
         else GT
 
-runEgressChainSync :: (HasService env m) => m ()
+runEgressChainSync :: (HasXokenNodeEnv env m, MonadIO m) => m ()
 runEgressChainSync = do
     res <- LE.try $ runStream $ (S.repeatM produceGetHeadersMessage) & (S.mapM sendRequestMessages)
     case res of
@@ -197,7 +197,7 @@ fetchBestBlock conn net = do
                         Nothing -> throw InvalidBlockHashException
                 Nothing -> throw InvalidMetaDataException
 
-processHeaders :: (HasService env m) => Headers -> m ()
+processHeaders :: (HasXokenNodeEnv env m, MonadIO m) => Headers -> m ()
 processHeaders hdrs = do
     dbe' <- getDB
     bp2pEnv <- getBitcoinP2P
@@ -249,9 +249,4 @@ processHeaders hdrs = do
                 putMVar (bestBlockUpdated bp2pEnv) True
             return ()
         False -> liftIO $ print ("Error: BlocksNotChainedException") >> throw BlocksNotChainedException
-    return ()
-
-logMessage :: (HasService env m) => MessageCommand -> m ()
-logMessage mg = do
-    liftIO $ print ("processed: " ++ show mg)
     return ()

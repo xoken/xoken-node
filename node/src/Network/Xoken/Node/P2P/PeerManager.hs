@@ -248,7 +248,11 @@ doVersionHandshake net sock sa = do
             debug lg $ msg $ val "Error, unexpected message (1) during handshake"
             return False
 
-messageHandler :: (HasService env m) => BitcoinPeer -> (Maybe Message, Maybe IngressStreamState) -> m (MessageCommand)
+messageHandler ::
+       (HasXokenNodeEnv env m, MonadIO m)
+    => BitcoinPeer
+    -> (Maybe Message, Maybe IngressStreamState)
+    -> m (MessageCommand)
 messageHandler peer (mm, ingss) = do
     bp2pEnv <- getBitcoinP2P
     lg <- getLogger
@@ -315,7 +319,7 @@ messageHandler peer (mm, ingss) = do
             debug lg $ LG.msg $ val "Error, invalid message"
             throw InvalidMessageTypeException
 
-readNextMessage' :: (HasService env m) => BitcoinPeer -> m ((Maybe Message, Maybe IngressStreamState))
+readNextMessage' :: (HasXokenNodeEnv env m, MonadIO m) => BitcoinPeer -> m ((Maybe Message, Maybe IngressStreamState))
 readNextMessage' peer = do
     bp2pEnv <- getBitcoinP2P
     let net = bncNet $ bitcoinNodeConfig bp2pEnv
@@ -365,7 +369,7 @@ initPeerListeners = do
     mapM_ (\pr -> LA.async $ handleIncomingMessages $ snd pr) conpr
     return ()
 
-handleIncomingMessages :: (HasService env m) => BitcoinPeer -> m ()
+handleIncomingMessages :: (HasXokenNodeEnv env m, MonadIO m) => BitcoinPeer -> m ()
 handleIncomingMessages pr = do
     bp2pEnv <- getBitcoinP2P
     lg <- getLogger

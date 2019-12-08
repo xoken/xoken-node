@@ -71,7 +71,7 @@ import Streamly.Prelude ((|:), nil)
 import qualified Streamly.Prelude as S
 import System.Random
 
-produceGetDataMessage :: (HasService env m) => m (Maybe Message)
+produceGetDataMessage :: (HasXokenNodeEnv env m, MonadIO m) => m (Maybe Message)
 produceGetDataMessage = do
     liftIO $ print ("produceGetDataMessage - called.")
     bp2pEnv <- getBitcoinP2P
@@ -93,7 +93,7 @@ produceGetDataMessage = do
             liftIO $ threadDelay (1000000 * 1)
             return Nothing
 
-sendRequestMessages :: (HasService env m) => Maybe Message -> m ()
+sendRequestMessages :: (HasXokenNodeEnv env m, MonadIO m) => Maybe Message -> m ()
 sendRequestMessages mmsg = do
     case mmsg of
         Just msg -> do
@@ -124,7 +124,7 @@ sendRequestMessages mmsg = do
             liftIO $ print ("graceful ignore...")
             return ()
 
-runEgressBlockSync :: (HasService env m) => m ()
+runEgressBlockSync :: (HasXokenNodeEnv env m, MonadIO m) => m ()
 runEgressBlockSync = do
     res <- LE.try $ runStream $ (S.repeatM produceGetDataMessage) & (S.mapM sendRequestMessages)
     case res of
@@ -142,7 +142,7 @@ markBestSyncedBlock hash height conn = do
         Left (e :: SomeException) ->
             print ("Error: Marking [Best-Synced] blockhash failed: " ++ show e) >> throw KeyValueDBInsertException
 
-getNextBlockToSync :: (HasService env m) => m (Bool, Maybe BlockInfo)
+getNextBlockToSync :: (HasXokenNodeEnv env m, MonadIO m) => m (Bool, Maybe BlockInfo)
 getNextBlockToSync = do
     bp2pEnv <- getBitcoinP2P
     dbe' <- getDB
@@ -218,7 +218,7 @@ fetchBestSyncedBlock conn net = do
                         Nothing -> throw InvalidBlockHashException
                 Nothing -> throw InvalidMetaDataException
 
-processConfTransaction :: (HasService env m) => Tx -> BlockHash -> Int -> Int -> m ()
+processConfTransaction :: (HasXokenNodeEnv env m, MonadIO m) => Tx -> BlockHash -> Int -> Int -> m ()
 processConfTransaction tx bhash txind blkht = do
     dbe' <- getDB
     bp2pEnv <- getBitcoinP2P
@@ -246,7 +246,7 @@ processConfTransaction tx bhash txind blkht = do
             liftIO $ print ("Error: INSERTing into 'blocks_by_hash': " ++ show e) >>= throw KeyValueDBInsertException
     return ()
 
-processBlock :: (HasService env m) => DefBlock -> m ()
+processBlock :: (HasXokenNodeEnv env m, MonadIO m) => DefBlock -> m ()
 processBlock dblk = do
     dbe' <- getDB
     bp2pEnv <- getBitcoinP2P
