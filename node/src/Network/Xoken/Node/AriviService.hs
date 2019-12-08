@@ -162,8 +162,8 @@ goGetResource1 ldb msg net = do
 globalHandlerRpc :: (HasService env m) => String -> m (Maybe String)
 globalHandlerRpc msg = do
     liftIO $ printf "Decoded resp: %s\n" (msg)
-    dbe <- getDBEnv
-    let ldb = keyValDB (dbHandles dbe)
+    dbe <- getDB
+    let ldb = keyValDB (dbe)
     st <- liftIO $ goGetResource1 ldb msg "bsv"
     return (Just $ st)
 

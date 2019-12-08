@@ -65,10 +65,10 @@ import System.Random
 produceGetHeadersMessage :: (HasService env m) => m (Message)
 produceGetHeadersMessage = do
     liftIO $ print ("produceGetHeadersMessage - called.")
-    bp2pEnv <- getBitcoinP2PEnv
-    dbe' <- getDBEnv
+    bp2pEnv <- getBitcoinP2P
+    dbe' <- getDB
     liftIO $ takeMVar (bestBlockUpdated bp2pEnv) -- be blocked until a new best-block is updated in DB.
-    let conn = keyValDB $ dbHandles dbe'
+    let conn = keyValDB $ dbe'
     let net = bncNet $ bitcoinNodeConfig bp2pEnv
     bl <- liftIO $ getBlockLocator conn net
     let gh =
@@ -83,9 +83,9 @@ produceGetHeadersMessage = do
 sendRequestMessages :: (HasService env m) => Message -> m ()
 sendRequestMessages msg = do
     liftIO $ print ("sendRequestMessages - called.")
-    bp2pEnv <- getBitcoinP2PEnv
-    dbe' <- getDBEnv
-    let conn = keyValDB $ dbHandles dbe'
+    bp2pEnv <- getBitcoinP2P
+    dbe' <- getDB
+    let conn = keyValDB $ dbe'
     let net = bncNet $ bitcoinNodeConfig bp2pEnv
     allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
     let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
@@ -199,8 +199,8 @@ fetchBestBlock conn net = do
 
 processHeaders :: (HasService env m) => Headers -> m ()
 processHeaders hdrs = do
-    dbe' <- getDBEnv
-    bp2pEnv <- getBitcoinP2PEnv
+    dbe' <- getDB
+    bp2pEnv <- getBitcoinP2P
     if (L.length $ headersList hdrs) == 0
         then liftIO $ print "Nothing to process!" >>= throw EmptyHeadersMessageException
         else liftIO $ print $ "Processing Headers with " ++ show (L.length $ headersList hdrs) ++ " entries."
@@ -208,7 +208,7 @@ processHeaders hdrs = do
         True -> do
             let net = bncNet $ bitcoinNodeConfig bp2pEnv
                 genesisHash = blockHashToHex $ headerHash $ getGenesisHeader net
-                conn = keyValDB $ dbHandles dbe'
+                conn = keyValDB $ dbe'
                 headPrevHash = (blockHashToHex $ prevBlock $ fst $ head $ headersList hdrs)
             bb <- liftIO $ fetchBestBlock conn net
             if (blockHashToHex $ fst bb) == genesisHash

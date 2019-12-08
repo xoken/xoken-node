@@ -68,6 +68,8 @@ import System.Logger as LG
 import System.Logger.Message
 import System.Random
 
+import Network.Xoken.Node.Env
+
 createSocket :: AddrInfo -> IO (Maybe Socket)
 createSocket = createSocketWithOptions []
 
@@ -80,11 +82,11 @@ createSocketWithOptions options addr = do
         Right () -> return $ Just sock
         Left (e :: IOException) -> throw $ SocketConnectException (addrAddress addr)
 
-setupPeerConnection :: (HasService env m) => m ()
+setupPeerConnection :: (HasXokenNodeEnv env m, MonadIO m) => m ()
 setupPeerConnection = do
-    bp2pEnv <- getBitcoinP2PEnv
-    let lg = logger bp2pEnv
-        net = bncNet $ bitcoinNodeConfig bp2pEnv
+    bp2pEnv <- getBitcoinP2P
+    lg <- getLogger
+    let net = bncNet $ bitcoinNodeConfig bp2pEnv
         seeds = getSeeds net
         hints = defaultHints {addrSocketType = Stream}
         port = getDefaultPort net
@@ -129,14 +131,14 @@ recvAll sock len = do
         else return (B.empty)
 
 readNextMessage ::
-       (HasBitcoinP2PEnv m, MonadIO m)
+       (HasBitcoinP2P m, HasLogger m, MonadIO m)
     => Network
     -> Socket
     -> Maybe IngressStreamState
     -> m ((Maybe Message, Maybe IngressStreamState))
 readNextMessage net sock ingss = do
-    p2pEnv <- getBitcoinP2PEnv
-    let lg = logger p2pEnv
+    p2pEnv <- getBitcoinP2P
+    lg <- getLogger
     case ingss of
         Just iss -> do
             debug lg $ msg ("IngressStreamState parsing tx: " ++ show iss)
@@ -213,10 +215,10 @@ readNextMessage net sock ingss = do
                                 Right msg -> do
                                     return (Just msg, Nothing)
 
-doVersionHandshake :: (HasBitcoinP2PEnv m, MonadIO m) => Network -> Socket -> SockAddr -> m (Bool)
+doVersionHandshake :: (HasBitcoinP2P m, HasLogger m, MonadIO m) => Network -> Socket -> SockAddr -> m (Bool)
 doVersionHandshake net sock sa = do
-    p2pEnv <- getBitcoinP2PEnv
-    let lg = logger p2pEnv
+    p2pEnv <- getBitcoinP2P
+    lg <- getLogger
     g <- liftIO $ getStdGen
     now <- round <$> liftIO getPOSIXTime
     myaddr <-
@@ -248,8 +250,8 @@ doVersionHandshake net sock sa = do
 
 messageHandler :: (HasService env m) => BitcoinPeer -> (Maybe Message, Maybe IngressStreamState) -> m (MessageCommand)
 messageHandler peer (mm, ingss) = do
-    bp2pEnv <- getBitcoinP2PEnv
-    let lg = logger bp2pEnv
+    bp2pEnv <- getBitcoinP2P
+    lg <- getLogger
     case mm of
         Just msg -> do
             case (msg) of
@@ -315,7 +317,7 @@ messageHandler peer (mm, ingss) = do
 
 readNextMessage' :: (HasService env m) => BitcoinPeer -> m ((Maybe Message, Maybe IngressStreamState))
 readNextMessage' peer = do
-    bp2pEnv <- getBitcoinP2PEnv
+    bp2pEnv <- getBitcoinP2P
     let net = bncNet $ bitcoinNodeConfig bp2pEnv
     case bpSocket peer of
         Just sock -> do
@@ -357,7 +359,7 @@ readNextMessage' peer = do
 
 initPeerListeners :: (HasService env m) => m ()
 initPeerListeners = do
-    bp2pEnv <- getBitcoinP2PEnv
+    bp2pEnv <- getBitcoinP2P
     allpr <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
     let conpr = L.filter (\x -> bpConnected (snd x)) (M.toList allpr)
     mapM_ (\pr -> LA.async $ handleIncomingMessages $ snd pr) conpr
@@ -365,8 +367,8 @@ initPeerListeners = do
 
 handleIncomingMessages :: (HasService env m) => BitcoinPeer -> m ()
 handleIncomingMessages pr = do
-    bp2pEnv <- getBitcoinP2PEnv
-    let lg = logger bp2pEnv
+    bp2pEnv <- getBitcoinP2P
+    lg <- getLogger
     debug lg $ msg $ (val "reading from: ") +++ show (bpAddress pr)
     res <-
         LE.try $

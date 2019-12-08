@@ -13,6 +13,7 @@ import Control.Concurrent.MVar
 import Control.Concurrent.QSem
 import Control.Concurrent.STM.TVar
 import Control.Monad.Reader
+import Control.Monad.Trans.Control
 import Data.Hashable
 import qualified Data.Map.Strict as M
 import Data.Time.Clock
@@ -27,33 +28,39 @@ import System.Logger
 import System.Random
 import Text.Read
 
-data BitcoinP2PEnv =
-    BitcoinP2PEnv
+type HasXokenNodeEnv env m
+     = (HasBitcoinP2P m, HasDatabaseHandles m, HasLogger m, MonadReader env m, MonadBaseControl IO m)
+
+data XokenNodeEnv =
+    XokenNodeEnv
+        { bitcoinP2PEnv :: BitcoinP2P
+        , dbHandles :: DatabaseHandles
+        , loggerEnv :: Logger
+        }
+
+data BitcoinP2P =
+    BitcoinP2P
         { bitcoinNodeConfig :: !BitcoinNodeConfig
         , bitcoinPeers :: !(TVar (M.Map SockAddr BitcoinPeer))
         , bestBlockUpdated :: !(MVar Bool)
         , headersWriteLock :: !(MVar Bool)
         , blockFetchBalance :: !QSem
         , blockSyncStatusMap :: !(TVar (M.Map BlockHash (BlockSyncStatus, BlockHeight)))
-        , logger :: Logger
         }
 
-class HasBitcoinP2PEnv m where
-    getBitcoinP2PEnv :: m (BitcoinP2PEnv)
+class HasBitcoinP2P m where
+    getBitcoinP2P :: m (BitcoinP2P)
 
-data DBEnv =
-    DBEnv
-        { dbHandles :: !DatabaseHandles
-        }
+class HasLogger m where
+    getLogger :: m (Logger)
 
-class HasDBEnv m where
-    getDBEnv :: m (DBEnv)
+class HasDatabaseHandles m where
+    getDB :: m (DatabaseHandles)
 
 data ServiceEnv m r t rmsg pmsg =
     ServiceEnv
-        { dbEnv :: DBEnv
+        { xokenNodeEnv :: XokenNodeEnv
         , p2pEnv :: P2PEnv m r t rmsg pmsg
-        , bitcoinP2PEnv :: BitcoinP2PEnv
         }
 
 data ServiceResource =
@@ -69,4 +76,7 @@ instance Serialise ServiceResource
 instance Hashable ServiceResource
 
 type HasService env m
-     = (HasDBEnv m, HasP2PEnv env m ServiceResource ServiceTopic String String, HasBitcoinP2PEnv m, MonadReader env m)
+     = ( HasXokenNodeEnv env m
+       , HasP2PEnv env m ServiceResource ServiceTopic String String
+       , MonadReader env m
+       , MonadBaseControl IO m)

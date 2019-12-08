@@ -99,11 +99,14 @@ deriving instance MonadBase IO AppM
 
 deriving instance MonadBaseControl IO AppM
 
-instance HasBitcoinP2PEnv AppM where
-    getBitcoinP2PEnv = asks bitcoinP2PEnv
+instance HasBitcoinP2P AppM where
+    getBitcoinP2P = asks (bitcoinP2PEnv . xokenNodeEnv)
 
-instance HasDBEnv AppM where
-    getDBEnv = asks dbEnv
+instance HasDatabaseHandles AppM where
+    getDB = asks (dbHandles . xokenNodeEnv)
+
+instance HasLogger AppM where
+    getLogger = asks (loggerEnv . xokenNodeEnv)
 
 instance HasNetworkEnv AppM where
     getEnv = asks (ariviNetworkEnv . nodeEndpointEnv . p2pEnv)
@@ -151,11 +154,12 @@ defaultConfig path = do
                 9091
     Config.makeConfig config (path <> "/config.yaml")
 
-runNode :: Config.Config -> DatabaseHandles -> BitcoinP2PEnv -> IO ()
+runNode :: Config.Config -> DatabaseHandles -> BitcoinP2P -> IO ()
 runNode config dbh bp2p = do
     p2pEnv <- mkP2PEnv config globalHandlerRpc globalHandlerPubSub [AriviService] []
-    let dbEnv = DBEnv dbh
-        serviceEnv = ServiceEnv dbEnv p2pEnv bp2p
+    lg <- LG.create LG.StdOut
+    let xknEnv = XokenNodeEnv bp2p dbh lg
+    let serviceEnv = ServiceEnv xknEnv p2pEnv
     runFileLoggingT (toS $ Config.logFile config) $
         runAppM
             serviceEnv
@@ -275,8 +279,7 @@ main = do
     hl <- newMVar True
     bl <- newQSem 12 -- allows 12 outstanding blocks
     st <- newTVarIO M.empty
-    lg <- LG.create LG.StdOut
-    runNode cnf (DatabaseHandles conn) (BitcoinP2PEnv nodeConfig g mv hl bl st lg)
+    runNode cnf (DatabaseHandles conn) (BitcoinP2P nodeConfig g mv hl bl st)
   where
     opts =
         info (helper <*> config) $
