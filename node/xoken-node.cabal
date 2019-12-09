@@ -108,8 +108,8 @@ test-suite xoken-node-test
   type: exitcode-stdio-1.0
   main-is: Spec.hs
   other-modules:
-      Haskoin.StoreSpec
-      Network.Haskoin.Node.DataSpec
+      Xoken.StoreSpec
+      Network.Xoken.Node.DataSpec
       Paths_xoken_node
   hs-source-dirs:
       test

@@ -12,8 +12,10 @@ import Codec.Serialise
 import Control.Concurrent.MVar
 import Control.Concurrent.QSem
 import Control.Concurrent.STM.TVar
+import Control.Monad.Catch
 import Control.Monad.Reader
 import Control.Monad.Trans.Control
+import qualified Data.ByteString.Lazy.Char8 as C
 import Data.Hashable
 import qualified Data.Map.Strict as M
 import Data.Time.Clock
@@ -22,13 +24,12 @@ import qualified Database.CQL.IO as Q
 import GHC.Generics
 import Network.Socket hiding (send)
 import Network.Xoken.Block.Common
+import Network.Xoken.Node.Data
 import Network.Xoken.Node.P2P.Types
 import Network.Xoken.Transaction
 import System.Logger
 import System.Random
 import Text.Read
-
-import Control.Monad.Catch
 
 type HasXokenNodeEnv env m
      = (HasBitcoinP2P m, HasDatabaseHandles m, HasLogger m, MonadReader env m, MonadBaseControl IO m, MonadThrow m)
@@ -79,6 +80,6 @@ instance Hashable ServiceResource
 
 type HasService env m
      = ( HasXokenNodeEnv env m
-       , HasP2PEnv env m ServiceResource ServiceTopic String String
+       , HasP2PEnv env m ServiceResource ServiceTopic RPCMessage PubNotifyMessage
        , MonadReader env m
        , MonadBaseControl IO m)

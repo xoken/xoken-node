@@ -32,6 +32,7 @@ module Network.Xoken.Crypto.Hash
     , join512
     ) where
 
+import qualified Codec.Serialise as CBOR
 import Crypto.Hash (RIPEMD160(..), SHA1(..), SHA256(..), SHA512(..), hashWith)
 import Crypto.MAC.HMAC (HMAC, hmac)
 import Data.Aeson (FromJSON, ToJSON, Value(String), parseJSON, toJSON, withText)
@@ -73,7 +74,7 @@ newtype Hash256 =
     Hash256
         { getHash256 :: ShortByteString
         }
-    deriving (Eq, Ord, Hashable)
+    deriving (Eq, Ord, Hashable, CBOR.Serialise)
 
 instance ToJSON Hash256 where
     toJSON a = Data.Aeson.String $ encodeHex $ BSS.fromShort $ getHash256 a

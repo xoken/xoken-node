@@ -63,6 +63,7 @@ import qualified Database.CQL.IO as Q
 import Network.Simple.TCP
 import Network.Socket
 import Network.Xoken.Node.AriviService
+import Network.Xoken.Node.Data
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.GraphDB
 import Network.Xoken.Node.P2P.BlockSync
@@ -84,11 +85,11 @@ import Xoken
 import Xoken.Node
 
 newtype AppM a =
-    AppM (ReaderT (ServiceEnv AppM ServiceResource ServiceTopic String String) (LoggingT IO) a)
+    AppM (ReaderT (ServiceEnv AppM ServiceResource ServiceTopic RPCMessage PubNotifyMessage) (LoggingT IO) a)
     deriving ( Functor
              , Applicative
              , Monad
-             , MonadReader (ServiceEnv AppM ServiceResource ServiceTopic String String)
+             , MonadReader (ServiceEnv AppM ServiceResource ServiceTopic RPCMessage PubNotifyMessage)
              , MonadIO
              , MonadThrow
              , MonadCatch
@@ -132,7 +133,7 @@ instance HasPRT AppM where
     getReputedVsOtherTVar = asks (tvReputedVsOther . prtEnv . p2pEnv)
     getKClosestVsRandomTVar = asks (tvKClosestVsRandom . prtEnv . p2pEnv)
 
-runAppM :: ServiceEnv AppM ServiceResource ServiceTopic String String -> AppM a -> LoggingT IO a
+runAppM :: ServiceEnv AppM ServiceResource ServiceTopic RPCMessage PubNotifyMessage -> AppM a -> LoggingT IO a
 runAppM env (AppM app) = runReaderT app env
 
 defaultConfig :: FilePath -> IO ()

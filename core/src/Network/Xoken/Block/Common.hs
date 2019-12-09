@@ -29,6 +29,7 @@ module Network.Xoken.Block.Common
     , encodeCompact
     ) where
 
+import qualified Codec.Serialise as CBOR
 import Control.Monad (forM_, liftM2, mzero, replicateM)
 import Data.Aeson (FromJSON, ToJSON, Value(String), parseJSON, toJSON, withText)
 import Data.Bits ((.&.), (.|.), shiftL, shiftR)
@@ -95,7 +96,7 @@ newtype BlockHash =
     BlockHash
         { getBlockHash :: Hash256
         }
-    deriving (Eq, Ord, Generic, Hashable, Serialize)
+    deriving (Eq, Ord, Generic, Hashable, Serialize, CBOR.Serialise)
 
 instance Show BlockHash where
     showsPrec _ = shows . blockHashToHex
@@ -149,7 +150,7 @@ data BlockHeader =
                   -- | random nonce
         , bhNonce :: !Word32 --  4 bytes
         }
-    deriving (Eq, Ord, Show, Read, Generic, Hashable) -- 80 bytes
+    deriving (Eq, Ord, Show, Read, Generic, Hashable, CBOR.Serialise) -- 80 bytes
 
 instance ToJSON BlockHeader
 

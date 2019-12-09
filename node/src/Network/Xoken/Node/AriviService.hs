@@ -117,57 +117,58 @@ xGetBlocksHeights net heights = do
     let ar = catMaybes res
     return undefined -- $ jsonSerialiseAny net (ar)
 
-goGetResource1 :: Q.ClientState -> String -> Network -> IO (String)
-goGetResource1 ldb msg net = do
-    let bs = C.pack $ msg
-    let jsonStr = GZ.decompress $ B64L.decodeLenient bs
-    liftIO $ print (jsonStr)
-    let rpcReq = A.decode jsonStr :: Maybe RPCRequest
-    case rpcReq of
-        Just x -> do
-            liftIO $ printf "RPC: (%s)\n" (method x)
-            runner <- askRunInIO
-            val <-
-                liftIO $ do
-                    case (method x) of
-                        "get_block_hash" -> do
-                            let z = A.decode (A.encode (params x)) :: Maybe GetBlockHash
-                            case z of
-                                Just a -> xGetBlockHash net (blockhash a)
-                                Nothing -> return $ getMissingParamError (msgid x)
-                        "get_blocks_hashes" -> do
-                            let z = A.decode (A.encode (params x)) :: Maybe GetBlocksHashes
-                            case z of
-                                Just a -> xGetBlocksHashes net (blockhashes a)
-                                Nothing -> return $ getMissingParamError (msgid x)
-                        "get_block_height" -> do
-                            let z = A.decode (A.encode (params x)) :: Maybe GetBlockHeight
-                            case z of
-                                Just a -> xGetBlockHeight net (height a)
-                                Nothing -> return $ getMissingParamError (msgid x)
-                        "get_blocks_heights" -> do
-                            let z = A.decode (A.encode (params x)) :: Maybe GetBlocksHeights
-                            case z of
-                                Just a -> xGetBlocksHeights net (heights a)
-                                Nothing -> return $ getMissingParamError (msgid x)
-                        _____ -> do
-                            return $ A.encode (getJsonRpcErrorObj (msgid x) (-32601) "The method does not exist.")
-            let x = gzipCompressBase64Encode val
-            return x
-        Nothing -> do
-            liftIO $ printf "Decode failed.\n"
-            let v = getJsonRpcErrorObj 0 (-32600) "Invalid Request"
-            return $ gzipCompressBase64Encode (A.encode (v))
+goGetResource1 :: Q.ClientState -> RPCMessage -> Network -> IO (RPCMessage)
+goGetResource1 ldb msg net = undefined
+    --  do
+    -- let bs = C.pack $ msg
+    -- let jsonStr = GZ.decompress $ B64L.decodeLenient bs
+    -- liftIO $ print (jsonStr)
+    -- let rpcReq = A.decode jsonStr :: Maybe ORPCRequest
+    -- case rpcReq of
+    --     Just x -> do
+    --         liftIO $ printf "RPC: (%s)\n" (method x)
+    --         runner <- askRunInIO
+    --         val <-
+    --             liftIO $ do
+    --                 case (method x) of
+    --                     "get_block_hash" -> do
+    --                         let z = A.decode (A.encode (params x)) :: Maybe GetBlockHash
+    --                         case z of
+    --                             Just a -> xGetBlockHash net (blockhash a)
+    --                             Nothing -> return $ getMissingParamError (msgid x)
+    --                     "get_blocks_hashes" -> do
+    --                         let z = A.decode (A.encode (params x)) :: Maybe GetBlocksHashes
+    --                         case z of
+    --                             Just a -> xGetBlocksHashes net (blockhashes a)
+    --                             Nothing -> return $ getMissingParamError (msgid x)
+    --                     "get_block_height" -> do
+    --                         let z = A.decode (A.encode (params x)) :: Maybe GetBlockHeight
+    --                         case z of
+    --                             Just a -> xGetBlockHeight net (height a)
+    --                             Nothing -> return $ getMissingParamError (msgid x)
+    --                     "get_blocks_heights" -> do
+    --                         let z = A.decode (A.encode (params x)) :: Maybe GetBlocksHeights
+    --                         case z of
+    --                             Just a -> xGetBlocksHeights net (heights a)
+    --                             Nothing -> return $ getMissingParamError (msgid x)
+    --                     _____ -> do
+    --                         return $ A.encode (getJsonRpcErrorObj (msgid x) (-32601) "The method does not exist.")
+    --         let x = gzipCompressBase64Encode val
+    --         return x
+    --     Nothing -> do
+    --         liftIO $ printf "Decode failed.\n"
+    --         let v = getJsonRpcErrorObj 0 (-32600) "Invalid Request"
+    --         return $ gzipCompressBase64Encode (A.encode (v))
 
-globalHandlerRpc :: (HasService env m) => String -> m (Maybe String)
+globalHandlerRpc :: (HasService env m) => RPCMessage -> m (Maybe RPCMessage)
 globalHandlerRpc msg = do
-    liftIO $ printf "Decoded resp: %s\n" (msg)
+    liftIO $ printf "Decoded resp: %s\n" (show msg)
     dbe <- getDB
     let ldb = keyValDB (dbe)
     st <- liftIO $ goGetResource1 ldb msg "bsv"
     return (Just $ st)
 
-globalHandlerPubSub :: (HasService env m) => String -> String -> m Status
+globalHandlerPubSub :: (HasService env m) => ServiceTopic -> PubNotifyMessage -> m Status
 globalHandlerPubSub tpc msg = undefined
 
 instance HasNetworkConfig (ServiceEnv m r t rmsg pmsg) NetworkConfig where

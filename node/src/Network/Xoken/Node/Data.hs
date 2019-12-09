@@ -7,6 +7,7 @@
 
 module Network.Xoken.Node.Data where
 
+import Codec.Serialise
 import Conduit
 import Control.Applicative
 import Control.Arrow (first)
@@ -54,17 +55,72 @@ decodeShort bs =
         Left e -> error e
         Right a -> a
 
-data RPCRequest =
-    RPCRequest
+--
+--
+data RPCMessage
+    = RPCRequest
+          { rqMethod :: String
+          , rqParams :: Maybe RPCReqParams
+          }
+    | RPCResponse
+          { rsStatusCode :: Int16
+          , rsStatusMessage :: Maybe String
+          , rsBody :: RPCResponseBody
+          }
+    deriving (Show, Generic, Hashable, Eq, Serialise)
+
+data RPCReqParams
+    = GetBlockByHeight
+          { gbHeight :: Int
+          }
+    | GetBlocksByHeight
+          { gbHeights :: [Int]
+          }
+    | GetBlockByHash
+          { gbBlockHash :: BlockHash
+          }
+    deriving (Generic, Show, Hashable, Eq, Serialise)
+
+data RPCResponseBody
+    = RespBlockByHeight
+          { block :: BlockRecord
+          }
+    | RespBlocksByHeight
+          { blocks :: [BlockRecord]
+          }
+    | RespBlockByHash
+          { block :: BlockRecord
+          }
+    deriving (Generic, Show, Hashable, Eq, Serialise)
+
+data PubNotifyMessage =
+    PubNotifyMessage
+        { psBody :: ByteString
+        }
+    deriving (Show, Generic, Eq, Serialise)
+
+--
+data BlockRecord =
+    BlockRecord
+        { rbHeight :: Int
+        , rbHash :: BlockHash
+        , rbHeader :: BlockHeader
+        }
+    deriving (Generic, Show, Hashable, Eq, Serialise)
+
+--
+--
+data ORPCRequest =
+    ORPCRequest
         { method :: String
         , msgid :: Int
         , params :: Value
         }
     deriving (Show, Generic)
 
-instance FromJSON RPCRequest where
-    parseJSON (Object v) = RPCRequest <$> v .: "method" <*> v .: "id" <*> v .: "params"
-    parseJSON _ = error "Can't parse RPCRequest"
+instance FromJSON ORPCRequest where
+    parseJSON (Object v) = ORPCRequest <$> v .: "method" <*> v .: "id" <*> v .: "params"
+    parseJSON _ = error "Can't parse ORPCRequest"
 
 data GetBlockHeight =
     GetBlockHeight
