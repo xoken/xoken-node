@@ -149,7 +149,7 @@ markBestBlock :: Text -> Int32 -> Q.ClientState -> IO ()
 markBestBlock hash height conn = do
     let str = "insert INTO xoken.misc_store (key, value) values (? , ?)"
         qstr = str :: Q.QueryString Q.W (Text, (Maybe Bool, Int32, Maybe Int64, Text)) ()
-        par = Q.defQueryParams Q.One ("best-block", (Nothing, height, Nothing, hash))
+        par = Q.defQueryParams Q.One ("best_chain_tip", (Nothing, height, Nothing, hash))
     res <- try $ Q.runClient conn (Q.write (Q.prepared qstr) par)
     case res of
         Right () -> return ()
@@ -180,7 +180,7 @@ fetchBestBlock :: Q.ClientState -> Network -> IO ((BlockHash, Int32))
 fetchBestBlock conn net = do
     let str = "SELECT value from xoken.misc_store where key = ?"
         qstr = str :: Q.QueryString Q.R (Identity Text) (Identity (Maybe Bool, Maybe Int32, Maybe Int64, Maybe T.Text))
-        p = Q.defQueryParams Q.One $ Identity "best-block"
+        p = Q.defQueryParams Q.One $ Identity "best_chain_tip"
     iop <- Q.runClient conn (Q.query qstr p)
     if L.length iop == 0
         then print ("Bestblock is genesis.") >> return ((headerHash $ getGenesisHeader net), 0)

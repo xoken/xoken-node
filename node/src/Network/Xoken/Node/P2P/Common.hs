@@ -77,6 +77,11 @@ data BlockSyncException
     | UnexpectedDuringBlockProcException
     | InvalidBlockSyncStatusMapException
     | InvalidBlockInfoException
+    | OutpointAddressNotFoundException
+    | InvalidAddressException
+    | TxIDNotFoundException
+    | InvalidOutpointException
+    | DBTxParseException
     deriving (Show)
 
 instance Exception BlockSyncException

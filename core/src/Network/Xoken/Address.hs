@@ -148,20 +148,19 @@ addrFromJSON net =
 -- 'CashAddr' depending on network.
 addrToString :: Network -> Address -> Maybe Text
 addrToString net a@PubKeyAddress {getAddrHash160 = h}
-    | isNothing (getCashAddrPrefix net) =
-        Just . encodeBase58Check . runPut $ base58put net a
+    | isNothing (getCashAddrPrefix net) = Just . encodeBase58Check . runPut $ base58put net a
     | otherwise = cashAddrEncode net 0 (S.encode h)
 addrToString net a@ScriptAddress {getAddrHash160 = h}
-    | isNothing (getCashAddrPrefix net) =
-        Just . encodeBase58Check . runPut $ base58put net a
+    | isNothing (getCashAddrPrefix net) = Just . encodeBase58Check . runPut $ base58put net a
     | otherwise = cashAddrEncode net 1 (S.encode h)
-addrToString net WitnessPubKeyAddress {getAddrHash160 = h} = do
-    hrp <- getBech32Prefix net
-    segwitEncode hrp 0 (B.unpack (S.encode h))
-addrToString net WitnessScriptAddress {getAddrHash256 = h} = do
-    hrp <- getBech32Prefix net
-    segwitEncode hrp 0 (B.unpack (S.encode h))
 
+-- addrToString net WitnessPubKeyAddress {getAddrHash160 = h} = do
+--     hrp <- getBech32Prefix net
+--     segwitEncode hrp 0 (B.unpack (S.encode h))
+-- addrToString net WitnessScriptAddress {getAddrHash256 = h} = do
+--     hrp <- getBech32Prefix net
+--     segwitEncode hrp 0 (B.unpack (S.encode h))
+--
 -- | Parse 'Base58', 'Bech32' or 'CashAddr' address, depending on network.
 stringToAddr :: Network -> Text -> Maybe Address
 stringToAddr net bs = cash <|> segwit <|> b58
@@ -206,9 +205,7 @@ pubKeyWitnessAddr = WitnessPubKeyAddress . addressHash . S.encode
 
 -- | Obtain a backwards-compatible SegWit P2SH-P2WPKH address from a public key.
 pubKeyCompatWitnessAddr :: PubKeyI -> Address
-pubKeyCompatWitnessAddr =
-    p2shAddr .
-    addressHash . encodeOutputBS . PayWitnessPKHash . addressHash . S.encode
+pubKeyCompatWitnessAddr = p2shAddr . addressHash . encodeOutputBS . PayWitnessPKHash . addressHash . S.encode
 
 -- | Obtain a SegWit pay-to-witness-public-key-hash (P2WPKH) address from a
 -- 'Hash160'.
@@ -234,8 +231,7 @@ payToWitnessScriptAddress = p2wshAddr . sha256 . encodeOutputBS
 
 -- | Compute a backwards-compatible SegWit P2SH-P2WSH address.
 payToNestedScriptAddress :: ScriptOutput -> Address
-payToNestedScriptAddress =
-    p2shAddr . addressHash . encodeOutputBS . toP2WSH . encodeOutput
+payToNestedScriptAddress = p2shAddr . addressHash . encodeOutputBS . toP2WSH . encodeOutput
 
 -- | Encode an output script from an address. Will fail if using a
 -- pay-to-witness address on a non-SegWit network.
@@ -255,13 +251,11 @@ addressToScriptBS = S.encode . addressToScript
 
 -- | Decode an output script into an 'Address' if it has such representation.
 scriptToAddress :: Script -> Either String Address
-scriptToAddress =
-    maybeToEither "Could not decode address" . outputAddress <=< decodeOutput
+scriptToAddress = maybeToEither "Could not decode address" . outputAddress <=< decodeOutput
 
 -- | Decode a serialized script into an 'Address'.
 scriptToAddressBS :: ByteString -> Either String Address
-scriptToAddressBS =
-    maybeToEither "Could not decode address" . outputAddress <=< decodeOutputBS
+scriptToAddressBS = maybeToEither "Could not decode address" . outputAddress <=< decodeOutputBS
 
 -- | Get the 'Address' of a 'ScriptOutput'.
 outputAddress :: ScriptOutput -> Maybe Address

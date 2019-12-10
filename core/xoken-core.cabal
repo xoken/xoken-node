@@ -49,9 +49,9 @@ library
       Network.Xoken.Crypto.Hash
       Network.Xoken.Block.Common
       Network.Xoken.Transaction.Common
+      Network.Xoken.Script.Standard
+
   other-modules:
-
-
       Network.Xoken.Crypto.Signature
       Network.Xoken.Keys.Common
       Network.Xoken.Keys.Extended
@@ -59,7 +59,6 @@ library
       Network.Xoken.Network.Bloom
       Network.Xoken.Script.Common
       Network.Xoken.Script.SigHash
-      Network.Xoken.Script.Standard
       Network.Xoken.Test.Address
       Network.Xoken.Test.Block
       Network.Xoken.Test.Crypto
