@@ -21,6 +21,7 @@ import Control.Concurrent.MVar
 import Control.Concurrent.QSem
 import Control.Concurrent.STM.TVar
 import Control.Exception
+import qualified Control.Exception.Extra as EX
 import qualified Control.Exception.Lifted as LE (try)
 import Control.Monad
 import Control.Monad.Logger
@@ -308,7 +309,15 @@ processConfTransaction tx bhash txind blkht = do
                          if (outPointHash nullOutPoint) == (outPointHash $ prevOutput b)
                              then return Nothing
                              else do
-                                 ma <- liftIO $ getAddressFromOutpoint conn net $ prevOutput b
+                                 ma <-
+                                     liftIO $
+                                     EX.retryBool
+                                         (\e ->
+                                              case e of
+                                                  TxIDNotFoundRetryException -> True
+                                                  otherwise -> False)
+                                         120
+                                         (getAddressFromOutpoint conn net $ prevOutput b)
                                  case (ma) of
                                      Just x ->
                                          case addrToString net x of
@@ -340,7 +349,7 @@ processConfTransaction tx bhash txind blkht = do
                       commitAddressOutputs
                           conn
                           x
-                          True
+                          False
                           (Just y)
                           (txHashToHex $ txHash tx, i)
                           ((blockHashToHex bhash, fromIntegral blkht), fromIntegral txind)
@@ -359,7 +368,10 @@ getAddressFromOutpoint conn net outPoint = do
         p = Q.defQueryParams Q.One $ Identity $ txHashToHex $ outPointHash outPoint
     iop <- Q.runClient conn (Q.query qstr p)
     if L.length iop == 0
-        then throw TxIDNotFoundException -- print ("Best-synced-block is genesis.") >> return ((headerHash $ getGenesisHeader net), 0)
+        then do
+            print ("(retry) TxID not found: " ++ (show $ txHashToHex $ outPointHash outPoint))
+            liftIO $ threadDelay (1000000 * 1)
+            throw TxIDNotFoundRetryException
         else do
             let txbyt = runIdentity $ iop !! 0
             case runGetLazy (getConfirmedTx) (fromBlob txbyt) of

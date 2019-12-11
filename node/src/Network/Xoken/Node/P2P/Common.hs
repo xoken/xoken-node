@@ -79,7 +79,8 @@ data BlockSyncException
     | InvalidBlockInfoException
     | OutpointAddressNotFoundException
     | InvalidAddressException
-    | TxIDNotFoundException
+    | TxIDNotFoundFinalException
+    | TxIDNotFoundRetryException
     | InvalidOutpointException
     | DBTxParseException
     deriving (Show)
