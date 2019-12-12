@@ -135,6 +135,15 @@ logMessage mg = do
     liftIO $ print ("processed: " ++ show mg)
     return ()
 
+-- | Computes the height of a Merkle tree.
+computeTreeHeight ::
+       Int -- ^ number of transactions (leaf nodes)
+    -> Int8 -- ^ height of the merkle tree
+computeTreeHeight ntx
+    | ntx < 2 = 0
+    | even ntx = 1 + computeTreeHeight (ntx `div` 2)
+    | otherwise = computeTreeHeight $ ntx + 1
+
 getTextVal :: (Maybe Bool, Maybe Int32, Maybe Int64, Maybe T.Text) -> Maybe T.Text
 getTextVal (_, _, _, txt) = txt
 

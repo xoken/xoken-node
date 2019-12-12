@@ -17,6 +17,7 @@ import Control.Monad.Reader
 import Control.Monad.Trans (liftIO)
 import Control.Monad.Trans.Reader (ReaderT(..))
 import Data.Aeson (ToJSON(..), (.=), object)
+import Data.Char
 import Data.Hashable
 import Data.List (nub)
 import Data.Map.Strict as M
@@ -27,15 +28,15 @@ import Data.Text (Text)
 import Data.Time.Clock
 import Data.Word
 import Database.Bolt as BT
+import Database.Bolt (Node(..), Record, RecordValue(..), Value(..), at)
 import qualified Database.CQL.IO as Q
 import GHC.Generics
 import Network.Socket hiding (send)
+import Network.Xoken.Crypto.Hash
 import Network.Xoken.Node.P2P.Types
 import Network.Xoken.Transaction
 import System.Random
 import Text.Read
-
-import Database.Bolt (Node(..), Record, RecordValue(..), Value(..), at)
 
 data Movie =
     Movie
@@ -194,3 +195,15 @@ queryGraph limit = do
         "MATCH (m:Movie)<-[:ACTED_IN]-(a:Person) " <> "RETURN m.title as movie, collect(a.name) as cast " <>
         "LIMIT {limit}"
     params = fromList [("limit", I limit)]
+
+insertMerkleSubTree :: Bool -> [Hash256] -> BoltActionT IO ()
+insertMerkleSubTree match hashes = do
+    records <- queryP cypher params
+    return ()
+  where
+    ind = Prelude.map (\x -> chr x) [1 .. (length hashes)]
+    inputs = zip hashes ind
+    cypher =
+        "MATCH (m:Movie)<-[:ACTED_IN]-(a:Person) " <> "RETURN m.title as movie, collect(a.name) as cast " <>
+        "LIMIT {limit}"
+    params = fromList [("limit", I 100)]

@@ -8,6 +8,8 @@ import Control.Concurrent.MVar
 import Control.Concurrent.STM
 import qualified Data.ByteString as B
 import Data.Functor.Identity
+import Data.Int
+import qualified Data.Map.Strict as M
 import Data.Time.Clock
 import Data.Word
 import qualified Database.CQL.IO as Q
@@ -85,6 +87,8 @@ data IngressStreamState =
     IngressStreamState
         { issBlockIngest :: !BlockIngestState
         , issBlockInfo :: !(Maybe BlockInfo)
+        , merkleTreeHeight :: Int8
+        , merklePrevNodesMap :: !(M.Map Int8 (Maybe Hash256))
         }
     deriving (Show)
 

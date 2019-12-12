@@ -60,6 +60,7 @@ import Network.Xoken.Node.P2P.BlockSync
 import Network.Xoken.Node.P2P.ChainSync
 import Network.Xoken.Node.P2P.Common
 import Network.Xoken.Node.P2P.Types
+import Network.Xoken.Transaction.Common
 import Network.Xoken.Util
 import Streamly
 import Streamly.Prelude ((|:), nil)
@@ -130,6 +131,36 @@ recvAll sock len = do
                         else B.append msg <$> recvAll sock (len - B.length msg)
         else return (B.empty)
 
+hashPair :: Hash256 -> Hash256 -> Hash256
+hashPair a b = doubleSHA256 $ encode a `B.append` encode b
+
+pushHash :: M.Map Int8 (Maybe Hash256) -> Hash256 -> Int8 -> Bool -> M.Map Int8 (Maybe Hash256)
+pushHash hashMap nhash ind final =
+    case prev of
+        Just pv ->
+            pushHash
+                (insertSpecial pv nhash (hashPair pv nhash) (M.insert ind Nothing hashMap))
+                (hashPair pv nhash)
+                (ind - 1)
+                final
+        Nothing ->
+            if final
+                then pushHash
+                         (insertSpecial nhash nhash (hashPair nhash nhash) (M.insert ind (Just nhash) hashMap))
+                         (hashPair nhash nhash)
+                         (ind - 1)
+                         final
+                else M.insert ind (Just nhash) hashMap
+  where
+    insertSpecial x y z mp = (M.insert 103 (Just z) (M.insert 102 (Just y) (M.insert 101 (Just x) mp)))
+    prev =
+        case M.lookupIndex (fromIntegral ind) hashMap of
+            Just i -> snd $ M.elemAt i hashMap
+            Nothing -> Nothing
+
+updateMerkleSubTrees :: M.Map Int8 (Maybe Hash256) -> Hash256 -> Int8 -> Bool -> IO (M.Map Int8 (Maybe Hash256))
+updateMerkleSubTrees hashMap newhash ht final = undefined
+
 readNextMessage ::
        (HasBitcoinP2P m, HasLogger m, MonadIO m)
     => Network
@@ -170,7 +201,16 @@ readNextMessage net sock ingss = do
                                         , binTxProcessed = 1 + binTxProcessed blin
                                         , binChecksum = binChecksum blin
                                         }
-                            return (Just $ MTx t, Just $ IngressStreamState bio $ issBlockInfo iss)
+                            nst <-
+                                liftIO $
+                                updateMerkleSubTrees
+                                    (merklePrevNodesMap iss)
+                                    (getTxHash $ txHash t)
+                                    (merkleTreeHeight iss)
+                                    ((binTxTotalCount bio) == (binTxProcessed bio))
+                            return
+                                ( Just $ MTx t
+                                , Just $ IngressStreamState bio (issBlockInfo iss) (merkleTreeHeight iss) nst)
                         Nothing -> do
                             debug lg $ msg (txbyt)
                             throw ConfirmedTxParseException
@@ -201,7 +241,14 @@ readNextMessage net sock ingss = do
                                                         , binTxProcessed = 0
                                                         , binChecksum = cks
                                                         }
-                                            return (Just $ MBlock b, Just $ IngressStreamState bi Nothing)
+                                            return
+                                                ( Just $ MBlock b
+                                                , Just $
+                                                  IngressStreamState
+                                                      bi
+                                                      Nothing
+                                                      (computeTreeHeight $ binTxTotalCount bi)
+                                                      M.empty)
                                         Nothing -> throw DeflatedBlockParseException
                         else do
                             byts <-
@@ -340,7 +387,7 @@ readNextMessage' peer = do
                                     case (M.lookup hh mp) of
                                         Just (_, h) -> h
                                         Nothing -> throw InvalidBlockSyncStatusMapException
-                                !iz = Just (IngressStreamState ingst $ Just $ BlockInfo hh ht)
+                                !iz = Just (IngressStreamState ingst (Just $ BlockInfo hh ht) 0 M.empty)
                             liftIO $ atomically $ writeTVar (bpIngressState peer) $ iz
                         Just (MTx ctx) -> do
                             if binTxTotalCount ingst == binTxProcessed ingst
