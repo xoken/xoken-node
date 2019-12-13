@@ -83,12 +83,14 @@ data BlockInfo =
         }
     deriving (Show)
 
+type HashCompute = (M.Map Int8 (Maybe Hash256), M.Map Int8 (Maybe Hash256))
+
 data IngressStreamState =
     IngressStreamState
         { issBlockIngest :: !BlockIngestState
         , issBlockInfo :: !(Maybe BlockInfo)
         , merkleTreeHeight :: Int8
-        , merklePrevNodesMap :: !(M.Map Int8 (Maybe Hash256))
+        , merklePrevNodesMap :: !HashCompute
         }
     deriving (Show)
 

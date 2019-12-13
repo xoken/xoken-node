@@ -31,6 +31,7 @@ import qualified Data.ByteString.Char8 as C
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Lazy.Char8 as LC
 import Data.ByteString.Short as BSS
+import Data.Char
 import Data.Function ((&))
 import Data.Functor.Identity
 import Data.Int
@@ -55,6 +56,7 @@ import Network.Xoken.Crypto.Hash
 import Network.Xoken.Network.Common
 import Network.Xoken.Network.Message
 import Network.Xoken.Node.Env
+import Network.Xoken.Node.Env
 import Network.Xoken.Node.GraphDB
 import Network.Xoken.Node.P2P.BlockSync
 import Network.Xoken.Node.P2P.ChainSync
@@ -68,8 +70,6 @@ import qualified Streamly.Prelude as S
 import System.Logger as LG
 import System.Logger.Message
 import System.Random
-
-import Network.Xoken.Node.Env
 
 createSocket :: AddrInfo -> IO (Maybe Socket)
 createSocket = createSocketWithOptions []
@@ -134,32 +134,45 @@ recvAll sock len = do
 hashPair :: Hash256 -> Hash256 -> Hash256
 hashPair a b = doubleSHA256 $ encode a `B.append` encode b
 
-pushHash :: M.Map Int8 (Maybe Hash256) -> Hash256 -> Int8 -> Bool -> M.Map Int8 (Maybe Hash256)
-pushHash hashMap nhash ind final =
+pushHash :: HashCompute -> Hash256 -> Int8 -> Bool -> HashCompute
+pushHash (hmp, res) nhash ind final =
     case prev of
         Just pv ->
             pushHash
-                (insertSpecial pv nhash (hashPair pv nhash) (M.insert ind Nothing hashMap))
+                ((M.insert ind Nothing hashMap), (insertSpecial pv nhash (hashPair pv nhash) res))
                 (hashPair pv nhash)
-                (ind - 1)
+                (ind + 1)
                 final
         Nothing ->
             if final
                 then pushHash
-                         (insertSpecial nhash nhash (hashPair nhash nhash) (M.insert ind (Just nhash) hashMap))
+                         ((M.insert ind (Just nhash) hashMap), (insertSpecial nhash nhash (hashPair nhash nhash) res))
                          (hashPair nhash nhash)
-                         (ind - 1)
+                         (ind + 1)
                          final
-                else M.insert ind (Just nhash) hashMap
+                else (M.insert ind (Just nhash) hashMap, res)
   where
-    insertSpecial x y z mp = (M.insert 103 (Just z) (M.insert 102 (Just y) (M.insert 101 (Just x) mp)))
+    hashMap = hmp
+    insertSpecial x y z mp =
+        (M.insert (100 + ind) Nothing (M.insert 0 (Just x) (M.insert 1 (Just y) (M.insert 2 (Just z) mp))))
     prev =
         case M.lookupIndex (fromIntegral ind) hashMap of
             Just i -> snd $ M.elemAt i hashMap
             Nothing -> Nothing
 
-updateMerkleSubTrees :: M.Map Int8 (Maybe Hash256) -> Hash256 -> Int8 -> Bool -> IO (M.Map Int8 (Maybe Hash256))
-updateMerkleSubTrees hashMap newhash ht final = undefined
+updateMerkleSubTrees :: HashCompute -> Hash256 -> Int8 -> Bool -> IO (HashCompute)
+updateMerkleSubTrees hashMap newhash ht final = do
+    let (state, res) = pushHash hashMap newhash ht final
+    if M.size res > 0
+        then do
+            mapM_
+                (\x -> do
+                     case snd x of
+                         Just hs -> print ((show $ fst x) ++ " @@@ " ++ (show $ txHashToHex $ TxHash hs))
+                         Nothing -> print ("Index:" ++ (show $ fst x)))
+                (M.toList res)
+            return (state, M.empty)
+        else return (state, res)
 
 readNextMessage ::
        (HasBitcoinP2P m, HasLogger m, MonadIO m)
@@ -171,8 +184,9 @@ readNextMessage net sock ingss = do
     p2pEnv <- getBitcoinP2P
     lg <- getLogger
     case ingss of
-        Just iss -> do
-            debug lg $ msg ("IngressStreamState parsing tx: " ++ show iss)
+        Just iss
+            -- debug lg $ msg ("IngressStreamState parsing tx: " ++ show iss)
+         -> do
             let blin = issBlockIngest iss
                 maxChunk = (1024 * 100) - (B.length $ binUnspentBytes blin)
                 len =
@@ -192,7 +206,7 @@ readNextMessage net sock ingss = do
                 Right (tx, unused) -> do
                     case tx of
                         Just t -> do
-                            debug lg $ msg ("Conf.Tx: " ++ show tx ++ " unused: " ++ show (B.length unused))
+                            debug lg $ msg ("Conf.Tx: " ++ (show $ txHash t) ++ " unused: " ++ show (B.length unused))
                             let !bio =
                                     BlockIngestState
                                         { binUnspentBytes = unused
@@ -248,7 +262,7 @@ readNextMessage net sock ingss = do
                                                       bi
                                                       Nothing
                                                       (computeTreeHeight $ binTxTotalCount bi)
-                                                      M.empty)
+                                                      (M.empty, M.empty))
                                         Nothing -> throw DeflatedBlockParseException
                         else do
                             byts <-
@@ -387,7 +401,7 @@ readNextMessage' peer = do
                                     case (M.lookup hh mp) of
                                         Just (_, h) -> h
                                         Nothing -> throw InvalidBlockSyncStatusMapException
-                                !iz = Just (IngressStreamState ingst (Just $ BlockInfo hh ht) 0 M.empty)
+                                !iz = Just (IngressStreamState ingst (Just $ BlockInfo hh ht) 0 (M.empty, M.empty))
                             liftIO $ atomically $ writeTVar (bpIngressState peer) $ iz
                         Just (MTx ctx) -> do
                             if binTxTotalCount ingst == binTxProcessed ingst
