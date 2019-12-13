@@ -134,43 +134,77 @@ recvAll sock len = do
 hashPair :: Hash256 -> Hash256 -> Hash256
 hashPair a b = doubleSHA256 $ encode a `B.append` encode b
 
-pushHash :: HashCompute -> Hash256 -> Int8 -> Bool -> HashCompute
-pushHash (hmp, res) nhash ind final =
-    case prev of
+pushHash ::
+       HashCompute
+    -> Hash256
+    -> Maybe Hash256
+    -> Maybe Hash256
+    -> Maybe Hash256
+    -> Maybe Hash256
+    -> Int8
+    -> Bool
+    -> HashCompute
+pushHash (hmp, res) nhash leftPrev rightPrev left right ind final =
+    case node prev of
         Just pv ->
             pushHash
-                ((M.insert ind Nothing hashMap), (insertSpecial pv nhash (hashPair pv nhash) res))
+                ( (M.insert ind (MerkleNode Nothing left right) hashMap)
+                , (insertSpecial
+                       (Just pv)
+                       (left)
+                       (right)
+                       (insertSpecial (Just nhash) (leftChild prev) (rightChild prev) res)))
                 (hashPair pv nhash)
+                (leftChild prev)
+                (rightChild prev)
+                (Just pv)
+                (Just nhash)
                 (ind + 1)
                 final
         Nothing ->
             if final
                 then pushHash
-                         ((M.insert ind (Just nhash) hashMap), (insertSpecial nhash nhash (hashPair nhash nhash) res))
+                         ( (M.insert ind (MerkleNode (Just nhash) left right) hashMap)
+                         , (insertSpecial (Just $ hashPair nhash nhash) (Just nhash) (Just nhash) res))
                          (hashPair nhash nhash)
+                         Nothing
+                         Nothing
+                         (Just nhash)
+                         (Just nhash)
                          (ind + 1)
                          final
-                else (M.insert ind (Just nhash) hashMap, res)
+                else (M.insert ind (MerkleNode (Just nhash) Nothing Nothing) hashMap, res)
   where
     hashMap = hmp
-    insertSpecial x y z mp =
-        (M.insert (100 + ind) Nothing (M.insert 0 (Just x) (M.insert 1 (Just y) (M.insert 2 (Just z) mp))))
+    insertSpecial sib lft rht mp =
+        (M.insert (100 + ind) Nothing (M.insert 0 (sib) (M.insert 1 (lft) (M.insert 2 (rht) mp))))
     prev =
         case M.lookupIndex (fromIntegral ind) hashMap of
             Just i -> snd $ M.elemAt i hashMap
-            Nothing -> Nothing
+            Nothing -> emptyMerkleNode
 
-updateMerkleSubTrees :: HashCompute -> Hash256 -> Int8 -> Bool -> IO (HashCompute)
-updateMerkleSubTrees hashMap newhash ht final = do
-    let (state, res) = pushHash hashMap newhash ht final
+updateMerkleSubTrees ::
+       HashCompute
+    -> Hash256
+    -> Maybe Hash256
+    -> Maybe Hash256
+    -> Maybe Hash256
+    -> Maybe Hash256
+    -> Int8
+    -> Bool
+    -> IO (HashCompute)
+updateMerkleSubTrees hashMap newhash leftPrev rightPrev left right ht final = do
+    let (state, res) = pushHash hashMap newhash leftPrev rightPrev left right ht final
     if M.size res > 0
         then do
-            mapM_
-                (\x -> do
-                     case snd x of
-                         Just hs -> print ((show $ fst x) ++ " @@@ " ++ (show $ txHashToHex $ TxHash hs))
-                         Nothing -> print ("Index:" ++ (show $ fst x)))
-                (M.toList res)
+            let ps =
+                    map
+                        (\x -> do
+                             case snd x of
+                                 Just hs -> ((show $ fst x), (show $ txHashToHex $ TxHash hs))
+                                 Nothing -> ("@@Index:", (show $ 100 - fst x)))
+                        (M.toList res)
+            print (ps)
             return (state, M.empty)
         else return (state, res)
 
@@ -220,6 +254,10 @@ readNextMessage net sock ingss = do
                                 updateMerkleSubTrees
                                     (merklePrevNodesMap iss)
                                     (getTxHash $ txHash t)
+                                    Nothing
+                                    Nothing
+                                    Nothing
+                                    Nothing
                                     (merkleTreeHeight iss)
                                     ((binTxTotalCount bio) == (binTxProcessed bio))
                             return

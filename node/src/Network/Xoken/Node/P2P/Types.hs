@@ -83,7 +83,18 @@ data BlockInfo =
         }
     deriving (Show)
 
-type HashCompute = (M.Map Int8 (Maybe Hash256), M.Map Int8 (Maybe Hash256))
+data MerkleNode =
+    MerkleNode
+        { node :: Maybe Hash256
+        , leftChild :: Maybe Hash256
+        , rightChild :: Maybe Hash256
+        }
+    deriving (Show)
+
+type HashCompute = (M.Map Int8 (MerkleNode), M.Map Int8 (Maybe Hash256))
+
+emptyMerkleNode :: MerkleNode
+emptyMerkleNode = MerkleNode {node = Nothing, leftChild = Nothing, rightChild = Nothing}
 
 data IngressStreamState =
     IngressStreamState
