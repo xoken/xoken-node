@@ -91,7 +91,7 @@ data MerkleNode =
         }
     deriving (Show)
 
-type HashCompute = (M.Map Int8 (MerkleNode), M.Map Int8 (Maybe Hash256))
+type HashCompute = (M.Map Int8 (MerkleNode), [(Maybe Hash256, Maybe Hash256, Maybe Hash256)])
 
 emptyMerkleNode :: MerkleNode
 emptyMerkleNode = MerkleNode {node = Nothing, leftChild = Nothing, rightChild = Nothing}
@@ -100,7 +100,8 @@ data IngressStreamState =
     IngressStreamState
         { issBlockIngest :: !BlockIngestState
         , issBlockInfo :: !(Maybe BlockInfo)
-        , merkleTreeHeight :: Int8
+        , merkleTreeHeight :: !Int8
+        , merkleTreeCurIndex :: !Int8
         , merklePrevNodesMap :: !HashCompute
         }
     deriving (Show)

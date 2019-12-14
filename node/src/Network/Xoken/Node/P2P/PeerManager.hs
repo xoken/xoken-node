@@ -134,78 +134,78 @@ recvAll sock len = do
 hashPair :: Hash256 -> Hash256 -> Hash256
 hashPair a b = doubleSHA256 $ encode a `B.append` encode b
 
-pushHash ::
-       HashCompute
-    -> Hash256
-    -> Maybe Hash256
-    -> Maybe Hash256
-    -> Maybe Hash256
-    -> Maybe Hash256
-    -> Int8
-    -> Bool
-    -> HashCompute
-pushHash (hmp, res) nhash leftPrev rightPrev left right ind final =
+pushHash :: HashCompute -> Hash256 -> Maybe Hash256 -> Maybe Hash256 -> Int8 -> Int8 -> Bool -> IO (HashCompute)
+pushHash (hmp, res) nhash left right ht ind final =
     case node prev of
-        Just pv ->
+        Just pv -> do
+            print
+                (" prev: " ++
+                 (show $ txHashToHex $ TxHash pv) ++ " new-parent " ++ (show $ txHashToHex $ TxHash (hashPair pv nhash)))
             pushHash
-                ( (M.insert ind (MerkleNode Nothing left right) hashMap)
+                ( (M.insert ind (MerkleNode Nothing Nothing Nothing) hashMap)
                 , (insertSpecial
                        (Just pv)
                        (left)
                        (right)
                        (insertSpecial (Just nhash) (leftChild prev) (rightChild prev) res)))
                 (hashPair pv nhash)
-                (leftChild prev)
-                (rightChild prev)
                 (Just pv)
                 (Just nhash)
+                ht
                 (ind + 1)
                 final
         Nothing ->
-            if final
-                then pushHash
-                         ( (M.insert ind (MerkleNode (Just nhash) left right) hashMap)
-                         , (insertSpecial (Just $ hashPair nhash nhash) (Just nhash) (Just nhash) res))
-                         (hashPair nhash nhash)
-                         Nothing
-                         Nothing
-                         (Just nhash)
-                         (Just nhash)
-                         (ind + 1)
-                         final
-                else (M.insert ind (MerkleNode (Just nhash) Nothing Nothing) hashMap, res)
+            if ht == ind
+                then do
+                    print (" TOP: " ++ (show $ txHashToHex $ TxHash (nhash)))
+                    return $
+                        ( M.insert ind (MerkleNode (Just nhash) left right) hashMap
+                        , (insertSpecial (Just nhash) left right res))
+                else if final
+                         then do
+                             print
+                                 (" new-parent " ++
+                                  (show $ txHashToHex $ TxHash (hashPair nhash nhash)) ++
+                                  " prevleft==prevright " ++ (show $ txHashToHex $ TxHash (nhash)))
+                             pushHash
+                                 ( (M.insert ind (MerkleNode (Just nhash) left right) hashMap)
+                                 , (insertSpecial (Just $ hashPair nhash nhash) (Just nhash) (Just nhash) res))
+                                 (hashPair nhash nhash)
+                                 (Just nhash)
+                                 (Just nhash)
+                                 ht
+                                 (ind + 1)
+                                 final
+                         else do
+                             print (" else: " ++ (show $ txHashToHex $ TxHash (nhash)))
+                             return (M.insert ind (MerkleNode (Just nhash) left right) hashMap, res)
   where
     hashMap = hmp
-    insertSpecial sib lft rht mp =
-        (M.insert (100 + ind) Nothing (M.insert 0 (sib) (M.insert 1 (lft) (M.insert 2 (rht) mp))))
+    insertSpecial sib lft rht lst = L.insert (sib, lft, rht) lst
     prev =
         case M.lookupIndex (fromIntegral ind) hashMap of
             Just i -> snd $ M.elemAt i hashMap
             Nothing -> emptyMerkleNode
 
 updateMerkleSubTrees ::
-       HashCompute
-    -> Hash256
-    -> Maybe Hash256
-    -> Maybe Hash256
-    -> Maybe Hash256
-    -> Maybe Hash256
-    -> Int8
-    -> Bool
-    -> IO (HashCompute)
-updateMerkleSubTrees hashMap newhash leftPrev rightPrev left right ht final = do
-    let (state, res) = pushHash hashMap newhash leftPrev rightPrev left right ht final
-    if M.size res > 0
+       HashCompute -> Hash256 -> Maybe Hash256 -> Maybe Hash256 -> Int8 -> Int8 -> Bool -> IO (HashCompute)
+updateMerkleSubTrees hashMap newhash left right ht ind final = do
+    (state, res) <- pushHash hashMap newhash left right ht ind final
+    if L.length res > 0
         then do
             let ps =
                     map
-                        (\x -> do
-                             case snd x of
-                                 Just hs -> ((show $ fst x), (show $ txHashToHex $ TxHash hs))
-                                 Nothing -> ("@@Index:", (show $ 100 - fst x)))
-                        (M.toList res)
+                        (\x ->
+                             case x of
+                                 (Just sib, Just lft, Just rht) ->
+                                     " sib: " ++
+                                     (show $ txHashToHex $ TxHash sib) ++
+                                     " lft: " ++
+                                     (show $ txHashToHex $ TxHash lft) ++ " rht: " ++ (show $ txHashToHex $ TxHash rht)
+                                 otherwise -> "<??>")
+                        (res)
             print (ps)
-            return (state, M.empty)
+            return (state, [])
         else return (state, res)
 
 readNextMessage ::
@@ -240,7 +240,19 @@ readNextMessage net sock ingss = do
                 Right (tx, unused) -> do
                     case tx of
                         Just t -> do
-                            debug lg $ msg ("Conf.Tx: " ++ (show $ txHash t) ++ " unused: " ++ show (B.length unused))
+                            debug lg $
+                                msg ("Confirmed-Tx: " ++ (show $ txHash t) ++ " unused: " ++ show (B.length unused))
+                            nst <-
+                                liftIO $
+                                updateMerkleSubTrees
+                                    (merklePrevNodesMap iss)
+                                    (getTxHash $ txHash t)
+                                    Nothing
+                                    Nothing
+                                    (merkleTreeHeight iss)
+                                    (merkleTreeCurIndex iss)
+                                    ((binTxTotalCount blin) == (1 + binTxProcessed blin))
+                            debug lg $ msg (val "out... ")
                             let !bio =
                                     BlockIngestState
                                         { binUnspentBytes = unused
@@ -249,20 +261,9 @@ readNextMessage net sock ingss = do
                                         , binTxProcessed = 1 + binTxProcessed blin
                                         , binChecksum = binChecksum blin
                                         }
-                            nst <-
-                                liftIO $
-                                updateMerkleSubTrees
-                                    (merklePrevNodesMap iss)
-                                    (getTxHash $ txHash t)
-                                    Nothing
-                                    Nothing
-                                    Nothing
-                                    Nothing
-                                    (merkleTreeHeight iss)
-                                    ((binTxTotalCount bio) == (binTxProcessed bio))
                             return
                                 ( Just $ MTx t
-                                , Just $ IngressStreamState bio (issBlockInfo iss) (merkleTreeHeight iss) nst)
+                                , Just $ IngressStreamState bio (issBlockInfo iss) (merkleTreeHeight iss) 0 nst)
                         Nothing -> do
                             debug lg $ msg (txbyt)
                             throw ConfirmedTxParseException
@@ -300,7 +301,8 @@ readNextMessage net sock ingss = do
                                                       bi
                                                       Nothing
                                                       (computeTreeHeight $ binTxTotalCount bi)
-                                                      (M.empty, M.empty))
+                                                      0
+                                                      (M.empty, []))
                                         Nothing -> throw DeflatedBlockParseException
                         else do
                             byts <-
@@ -439,7 +441,14 @@ readNextMessage' peer = do
                                     case (M.lookup hh mp) of
                                         Just (_, h) -> h
                                         Nothing -> throw InvalidBlockSyncStatusMapException
-                                !iz = Just (IngressStreamState ingst (Just $ BlockInfo hh ht) 0 (M.empty, M.empty))
+                                !iz =
+                                    Just
+                                        (IngressStreamState
+                                             ingst
+                                             (Just $ BlockInfo hh ht)
+                                             (computeTreeHeight $ binTxTotalCount ingst)
+                                             0
+                                             (M.empty, []))
                             liftIO $ atomically $ writeTVar (bpIngressState peer) $ iz
                         Just (MTx ctx) -> do
                             if binTxTotalCount ingst == binTxProcessed ingst
@@ -473,9 +482,7 @@ handleIncomingMessages pr = do
     bp2pEnv <- getBitcoinP2P
     lg <- getLogger
     debug lg $ msg $ (val "reading from: ") +++ show (bpAddress pr)
-    res <-
-        LE.try $
-        runStream $ asyncly $ S.repeatM (readNextMessage' pr) & S.mapM (messageHandler pr) & S.mapM (logMessage)
+    res <- LE.try $ runStream $ S.repeatM (readNextMessage' pr) & S.mapM (messageHandler pr) & S.mapM (logMessage)
     case res of
         Right () -> return ()
         Left (e :: SomeException) -> do
