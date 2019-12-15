@@ -20,7 +20,6 @@ import Control.Concurrent.MVar
 import Control.Concurrent.STM.TVar
 import Control.Exception
 import qualified Control.Exception.Lifted as LE (try)
-import Control.Monad
 import Control.Monad.Logger
 import Control.Monad.Reader
 import Control.Monad.STM
@@ -40,9 +39,7 @@ import qualified Data.Map.Strict as M
 import Data.Maybe
 import Data.Serialize
 import Data.String.Conversions
-import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Time.Clock
 import Data.Time.Clock.POSIX
 import Data.Word
 import qualified Database.CQL.IO as Q
@@ -55,7 +52,6 @@ import Network.Xoken.Constants
 import Network.Xoken.Crypto.Hash
 import Network.Xoken.Network.Common
 import Network.Xoken.Network.Message
-import Network.Xoken.Node.Env
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.GraphDB
 import Network.Xoken.Node.P2P.BlockSync
@@ -181,7 +177,7 @@ pushHash (hmp, res) nhash left right ht ind final =
                              return (M.insert ind (MerkleNode (Just nhash) left right) hashMap, res)
   where
     hashMap = hmp
-    insertSpecial sib lft rht lst = L.insert (sib, lft, rht) lst
+    insertSpecial sib lft rht lst = L.insert (MerkleNode sib lft rht) lst
     prev =
         case M.lookupIndex (fromIntegral ind) hashMap of
             Just i -> snd $ M.elemAt i hashMap
@@ -197,12 +193,16 @@ updateMerkleSubTrees hashMap newhash left right ht ind final = do
                     map
                         (\x ->
                              case x of
-                                 (Just sib, Just lft, Just rht) ->
-                                     " sib: " ++
-                                     (show $ txHashToHex $ TxHash sib) ++
-                                     " lft: " ++
-                                     (show $ txHashToHex $ TxHash lft) ++ " rht: " ++ (show $ txHashToHex $ TxHash rht)
-                                 otherwise -> "<??>")
+                                 (MerkleNode sib lft rht) ->
+                                     if isJust sib && isJust lft && isJust rht
+                                         then " sib: " ++
+                                              (show $ txHashToHex $ TxHash $ fromJust sib) ++
+                                              " lft: " ++
+                                              (show $ txHashToHex $ TxHash $ fromJust lft) ++
+                                              " rht: " ++ (show $ txHashToHex $ TxHash $ fromJust rht)
+                                         else if isJust sib
+                                                  then "<leaf-node> " ++ (show $ txHashToHex $ TxHash $ fromJust sib)
+                                                  else "??")
                         (res)
             print (ps)
             return (state, [])
@@ -224,7 +224,7 @@ readNextMessage net sock ingss = do
             let blin = issBlockIngest iss
                 maxChunk = (1024 * 100) - (B.length $ binUnspentBytes blin)
                 len =
-                    if binTxPayloadLeft blin < maxChunk
+                    if (binTxPayloadLeft blin - (B.length $ binUnspentBytes blin)) < maxChunk
                         then (binTxPayloadLeft blin) - (B.length $ binUnspentBytes blin)
                         else maxChunk
             debug lg $ msg (" | Tx payload left " ++ show (binTxPayloadLeft blin))
@@ -252,7 +252,6 @@ readNextMessage net sock ingss = do
                                     (merkleTreeHeight iss)
                                     (merkleTreeCurIndex iss)
                                     ((binTxTotalCount blin) == (1 + binTxProcessed blin))
-                            debug lg $ msg (val "out... ")
                             let !bio =
                                     BlockIngestState
                                         { binUnspentBytes = unused

@@ -89,9 +89,9 @@ data MerkleNode =
         , leftChild :: Maybe Hash256
         , rightChild :: Maybe Hash256
         }
-    deriving (Show)
+    deriving (Show, Eq, Ord)
 
-type HashCompute = (M.Map Int8 (MerkleNode), [(Maybe Hash256, Maybe Hash256, Maybe Hash256)])
+type HashCompute = (M.Map Int8 (MerkleNode), [MerkleNode])
 
 emptyMerkleNode :: MerkleNode
 emptyMerkleNode = MerkleNode {node = Nothing, leftChild = Nothing, rightChild = Nothing}
