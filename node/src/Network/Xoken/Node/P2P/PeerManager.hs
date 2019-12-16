@@ -42,6 +42,10 @@ import Data.String.Conversions
 import qualified Data.Text as T
 import Data.Time.Clock.POSIX
 import Data.Word
+import qualified Database.Bolt as BT
+
+import Data.Default
+import Data.Pool
 import qualified Database.CQL.IO as Q
 import Network.Socket
 import qualified Network.Socket.ByteString as SB (recv)
@@ -130,13 +134,14 @@ recvAll sock len = do
 hashPair :: Hash256 -> Hash256 -> Hash256
 hashPair a b = doubleSHA256 $ encode a `B.append` encode b
 
-pushHash :: HashCompute -> Hash256 -> Maybe Hash256 -> Maybe Hash256 -> Int8 -> Int8 -> Bool -> IO (HashCompute)
+pushHash :: HashCompute -> Hash256 -> Maybe Hash256 -> Maybe Hash256 -> Int8 -> Int8 -> Bool -> (HashCompute)
 pushHash (hmp, res) nhash left right ht ind final =
     case node prev of
-        Just pv -> do
-            print
-                (" prev: " ++
-                 (show $ txHashToHex $ TxHash pv) ++ " new-parent " ++ (show $ txHashToHex $ TxHash (hashPair pv nhash)))
+        Just pv
+            -- print
+            --     (" prev: " ++
+            --      (show $ txHashToHex $ TxHash pv) ++ " new-parent " ++ (show $ txHashToHex $ TxHash (hashPair pv nhash)))
+         ->
             pushHash
                 ( (M.insert ind (MerkleNode Nothing Nothing Nothing) hashMap)
                 , (insertSpecial
@@ -152,29 +157,24 @@ pushHash (hmp, res) nhash left right ht ind final =
                 final
         Nothing ->
             if ht == ind
-                then do
-                    print (" TOP: " ++ (show $ txHashToHex $ TxHash (nhash)))
-                    return $
-                        ( M.insert ind (MerkleNode (Just nhash) left right) hashMap
-                        , (insertSpecial (Just nhash) left right res))
+                    -- print (" TOP: " ++ (show $ txHashToHex $ TxHash (nhash)))
+                then ( M.insert ind (MerkleNode (Just nhash) left right) hashMap
+                     , (insertSpecial (Just nhash) left right res))
                 else if final
-                         then do
-                             print
-                                 (" new-parent " ++
-                                  (show $ txHashToHex $ TxHash (hashPair nhash nhash)) ++
-                                  " prevleft==prevright " ++ (show $ txHashToHex $ TxHash (nhash)))
-                             pushHash
-                                 ( (M.insert ind (MerkleNode (Just nhash) left right) hashMap)
-                                 , (insertSpecial (Just $ hashPair nhash nhash) (Just nhash) (Just nhash) res))
-                                 (hashPair nhash nhash)
-                                 (Just nhash)
-                                 (Just nhash)
-                                 ht
-                                 (ind + 1)
-                                 final
-                         else do
-                             print (" else: " ++ (show $ txHashToHex $ TxHash (nhash)))
-                             return (M.insert ind (MerkleNode (Just nhash) left right) hashMap, res)
+                             -- print
+                             --     (" new-parent " ++
+                             --      (show $ txHashToHex $ TxHash (hashPair nhash nhash)) ++
+                             --      " prevleft==prevright " ++ (show $ txHashToHex $ TxHash (nhash)))
+                         then pushHash
+                                  ( (M.insert ind (MerkleNode (Just nhash) left right) hashMap)
+                                  , (insertSpecial (Just $ hashPair nhash nhash) (Just nhash) (Just nhash) res))
+                                  (hashPair nhash nhash)
+                                  (Just nhash)
+                                  (Just nhash)
+                                  ht
+                                  (ind + 1)
+                                  final
+                         else (M.insert ind (MerkleNode (Just nhash) left right) hashMap, res)
   where
     hashMap = hmp
     insertSpecial sib lft rht lst = L.insert (MerkleNode sib lft rht) lst
@@ -184,32 +184,48 @@ pushHash (hmp, res) nhash left right ht ind final =
             Nothing -> emptyMerkleNode
 
 updateMerkleSubTrees ::
-       HashCompute -> Hash256 -> Maybe Hash256 -> Maybe Hash256 -> Int8 -> Int8 -> Bool -> IO (HashCompute)
+       (HasDatabaseHandles m, MonadIO m)
+    => HashCompute
+    -> Hash256
+    -> Maybe Hash256
+    -> Maybe Hash256
+    -> Int8
+    -> Int8
+    -> Bool
+    -> m (HashCompute)
 updateMerkleSubTrees hashMap newhash left right ht ind final = do
-    (state, res) <- pushHash hashMap newhash left right ht ind final
+    dbe <- getDB
+    let (state, res) = pushHash hashMap newhash left right ht ind final
     if L.length res > 0
         then do
-            let ps =
-                    map
+            let (create, match) =
+                    L.partition
                         (\x ->
                              case x of
                                  (MerkleNode sib lft rht) ->
                                      if isJust sib && isJust lft && isJust rht
-                                         then " sib: " ++
-                                              (show $ txHashToHex $ TxHash $ fromJust sib) ++
-                                              " lft: " ++
-                                              (show $ txHashToHex $ TxHash $ fromJust lft) ++
-                                              " rht: " ++ (show $ txHashToHex $ TxHash $ fromJust rht)
+                                         then False
                                          else if isJust sib
-                                                  then "<leaf-node> " ++ (show $ txHashToHex $ TxHash $ fromJust sib)
-                                                  else "??")
+                                                  then True --"<leaf-node> " ++ (show $ txHashToHex $ TxHash $ fromJust sib)
+                                                  else throw MerkleTreeComputeException)
                         (res)
-            print (ps)
+            liftIO $ print ("Create: " ++ show create)
+            let finMatch =
+                    L.sortBy
+                        (\x y ->
+                             if (leftChild x == node y) || (rightChild x == node y)
+                                 then GT
+                                 else LT)
+                        match
+            liftIO $ print ("Match: " ++ show finMatch)
+            -- let gdbConfig = def {BT.user = "neo4j", BT.password = "admin123"}
+            -- gdbState <- constructState gdbConfig
+            a <- liftIO $ withResource (pool $ graphDB dbe) (`BT.run` insertMerkleSubTree create finMatch)
             return (state, [])
         else return (state, res)
 
 readNextMessage ::
-       (HasBitcoinP2P m, HasLogger m, MonadIO m)
+       (HasBitcoinP2P m, HasLogger m, HasDatabaseHandles m, MonadIO m)
     => Network
     -> Socket
     -> Maybe IngressStreamState
@@ -243,7 +259,6 @@ readNextMessage net sock ingss = do
                             debug lg $
                                 msg ("Confirmed-Tx: " ++ (show $ txHash t) ++ " unused: " ++ show (B.length unused))
                             nst <-
-                                liftIO $
                                 updateMerkleSubTrees
                                     (merklePrevNodesMap iss)
                                     (getTxHash $ txHash t)
@@ -315,7 +330,8 @@ readNextMessage net sock ingss = do
                                 Right msg -> do
                                     return (Just msg, Nothing)
 
-doVersionHandshake :: (HasBitcoinP2P m, HasLogger m, MonadIO m) => Network -> Socket -> SockAddr -> m (Bool)
+doVersionHandshake ::
+       (HasBitcoinP2P m, HasLogger m, HasDatabaseHandles m, MonadIO m) => Network -> Socket -> SockAddr -> m (Bool)
 doVersionHandshake net sock sa = do
     p2pEnv <- getBitcoinP2P
     lg <- getLogger

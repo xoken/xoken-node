@@ -13,6 +13,7 @@ import Arivi.P2P.P2PEnv as PE hiding (option)
 import Codec.Serialise
 import Control.Concurrent.MVar
 import Control.Concurrent.STM.TVar
+import Control.Exception
 import Control.Monad.Reader
 import Control.Monad.Trans (liftIO)
 import Control.Monad.Trans.Reader (ReaderT(..))
@@ -24,15 +25,17 @@ import Data.Map.Strict as M
 import Data.Maybe (fromJust)
 import Data.Monoid ((<>))
 import Data.Pool (Pool, createPool)
-import Data.Text (Text)
+import Data.Text (Text, concat, intercalate, pack, replace, unpack)
 import Data.Time.Clock
 import Data.Word
 import Database.Bolt as BT
-import Database.Bolt (Node(..), Record, RecordValue(..), Value(..), at)
+
+-- import Database.Bolt (Node(..), Record, RecordValue(..), Value(..), at)
 import qualified Database.CQL.IO as Q
 import GHC.Generics
 import Network.Socket hiding (send)
 import Network.Xoken.Crypto.Hash
+import Network.Xoken.Node.P2P.Common
 import Network.Xoken.Node.P2P.Types
 import Network.Xoken.Transaction
 import System.Random
@@ -134,13 +137,6 @@ toNodes r = do
     return (MNode title "movie", (`MNode` "actor") <$> casts)
 
 --
--- import Type
--- |A pool of connections to Neo4j server
-data ServerState =
-    ServerState
-        { pool :: Pool Pipe
-        }
-
 -- |Create pool of connections (4 stripes, 500 ms timeout, 1 resource per stripe)
 constructState :: BoltCfg -> IO ServerState
 constructState bcfg = do
@@ -177,33 +173,46 @@ queryMovie title = do
         "LIMIT 1"
     params = fromList [("title", T title)]
 
--- |Returns movies with all it's actors
-queryGraph :: Int -> BoltActionT IO Int
-queryGraph limit = do
+-- |Returns Neo4j DB version
+queryGraphDBVersion :: BoltActionT IO [Text]
+queryGraphDBVersion = do
     records <- queryP cypher params
-    nodeTuples <- traverse toNodes records
-    let movies = fst <$> nodeTuples
-    let actors = nub $ concatMap snd nodeTuples
-    let actorIdx = fromJust . (`Prelude.lookup` zip actors [0 ..])
-    let modifyTpl (m, as) = (m, actorIdx <$> as)
-    let indexMap = fromList $ modifyTpl <$> nodeTuples
-    let mkTuples (m, t) = (`MRel` t) <$> indexMap ! m
-    let relations = concatMap mkTuples $ zip movies [length actors ..]
-    return 12 -- $ MGraph (actors <> movies) relations
+    x <- traverse (`at` "version") records
+    return $ x >>= exact
   where
     cypher =
-        "MATCH (m:Movie)<-[:ACTED_IN]-(a:Person) " <> "RETURN m.title as movie, collect(a.name) as cast " <>
-        "LIMIT {limit}"
-    params = fromList [("limit", I limit)]
+        "call dbms.components() yield name, versions, edition unwind versions as version return name, version, edition"
+    params = fromList []
 
-insertMerkleSubTree :: Bool -> [Hash256] -> BoltActionT IO ()
-insertMerkleSubTree match hashes = do
-    records <- queryP cypher params
-    return ()
+insertMerkleSubTree :: [MerkleNode] -> [MerkleNode] -> BoltActionT IO ()
+insertMerkleSubTree create match = do
+    if length create == 2
+        then do
+            records <- queryP cypher params
+            return ()
+        else do
+            throw InvalidCreateListException
+    -- inputsC = zip create $ Prelude.map (\x -> [chr x]) [1 .. (length create)]
+    -- inputsM = zip match $ Prelude.map (\x -> [chr x]) [1 .. (length match)]
   where
-    ind = Prelude.map (\x -> chr x) [1 .. (length hashes)]
-    inputs = zip hashes ind
-    cypher =
-        "MATCH (m:Movie)<-[:ACTED_IN]-(a:Person) " <> "RETURN m.title as movie, collect(a.name) as cast " <>
-        "LIMIT {limit}"
-    params = fromList [("limit", I 100)]
+    cyCreate = "CREATE (aa:mnode { v: {node_aa}}), (bb:mnode { v: {node_bb}}) "
+    parCreate =
+        [ (pack $ "node_aa", T $ txHashToHex $ TxHash $ fromJust $ node $ create !! 0)
+        , (pack $ "node_bb", T $ txHashToHex $ TxHash $ fromJust $ node $ create !! 1)
+        ]
+    matchTemplate =
+        " MATCH (<i>x:mnode), (<i>y:mnode) WHERE <i>x.v = {leftChild} AND <i>y.v = {rightChild} " <>
+        " CREATE (<i>z:mnode { v: {node}}) , (<i>x)-[:PARENT]->(<i>z), (<i>y)-[:PARENT]->(<i>z) "
+    cyMatch = Data.Text.concat $ Prelude.map (\repl -> replace (pack "<i>") (pack repl) (pack matchTemplate)) chars
+    cypher = pack cyCreate <> cyMatch
+    parMatchArr =
+        Prelude.map
+            (\(i, x) ->
+                 [ (pack $ i ++ "x", T $ txHashToHex $ TxHash $ fromJust $ leftChild $ x)
+                 , (pack $ i ++ "y", T $ txHashToHex $ TxHash $ fromJust $ rightChild $ x)
+                 , (pack $ i ++ "z", T $ txHashToHex $ TxHash $ fromJust $ node $ x)
+                 ])
+            (zip chars match)
+    parMatch = Prelude.concat parMatchArr
+    params = fromList $ parCreate <> parMatch
+    chars = Prelude.map (\x -> [chr x]) [1 .. (length match)]

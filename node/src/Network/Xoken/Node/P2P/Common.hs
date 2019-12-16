@@ -50,7 +50,8 @@ import Network.Xoken.Crypto.Hash
 import Network.Xoken.Network.Common -- (GetData(..), MessageCommand(..), NetworkAddress(..))
 import Network.Xoken.Network.Message
 import Network.Xoken.Node.Env
-import Network.Xoken.Node.GraphDB
+
+-- import Network.Xoken.Node.GraphDB
 import Network.Xoken.Node.P2P.Types
 import Streamly
 import Streamly.Prelude ((|:), nil)
@@ -83,6 +84,8 @@ data BlockSyncException
     | TxIDNotFoundRetryException
     | InvalidOutpointException
     | DBTxParseException
+    | MerkleTreeComputeException
+    | InvalidCreateListException
     deriving (Show)
 
 instance Exception BlockSyncException

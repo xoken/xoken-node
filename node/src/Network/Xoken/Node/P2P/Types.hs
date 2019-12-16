@@ -10,8 +10,10 @@ import qualified Data.ByteString as B
 import Data.Functor.Identity
 import Data.Int
 import qualified Data.Map.Strict as M
+import Data.Pool
 import Data.Time.Clock
 import Data.Word
+import Database.Bolt as BT
 import qualified Database.CQL.IO as Q
 import Network.Socket hiding (send)
 import Network.Xoken.Block
@@ -34,6 +36,7 @@ type Port = Int
 data DatabaseHandles =
     DatabaseHandles
         { keyValDB :: !Q.ClientState
+        , graphDB :: !ServerState
         }
 
 -- | Data structure representing an bitcoin peer.
@@ -121,3 +124,10 @@ data BlockSyncStatus
     | RequestQueued
     | BlockReceived
     deriving (Eq, Ord, Show)
+
+-- import Type
+-- |A pool of connections to Neo4j server
+data ServerState =
+    ServerState
+        { pool :: Pool Pipe
+        }
