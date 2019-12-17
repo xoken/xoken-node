@@ -134,14 +134,13 @@ recvAll sock len = do
 hashPair :: Hash256 -> Hash256 -> Hash256
 hashPair a b = doubleSHA256 $ encode a `B.append` encode b
 
-pushHash :: HashCompute -> Hash256 -> Maybe Hash256 -> Maybe Hash256 -> Int8 -> Int8 -> Bool -> (HashCompute)
+pushHash :: HashCompute -> Hash256 -> Maybe Hash256 -> Maybe Hash256 -> Int8 -> Int8 -> Bool -> IO (HashCompute)
 pushHash (hmp, res) nhash left right ht ind final =
     case node prev of
-        Just pv
-            -- print
-            --     (" prev: " ++
-            --      (show $ txHashToHex $ TxHash pv) ++ " new-parent " ++ (show $ txHashToHex $ TxHash (hashPair pv nhash)))
-         ->
+        Just pv -> do
+            print
+                (" prev: " ++
+                 (show $ txHashToHex $ TxHash pv) ++ " new-parent " ++ (show $ txHashToHex $ TxHash (hashPair pv nhash)))
             pushHash
                 ( (M.insert ind (MerkleNode Nothing Nothing Nothing) hashMap)
                 , (insertSpecial
@@ -157,24 +156,27 @@ pushHash (hmp, res) nhash left right ht ind final =
                 final
         Nothing ->
             if ht == ind
-                    -- print (" TOP: " ++ (show $ txHashToHex $ TxHash (nhash)))
-                then ( M.insert ind (MerkleNode (Just nhash) left right) hashMap
-                     , (insertSpecial (Just nhash) left right res))
+                then do
+                    print (" TOP: " ++ (show $ txHashToHex $ TxHash (nhash)))
+                    return $
+                        ( M.insert ind (MerkleNode (Just nhash) left right) hashMap
+                        , (insertSpecial (Just nhash) left right res))
                 else if final
-                             -- print
-                             --     (" new-parent " ++
-                             --      (show $ txHashToHex $ TxHash (hashPair nhash nhash)) ++
-                             --      " prevleft==prevright " ++ (show $ txHashToHex $ TxHash (nhash)))
-                         then pushHash
-                                  ( (M.insert ind (MerkleNode (Just nhash) left right) hashMap)
-                                  , (insertSpecial (Just $ hashPair nhash nhash) (Just nhash) (Just nhash) res))
-                                  (hashPair nhash nhash)
-                                  (Just nhash)
-                                  (Just nhash)
-                                  ht
-                                  (ind + 1)
-                                  final
-                         else (M.insert ind (MerkleNode (Just nhash) left right) hashMap, res)
+                         then do
+                             print
+                                 (" new-parent " ++
+                                  (show $ txHashToHex $ TxHash (hashPair nhash nhash)) ++
+                                  " prevleft==prevright " ++ (show $ txHashToHex $ TxHash (nhash)))
+                             pushHash
+                                 ( (M.insert ind (MerkleNode (Just nhash) left right) hashMap)
+                                 , (insertSpecial (Just nhash) left right res))
+                                 (hashPair nhash nhash)
+                                 (Just nhash)
+                                 (Just nhash)
+                                 ht
+                                 (ind + 1)
+                                 final
+                         else return (M.insert ind (MerkleNode (Just nhash) left right) hashMap, res)
   where
     hashMap = hmp
     insertSpecial sib lft rht lst = L.insert (MerkleNode sib lft rht) lst
@@ -195,7 +197,7 @@ updateMerkleSubTrees ::
     -> m (HashCompute)
 updateMerkleSubTrees hashMap newhash left right ht ind final = do
     dbe <- getDB
-    let (state, res) = pushHash hashMap newhash left right ht ind final
+    (state, res) <- liftIO $ pushHash hashMap newhash left right ht ind final
     if L.length res > 0
         then do
             let (create, match) =
@@ -209,7 +211,19 @@ updateMerkleSubTrees hashMap newhash left right ht ind final = do
                                                   then True --"<leaf-node> " ++ (show $ txHashToHex $ TxHash $ fromJust sib)
                                                   else throw MerkleTreeComputeException)
                         (res)
-            liftIO $ print ("Create: " ++ show create)
+            let createFF =
+                    map
+                        (\x ->
+                             ( T.filter (isAlpha) $ T.take 20 $ txHashToHex $ TxHash $ fromJust $ node $ x
+                             , if (leftChild x) /= Nothing
+                                   then T.filter (isAlpha) $ T.take 20 $ txHashToHex $ TxHash $ fromJust $ leftChild $ x
+                                   else " n/a "
+                             , if (rightChild x) /= Nothing
+                                   then T.filter (isAlpha) $
+                                        T.take 20 $ txHashToHex $ TxHash $ fromJust $ rightChild $ x
+                                   else " n/a "))
+                        create
+            liftIO $ print ("Create: " ++ show createFF)
             let finMatch =
                     L.sortBy
                         (\x y ->
@@ -217,9 +231,14 @@ updateMerkleSubTrees hashMap newhash left right ht ind final = do
                                  then GT
                                  else LT)
                         match
-            liftIO $ print ("Match: " ++ show finMatch)
-            -- let gdbConfig = def {BT.user = "neo4j", BT.password = "admin123"}
-            -- gdbState <- constructState gdbConfig
+            let matchFF =
+                    map
+                        (\x ->
+                             ( T.filter (isAlpha) $ T.take 20 $ txHashToHex $ TxHash $ fromJust $ node $ x
+                             , T.filter (isAlpha) $ T.take 20 $ txHashToHex $ TxHash $ fromJust $ leftChild $ x
+                             , T.filter (isAlpha) $ T.take 20 $ txHashToHex $ TxHash $ fromJust $ rightChild $ x))
+                        finMatch
+            liftIO $ print ("Match: " ++ show matchFF)
             a <- liftIO $ withResource (pool $ graphDB dbe) (`BT.run` insertMerkleSubTree create finMatch)
             return (state, [])
         else return (state, res)
@@ -239,8 +258,9 @@ readNextMessage net sock ingss = do
          -> do
             let blin = issBlockIngest iss
                 maxChunk = (1024 * 100) - (B.length $ binUnspentBytes blin)
+                -- if (binTxPayloadLeft blin - (B.length $ binUnspentBytes blin)) < maxChunk
                 len =
-                    if (binTxPayloadLeft blin - (B.length $ binUnspentBytes blin)) < maxChunk
+                    if (binTxPayloadLeft blin) < maxChunk
                         then (binTxPayloadLeft blin) - (B.length $ binUnspentBytes blin)
                         else maxChunk
             debug lg $ msg (" | Tx payload left " ++ show (binTxPayloadLeft blin))

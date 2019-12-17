@@ -259,7 +259,7 @@ main = do
     --
     let gdbConfig = def {BT.user = "neo4j", BT.password = "admin123"}
     gdbState <- constructState gdbConfig
-    a <- withResource (pool gdbState) (`BT.run` queryGraph 12)
+    a <- withResource (pool gdbState) (`BT.run` queryGraphDBVersion)
     print ("result: " ++ show a)
     --
     --
@@ -278,9 +278,9 @@ main = do
     g <- newTVarIO M.empty
     mv <- newMVar True
     hl <- newMVar True
-    bl <- newQSem 12 -- allows 12 outstanding blocks
+    bl <- newQSem 5 -- allows 12 outstanding blocks
     st <- newTVarIO M.empty
-    runNode cnf (DatabaseHandles conn) (BitcoinP2P nodeConfig g mv hl bl st)
+    runNode cnf (DatabaseHandles conn gdbState) (BitcoinP2P nodeConfig g mv hl bl st)
   where
     opts =
         info (helper <*> config) $

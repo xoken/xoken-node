@@ -186,32 +186,27 @@ queryGraphDBVersion = do
         "call dbms.components() yield name, versions, edition unwind versions as version return name, version, edition"
     params = fromList []
 
--- MATCH  (Ax:mnode), (Ay:mnode)  ,  (Bx:mnode), (By:mnode)  WHERE  Ax.v = {leftChildA} AND Ay.v = {rightChildA}  AND  Bx.v = {leftChildB} AND By.v = {rightChildB}  MERGE  (aa:mnode { v: {node_aa}}), (bb:mnode { v: {node_bb}})  ,  (Az:mnode { v: {nodeA}}) , (Ax)-[:PARENT]->(Az), (Ay)-[:PARENT]->(Az)  ,  (Bz:mnode { v: {nodeB}}) , (Bx)-[:PARENT]->(Bz), (By)-[:PARENT]->(Bz)
 insertMerkleSubTree :: [MerkleNode] -> [MerkleNode] -> BoltActionT IO ()
-insertMerkleSubTree create match = do
+insertMerkleSubTree leaves inodes = do
     liftIO $ print (cypher)
     records <- queryP cypher params
     return ()
   where
-    lefts = Prelude.map (leftChild) match
-    rights = Prelude.map (rightChild) match
-    nodes = Prelude.map (node) match
-    matchReq = (lefts `union` rights) \\ ((lefts `intersect` nodes) `union` (rights `intersect` nodes))
-    cyCreateLeaves = " (aa:mnode { v: {node_aa}}), (bb:mnode { v: {node_bb}}) "
-    parCreateLeaves =
-        [ (pack $ "node_aa", T $ txHashToHex $ TxHash $ fromJust $ node $ create !! 0)
-        , (pack $ "node_bb", T $ txHashToHex $ TxHash $ fromJust $ node $ create !! 1)
-        ]
-    matchTemplate = "  (<i>:mnode) "
-    whereTemplate = " <i>.v = {<i>} "
+    lefts = Prelude.map (leftChild) inodes
+    rights = Prelude.map (rightChild) inodes
+    nodes = Prelude.map (node) inodes
+    matchReq =
+        ((lefts `union` rights) \\ ((lefts `intersect` nodes) `union` (rights `intersect` nodes))) \\
+        (Prelude.map (node) leaves)
+    matchTemplate = "  (<i>:mnode { v: {<i>}}) "
     createTemplate = " (<i>:mnode { v: {<i>}}) "
     relationTemplate = " (<c>)-[:PARENT]->(<p>) "
+    cyCreateLeaves =
+        Data.Text.intercalate (" , ") $
+        Prelude.map (\repl -> replace ("<i>") (repl) (pack createTemplate)) (vars $ Prelude.map (node) leaves)
     cyMatch =
         Data.Text.intercalate (" , ") $
         Prelude.map (\repl -> replace ("<i>") (repl) (pack matchTemplate)) (vars matchReq)
-    cyWhere =
-        Data.Text.intercalate (" AND ") $
-        Prelude.map (\repl -> replace ("<i>") (repl) (pack whereTemplate)) (vars matchReq)
     cyCreateT =
         Data.Text.intercalate (" , ") $ Prelude.map (\repl -> replace ("<i>") (repl) (pack createTemplate)) (vars nodes)
     cyRelationLeft =
@@ -225,32 +220,29 @@ insertMerkleSubTree create match = do
             (\(rc, rp) -> replace ("<p>") (rp) (replace ("<c>") (rc) (pack relationTemplate)))
             (zip (vars rights) (vars nodes))
     cyCreate =
-        if length create == 2
-            then if length match > 0
+        if length leaves == 2
+            then if length inodes > 0
                      then Data.Text.intercalate (" , ") $
                           Data.List.filter
                               (not . Data.Text.null)
                               [cyCreateLeaves, cyCreateT, cyRelationLeft, cyRelationRight]
                      else cyCreateLeaves
             else cyCreateT
+    parCreateLeaves = Prelude.map (\(i, x) -> (i, T $ txtTx $ node x)) (zip (vars $ Prelude.map (node) leaves) leaves)
     parCreateArr =
         Prelude.map
-            (\(i, j, k, x) ->
-                 [ (i, T $ txHashToHex $ TxHash $ fromJust $ node $ x)
-                 , (j, T $ txHashToHex $ TxHash $ fromJust $ leftChild $ x)
-                 , (k, T $ txHashToHex $ TxHash $ fromJust $ rightChild $ x)
-                 ])
-            (zip4 (vars nodes) (vars lefts) (vars rights) match)
+            (\(i, j, k, x) -> [(i, T $ txtTx $ node x), (j, T $ txtTx $ leftChild x), (k, T $ txtTx $ rightChild x)])
+            (zip4 (vars nodes) (vars lefts) (vars rights) inodes)
     parCreate = Prelude.concat parCreateArr
     params =
         fromList $
-        if length create == 2
+        if length leaves == 2
             then parCreateLeaves <> parCreate
             else parCreate
     cypher =
-        if length match == 0
+        if length inodes == 0
             then " CREATE " <> cyCreate
-            else " MATCH " <> cyMatch <> " WHERE " <> cyWhere <> " CREATE " <> cyCreate
+            else " MATCH " <> cyMatch <> " CREATE " <> cyCreate
     txtTx i = txHashToHex $ TxHash $ fromJust i
-    vars m = Prelude.map (\x -> Data.Text.filter (isAlpha) $ Data.Text.take 20 $ txtTx x) (m)
+    vars m = Prelude.map (\x -> Data.Text.filter (isAlpha) $ Data.Text.take 24 $ txtTx x) (m)
 --
