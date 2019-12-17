@@ -11,6 +11,7 @@ module Network.Xoken.Node.GraphDB where
 
 import Arivi.P2P.P2PEnv as PE hiding (option)
 import Codec.Serialise
+import Control.Concurrent (threadDelay)
 import Control.Concurrent.MVar
 import Control.Concurrent.STM.TVar
 import Control.Exception
@@ -20,12 +21,13 @@ import Control.Monad.Trans.Reader (ReaderT(..))
 import Data.Aeson (ToJSON(..), (.=), object)
 import Data.Char
 import Data.Hashable
-import Data.List (nub)
-import Data.Map.Strict as M
+import Data.List ((\\), filter, intersect, nub, nubBy, union, zip4)
+import Data.Map.Strict as M (fromList)
 import Data.Maybe (fromJust)
 import Data.Monoid ((<>))
 import Data.Pool (Pool, createPool)
-import Data.Text (Text, concat, intercalate, pack, replace, unpack)
+import qualified Data.Set as SE
+import Data.Text (Text, concat, filter, intercalate, null, pack, replace, take, takeWhileEnd, unpack)
 import Data.Time.Clock
 import Data.Word
 import Database.Bolt as BT
@@ -184,35 +186,71 @@ queryGraphDBVersion = do
         "call dbms.components() yield name, versions, edition unwind versions as version return name, version, edition"
     params = fromList []
 
+-- MATCH  (Ax:mnode), (Ay:mnode)  ,  (Bx:mnode), (By:mnode)  WHERE  Ax.v = {leftChildA} AND Ay.v = {rightChildA}  AND  Bx.v = {leftChildB} AND By.v = {rightChildB}  MERGE  (aa:mnode { v: {node_aa}}), (bb:mnode { v: {node_bb}})  ,  (Az:mnode { v: {nodeA}}) , (Ax)-[:PARENT]->(Az), (Ay)-[:PARENT]->(Az)  ,  (Bz:mnode { v: {nodeB}}) , (Bx)-[:PARENT]->(Bz), (By)-[:PARENT]->(Bz)
 insertMerkleSubTree :: [MerkleNode] -> [MerkleNode] -> BoltActionT IO ()
 insertMerkleSubTree create match = do
-    if length create == 2
-        then do
-            records <- queryP cypher params
-            return ()
-        else do
-            throw InvalidCreateListException
-    -- inputsC = zip create $ Prelude.map (\x -> [chr x]) [1 .. (length create)]
-    -- inputsM = zip match $ Prelude.map (\x -> [chr x]) [1 .. (length match)]
+    liftIO $ print (cypher)
+    records <- queryP cypher params
+    return ()
   where
-    cyCreate = "CREATE (aa:mnode { v: {node_aa}}), (bb:mnode { v: {node_bb}}) "
-    parCreate =
+    lefts = Prelude.map (leftChild) match
+    rights = Prelude.map (rightChild) match
+    nodes = Prelude.map (node) match
+    matchReq = (lefts `union` rights) \\ ((lefts `intersect` nodes) `union` (rights `intersect` nodes))
+    cyCreateLeaves = " (aa:mnode { v: {node_aa}}), (bb:mnode { v: {node_bb}}) "
+    parCreateLeaves =
         [ (pack $ "node_aa", T $ txHashToHex $ TxHash $ fromJust $ node $ create !! 0)
         , (pack $ "node_bb", T $ txHashToHex $ TxHash $ fromJust $ node $ create !! 1)
         ]
-    matchTemplate =
-        " MATCH (<i>x:mnode), (<i>y:mnode) WHERE <i>x.v = {leftChild} AND <i>y.v = {rightChild} " <>
-        " CREATE (<i>z:mnode { v: {node}}) , (<i>x)-[:PARENT]->(<i>z), (<i>y)-[:PARENT]->(<i>z) "
-    cyMatch = Data.Text.concat $ Prelude.map (\repl -> replace (pack "<i>") (pack repl) (pack matchTemplate)) chars
-    cypher = pack cyCreate <> cyMatch
-    parMatchArr =
+    matchTemplate = "  (<i>:mnode) "
+    whereTemplate = " <i>.v = {<i>} "
+    createTemplate = " (<i>:mnode { v: {<i>}}) "
+    relationTemplate = " (<c>)-[:PARENT]->(<p>) "
+    cyMatch =
+        Data.Text.intercalate (" , ") $
+        Prelude.map (\repl -> replace ("<i>") (repl) (pack matchTemplate)) (vars matchReq)
+    cyWhere =
+        Data.Text.intercalate (" AND ") $
+        Prelude.map (\repl -> replace ("<i>") (repl) (pack whereTemplate)) (vars matchReq)
+    cyCreateT =
+        Data.Text.intercalate (" , ") $ Prelude.map (\repl -> replace ("<i>") (repl) (pack createTemplate)) (vars nodes)
+    cyRelationLeft =
+        Data.Text.intercalate (" , ") $
         Prelude.map
-            (\(i, x) ->
-                 [ (pack $ i ++ "x", T $ txHashToHex $ TxHash $ fromJust $ leftChild $ x)
-                 , (pack $ i ++ "y", T $ txHashToHex $ TxHash $ fromJust $ rightChild $ x)
-                 , (pack $ i ++ "z", T $ txHashToHex $ TxHash $ fromJust $ node $ x)
+            (\(rc, rp) -> replace ("<p>") (rp) (replace ("<c>") (rc) (pack relationTemplate)))
+            (zip (vars lefts) (vars nodes))
+    cyRelationRight =
+        Data.Text.intercalate (" , ") $
+        Prelude.map
+            (\(rc, rp) -> replace ("<p>") (rp) (replace ("<c>") (rc) (pack relationTemplate)))
+            (zip (vars rights) (vars nodes))
+    cyCreate =
+        if length create == 2
+            then if length match > 0
+                     then Data.Text.intercalate (" , ") $
+                          Data.List.filter
+                              (not . Data.Text.null)
+                              [cyCreateLeaves, cyCreateT, cyRelationLeft, cyRelationRight]
+                     else cyCreateLeaves
+            else cyCreateT
+    parCreateArr =
+        Prelude.map
+            (\(i, j, k, x) ->
+                 [ (i, T $ txHashToHex $ TxHash $ fromJust $ node $ x)
+                 , (j, T $ txHashToHex $ TxHash $ fromJust $ leftChild $ x)
+                 , (k, T $ txHashToHex $ TxHash $ fromJust $ rightChild $ x)
                  ])
-            (zip chars match)
-    parMatch = Prelude.concat parMatchArr
-    params = fromList $ parCreate <> parMatch
-    chars = Prelude.map (\x -> [chr x]) [1 .. (length match)]
+            (zip4 (vars nodes) (vars lefts) (vars rights) match)
+    parCreate = Prelude.concat parCreateArr
+    params =
+        fromList $
+        if length create == 2
+            then parCreateLeaves <> parCreate
+            else parCreate
+    cypher =
+        if length match == 0
+            then " CREATE " <> cyCreate
+            else " MATCH " <> cyMatch <> " WHERE " <> cyWhere <> " CREATE " <> cyCreate
+    txtTx i = txHashToHex $ TxHash $ fromJust i
+    vars m = Prelude.map (\x -> Data.Text.filter (isAlpha) $ Data.Text.take 20 $ txtTx x) (m)
+--
