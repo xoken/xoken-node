@@ -1,15 +1,16 @@
 resolver: lts-14.7
 allow-newer: true
 packages:
-    - core
     - node
 
 
 extra-deps:
-    - ../arivi/p2p
-    - ../arivi/network
-    - ../arivi/utils
-    - ../arivi/crypto
+    
+    - ../arivi-core/utils
+    - ../arivi-core/crypto
+    - ../arivi-core/p2p
+    - ../arivi-core/network
+    - ../xoken-core/core
     - serialise-0.2.0.0
     - cborg-0.2.0.0
     - timers-updatable-0.2.0.2
@@ -20,7 +21,6 @@ extra-deps:
     - stm-containers-1.0.1
     - either-unwrap-1.1
     - raaz-0.2.1
-    - rocksdb-query-0.3.0
     - network-2.8.0.1
     - queue-0.1.2
     - stm-hamt-1.1.2

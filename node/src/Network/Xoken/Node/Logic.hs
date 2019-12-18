@@ -22,11 +22,8 @@ import Data.String
 import Data.String.Conversions (cs)
 import Data.Text (Text)
 import Data.Word
-
--- import Database.RocksDB
 import Network.Xoken.Block.Headers (computeSubsidy)
 import Network.Xoken.Node.Data
-
 import UnliftIO
 import Xoken
 
@@ -61,24 +58,6 @@ sortTxs txs = go $ zip [0 ..] txs
     go ts =
         let (is, ds) = partition (all ((`notElem` map (txHash . snd) ts) . outPointHash . prevOutput) . txIn . snd) ts
          in is <> go ds
-
-getTxOutput :: (MonadLogger m, MonadError ImportException m) => Word32 -> Transaction -> m StoreOutput
-getTxOutput i tx = do
-    unless (fromIntegral i < length (transactionOutputs tx)) $ do
-        $(logErrorS) "BlockLogic" $
-            "Output out of range " <> txHashToHex (txHash (transactionData tx)) <> " " <> fromString (show i)
-        throwError . OutputOutOfRange . cs $
-            show OutPoint {outPointHash = txHash (transactionData tx), outPointIndex = i}
-    return $ transactionOutputs tx !! fromIntegral i
-
-updateAddressCounts :: (Monad m, MonadError ImportException m) => Network -> [Address] -> (Word64 -> Word64) -> m ()
-updateAddressCounts net as f = undefined
-    -- forM_ as $ \a -> do
-    --     b <-
-    --         getBalance a >>= \case
-    --             Nothing -> throwError (BalanceNotFound (addrText net a))
-    --             Just b -> return b
-    --     setBalance b {balanceTxCount = f (balanceTxCount b)}
 
 txAddresses :: Transaction -> [Address]
 txAddresses t =

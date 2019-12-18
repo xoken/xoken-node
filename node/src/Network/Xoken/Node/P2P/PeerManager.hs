@@ -134,15 +134,12 @@ recvAll sock len = do
 hashPair :: Hash256 -> Hash256 -> Hash256
 hashPair a b = doubleSHA256 $ encode a `B.append` encode b
 
-pushHash :: HashCompute -> Hash256 -> Maybe Hash256 -> Maybe Hash256 -> Int8 -> Int8 -> Bool -> IO (HashCompute)
+pushHash :: HashCompute -> Hash256 -> Maybe Hash256 -> Maybe Hash256 -> Int8 -> Int8 -> Bool -> HashCompute
 pushHash (hmp, res) nhash left right ht ind final =
     case node prev of
-        Just pv -> do
-            print
-                (" prev: " ++
-                 (show $ txHashToHex $ TxHash pv) ++ " new-parent " ++ (show $ txHashToHex $ TxHash (hashPair pv nhash)))
+        Just pv ->
             pushHash
-                ( (M.insert ind (MerkleNode Nothing Nothing Nothing) hashMap)
+                ( (M.insert ind (emptyMerkleNode) hashMap)
                 , (insertSpecial
                        (Just pv)
                        (left)
@@ -156,27 +153,19 @@ pushHash (hmp, res) nhash left right ht ind final =
                 final
         Nothing ->
             if ht == ind
-                then do
-                    print (" TOP: " ++ (show $ txHashToHex $ TxHash (nhash)))
-                    return $
-                        ( M.insert ind (MerkleNode (Just nhash) left right) hashMap
-                        , (insertSpecial (Just nhash) left right res))
+                then ( M.insert ind (MerkleNode (Just nhash) left right) hashMap
+                     , (insertSpecial (Just nhash) left right res))
                 else if final
-                         then do
-                             print
-                                 (" new-parent " ++
-                                  (show $ txHashToHex $ TxHash (hashPair nhash nhash)) ++
-                                  " prevleft==prevright " ++ (show $ txHashToHex $ TxHash (nhash)))
-                             pushHash
-                                 ( (M.insert ind (MerkleNode (Just nhash) left right) hashMap)
-                                 , (insertSpecial (Just nhash) left right res))
-                                 (hashPair nhash nhash)
-                                 (Just nhash)
-                                 (Just nhash)
-                                 ht
-                                 (ind + 1)
-                                 final
-                         else return (M.insert ind (MerkleNode (Just nhash) left right) hashMap, res)
+                         then pushHash
+                                  ( (M.insert ind (MerkleNode (Just nhash) left right) hashMap)
+                                  , (insertSpecial (Just nhash) left right res))
+                                  (hashPair nhash nhash)
+                                  (Just nhash)
+                                  (Just nhash)
+                                  ht
+                                  (ind + 1)
+                                  final
+                         else (M.insert ind (MerkleNode (Just nhash) left right) hashMap, res)
   where
     hashMap = hmp
     insertSpecial sib lft rht lst = L.insert (MerkleNode sib lft rht) lst
@@ -197,7 +186,7 @@ updateMerkleSubTrees ::
     -> m (HashCompute)
 updateMerkleSubTrees hashMap newhash left right ht ind final = do
     dbe <- getDB
-    (state, res) <- liftIO $ pushHash hashMap newhash left right ht ind final
+    let (state, res) = pushHash hashMap newhash left right ht ind final
     if L.length res > 0
         then do
             let (create, match) =

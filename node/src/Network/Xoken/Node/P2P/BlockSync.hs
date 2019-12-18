@@ -258,7 +258,7 @@ processConfTransaction tx bhash txind blkht = do
     dbe' <- getDB
     bp2pEnv <- getBitcoinP2P
     let net = bncNet $ bitcoinNodeConfig bp2pEnv
-    liftIO $ print ("processing Transaction! " ++ show tx)
+    liftIO $ print ("processing Transaction! ") -- ++ show tx)
     let conn = keyValDB $ dbe'
         str = "insert INTO xoken.transactions ( tx_id, block_info, tx_serialized ) values (?, ?, ?)"
         qstr = str :: Q.QueryString Q.W (Text, ((Text, Int32), Int32), Blob) ()
@@ -269,7 +269,6 @@ processConfTransaction tx bhash txind blkht = do
                 , ((blockHashToHex bhash, fromIntegral txind), fromIntegral blkht)
                 , Blob $ runPutLazy $ putLazyByteString $ S.encodeLazy tx)
     liftIO $ print (show (txHash tx))
-    liftIO $ LC.putStrLn $ A.encode tx
     res <- liftIO $ try $ Q.runClient conn (Q.write (qstr) par)
     case res of
         Right () -> return ()
@@ -317,7 +316,7 @@ processConfTransaction tx bhash txind blkht = do
                                                   TxIDNotFoundRetryException -> True
                                                   otherwise -> False)
                                          120
-                                         (getAddressFromOutpoint conn net $ prevOutput b)
+                                         (getAddressFromOutpoint_DUMMY conn net $ prevOutput b)
                                  case (ma) of
                                      Just x ->
                                          case addrToString net x of
@@ -357,10 +356,22 @@ processConfTransaction tx bhash txind blkht = do
                           (fromIntegral $ outValue b))
                  outAddrs)
         (catMaybes lookupInAddrs)
-    liftIO $ print ("inAddrs : " ++ show inAddrs)
-    liftIO $ print ("outAddrs : " ++ show outAddrs)
+    -- liftIO $ print ("inAddrs : " ++ show inAddrs)
+    -- liftIO $ print ("outAddrs : " ++ show outAddrs)
     return ()
 
+--
+--
+--
+--
+getAddressFromOutpoint_DUMMY :: Q.ClientState -> Network -> OutPoint -> IO (Maybe Address)
+getAddressFromOutpoint_DUMMY conn net outPoint = do
+    return $ stringToAddr net "1Q6v5VAUHjrDJiqwCGtwQpxMs4R3R4Gsw4"
+
+--
+--
+--
+--
 getAddressFromOutpoint :: Q.ClientState -> Network -> OutPoint -> IO (Maybe Address)
 getAddressFromOutpoint conn net outPoint = do
     let str = "SELECT tx_serialized from xoken.transactions where tx_id = ?"
