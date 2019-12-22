@@ -200,7 +200,8 @@ insertMerkleSubTree leaves inodes = do
         (Prelude.map (node) leaves)
     matchTemplate = "  (<i>:mnode { v: {<i>}}) "
     createTemplate = " (<i>:mnode { v: {<i>}}) "
-    relationTemplate = " (<c>)-[:PARENT]->(<p>) "
+    parentRelnTempl = " (<c>)-[:PARENT]->(<p>) "
+    siblingRelnTempl = " (<m>)-[:SIBLING]->(<s>) , (<s>)-[:SIBLING]->(<m>)"
     cyCreateLeaves =
         Data.Text.intercalate (" , ") $
         Prelude.map (\repl -> replace ("<i>") (repl) (pack createTemplate)) (vars $ Prelude.map (node) leaves)
@@ -212,23 +213,30 @@ insertMerkleSubTree leaves inodes = do
     cyRelationLeft =
         Data.Text.intercalate (" , ") $
         Prelude.map
-            (\(rc, rp) -> replace ("<p>") (rp) (replace ("<c>") (rc) (pack relationTemplate)))
+            (\(rc, rp) -> replace ("<p>") (rp) (replace ("<c>") (rc) (pack parentRelnTempl)))
             (zip (vars lefts) (vars nodes))
     cyRelationRight =
         Data.Text.intercalate (" , ") $
         Prelude.map
-            (\(rc, rp) -> replace ("<p>") (rp) (replace ("<c>") (rc) (pack relationTemplate)))
+            (\(rc, rp) -> replace ("<p>") (rp) (replace ("<c>") (rc) (pack parentRelnTempl)))
             (zip (vars rights) (vars nodes))
+    cySiblingReln =
+        replace ("<m>") (var $ node $ leaves !! 0) (replace ("<s>") (var $ node $ leaves !! 1) (pack siblingRelnTempl))
     cyCreate =
         if length leaves == 2
             then if length inodes > 0
                      then Data.Text.intercalate (" , ") $
                           Data.List.filter
                               (not . Data.Text.null)
-                              [cyCreateLeaves, cyCreateT, cyRelationLeft, cyRelationRight]
-                     else cyCreateLeaves
+                              [cyCreateLeaves, cyCreateT, cyRelationLeft, cyRelationRight, cySiblingReln]
+                     else Data.Text.intercalate (" , ") $
+                          Data.List.filter (not . Data.Text.null) [cyCreateLeaves, cySiblingReln]
             else cyCreateT
     parCreateLeaves = Prelude.map (\(i, x) -> (i, T $ txtTx $ node x)) (zip (vars $ Prelude.map (node) leaves) leaves)
+    parCreateSiblingReln =
+        Prelude.map
+            (\(i, x) -> (i, T $ txtTx $ node x))
+            (zip (vars $ Prelude.map (node) leaves) (leaves ++ reverse leaves))
     parCreateArr =
         Prelude.map
             (\(i, j, k, x) -> [(i, T $ txtTx $ node x), (j, T $ txtTx $ leftChild x), (k, T $ txtTx $ rightChild x)])
@@ -237,7 +245,7 @@ insertMerkleSubTree leaves inodes = do
     params =
         fromList $
         if length leaves == 2
-            then parCreateLeaves <> parCreate
+            then parCreateLeaves <> parCreate <> parCreateSiblingReln
             else parCreate
     cypher =
         if length inodes == 0
@@ -245,4 +253,5 @@ insertMerkleSubTree leaves inodes = do
             else " MATCH " <> cyMatch <> " CREATE " <> cyCreate
     txtTx i = txHashToHex $ TxHash $ fromJust i
     vars m = Prelude.map (\x -> Data.Text.filter (isAlpha) $ Data.Text.take 24 $ txtTx x) (m)
+    var m = Data.Text.filter (isAlpha) $ Data.Text.take 24 $ txtTx m
 --
