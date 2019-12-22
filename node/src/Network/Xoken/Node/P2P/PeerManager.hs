@@ -135,11 +135,11 @@ hashPair :: Hash256 -> Hash256 -> Hash256
 hashPair a b = doubleSHA256 $ encode a `B.append` encode b
 
 pushHash :: HashCompute -> Hash256 -> Maybe Hash256 -> Maybe Hash256 -> Int8 -> Int8 -> Bool -> HashCompute
-pushHash (hmp, res) nhash left right ht ind final =
+pushHash (stateMap, res) nhash left right ht ind final =
     case node prev of
         Just pv ->
             pushHash
-                ( (M.insert ind (emptyMerkleNode) hashMap)
+                ( (M.insert ind emptyMerkleNode stateMap)
                 , (insertSpecial
                        (Just pv)
                        (left)
@@ -153,25 +153,23 @@ pushHash (hmp, res) nhash left right ht ind final =
                 final
         Nothing ->
             if ht == ind
-                then ( M.insert ind (MerkleNode (Just nhash) left right) hashMap
-                     , (insertSpecial (Just nhash) left right res))
+                then (updateState, (insertSpecial (Just nhash) left right res))
                 else if final
                          then pushHash
-                                  ( (M.insert ind (MerkleNode (Just nhash) left right) hashMap)
-                                  , (insertSpecial (Just nhash) left right res))
+                                  (updateState, (insertSpecial (Just nhash) left right res))
                                   (hashPair nhash nhash)
                                   (Just nhash)
                                   (Just nhash)
                                   ht
                                   (ind + 1)
                                   final
-                         else (M.insert ind (MerkleNode (Just nhash) left right) hashMap, res)
+                         else (updateState, res)
   where
-    hashMap = hmp
     insertSpecial sib lft rht lst = L.insert (MerkleNode sib lft rht) lst
+    updateState = M.insert ind (MerkleNode (Just nhash) left right) stateMap
     prev =
-        case M.lookupIndex (fromIntegral ind) hashMap of
-            Just i -> snd $ M.elemAt i hashMap
+        case M.lookupIndex (fromIntegral ind) stateMap of
+            Just i -> snd $ M.elemAt i stateMap
             Nothing -> emptyMerkleNode
 
 updateMerkleSubTrees ::

@@ -140,19 +140,7 @@ defaultConfig :: FilePath -> IO ()
 defaultConfig path = do
     (sk, _) <- ACUPS.generateKeyPair
     let config =
-            Config.Config
-                5678
-                5678
-                sk
-                []
-                (generateNodeId sk)
-                "127.0.0.1"
-                (T.pack (path <> "/node.log"))
-                20
-                5
-                3
-                9090
-                9091
+            Config.Config 5678 5678 sk [] (generateNodeId sk) "127.0.0.1" (T.pack (path <> "/node.log")) 20 5 3 9090
     Config.makeConfig config (path <> "/config.yaml")
 
 runNode :: Config.Config -> DatabaseHandles -> BitcoinP2P -> IO ()
@@ -169,22 +157,14 @@ runNode config dbh bp2p = do
                 liftIO $ threadDelay (12 * 1000000)
                 liftIO $ putStrLn $ "............"
                 async $ initPeerListeners
-                async $ runEgressChainSync
-                runEgressBlockSync)
+                runEgressChainSync)
+                -- async $ runEgressChainSync
+                -- runEgressBlockSync)
     return ()
 
---
 data Config =
     Config
-        { configDir :: !FilePath
-        , configPort :: !Int
-        , configNetwork :: !Network
-        , configDiscover :: !Bool
-        , configPeers :: ![(Host, Maybe Port)]
-        , configVersion :: !Bool
-        , configCache :: !FilePath
-        , configDebug :: !Bool
-        , configReqLog :: !Bool
+        { configNetwork :: !Network
         }
 
 defPort :: Int
@@ -198,23 +178,9 @@ netNames = intercalate "|" (Data.List.map getNetworkName allNets)
 
 config :: Parser Config
 config = do
-    configDir <-
-        option str $
-        metavar "DIR" <> long "dir" <> short 'd' <> help "Data directory" <> showDefault <> value "xoken-node"
-    configPort <-
-        option auto $
-        metavar "INT" <> long "listen" <> short 'l' <> help "Listening port" <> showDefault <> value defPort
     configNetwork <-
         option (eitherReader networkReader) $
         metavar netNames <> long "net" <> short 'n' <> help "Network to connect to" <> showDefault <> value defNetwork
-    configDiscover <- switch $ long "auto" <> short 'a' <> help "Peer discovery"
-    configPeers <-
-        many . option (eitherReader peerReader) $
-        metavar "HOST" <> long "peer" <> short 'p' <> help "Network peer (as many as required)"
-    configCache <- option str $ long "cache" <> short 'c' <> help "RAM drive directory for acceleration" <> value ""
-    configVersion <- switch $ long "version" <> short 'v' <> help "Show version"
-    configDebug <- switch $ long "debug" <> help "Show debug messages"
-    configReqLog <- switch $ long "reqlog" <> help "HTTP request logging"
     pure Config {..}
 
 networkReader :: String -> Either String Network
@@ -247,20 +213,12 @@ main = do
         p = Q.defQueryParams Q.One ()
     conn <- Q.init stng
     op <- Q.runClient conn (Q.query qstr p)
-    putStrLn $ "Connected to Cassandra-DB version " ++ show (runIdentity (op !! 0))
-    --
+    putStrLn $ "Connected to Cassandra database, version " ++ show (runIdentity (op !! 0))
     conf <- liftIO (execParser opts)
-    when (configVersion conf) . liftIO $ do
-        putStrLn $ showVersion P.version
-        exitSuccess
-    when (Data.List.null (configPeers conf) && not (configDiscover conf)) . liftIO $
-        die "ERROR: Specify peers to connect or enable peer discovery."
-    --
-    --
     let gdbConfig = def {BT.user = "neo4j", BT.password = "admin123"}
     gdbState <- constructState gdbConfig
     a <- withResource (pool gdbState) (`BT.run` queryGraphDBVersion)
-    print ("result: " ++ show a)
+    putStrLn $ "Connected to Neo4j database, version " ++ show (a !! 0)
     --
     --
     let path = "."
