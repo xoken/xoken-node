@@ -91,13 +91,14 @@ data MerkleNode =
         { node :: Maybe Hash256
         , leftChild :: Maybe Hash256
         , rightChild :: Maybe Hash256
+        , isLeft :: Bool
         }
     deriving (Show, Eq, Ord)
 
 type HashCompute = (M.Map Int8 (MerkleNode), [MerkleNode])
 
 emptyMerkleNode :: MerkleNode
-emptyMerkleNode = MerkleNode {node = Nothing, leftChild = Nothing, rightChild = Nothing}
+emptyMerkleNode = MerkleNode {node = Nothing, leftChild = Nothing, rightChild = Nothing, isLeft = False}
 
 data IngressStreamState =
     IngressStreamState

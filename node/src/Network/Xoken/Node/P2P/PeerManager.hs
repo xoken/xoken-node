@@ -144,7 +144,8 @@ pushHash (stateMap, res) nhash left right ht ind final =
                        (Just pv)
                        (left)
                        (right)
-                       (insertSpecial (Just nhash) (leftChild prev) (rightChild prev) res)))
+                       True
+                       (insertSpecial (Just nhash) (leftChild prev) (rightChild prev) False res)))
                 (hashPair pv nhash)
                 (Just pv)
                 (Just nhash)
@@ -153,10 +154,10 @@ pushHash (stateMap, res) nhash left right ht ind final =
                 final
         Nothing ->
             if ht == ind
-                then (updateState, (insertSpecial (Just nhash) left right res))
+                then (updateState, (insertSpecial (Just nhash) left right True res))
                 else if final
                          then pushHash
-                                  (updateState, (insertSpecial (Just nhash) left right res))
+                                  (updateState, (insertSpecial (Just nhash) left right True res))
                                   (hashPair nhash nhash)
                                   (Just nhash)
                                   (Just nhash)
@@ -165,8 +166,8 @@ pushHash (stateMap, res) nhash left right ht ind final =
                                   final
                          else (updateState, res)
   where
-    insertSpecial sib lft rht lst = L.insert (MerkleNode sib lft rht) lst
-    updateState = M.insert ind (MerkleNode (Just nhash) left right) stateMap
+    insertSpecial sib lft rht flg lst = L.insert (MerkleNode sib lft rht flg) lst
+    updateState = M.insert ind (MerkleNode (Just nhash) left right True) stateMap
     prev =
         case M.lookupIndex (fromIntegral ind) stateMap of
             Just i -> snd $ M.elemAt i stateMap
@@ -191,26 +192,26 @@ updateMerkleSubTrees hashMap newhash left right ht ind final = do
                     L.partition
                         (\x ->
                              case x of
-                                 (MerkleNode sib lft rht) ->
+                                 (MerkleNode sib lft rht _) ->
                                      if isJust sib && isJust lft && isJust rht
                                          then False
                                          else if isJust sib
                                                   then True --"<leaf-node> " ++ (show $ txHashToHex $ TxHash $ fromJust sib)
                                                   else throw MerkleTreeComputeException)
                         (res)
-            let createFF =
-                    map
-                        (\x ->
-                             ( T.filter (isAlpha) $ T.take 20 $ txHashToHex $ TxHash $ fromJust $ node $ x
-                             , if (leftChild x) /= Nothing
-                                   then T.filter (isAlpha) $ T.take 20 $ txHashToHex $ TxHash $ fromJust $ leftChild $ x
-                                   else " n/a "
-                             , if (rightChild x) /= Nothing
-                                   then T.filter (isAlpha) $
-                                        T.take 20 $ txHashToHex $ TxHash $ fromJust $ rightChild $ x
-                                   else " n/a "))
-                        create
-            liftIO $ print ("Create: " ++ show createFF)
+            -- let createFF =
+            --         map
+            --             (\x ->
+            --                  ( T.filter (isAlpha) $ T.take 20 $ txHashToHex $ TxHash $ fromJust $ node $ x
+            --                  , if (leftChild x) /= Nothing
+            --                        then T.filter (isAlpha) $ T.take 20 $ txHashToHex $ TxHash $ fromJust $ leftChild $ x
+            --                        else " n/a "
+            --                  , if (rightChild x) /= Nothing
+            --                        then T.filter (isAlpha) $
+            --                             T.take 20 $ txHashToHex $ TxHash $ fromJust $ rightChild $ x
+            --                        else " n/a "))
+            --             create
+            -- liftIO $ print ("Create: " ++ show createFF)
             let finMatch =
                     L.sortBy
                         (\x y ->
@@ -218,14 +219,14 @@ updateMerkleSubTrees hashMap newhash left right ht ind final = do
                                  then GT
                                  else LT)
                         match
-            let matchFF =
-                    map
-                        (\x ->
-                             ( T.filter (isAlpha) $ T.take 20 $ txHashToHex $ TxHash $ fromJust $ node $ x
-                             , T.filter (isAlpha) $ T.take 20 $ txHashToHex $ TxHash $ fromJust $ leftChild $ x
-                             , T.filter (isAlpha) $ T.take 20 $ txHashToHex $ TxHash $ fromJust $ rightChild $ x))
-                        finMatch
-            liftIO $ print ("Match: " ++ show matchFF)
+            -- let matchFF =
+            --         map
+            --             (\x ->
+            --                  ( T.filter (isAlpha) $ T.take 20 $ txHashToHex $ TxHash $ fromJust $ node $ x
+            --                  , T.filter (isAlpha) $ T.take 20 $ txHashToHex $ TxHash $ fromJust $ leftChild $ x
+            --                  , T.filter (isAlpha) $ T.take 20 $ txHashToHex $ TxHash $ fromJust $ rightChild $ x))
+            --             finMatch
+            -- liftIO $ print ("Match: " ++ show matchFF)
             a <- liftIO $ withResource (pool $ graphDB dbe) (`BT.run` insertMerkleSubTree create finMatch)
             return (state, [])
         else return (state, res)

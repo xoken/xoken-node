@@ -199,17 +199,20 @@ insertMerkleSubTree leaves inodes = do
         ((lefts `union` rights) \\ ((lefts `intersect` nodes) `union` (rights `intersect` nodes))) \\
         (Prelude.map (node) leaves)
     matchTemplate = "  (<i>:mnode { v: {<i>}}) "
-    createTemplate = " (<i>:mnode { v: {<i>}}) "
+    createTemplate = " (<i>:mnode { v: {<i>} , l: <f> }) "
     parentRelnTempl = " (<c>)-[:PARENT]->(<p>) "
     siblingRelnTempl = " (<m>)-[:SIBLING]->(<s>) , (<s>)-[:SIBLING]->(<m>)"
     cyCreateLeaves =
         Data.Text.intercalate (" , ") $
-        Prelude.map (\repl -> replace ("<i>") (repl) (pack createTemplate)) (vars $ Prelude.map (node) leaves)
+        Prelude.map (\(repl, il) -> replace ("<i>") (repl) (replace ("<f>") (il) (pack createTemplate))) $
+        zip (vars $ Prelude.map (node) leaves) (Prelude.map (bool2Text . isLeft) leaves)
     cyMatch =
         Data.Text.intercalate (" , ") $
         Prelude.map (\repl -> replace ("<i>") (repl) (pack matchTemplate)) (vars matchReq)
     cyCreateT =
-        Data.Text.intercalate (" , ") $ Prelude.map (\repl -> replace ("<i>") (repl) (pack createTemplate)) (vars nodes)
+        Data.Text.intercalate (" , ") $
+        Prelude.map (\(repl, il) -> replace ("<i>") (repl) (replace ("<f>") (il) (pack createTemplate))) $
+        zip (vars nodes) (Prelude.map (bool2Text . isLeft) inodes)
     cyRelationLeft =
         Data.Text.intercalate (" , ") $
         Prelude.map
@@ -254,4 +257,8 @@ insertMerkleSubTree leaves inodes = do
     txtTx i = txHashToHex $ TxHash $ fromJust i
     vars m = Prelude.map (\x -> Data.Text.filter (isAlpha) $ Data.Text.take 24 $ txtTx x) (m)
     var m = Data.Text.filter (isAlpha) $ Data.Text.take 24 $ txtTx m
+    bool2Text cond =
+        if cond
+            then Data.Text.pack " TRUE "
+            else Data.Text.pack " FALSE "
 --
