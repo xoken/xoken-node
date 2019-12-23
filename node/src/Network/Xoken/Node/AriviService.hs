@@ -33,8 +33,9 @@ import Control.Monad.IO.Class
 import Control.Monad.Logger
 import Control.Monad.Loops
 import Control.Monad.Reader
-import Data.Aeson as A
-import Data.Aeson.Encoding (encodingToLazyByteString, fromEncoding)
+
+-- import Data.Aeson as A
+-- import Data.Aeson.Encoding (encodingToLazyByteString, fromEncoding)
 import Data.Binary as DB
 import Data.Bits
 import Data.ByteString.Base64 as B64
@@ -52,120 +53,119 @@ import Data.Serialize
 import Data.Set as Set
 import qualified Data.Text as DT
 import qualified Database.CQL.IO as Q
+import Database.CQL.Protocol
 import qualified GHC.Exts as Exts
 import GHC.Generics
 import Network.Simple.TCP as T
 import Network.Xoken.Node.Data
-
 import Network.Xoken.Node.Env
-
 import Network.Xoken.Node.P2P.Types
-
 import System.Random
 import Text.Printf
 import UnliftIO
 import UnliftIO.Resource
 import Xoken
 
--- import Xoken.P2P
-jsonSerialiseAny :: (JsonSerial a) => Network -> a -> L.ByteString
-jsonSerialiseAny net = encodingToLazyByteString . jsonSerial net
-    -- __ <- jsonSerialiseAny net i
-
-gzipCompressBase64Encode :: C.ByteString -> String
-gzipCompressBase64Encode val = BSU.toString $ B64.encode $ L.toStrict $ GZ.compress (val)
-
-getMissingParamError :: Int -> C.ByteString
-getMissingParamError msgid = A.encode $ getJsonRpcErrorObj msgid (-32602) "Invalid method parameter(s)."
-
-getJsonRpcErrorObj :: Int -> Int -> Value -> Value
-getJsonRpcErrorObj messageId errCode errMsg =
-    Object $
-    Exts.fromList
-        [ ("id", (Number $ fromIntegral messageId))
-        , ("error", Object $ Exts.fromList [("code", (Number $ fromIntegral errCode)), ("message", errMsg)])
-        ]
-
-xGetBlockHash :: (MonadUnliftIO m) => Network -> BlockHash -> m (L.ByteString)
+xGetBlockHash :: (HasXokenNodeEnv env m, MonadIO m) => Network -> String -> m (Maybe BlockRecord)
 xGetBlockHash net hash = do
-    res <- undefined -- liftIO $ getBlockDB hash
-    case res of
-        Just b -> return undefined -- $ jsonSerialiseAny net (b)
-        Nothing -> return $ C.pack "{}"
-
-xGetBlocksHashes :: (MonadUnliftIO m) => Network -> [BlockHash] -> m (L.ByteString)
-xGetBlocksHashes net hashes = do
-    res <- undefined -- mapM getBlockDB hashes
-    let ar = catMaybes res
-    return undefined -- $ jsonSerialiseAny net (ar)
-
-xGetBlockHeight :: (MonadUnliftIO m) => Network -> Word32 -> m (L.ByteString)
-xGetBlockHeight net height = do
-    hs <- undefined -- getBlocksAtHeightDB height
-    if undefined -- length hs == undefined -- 0
-        then return $ C.pack "{}"
+    dbe <- getDB
+    let conn = keyValDB (dbe)
+    let str = "SELECT block_hash, block_height, block_header from xoken.blocks_by_hash where block_hash = ?"
+        qstr = str :: Q.QueryString Q.R (Identity DT.Text) (DT.Text, Int32, DT.Text)
+        p = Q.defQueryParams Q.One $ Identity $ DT.pack hash
+    iop <- Q.runClient conn (Q.query qstr p)
+    if length iop == 0
+        then return Nothing
         else do
-            res <- undefined -- getBlockDB (hs !! 0)
-            case res of
-                Just b -> return undefined -- $ jsonSerialiseAny net (b)
-                Nothing -> return $ C.pack "{}"
+            let (hs, ht, hdr) = iop !! 0
+            return $ Just $ BlockRecord (fromIntegral ht) (DT.unpack hs) (DT.unpack hdr)
+        --
 
-xGetBlocksHeights :: (MonadUnliftIO m) => Network -> [Word32] -> m (L.ByteString)
+xGetBlocksHashes :: (HasXokenNodeEnv env m, MonadIO m) => Network -> [String] -> m ([BlockRecord])
+xGetBlocksHashes net hashes = do
+    dbe <- getDB
+    let conn = keyValDB (dbe)
+    let str = "SELECT block_hash, block_height, block_header from xoken.blocks_by_hash where block_hash in ?"
+        qstr = str :: Q.QueryString Q.R (Identity [DT.Text]) (DT.Text, Int32, DT.Text)
+        p = Q.defQueryParams Q.One $ Identity $ Data.List.map (DT.pack) hashes
+    iop <- Q.runClient conn (Q.query qstr p)
+    if length iop == 0
+        then return []
+        else do
+            return $
+                Data.List.map (\(hs, ht, hdr) -> BlockRecord (fromIntegral ht) (DT.unpack hs) (DT.unpack hdr)) (iop)
+
+xGetBlockHeight :: (HasXokenNodeEnv env m, MonadIO m) => Network -> Int32 -> m (Maybe BlockRecord)
+xGetBlockHeight net height = do
+    dbe <- getDB
+    let conn = keyValDB (dbe)
+    let str = "SELECT block_hash, block_height, block_header from xoken.blocks_by_height where block_height = ?"
+        qstr = str :: Q.QueryString Q.R (Identity Int32) (DT.Text, Int32, DT.Text)
+        p = Q.defQueryParams Q.One $ Identity height
+    iop <- Q.runClient conn (Q.query qstr p)
+    if length iop == 0
+        then return Nothing
+        else do
+            let (hs, ht, hdr) = iop !! 0
+            return $ Just $ BlockRecord (fromIntegral ht) (DT.unpack hs) (DT.unpack hdr)
+
+xGetBlocksHeights :: (HasXokenNodeEnv env m, MonadIO m) => Network -> [Int32] -> m ([BlockRecord])
 xGetBlocksHeights net heights = do
-    hs <- undefined -- concat <$> mapM getBlocksAtHeightDB (nub heights)
-    res <- undefined -- mapM getBlockDB hs
-    let ar = catMaybes res
-    return undefined -- $ jsonSerialiseAny net (ar)
+    dbe <- getDB
+    let conn = keyValDB (dbe)
+    let str = "SELECT block_hash, block_height, block_header from xoken.blocks_by_height where block_height in ?"
+        qstr = str :: Q.QueryString Q.R (Identity [Int32]) (DT.Text, Int32, DT.Text)
+        p = Q.defQueryParams Q.One $ Identity heights
+    iop <- Q.runClient conn (Q.query qstr p)
+    liftIO $ print ("Query output :" ++ show iop)
+    if length iop == 0
+        then return []
+        else do
+            return $
+                Data.List.map (\(hs, ht, hdr) -> BlockRecord (fromIntegral ht) (DT.unpack hs) (DT.unpack hdr)) (iop)
 
-goGetResource1 :: Q.ClientState -> RPCMessage -> Network -> IO (RPCMessage)
-goGetResource1 ldb msg net = undefined
-    --  do
-    -- let bs = C.pack $ msg
-    -- let jsonStr = GZ.decompress $ B64L.decodeLenient bs
-    -- liftIO $ print (jsonStr)
-    -- let rpcReq = A.decode jsonStr :: Maybe ORPCRequest
-    -- case rpcReq of
-    --     Just x -> do
-    --         liftIO $ printf "RPC: (%s)\n" (method x)
-    --         runner <- askRunInIO
-    --         val <-
-    --             liftIO $ do
-    --                 case (method x) of
-    --                     "get_block_hash" -> do
-    --                         let z = A.decode (A.encode (params x)) :: Maybe GetBlockHash
-    --                         case z of
-    --                             Just a -> xGetBlockHash net (blockhash a)
-    --                             Nothing -> return $ getMissingParamError (msgid x)
-    --                     "get_blocks_hashes" -> do
-    --                         let z = A.decode (A.encode (params x)) :: Maybe GetBlocksHashes
-    --                         case z of
-    --                             Just a -> xGetBlocksHashes net (blockhashes a)
-    --                             Nothing -> return $ getMissingParamError (msgid x)
-    --                     "get_block_height" -> do
-    --                         let z = A.decode (A.encode (params x)) :: Maybe GetBlockHeight
-    --                         case z of
-    --                             Just a -> xGetBlockHeight net (height a)
-    --                             Nothing -> return $ getMissingParamError (msgid x)
-    --                     "get_blocks_heights" -> do
-    --                         let z = A.decode (A.encode (params x)) :: Maybe GetBlocksHeights
-    --                         case z of
-    --                             Just a -> xGetBlocksHeights net (heights a)
-    --                             Nothing -> return $ getMissingParamError (msgid x)
-    --                     _____ -> do
-    --                         return $ A.encode (getJsonRpcErrorObj (msgid x) (-32601) "The method does not exist.")
-    --         let x = gzipCompressBase64Encode val
-    --         return x
-    --     Nothing -> do
-    --         liftIO $ printf "Decode failed.\n"
-    --         let v = getJsonRpcErrorObj 0 (-32600) "Invalid Request"
-    --         return $ gzipCompressBase64Encode (A.encode (v))
+goGetResource :: (HasXokenNodeEnv env m, MonadIO m) => RPCMessage -> Network -> m (RPCMessage)
+goGetResource msg net = do
+    dbe <- getDB
+    let kvdb = keyValDB (dbe)
+    case rqMethod msg of
+        "Hash->Block" -> do
+            case rqParams msg of
+                Just (GetBlockByHash hs) -> do
+                    blk <- xGetBlockHash net (hs)
+                    case blk of
+                        Just b -> return $ RPCResponse 200 Nothing $ Just $ RespBlockByHash b
+                        Nothing -> return $ RPCResponse 404 (Just "Record Not found") Nothing
+                Nothing -> return $ RPCResponse 400 (Just "Error: Invalid Params") Nothing
+        "Hashes->[Block]" -> do
+            case rqParams msg of
+                Just (GetBlocksByHashes hashes) -> do
+                    blks <- xGetBlocksHashes net hashes
+                    return $ RPCResponse 200 Nothing $ Just $ RespBlocksByHashes blks
+                Nothing -> return $ RPCResponse 400 (Just "Error: Invalid Params") Nothing
+        "Height->Block" -> do
+            case rqParams msg of
+                Just (GetBlockByHeight ht) -> do
+                    blk <- xGetBlockHeight net (fromIntegral ht)
+                    case blk of
+                        Just b -> return $ RPCResponse 200 Nothing $ Just $ RespBlockByHash b
+                        Nothing -> return $ RPCResponse 404 (Just "Record Not found") Nothing
+                Nothing -> return $ RPCResponse 400 (Just "Error: Invalid Params") Nothing
+        "Height->[Block]" -> do
+            case rqParams msg of
+                Just (GetBlocksByHeight hts) -> do
+                    blks <- xGetBlocksHeights net $ Data.List.map (fromIntegral) hts
+                    return $ RPCResponse 200 Nothing $ Just $ RespBlocksByHashes blks
+                Nothing -> return $ RPCResponse 400 (Just "Error: Invalid Params") Nothing
+        _____ -> do
+            return $ RPCResponse 400 (Just "Error: Invalid Method") Nothing
 
 globalHandlerRpc :: (HasService env m) => RPCMessage -> m (Maybe RPCMessage)
 globalHandlerRpc msg = do
+    bp2pEnv <- getBitcoinP2P
+    let net = bncNet $ bitcoinNodeConfig bp2pEnv
     liftIO $ printf "Decoded resp: %s\n" (show msg)
-    dbe <- getDB
-    let ldb = keyValDB (dbe)
-    st <- liftIO $ goGetResource1 ldb msg "bsv"
+    st <- goGetResource msg net
     return (Just $ st)
 
 globalHandlerPubSub :: (HasService env m) => ServiceTopic -> PubNotifyMessage -> m Status
