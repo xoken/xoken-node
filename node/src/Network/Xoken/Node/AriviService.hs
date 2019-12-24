@@ -124,12 +124,50 @@ xGetBlocksHeights net heights = do
             return $
                 Data.List.map (\(hs, ht, hdr) -> BlockRecord (fromIntegral ht) (DT.unpack hs) (DT.unpack hdr)) (iop)
 
+xGetTxHash :: (HasXokenNodeEnv env m, MonadIO m) => Network -> String -> m (Maybe TxRecord)
+xGetTxHash net hash = do
+    dbe <- getDB
+    let conn = keyValDB (dbe)
+    let str = "SELECT tx_id, block_info, tx_serialized from xoken.transactions where tx_id = ?"
+        qstr = str :: Q.QueryString Q.R (Identity DT.Text) (DT.Text, ((DT.Text, Int32), Int32), Blob)
+        p = Q.defQueryParams Q.One $ Identity $ DT.pack hash
+    iop <- Q.runClient conn (Q.query qstr p)
+    if length iop == 0
+        then return Nothing
+        else do
+            let (txid, ((bhash, txind), blkht), sz) = iop !! 0
+            return $
+                Just $
+                TxRecord (DT.unpack txid) (DT.unpack bhash) (fromIntegral txind) (fromIntegral blkht) (fromBlob sz)
+
+xGetTxHashes :: (HasXokenNodeEnv env m, MonadIO m) => Network -> [String] -> m ([TxRecord])
+xGetTxHashes net hashes = do
+    dbe <- getDB
+    let conn = keyValDB (dbe)
+    let str = "SELECT tx_id, block_info, tx_serialized from xoken.transactions where tx_id in ?"
+        qstr = str :: Q.QueryString Q.R (Identity [DT.Text]) (DT.Text, ((DT.Text, Int32), Int32), Blob)
+        p = Q.defQueryParams Q.One $ Identity $ Data.List.map (DT.pack) hashes
+    iop <- Q.runClient conn (Q.query qstr p)
+    if length iop == 0
+        then return []
+        else do
+            return $
+                Data.List.map
+                    (\(txid, ((bhash, txind), blkht), sz) ->
+                         TxRecord
+                             (DT.unpack txid)
+                             (DT.unpack bhash)
+                             (fromIntegral txind)
+                             (fromIntegral blkht)
+                             (fromBlob sz))
+                    iop
+
 goGetResource :: (HasXokenNodeEnv env m, MonadIO m) => RPCMessage -> Network -> m (RPCMessage)
 goGetResource msg net = do
     dbe <- getDB
     let kvdb = keyValDB (dbe)
     case rqMethod msg of
-        "Hash->Block" -> do
+        "HASH->BLOCK" -> do
             case rqParams msg of
                 Just (GetBlockByHash hs) -> do
                     blk <- xGetBlockHash net (hs)
@@ -137,13 +175,13 @@ goGetResource msg net = do
                         Just b -> return $ RPCResponse 200 Nothing $ Just $ RespBlockByHash b
                         Nothing -> return $ RPCResponse 404 (Just "Record Not found") Nothing
                 Nothing -> return $ RPCResponse 400 (Just "Error: Invalid Params") Nothing
-        "Hashes->[Block]" -> do
+        "[HASH]->[BLOCK]" -> do
             case rqParams msg of
                 Just (GetBlocksByHashes hashes) -> do
                     blks <- xGetBlocksHashes net hashes
                     return $ RPCResponse 200 Nothing $ Just $ RespBlocksByHashes blks
                 Nothing -> return $ RPCResponse 400 (Just "Error: Invalid Params") Nothing
-        "Height->Block" -> do
+        "HEIGHT->BLOCK" -> do
             case rqParams msg of
                 Just (GetBlockByHeight ht) -> do
                     blk <- xGetBlockHeight net (fromIntegral ht)
@@ -151,11 +189,25 @@ goGetResource msg net = do
                         Just b -> return $ RPCResponse 200 Nothing $ Just $ RespBlockByHash b
                         Nothing -> return $ RPCResponse 404 (Just "Record Not found") Nothing
                 Nothing -> return $ RPCResponse 400 (Just "Error: Invalid Params") Nothing
-        "Height->[Block]" -> do
+        "[HEIGHT]->[BLOCK]" -> do
             case rqParams msg of
                 Just (GetBlocksByHeight hts) -> do
                     blks <- xGetBlocksHeights net $ Data.List.map (fromIntegral) hts
                     return $ RPCResponse 200 Nothing $ Just $ RespBlocksByHashes blks
+                Nothing -> return $ RPCResponse 400 (Just "Error: Invalid Params") Nothing
+        "TXID->TRANSACTION" -> do
+            case rqParams msg of
+                Just (GetTransactionByTxID hs) -> do
+                    tx <- xGetTxHash net (hs)
+                    case tx of
+                        Just t -> return $ RPCResponse 200 Nothing $ Just $ RespTransactionByTxID t
+                        Nothing -> return $ RPCResponse 404 (Just "Record Not found") Nothing
+                Nothing -> return $ RPCResponse 400 (Just "Error: Invalid Params") Nothing
+        "[TXID]->[TRANSACTION]" -> do
+            case rqParams msg of
+                Just (GetTransactionsByTxIDs hashes) -> do
+                    txs <- xGetTxHashes net hashes
+                    return $ RPCResponse 200 Nothing $ Just $ RespTransactionsByTxIDs txs
                 Nothing -> return $ RPCResponse 400 (Just "Error: Invalid Params") Nothing
         _____ -> do
             return $ RPCResponse 400 (Just "Error: Invalid Method") Nothing

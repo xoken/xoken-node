@@ -17,6 +17,7 @@ import Data.Aeson as A
 import qualified Data.Aeson.Encoding as A
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as B
+import qualified Data.ByteString.Lazy.Char8 as C
 import Data.ByteString.Short (ShortByteString)
 import qualified Data.ByteString.Short as B.Short
 import Data.Default
@@ -82,6 +83,12 @@ data RPCReqParams
     | GetBlocksByHashes
           { gbBlockHashes :: [String]
           }
+    | GetTransactionByTxID
+          { gbTxHash :: String
+          }
+    | GetTransactionsByTxIDs
+          { gbTxHashes :: [String]
+          }
     deriving (Generic, Show, Hashable, Eq, Serialise)
 
 data RPCResponseBody
@@ -96,6 +103,12 @@ data RPCResponseBody
           }
     | RespBlocksByHashes
           { blocks :: [BlockRecord]
+          }
+    | RespTransactionByTxID
+          { tx :: TxRecord
+          }
+    | RespTransactionsByTxIDs
+          { txs :: [TxRecord]
           }
     deriving (Generic, Show, Hashable, Eq, Serialise)
 
@@ -113,6 +126,16 @@ data BlockRecord =
         , rbHeader :: String
         }
     deriving (Generic, Show, Hashable, Eq, Serialise)
+
+data TxRecord =
+    TxRecord
+        { txId :: String
+        , blockHash :: String
+        , txIndex :: Int
+        , blockHeight :: Int
+        , txSerialized :: C.ByteString
+        }
+    deriving (Show, Generic, Hashable, Eq, Serialise)
 
 --
 --
