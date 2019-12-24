@@ -130,10 +130,37 @@ data BlockRecord =
 data TxRecord =
     TxRecord
         { txId :: String
-        , blockHash :: String
-        , txIndex :: Int
-        , blockHeight :: Int
+        , txBlockInfo :: BlockInfo'
         , txSerialized :: C.ByteString
+        }
+    deriving (Show, Generic, Hashable, Eq, Serialise)
+
+data AddressOutputs =
+    AddressOutputs
+        { aoAddress :: String
+        , aoOutput :: OutPoint'
+        , aoBlockInfo :: BlockInfo'
+        , aoIsBlockConfirmed :: Bool
+        , aoIsOutputSpent :: Bool
+        , aoIsTypeReceive :: Bool
+        , aoOtherAddress :: String
+        , aoPrevOutpoint :: OutPoint'
+        , aoValue :: Int64
+        }
+    deriving (Show, Generic, Hashable, Eq, Serialise)
+
+data OutPoint' =
+    OutPoint'
+        { opTxHash :: String
+        , opIndex :: Int
+        }
+    deriving (Show, Generic, Hashable, Eq, Serialise)
+
+data BlockInfo' =
+    BlockInfo'
+        { binfBlockHash :: String
+        , binfTxIndex :: Int
+        , binfBlockHeight :: Int
         }
     deriving (Show, Generic, Hashable, Eq, Serialise)
 

@@ -70,7 +70,7 @@ xGetBlockHash :: (HasXokenNodeEnv env m, MonadIO m) => Network -> String -> m (M
 xGetBlockHash net hash = do
     dbe <- getDB
     let conn = keyValDB (dbe)
-    let str = "SELECT block_hash, block_height, block_header from xoken.blocks_by_hash where block_hash = ?"
+        str = "SELECT block_hash, block_height, block_header from xoken.blocks_by_hash where block_hash = ?"
         qstr = str :: Q.QueryString Q.R (Identity DT.Text) (DT.Text, Int32, DT.Text)
         p = Q.defQueryParams Q.One $ Identity $ DT.pack hash
     iop <- Q.runClient conn (Q.query qstr p)
@@ -79,13 +79,12 @@ xGetBlockHash net hash = do
         else do
             let (hs, ht, hdr) = iop !! 0
             return $ Just $ BlockRecord (fromIntegral ht) (DT.unpack hs) (DT.unpack hdr)
-        --
 
 xGetBlocksHashes :: (HasXokenNodeEnv env m, MonadIO m) => Network -> [String] -> m ([BlockRecord])
 xGetBlocksHashes net hashes = do
     dbe <- getDB
     let conn = keyValDB (dbe)
-    let str = "SELECT block_hash, block_height, block_header from xoken.blocks_by_hash where block_hash in ?"
+        str = "SELECT block_hash, block_height, block_header from xoken.blocks_by_hash where block_hash in ?"
         qstr = str :: Q.QueryString Q.R (Identity [DT.Text]) (DT.Text, Int32, DT.Text)
         p = Q.defQueryParams Q.One $ Identity $ Data.List.map (DT.pack) hashes
     iop <- Q.runClient conn (Q.query qstr p)
@@ -99,7 +98,7 @@ xGetBlockHeight :: (HasXokenNodeEnv env m, MonadIO m) => Network -> Int32 -> m (
 xGetBlockHeight net height = do
     dbe <- getDB
     let conn = keyValDB (dbe)
-    let str = "SELECT block_hash, block_height, block_header from xoken.blocks_by_height where block_height = ?"
+        str = "SELECT block_hash, block_height, block_header from xoken.blocks_by_height where block_height = ?"
         qstr = str :: Q.QueryString Q.R (Identity Int32) (DT.Text, Int32, DT.Text)
         p = Q.defQueryParams Q.One $ Identity height
     iop <- Q.runClient conn (Q.query qstr p)
@@ -113,7 +112,7 @@ xGetBlocksHeights :: (HasXokenNodeEnv env m, MonadIO m) => Network -> [Int32] ->
 xGetBlocksHeights net heights = do
     dbe <- getDB
     let conn = keyValDB (dbe)
-    let str = "SELECT block_hash, block_height, block_header from xoken.blocks_by_height where block_height in ?"
+        str = "SELECT block_hash, block_height, block_header from xoken.blocks_by_height where block_height in ?"
         qstr = str :: Q.QueryString Q.R (Identity [Int32]) (DT.Text, Int32, DT.Text)
         p = Q.defQueryParams Q.One $ Identity heights
     iop <- Q.runClient conn (Q.query qstr p)
@@ -128,7 +127,7 @@ xGetTxHash :: (HasXokenNodeEnv env m, MonadIO m) => Network -> String -> m (Mayb
 xGetTxHash net hash = do
     dbe <- getDB
     let conn = keyValDB (dbe)
-    let str = "SELECT tx_id, block_info, tx_serialized from xoken.transactions where tx_id = ?"
+        str = "SELECT tx_id, block_info, tx_serialized from xoken.transactions where tx_id = ?"
         qstr = str :: Q.QueryString Q.R (Identity DT.Text) (DT.Text, ((DT.Text, Int32), Int32), Blob)
         p = Q.defQueryParams Q.One $ Identity $ DT.pack hash
     iop <- Q.runClient conn (Q.query qstr p)
@@ -138,13 +137,16 @@ xGetTxHash net hash = do
             let (txid, ((bhash, txind), blkht), sz) = iop !! 0
             return $
                 Just $
-                TxRecord (DT.unpack txid) (DT.unpack bhash) (fromIntegral txind) (fromIntegral blkht) (fromBlob sz)
+                TxRecord
+                    (DT.unpack txid)
+                    (BlockInfo' (DT.unpack bhash) (fromIntegral txind) (fromIntegral blkht))
+                    (fromBlob sz)
 
 xGetTxHashes :: (HasXokenNodeEnv env m, MonadIO m) => Network -> [String] -> m ([TxRecord])
 xGetTxHashes net hashes = do
     dbe <- getDB
     let conn = keyValDB (dbe)
-    let str = "SELECT tx_id, block_info, tx_serialized from xoken.transactions where tx_id in ?"
+        str = "SELECT tx_id, block_info, tx_serialized from xoken.transactions where tx_id in ?"
         qstr = str :: Q.QueryString Q.R (Identity [DT.Text]) (DT.Text, ((DT.Text, Int32), Int32), Blob)
         p = Q.defQueryParams Q.One $ Identity $ Data.List.map (DT.pack) hashes
     iop <- Q.runClient conn (Q.query qstr p)
@@ -156,10 +158,44 @@ xGetTxHashes net hashes = do
                     (\(txid, ((bhash, txind), blkht), sz) ->
                          TxRecord
                              (DT.unpack txid)
-                             (DT.unpack bhash)
-                             (fromIntegral txind)
-                             (fromIntegral blkht)
+                             (BlockInfo' (DT.unpack bhash) (fromIntegral txind) (fromIntegral blkht))
                              (fromBlob sz))
+                    iop
+
+xGetAddressOutputs :: (HasXokenNodeEnv env m, MonadIO m) => Network -> String -> m ([AddressOutputs])
+xGetAddressOutputs net address = do
+    dbe <- getDB
+    let conn = keyValDB (dbe)
+        str =
+            "SELECT address,output,block_info,is_block_confirmed,is_output_spent,is_type_receive,other_address,prev_outpoint,value from xoken.address_outputs where address = ?"
+        qstr =
+            str :: Q.QueryString Q.R (Identity DT.Text) ( DT.Text
+                                                        , (DT.Text, Int32)
+                                                        , ((DT.Text, Int32), Int32)
+                                                        , Bool
+                                                        , Bool
+                                                        , Bool
+                                                        , DT.Text
+                                                        , (DT.Text, Int32)
+                                                        , Int64)
+        p = Q.defQueryParams Q.One $ Identity $ DT.pack address
+    iop <- Q.runClient conn (Q.query qstr p)
+    if length iop == 0
+        then return []
+        else do
+            return $
+                Data.List.map
+                    (\(addr, (txhs, ind), ((bhash, txind), blkht), fconf, fospent, freceive, oaddr, (ptxhs, pind), val) ->
+                         AddressOutputs
+                             (DT.unpack addr)
+                             (OutPoint' (DT.unpack txhs) (fromIntegral ind))
+                             (BlockInfo' (DT.unpack bhash) (fromIntegral txind) (fromIntegral blkht))
+                             fconf
+                             fospent
+                             freceive
+                             (DT.unpack oaddr)
+                             (OutPoint' (DT.unpack ptxhs) (fromIntegral pind))
+                             val)
                     iop
 
 goGetResource :: (HasXokenNodeEnv env m, MonadIO m) => RPCMessage -> Network -> m (RPCMessage)
