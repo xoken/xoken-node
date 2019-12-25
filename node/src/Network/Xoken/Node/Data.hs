@@ -84,10 +84,16 @@ data RPCReqParams
           { gbBlockHashes :: [String]
           }
     | GetTransactionByTxID
-          { gbTxHash :: String
+          { gtTxHash :: String
           }
     | GetTransactionsByTxIDs
-          { gbTxHashes :: [String]
+          { gtTxHashes :: [String]
+          }
+    | GetOutputsByAddress
+          { gaAddrOutputs :: String
+          }
+    | GetOutputsByAddresses
+          { gasAddrOutputs :: [String]
           }
     deriving (Generic, Show, Hashable, Eq, Serialise)
 
@@ -109,6 +115,12 @@ data RPCResponseBody
           }
     | RespTransactionsByTxIDs
           { txs :: [TxRecord]
+          }
+    | RespOutputsByAddress
+          { saddressOutputs :: [AddressOutputs]
+          }
+    | RespOutputsByAddresses
+          { maddressOutputs :: [AddressOutputs]
           }
     deriving (Generic, Show, Hashable, Eq, Serialise)
 

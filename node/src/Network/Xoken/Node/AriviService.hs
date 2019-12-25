@@ -162,8 +162,8 @@ xGetTxHashes net hashes = do
                              (fromBlob sz))
                     iop
 
-xGetAddressOutputs :: (HasXokenNodeEnv env m, MonadIO m) => Network -> String -> m ([AddressOutputs])
-xGetAddressOutputs net address = do
+xGetOutputsAddress :: (HasXokenNodeEnv env m, MonadIO m) => Network -> String -> m ([AddressOutputs])
+xGetOutputsAddress net address = do
     dbe <- getDB
     let conn = keyValDB (dbe)
         str =
@@ -179,6 +179,42 @@ xGetAddressOutputs net address = do
                                                         , (DT.Text, Int32)
                                                         , Int64)
         p = Q.defQueryParams Q.One $ Identity $ DT.pack address
+    iop <- Q.runClient conn (Q.query qstr p)
+    if length iop == 0
+        then return []
+        else do
+            return $
+                Data.List.map
+                    (\(addr, (txhs, ind), ((bhash, txind), blkht), fconf, fospent, freceive, oaddr, (ptxhs, pind), val) ->
+                         AddressOutputs
+                             (DT.unpack addr)
+                             (OutPoint' (DT.unpack txhs) (fromIntegral ind))
+                             (BlockInfo' (DT.unpack bhash) (fromIntegral txind) (fromIntegral blkht))
+                             fconf
+                             fospent
+                             freceive
+                             (DT.unpack oaddr)
+                             (OutPoint' (DT.unpack ptxhs) (fromIntegral pind))
+                             val)
+                    iop
+
+xGetOutputsAddresses :: (HasXokenNodeEnv env m, MonadIO m) => Network -> [String] -> m ([AddressOutputs])
+xGetOutputsAddresses net addresses = do
+    dbe <- getDB
+    let conn = keyValDB (dbe)
+        str =
+            "SELECT address,output,block_info,is_block_confirmed,is_output_spent,is_type_receive,other_address,prev_outpoint,value from xoken.address_outputs where address in ?"
+        qstr =
+            str :: Q.QueryString Q.R (Identity [DT.Text]) ( DT.Text
+                                                          , (DT.Text, Int32)
+                                                          , ((DT.Text, Int32), Int32)
+                                                          , Bool
+                                                          , Bool
+                                                          , Bool
+                                                          , DT.Text
+                                                          , (DT.Text, Int32)
+                                                          , Int64)
+        p = Q.defQueryParams Q.One $ Identity $ Data.List.map (DT.pack) addresses
     iop <- Q.runClient conn (Q.query qstr p)
     if length iop == 0
         then return []
@@ -231,7 +267,7 @@ goGetResource msg net = do
                     blks <- xGetBlocksHeights net $ Data.List.map (fromIntegral) hts
                     return $ RPCResponse 200 Nothing $ Just $ RespBlocksByHashes blks
                 Nothing -> return $ RPCResponse 400 (Just "Error: Invalid Params") Nothing
-        "TXID->TRANSACTION" -> do
+        "TXID->TX" -> do
             case rqParams msg of
                 Just (GetTransactionByTxID hs) -> do
                     tx <- xGetTxHash net (hs)
@@ -239,11 +275,23 @@ goGetResource msg net = do
                         Just t -> return $ RPCResponse 200 Nothing $ Just $ RespTransactionByTxID t
                         Nothing -> return $ RPCResponse 404 (Just "Record Not found") Nothing
                 Nothing -> return $ RPCResponse 400 (Just "Error: Invalid Params") Nothing
-        "[TXID]->[TRANSACTION]" -> do
+        "[TXID]->[TX]" -> do
             case rqParams msg of
                 Just (GetTransactionsByTxIDs hashes) -> do
                     txs <- xGetTxHashes net hashes
                     return $ RPCResponse 200 Nothing $ Just $ RespTransactionsByTxIDs txs
+                Nothing -> return $ RPCResponse 400 (Just "Error: Invalid Params") Nothing
+        "ADDR->[OUTPUT]" -> do
+            case rqParams msg of
+                Just (GetOutputsByAddress addr) -> do
+                    ops <- xGetOutputsAddress net (addr)
+                    return $ RPCResponse 200 Nothing $ Just $ RespOutputsByAddress ops
+                Nothing -> return $ RPCResponse 400 (Just "Error: Invalid Params") Nothing
+        "[ADDR]->[OUTPUT]" -> do
+            case rqParams msg of
+                Just (GetOutputsByAddresses addrs) -> do
+                    ops <- xGetOutputsAddresses net addrs
+                    return $ RPCResponse 200 Nothing $ Just $ RespOutputsByAddresses ops
                 Nothing -> return $ RPCResponse 400 (Just "Error: Invalid Params") Nothing
         _____ -> do
             return $ RPCResponse 400 (Just "Error: Invalid Method") Nothing
