@@ -7,6 +7,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 --
 module Network.Xoken.Node.AriviService where
@@ -33,6 +34,9 @@ import Control.Monad.IO.Class
 import Control.Monad.Logger
 import Control.Monad.Loops
 import Control.Monad.Reader
+
+import Control.Exception
+import qualified Control.Exception.Lifted as LE (try)
 
 -- import Data.Aeson as A
 -- import Data.Aeson.Encoding (encodingToLazyByteString, fromEncoding)
@@ -65,6 +69,12 @@ import Text.Printf
 import UnliftIO
 import UnliftIO.Resource
 import Xoken
+
+data AriviServiceException =
+    KeyValueDBLookupException
+    deriving (Show)
+
+instance Exception AriviServiceException
 
 xGetBlockHash :: (HasXokenNodeEnv env m, MonadIO m) => Network -> String -> m (Maybe BlockRecord)
 xGetBlockHash net hash = do
@@ -175,28 +185,35 @@ xGetOutputsAddress net address = do
                                                         , Bool
                                                         , Bool
                                                         , Bool
-                                                        , DT.Text
+                                                        , Maybe DT.Text
                                                         , (DT.Text, Int32)
                                                         , Int64)
         p = Q.defQueryParams Q.One $ Identity $ DT.pack address
-    iop <- Q.runClient conn (Q.query qstr p)
-    if length iop == 0
-        then return []
-        else do
-            return $
-                Data.List.map
-                    (\(addr, (txhs, ind), ((bhash, txind), blkht), fconf, fospent, freceive, oaddr, (ptxhs, pind), val) ->
-                         AddressOutputs
-                             (DT.unpack addr)
-                             (OutPoint' (DT.unpack txhs) (fromIntegral ind))
-                             (BlockInfo' (DT.unpack bhash) (fromIntegral txind) (fromIntegral blkht))
-                             fconf
-                             fospent
-                             freceive
-                             (DT.unpack oaddr)
-                             (OutPoint' (DT.unpack ptxhs) (fromIntegral pind))
-                             val)
-                    iop
+    res <- LE.try $ Q.runClient conn (Q.query qstr p)
+    case res of
+        Right iop -> do
+            if length iop == 0
+                then return []
+                else do
+                    return $
+                        Data.List.map
+                            (\(addr, (txhs, ind), ((bhash, txind), blkht), fconf, fospent, freceive, oaddr, (ptxhs, pind), val) ->
+                                 AddressOutputs
+                                     (DT.unpack addr)
+                                     (OutPoint' (DT.unpack txhs) (fromIntegral ind))
+                                     (BlockInfo' (DT.unpack bhash) (fromIntegral txind) (fromIntegral blkht))
+                                     fconf
+                                     fospent
+                                     freceive
+                                     (if isJust oaddr
+                                          then DT.unpack $ fromJust oaddr
+                                          else "")
+                                     (OutPoint' (DT.unpack ptxhs) (fromIntegral pind))
+                                     val)
+                            iop
+        Left (e :: SomeException) -> do
+            liftIO $ print ("Error: xGetOutputsAddress: " ++ show e)
+            throw KeyValueDBLookupException
 
 xGetOutputsAddresses :: (HasXokenNodeEnv env m, MonadIO m) => Network -> [String] -> m ([AddressOutputs])
 xGetOutputsAddresses net addresses = do
@@ -211,28 +228,35 @@ xGetOutputsAddresses net addresses = do
                                                           , Bool
                                                           , Bool
                                                           , Bool
-                                                          , DT.Text
+                                                          , Maybe DT.Text
                                                           , (DT.Text, Int32)
                                                           , Int64)
         p = Q.defQueryParams Q.One $ Identity $ Data.List.map (DT.pack) addresses
-    iop <- Q.runClient conn (Q.query qstr p)
-    if length iop == 0
-        then return []
-        else do
-            return $
-                Data.List.map
-                    (\(addr, (txhs, ind), ((bhash, txind), blkht), fconf, fospent, freceive, oaddr, (ptxhs, pind), val) ->
-                         AddressOutputs
-                             (DT.unpack addr)
-                             (OutPoint' (DT.unpack txhs) (fromIntegral ind))
-                             (BlockInfo' (DT.unpack bhash) (fromIntegral txind) (fromIntegral blkht))
-                             fconf
-                             fospent
-                             freceive
-                             (DT.unpack oaddr)
-                             (OutPoint' (DT.unpack ptxhs) (fromIntegral pind))
-                             val)
-                    iop
+    res <- LE.try $ Q.runClient conn (Q.query qstr p)
+    case res of
+        Right iop -> do
+            if length iop == 0
+                then return []
+                else do
+                    return $
+                        Data.List.map
+                            (\(addr, (txhs, ind), ((bhash, txind), blkht), fconf, fospent, freceive, oaddr, (ptxhs, pind), val) ->
+                                 AddressOutputs
+                                     (DT.unpack addr)
+                                     (OutPoint' (DT.unpack txhs) (fromIntegral ind))
+                                     (BlockInfo' (DT.unpack bhash) (fromIntegral txind) (fromIntegral blkht))
+                                     fconf
+                                     fospent
+                                     freceive
+                                     (if isJust oaddr
+                                          then DT.unpack $ fromJust oaddr
+                                          else "")
+                                     (OutPoint' (DT.unpack ptxhs) (fromIntegral pind))
+                                     val)
+                            iop
+        Left (e :: SomeException) -> do
+            liftIO $ print ("Error: xGetOutputsAddresses: " ++ show e)
+            throw KeyValueDBLookupException
 
 goGetResource :: (HasXokenNodeEnv env m, MonadIO m) => RPCMessage -> Network -> m (RPCMessage)
 goGetResource msg net = do

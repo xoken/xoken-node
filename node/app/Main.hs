@@ -140,7 +140,19 @@ defaultConfig :: FilePath -> IO ()
 defaultConfig path = do
     (sk, _) <- ACUPS.generateKeyPair
     let config =
-            Config.Config 5678 5678 sk [] (generateNodeId sk) "127.0.0.1" (T.pack (path <> "/node.log")) 20 5 3 9090
+            Config.Config
+                5678
+                5678
+                sk
+                []
+                (generateNodeId sk)
+                "127.0.0.1"
+                (T.pack (path <> "/node.log"))
+                20
+                5
+                3
+                "127.0.0.1"
+                9090
     Config.makeConfig config (path <> "/config.yaml")
 
 runNode :: Config.Config -> DatabaseHandles -> BitcoinP2P -> IO ()

@@ -57,6 +57,7 @@ decodeShort bs =
         Right a -> a
 
 --
+-- INTERFACE START
 --
 data RPCMessage
     = RPCRequest
@@ -124,13 +125,6 @@ data RPCResponseBody
           }
     deriving (Generic, Show, Hashable, Eq, Serialise)
 
-data PubNotifyMessage =
-    PubNotifyMessage
-        { psBody :: ByteString
-        }
-    deriving (Show, Generic, Eq, Serialise)
-
---
 data BlockRecord =
     BlockRecord
         { rbHeight :: Int
@@ -176,20 +170,15 @@ data BlockInfo' =
         }
     deriving (Show, Generic, Hashable, Eq, Serialise)
 
---
---
-data ORPCRequest =
-    ORPCRequest
-        { method :: String
-        , msgid :: Int
-        , params :: Value
+data PubNotifyMessage =
+    PubNotifyMessage
+        { psBody :: ByteString
         }
-    deriving (Show, Generic)
+    deriving (Show, Generic, Eq, Serialise)
 
-instance FromJSON ORPCRequest where
-    parseJSON (Object v) = ORPCRequest <$> v .: "method" <*> v .: "id" <*> v .: "params"
-    parseJSON _ = error "Can't parse ORPCRequest"
-
+--
+--
+--
 data GetBlockHeight =
     GetBlockHeight
         { height :: Word32
