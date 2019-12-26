@@ -174,7 +174,7 @@ pushHash (stateMap, res) nhash left right ht ind final =
             Nothing -> emptyMerkleNode
 
 updateMerkleSubTrees ::
-       (HasDatabaseHandles m, MonadIO m)
+       (HasDatabaseHandles m, HasLogger m, MonadIO m)
     => HashCompute
     -> Hash256
     -> Maybe Hash256
@@ -185,6 +185,7 @@ updateMerkleSubTrees ::
     -> m (HashCompute)
 updateMerkleSubTrees hashMap newhash left right ht ind final = do
     dbe <- getDB
+    lg <- getLogger
     let (state, res) = pushHash hashMap newhash left right ht ind final
     if L.length res > 0
         then do
@@ -206,8 +207,16 @@ updateMerkleSubTrees hashMap newhash left right ht ind final = do
                                  then GT
                                  else LT)
                         match
-            a <- liftIO $ withResource (pool $ graphDB dbe) (`BT.run` insertMerkleSubTree create finMatch)
-            return (state, [])
+            res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` insertMerkleSubTree create finMatch)
+            case res of
+                Right () -> do
+                    return (state, [])
+                Left (e :: SomeException) -> do
+                    if T.isInfixOf (T.pack "ConstraintValidationFailed") (T.pack $ show e)
+                        then do
+                            err lg $ msg $ val "Ignoring ConstraintValidationFailed, prev aborted block sync?"
+                            return (state, [])
+                        else throw MerkleSubTreeDBInsertException
         else return (state, res)
 
 readNextMessage ::
@@ -220,9 +229,7 @@ readNextMessage net sock ingss = do
     p2pEnv <- getBitcoinP2P
     lg <- getLogger
     case ingss of
-        Just iss
-            -- debug lg $ msg ("IngressStreamState parsing tx: " ++ show iss)
-         -> do
+        Just iss -> do
             let blin = issBlockIngest iss
                 maxChunk = (1024 * 100) - (B.length $ binUnspentBytes blin)
                 -- if (binTxPayloadLeft blin - (B.length $ binUnspentBytes blin)) < maxChunk
@@ -352,7 +359,7 @@ doVersionHandshake net sock sa = do
             return False
 
 messageHandler ::
-       (HasXokenNodeEnv env m, MonadIO m)
+       (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
     => BitcoinPeer
     -> (Maybe Message, Maybe IngressStreamState)
     -> m (MessageCommand)
@@ -490,3 +497,9 @@ handleIncomingMessages pr = do
         Left (e :: SomeException) -> do
             debug lg $ msg $ (val "[ERROR] handleIncomingMessages ") +++ (show e)
             return ()
+
+logMessage :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => MessageCommand -> m ()
+logMessage mg = do
+    lg <- getLogger
+    debug lg $ LG.msg $ "processed: " ++ show mg
+    return ()

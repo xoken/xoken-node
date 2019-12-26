@@ -169,9 +169,9 @@ runNode config dbh bp2p = do
                 liftIO $ threadDelay (12 * 1000000)
                 liftIO $ putStrLn $ "............"
                 async $ initPeerListeners
-                runEgressChainSync)
-                -- async $ runEgressChainSync
-                -- runEgressBlockSync)
+                runEgressChainSync
+                async $ runEgressChainSync
+                runEgressBlockSync)
     return ()
 
 data Config =

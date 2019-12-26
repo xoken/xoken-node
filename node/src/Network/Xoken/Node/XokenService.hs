@@ -26,6 +26,7 @@ import Conduit hiding (runResourceT)
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async.Lifted (async)
 import Control.Exception
+import Control.Exception
 import qualified Control.Exception.Lifted as LE (try)
 import Control.Monad
 import Control.Monad.Extra
@@ -55,8 +56,8 @@ import Network.Xoken.Node.Data
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.GraphDB
 import Network.Xoken.Node.P2P.Types
-import UnliftIO
-import UnliftIO.Resource
+import System.Logger as LG
+import System.Logger.Message
 import Xoken
 
 data AriviServiceException
@@ -116,7 +117,6 @@ xGetBlocksHeights net heights = do
         qstr = str :: Q.QueryString Q.R (Identity [Int32]) (DT.Text, Int32, DT.Text)
         p = Q.defQueryParams Q.One $ Identity heights
     iop <- Q.runClient conn (Q.query qstr p)
-    liftIO $ print ("Query output :" ++ show iop)
     if length iop == 0
         then return []
         else do
@@ -162,9 +162,10 @@ xGetTxHashes net hashes = do
                              (fromBlob sz))
                     iop
 
-xGetOutputsAddress :: (HasXokenNodeEnv env m, MonadIO m) => Network -> String -> m ([AddressOutputs])
+xGetOutputsAddress :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> String -> m ([AddressOutputs])
 xGetOutputsAddress net address = do
     dbe <- getDB
+    lg <- getLogger
     let conn = keyValDB (dbe)
         str =
             "SELECT address,output,block_info,is_block_confirmed,is_output_spent,is_type_receive,other_address,prev_outpoint,value from xoken.address_outputs where address = ?"
@@ -202,12 +203,13 @@ xGetOutputsAddress net address = do
                                      val)
                             iop
         Left (e :: SomeException) -> do
-            liftIO $ print ("Error: xGetOutputsAddress: " ++ show e)
+            debug lg $ LG.msg $ "Error: xGetOutputsAddress: " ++ show e
             throw KeyValueDBLookupException
 
-xGetOutputsAddresses :: (HasXokenNodeEnv env m, MonadIO m) => Network -> [String] -> m ([AddressOutputs])
+xGetOutputsAddresses :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> [String] -> m ([AddressOutputs])
 xGetOutputsAddresses net addresses = do
     dbe <- getDB
+    lg <- getLogger
     let conn = keyValDB (dbe)
         str =
             "SELECT address,output,block_info,is_block_confirmed,is_output_spent,is_type_receive,other_address,prev_outpoint,value from xoken.address_outputs where address in ?"
@@ -245,18 +247,19 @@ xGetOutputsAddresses net addresses = do
                                      val)
                             iop
         Left (e :: SomeException) -> do
-            liftIO $ print ("Error: xGetOutputsAddresses: " ++ show e)
+            debug lg $ LG.msg $ "Error: xGetOutputsAddresses: " ++ show e
             throw KeyValueDBLookupException
 
-xGetMerkleBranch :: (HasXokenNodeEnv env m, MonadIO m) => Network -> String -> m ([MerkleBranchNode'])
+xGetMerkleBranch :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> String -> m ([MerkleBranchNode'])
 xGetMerkleBranch net txid = do
     dbe <- getDB
-    res <- LE.try $ liftIO $ withResource (pool $ graphDB dbe) (`BT.run` queryMerkleBranch (DT.pack txid))
+    lg <- getLogger
+    res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryMerkleBranch (DT.pack txid))
     case res of
         Right mb -> do
             return $ Data.List.map (\x -> MerkleBranchNode' (DT.unpack $ _nodeValue x) (_isLeftNode x)) mb
         Left (e :: SomeException) -> do
-            liftIO $ print ("Error: xGetMerkleBranch: " ++ show e)
+            debug lg $ LG.msg $ "Error: xGetMerkleBranch: " ++ show e
             throw KeyValueDBLookupException
 
 goGetResource :: (HasXokenNodeEnv env m, MonadIO m) => RPCMessage -> Network -> m (RPCMessage)

@@ -73,11 +73,14 @@ import Network.Xoken.Util
 import Streamly
 import Streamly.Prelude ((|:), nil)
 import qualified Streamly.Prelude as S
+import System.Logger as LG
+import System.Logger.Message
 import System.Random
 
-produceGetDataMessage :: (HasXokenNodeEnv env m, MonadIO m) => m (Maybe Message)
+produceGetDataMessage :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m (Maybe Message)
 produceGetDataMessage = do
-    liftIO $ print ("produceGetDataMessage - called.")
+    lg <- getLogger
+    debug lg $ LG.msg $ val "produceGetDataMessage - called."
     bp2pEnv <- getBitcoinP2P
     (fl, bl) <- getNextBlockToSync
     case bl of
@@ -90,18 +93,19 @@ produceGetDataMessage = do
                 atomically $
                 modifyTVar (blockSyncStatusMap bp2pEnv) (M.insert (biBlockHash b) $ (RequestSent t, biBlockHeight b))
             let gd = GetData $ [InvVector InvBlock $ getBlockHash $ biBlockHash b]
-            liftIO $ print ("GetData req: " ++ show gd)
+            debug lg $ LG.msg $ "GetData req: " ++ show gd
             return (Just $ MGetData gd)
         Nothing -> do
-            liftIO $ print ("producing - empty ...")
+            debug lg $ LG.msg $ val "producing - empty ..."
             liftIO $ threadDelay (1000000 * 1)
             return Nothing
 
-sendRequestMessages :: (HasXokenNodeEnv env m, MonadIO m) => Maybe Message -> m ()
+sendRequestMessages :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Maybe Message -> m ()
 sendRequestMessages mmsg = do
+    lg <- getLogger
     case mmsg of
         Just msg -> do
-            liftIO $ print ("sendRequestMessages - called.")
+            debug lg $ LG.msg $ val "sendRequestMessages - called."
             bp2pEnv <- getBitcoinP2P
             dbe' <- getDB
             let conn = keyValDB $ dbe'
@@ -120,34 +124,38 @@ sendRequestMessages mmsg = do
                             res <- liftIO $ try $ sendEncMessage (bpWriteMsgLock pr) s (BSL.fromStrict em)
                             case res of
                                 Right () -> return ()
-                                Left (e :: SomeException) -> liftIO $ print ("Error, sending out data: " ++ show e)
-                            liftIO $ print ("sending out GetData: " ++ show (bpAddress pr))
-                        Nothing -> liftIO $ print ("Error sending, no connections available")
+                                Left (e :: SomeException) -> debug lg $ LG.msg $ "Error, sending out data: " ++ show e
+                            debug lg $ LG.msg $ "sending out GetData: " ++ show (bpAddress pr)
+                        Nothing -> debug lg $ LG.msg $ val "Error sending, no connections available"
                 ___ -> return ()
         Nothing -> do
-            liftIO $ print ("graceful ignore...")
+            debug lg $ LG.msg $ val "graceful ignore..."
             return ()
 
-runEgressBlockSync :: (HasXokenNodeEnv env m, MonadIO m) => m ()
+runEgressBlockSync :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
 runEgressBlockSync = do
+    lg <- getLogger
     res <- LE.try $ runStream $ (S.repeatM produceGetDataMessage) & (S.mapM sendRequestMessages)
     case res of
         Right () -> return ()
-        Left (e :: SomeException) -> liftIO $ print ("[ERROR] runEgressBlockSync " ++ show e)
+        Left (e :: SomeException) -> debug lg $ LG.msg ("[ERROR] runEgressBlockSync " ++ show e)
 
-markBestSyncedBlock :: Text -> Int32 -> Q.ClientState -> IO ()
+markBestSyncedBlock :: (HasLogger m, MonadIO m) => Text -> Int32 -> Q.ClientState -> m ()
 markBestSyncedBlock hash height conn = do
+    lg <- getLogger
     let str = "insert INTO xoken.misc_store (key, value) values (? , ?)"
         qstr = str :: Q.QueryString Q.W (Text, (Maybe Bool, Int32, Maybe Int64, Text)) ()
         par = Q.defQueryParams Q.One ("best-synced", (Nothing, height, Nothing, hash))
-    res <- try $ Q.runClient conn (Q.write (Q.prepared qstr) par)
+    res <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr) par)
     case res of
         Right () -> return ()
         Left (e :: SomeException) ->
-            print ("Error: Marking [Best-Synced] blockhash failed: " ++ show e) >> throw KeyValueDBInsertException
+            debug lg $
+            LG.msg ("Error: Marking [Best-Synced] blockhash failed: " ++ show e) >> throw KeyValueDBInsertException
 
-getNextBlockToSync :: (HasXokenNodeEnv env m, MonadIO m) => m (Bool, Maybe BlockInfo)
+getNextBlockToSync :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m (Bool, Maybe BlockInfo)
 getNextBlockToSync = do
+    lg <- getLogger
     bp2pEnv <- getBitcoinP2P
     dbe' <- getDB
     let conn = keyValDB $ dbe'
@@ -157,7 +165,7 @@ getNextBlockToSync = do
     -- reload cache
     if M.size sy == 0
         then do
-            (hash, ht) <- liftIO $ fetchBestSyncedBlock conn net
+            (hash, ht) <- fetchBestSyncedBlock conn net
             let bks = map (\x -> ht + x) [1 .. 100] -- cache size of 200
             let str = "SELECT block_height, block_hash from xoken.blocks_by_height where block_height in ?"
                 qstr = str :: Q.QueryString Q.R (Identity [Int32]) ((Int32, T.Text))
@@ -165,10 +173,10 @@ getNextBlockToSync = do
             op <- Q.runClient conn (Q.query qstr p)
             if L.length op == 0
                 then do
-                    liftIO $ print ("Synced fully!")
+                    debug lg $ LG.msg $ val "Synced fully!"
                     return (False, Nothing)
                 else do
-                    liftIO $ print ("Reloading cache.")
+                    debug lg $ LG.msg $ val "Reloading cache."
                     let z =
                             catMaybes $
                             map
@@ -189,7 +197,7 @@ getNextBlockToSync = do
                 then do
                     let lelm = last $ L.sortOn (snd . snd) (M.toList sy)
                     liftIO $ atomically $ writeTVar (blockSyncStatusMap bp2pEnv) M.empty
-                    liftIO $ markBestSyncedBlock (blockHashToHex $ fst $ lelm) (fromIntegral $ snd $ snd $ lelm) conn
+                    markBestSyncedBlock (blockHashToHex $ fst $ lelm) (fromIntegral $ snd $ snd $ lelm) conn
                     return (False, Nothing)
                 else if M.size unsent > 0
                          then return (True, Just $ BlockInfo (fst $ M.elemAt 0 unsent) (snd $ snd $ M.elemAt 0 unsent))
@@ -201,17 +209,20 @@ getNextBlockToSync = do
                                           ( False
                                           , Just $ BlockInfo (fst $ M.elemAt 0 expired) (snd $ snd $ M.elemAt 0 expired))
 
-fetchBestSyncedBlock :: Q.ClientState -> Network -> IO ((BlockHash, Int32))
+fetchBestSyncedBlock :: (HasLogger m, MonadIO m) => Q.ClientState -> Network -> m ((BlockHash, Int32))
 fetchBestSyncedBlock conn net = do
+    lg <- getLogger
     let str = "SELECT value from xoken.misc_store where key = ?"
         qstr = str :: Q.QueryString Q.R (Identity Text) (Identity (Maybe Bool, Maybe Int32, Maybe Int64, Maybe T.Text))
         p = Q.defQueryParams Q.One $ Identity "best-synced"
     iop <- Q.runClient conn (Q.query qstr p)
     if L.length iop == 0
-        then print ("Best-synced-block is genesis.") >> return ((headerHash $ getGenesisHeader net), 0)
+        then do
+            debug lg $ LG.msg $ val "Best-synced-block is genesis."
+            return ((headerHash $ getGenesisHeader net), 0)
         else do
             let record = runIdentity $ iop !! 0
-            print ("Best-synced-block from DB: " ++ (show record))
+            debug lg $ LG.msg $ "Best-synced-block from DB: " ++ (show record)
             case getTextVal record of
                 Just tx -> do
                     case (hexToBlockHash $ tx) of
@@ -223,7 +234,8 @@ fetchBestSyncedBlock conn net = do
                 Nothing -> throw InvalidMetaDataException
 
 commitAddressOutputs ::
-       Q.ClientState
+       (HasLogger m, MonadIO m)
+    => Q.ClientState
     -> Text
     -> Bool
     -> Maybe Text
@@ -231,9 +243,9 @@ commitAddressOutputs ::
     -> ((Text, Int32), Int32)
     -> (Text, Int32)
     -> Int64
-    -> IO ()
+    -> m ()
 commitAddressOutputs conn addr typeRecv otherAddr output blockInfo prevOutpoint value = do
-    liftIO $ print ("commitAddressOutputs : ")
+    lg <- getLogger
     let str =
             "insert INTO xoken.address_outputs ( address, is_type_receive,other_address, output, block_info, prev_outpoint, value, is_block_confirmed, is_output_spent ) values (?, ?, ?, ?, ?, ? ,? ,? ,?)"
         qstr =
@@ -249,16 +261,17 @@ commitAddressOutputs conn addr typeRecv otherAddr output blockInfo prevOutpoint 
         par = Q.defQueryParams Q.One (addr, typeRecv, otherAddr, output, blockInfo, prevOutpoint, value, False, False)
     res1 <- liftIO $ try $ Q.runClient conn (Q.write (qstr) par)
     case res1 of
-        Right () -> liftIO $ print ("done commiting.. ") >> return ()
-        Left (e :: SomeException) ->
-            liftIO $ print ("Error: INSERTing into 'address_outputs': " ++ show e) >>= throw KeyValueDBInsertException
+        Right () -> return ()
+        Left (e :: SomeException) -> do
+            debug lg $ LG.msg $ "Error: INSERTing into 'address_outputs': " ++ show e
+            throw KeyValueDBInsertException
 
-processConfTransaction :: (HasXokenNodeEnv env m, MonadIO m) => Tx -> BlockHash -> Int -> Int -> m ()
+processConfTransaction :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Tx -> BlockHash -> Int -> Int -> m ()
 processConfTransaction tx bhash txind blkht = do
     dbe' <- getDB
     bp2pEnv <- getBitcoinP2P
+    lg <- getLogger
     let net = bncNet $ bitcoinNodeConfig bp2pEnv
-    liftIO $ print ("processing Transaction! ") -- ++ show tx)
     let conn = keyValDB $ dbe'
         str = "insert INTO xoken.transactions ( tx_id, block_info, tx_serialized ) values (?, ?, ?)"
         qstr = str :: Q.QueryString Q.W (Text, ((Text, Int32), Int32), Blob) ()
@@ -268,13 +281,13 @@ processConfTransaction tx bhash txind blkht = do
                 ( txHashToHex $ txHash tx
                 , ((blockHashToHex bhash, fromIntegral txind), fromIntegral blkht)
                 , Blob $ runPutLazy $ putLazyByteString $ S.encodeLazy tx)
-    liftIO $ print (show (txHash tx))
+    debug lg $ LG.msg ("processing Transaction: " ++ show (txHash tx))
     res <- liftIO $ try $ Q.runClient conn (Q.write (qstr) par)
     case res of
         Right () -> return ()
-        Left (e :: SomeException) ->
-            liftIO $
-            print ("Error: INSERTing into 'xoken.transactions': " ++ show e) >>= throw KeyValueDBInsertException
+        Left (e :: SomeException) -> do
+            liftIO $ debug lg $ LG.msg ("Error: INSERTing into 'xoken.transactions': " ++ show e)
+            throw KeyValueDBInsertException
     --
     let inAddrs =
             zip3
@@ -326,7 +339,6 @@ processConfTransaction tx bhash txind blkht = do
             inAddrs
     mapM_
         (\(x, a, i) ->
-             liftIO $
              mapM_
                  (\(y, b, j) ->
                       commitAddressOutputs
@@ -342,7 +354,6 @@ processConfTransaction tx bhash txind blkht = do
         outAddrs
     mapM_
         (\(x, a, i) ->
-             liftIO $
              mapM_
                  (\(y, b, j) ->
                       commitAddressOutputs
@@ -356,13 +367,11 @@ processConfTransaction tx bhash txind blkht = do
                           (fromIntegral $ outValue b))
                  outAddrs)
         (catMaybes lookupInAddrs)
-    -- liftIO $ print ("inAddrs : " ++ show inAddrs)
-    -- liftIO $ print ("outAddrs : " ++ show outAddrs)
     return ()
 
 --
 --
---
+-- REMOVE THIS !!!!!!!!!!!!!!!!
 --
 getAddressFromOutpoint_DUMMY :: Q.ClientState -> Network -> OutPoint -> IO (Maybe Address)
 getAddressFromOutpoint_DUMMY conn net outPoint = do
@@ -372,22 +381,23 @@ getAddressFromOutpoint_DUMMY conn net outPoint = do
 --
 --
 --
-getAddressFromOutpoint :: Q.ClientState -> Network -> OutPoint -> IO (Maybe Address)
+getAddressFromOutpoint :: (HasLogger m, MonadIO m) => Q.ClientState -> Network -> OutPoint -> m (Maybe Address)
 getAddressFromOutpoint conn net outPoint = do
+    lg <- getLogger
     let str = "SELECT tx_serialized from xoken.transactions where tx_id = ?"
         qstr = str :: Q.QueryString Q.R (Identity Text) (Identity Blob)
         p = Q.defQueryParams Q.One $ Identity $ txHashToHex $ outPointHash outPoint
     iop <- Q.runClient conn (Q.query qstr p)
     if L.length iop == 0
         then do
-            print ("(retry) TxID not found: " ++ (show $ txHashToHex $ outPointHash outPoint))
+            debug lg $ LG.msg ("(retry) TxID not found: " ++ (show $ txHashToHex $ outPointHash outPoint))
             liftIO $ threadDelay (1000000 * 1)
             throw TxIDNotFoundRetryException
         else do
             let txbyt = runIdentity $ iop !! 0
             case runGetLazy (getConfirmedTx) (fromBlob txbyt) of
                 Left e -> do
-                    print (encodeHex $ BSL.toStrict $ fromBlob txbyt)
+                    debug lg $ LG.msg (encodeHex $ BSL.toStrict $ fromBlob txbyt)
                     throw DBTxParseException
                 Right (txd) -> do
                     case txd of
@@ -401,58 +411,10 @@ getAddressFromOutpoint conn net outPoint = do
                                         Right os -> return $ Just os
                         Nothing -> undefined
 
-processBlock :: (HasXokenNodeEnv env m, MonadIO m) => DefBlock -> m ()
+processBlock :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => DefBlock -> m ()
 processBlock dblk = do
-    dbe' <- getDB
+    lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    liftIO $ print ("processing deflated Block! " ++ show dblk)
+    debug lg $ LG.msg ("processing deflated Block! " ++ show dblk)
     liftIO $ signalQSem (blockFetchBalance bp2pEnv)
     return ()
-    -- if (L.length $ headersList hdrs) == 0
-    --     then liftIO $ print "Nothing to process!" >> throw EmptyHeadersMessageException
-    --     else liftIO $ print $ "Processing Headers with " ++ show (L.length $ headersList hdrs) ++ " entries."
-    -- case undefined of
-    --     True -> do
-    --         let net = bncNet $ bitcoinNodeConfig bp2pEnv
-    --             genesisHash = blockHashToHex $ headerHash $ getGenesisHeader net
-    --             conn = keyValDB $ dbHandles dbe'
-    --             headPrevHash = (blockHashToHex $ prevBlock $ fst $ head $ headersList hdrs)
-    --         bb <- liftIO $ fetchBestSyncedBlock conn net
-    --         if (blockHashToHex $ fst bb) == genesisHash
-    --             then liftIO $ print ("First Headers set from genesis")
-    --             else if (blockHashToHex $ fst bb) == headPrevHash
-    --                      then liftIO $ print ("Links okay!")
-    --                      else liftIO $ print ("Does not match DB best-block") >> throw BlockHashNotFoundException -- likely a previously sync'd block
-    --         let indexed = zip [((snd bb) + 1) ..] (headersList hdrs)
-    --             str1 = "insert INTO xoken.blocks_hash (blockhash, header, height, transactions) values (?, ? , ? , ?)"
-    --             qstr1 = str1 :: Q.QueryString Q.W (Text, Text, Int32, Maybe Text) ()
-    --             str2 = "insert INTO xoken.blocks_by_height (height, blockhash, header, transactions) values (?, ? , ? , ?)"
-    --             qstr2 = str2 :: Q.QueryString Q.W (Int32, Text, Text, Maybe Text) ()
-    --         liftIO $ print ("indexed " ++ show (L.length indexed))
-    --         mapM_
-    --             (\y -> do
-    --                  let hdrHash = blockHashToHex $ headerHash $ fst $ snd y
-    --                      hdrJson = T.pack $ LC.unpack $ A.encode $ fst $ snd y
-    --                      par1 = Q.defQueryParams Q.One (hdrHash, hdrJson, fst y, Nothing)
-    --                      par2 = Q.defQueryParams Q.One (fst y, hdrHash, hdrJson, Nothing)
-    --                  res1 <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr1) par1)
-    --                  case res1 of
-    --                      Right () -> return ()
-    --                      Left (e :: SomeException) ->
-    --                          liftIO $
-    --                          print ("Error: INSERT into 'blocks_hash' failed: " ++ show e) >>=
-    --                          throw KeyValueDBInsertException
-    --                  res2 <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr2) par2)
-    --                  case res2 of
-    --                      Right () -> return ()
-    --                      Left (e :: SomeException) ->
-    --                          liftIO $
-    --                          print ("Error: INSERT into 'blocks_by_height' failed: " ++ show e) >>=
-    --                          throw KeyValueDBInsertException)
-    --             indexed
-    --         liftIO $ print ("done..")
-    --         liftIO $ do
-    --             markBestSyncedBlock (blockHashToHex $ headerHash $ fst $ snd $ last $ indexed) (fst $ last indexed) conn
-    --
-    --         return ()
-    --     False -> liftIO $ print ("Error: BlocksNotChainedException") >> throw BlocksNotChainedException

@@ -86,6 +86,7 @@ data BlockSyncException
     | DBTxParseException
     | MerkleTreeComputeException
     | InvalidCreateListException
+    | MerkleSubTreeDBInsertException
     deriving (Show)
 
 instance Exception BlockSyncException
@@ -132,11 +133,6 @@ sendEncMessage writeLock sock msg = do
     a <- takeMVar writeLock
     (LB.sendAll sock msg) `catch` (\(e :: IOException) -> putStrLn ("caught: " ++ show e))
     putMVar writeLock a
-
-logMessage :: (HasXokenNodeEnv env m, MonadIO m) => MessageCommand -> m ()
-logMessage mg = do
-    liftIO $ print ("processed: " ++ show mg)
-    return ()
 
 -- | Computes the height of a Merkle tree.
 computeTreeHeight ::

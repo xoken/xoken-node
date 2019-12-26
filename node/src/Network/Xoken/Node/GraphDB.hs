@@ -226,7 +226,6 @@ queryGraphDBVersion = do
 
 insertMerkleSubTree :: [MerkleNode] -> [MerkleNode] -> BoltActionT IO ()
 insertMerkleSubTree leaves inodes = do
-    liftIO $ print (cypher)
     records <- queryP cypher params
     return ()
   where
