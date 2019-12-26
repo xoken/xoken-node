@@ -96,6 +96,9 @@ data RPCReqParams
     | GetOutputsByAddresses
           { gasAddrOutputs :: [String]
           }
+    | GetMerkleBranchByTxID
+          { gmbMerkleBranch :: String
+          }
     deriving (Generic, Show, Hashable, Eq, Serialise)
 
 data RPCResponseBody
@@ -122,6 +125,9 @@ data RPCResponseBody
           }
     | RespOutputsByAddresses
           { maddressOutputs :: [AddressOutputs]
+          }
+    | RespMerkleBranchByTxID
+          { merkleBranch :: [MerkleBranchNode']
           }
     deriving (Generic, Show, Hashable, Eq, Serialise)
 
@@ -167,6 +173,13 @@ data BlockInfo' =
         { binfBlockHash :: String
         , binfTxIndex :: Int
         , binfBlockHeight :: Int
+        }
+    deriving (Show, Generic, Hashable, Eq, Serialise)
+
+data MerkleBranchNode' =
+    MerkleBranchNode'
+        { nodeValue :: String
+        , isLeftNode :: Bool
         }
     deriving (Show, Generic, Hashable, Eq, Serialise)
 

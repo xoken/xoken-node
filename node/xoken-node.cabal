@@ -38,6 +38,7 @@ executable xoken-node
       Network.Xoken.Node.P2P.BlockSync
       Network.Xoken.Node.P2P.Common
       Network.Xoken.Node.P2P.PeerManager
+      Network.Xoken.Node.XokenService
 
   hs-source-dirs:
       app, src

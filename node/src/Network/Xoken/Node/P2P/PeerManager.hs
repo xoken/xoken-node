@@ -196,22 +196,9 @@ updateMerkleSubTrees hashMap newhash left right ht ind final = do
                                      if isJust sib && isJust lft && isJust rht
                                          then False
                                          else if isJust sib
-                                                  then True --"<leaf-node> " ++ (show $ txHashToHex $ TxHash $ fromJust sib)
+                                                  then True
                                                   else throw MerkleTreeComputeException)
                         (res)
-            -- let createFF =
-            --         map
-            --             (\x ->
-            --                  ( T.filter (isAlpha) $ T.take 20 $ txHashToHex $ TxHash $ fromJust $ node $ x
-            --                  , if (leftChild x) /= Nothing
-            --                        then T.filter (isAlpha) $ T.take 20 $ txHashToHex $ TxHash $ fromJust $ leftChild $ x
-            --                        else " n/a "
-            --                  , if (rightChild x) /= Nothing
-            --                        then T.filter (isAlpha) $
-            --                             T.take 20 $ txHashToHex $ TxHash $ fromJust $ rightChild $ x
-            --                        else " n/a "))
-            --             create
-            -- liftIO $ print ("Create: " ++ show createFF)
             let finMatch =
                     L.sortBy
                         (\x y ->
@@ -219,14 +206,6 @@ updateMerkleSubTrees hashMap newhash left right ht ind final = do
                                  then GT
                                  else LT)
                         match
-            -- let matchFF =
-            --         map
-            --             (\x ->
-            --                  ( T.filter (isAlpha) $ T.take 20 $ txHashToHex $ TxHash $ fromJust $ node $ x
-            --                  , T.filter (isAlpha) $ T.take 20 $ txHashToHex $ TxHash $ fromJust $ leftChild $ x
-            --                  , T.filter (isAlpha) $ T.take 20 $ txHashToHex $ TxHash $ fromJust $ rightChild $ x))
-            --             finMatch
-            -- liftIO $ print ("Match: " ++ show matchFF)
             a <- liftIO $ withResource (pool $ graphDB dbe) (`BT.run` insertMerkleSubTree create finMatch)
             return (state, [])
         else return (state, res)

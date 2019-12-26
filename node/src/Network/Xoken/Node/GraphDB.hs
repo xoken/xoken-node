@@ -31,8 +31,6 @@ import Data.Text (Text, concat, filter, intercalate, null, pack, replace, take, 
 import Data.Time.Clock
 import Data.Word
 import Database.Bolt as BT
-
--- import Database.Bolt (Node(..), Record, RecordValue(..), Value(..), at)
 import qualified Database.CQL.IO as Q
 import GHC.Generics
 import Network.Socket hiding (send)
@@ -42,6 +40,12 @@ import Network.Xoken.Node.P2P.Types
 import Network.Xoken.Transaction
 import System.Random
 import Text.Read
+
+data MerkleBranchNode =
+    MerkleBranchNode
+        { _nodeValue :: Text
+        , _isLeftNode :: Bool
+        }
 
 data Movie =
     Movie
@@ -115,65 +119,99 @@ instance ToJSON MRel where
 instance ToJSON MGraph where
     toJSON (MGraph n r) = object ["nodes" .= n, "links" .= r]
 
--- |Converts some BOLT value to 'Cast'
-toCast :: Monad m => Value -> m Cast
-toCast (L [T name, T job, role']) = return $ Cast name job role'
-toCast _ = fail "Not a Cast value"
-
--- |Converts some BOLT value to 'Movie'
-toMovie :: Monad m => Value -> m Movie
-toMovie v = do
-    node :: Node <- exact v
-    let props = nodeProps node
-    let identity = nodeIdentity node
-    title :: Text <- (props `at` "title") >>= exact
-    released :: Int <- (props `at` "released") >>= exact
-    tagline :: Text <- (props `at` "tagline") >>= exact
-    return $ Movie identity title released tagline
-
--- |Create movie node and actors node from single record
-toNodes :: Monad m => Record -> m (MNode, [MNode])
-toNodes r = do
-    title :: Text <- (r `at` "movie") >>= exact
-    casts :: [Text] <- (r `at` "cast") >>= exact
-    return (MNode title "movie", (`MNode` "actor") <$> casts)
-
---
 -- |Create pool of connections (4 stripes, 500 ms timeout, 1 resource per stripe)
 constructState :: BoltCfg -> IO ServerState
 constructState bcfg = do
     pool <- createPool (BT.connect bcfg) BT.close 4 500 1
     return (ServerState pool)
 
--- -- |Reader monad over IO to store connection pool
--- type WebM = ReaderT ServerState IO
--- |Search movie by title pattern
-querySearch :: Text -> BoltActionT IO [undefined]
-querySearch q = do
-    records <- queryP cypher params
-    nodes <- traverse (`at` "movie") records
-    traverse toMovie nodes
-    return [undefined] -- remove this
-  where
-    cypher = "MATCH (movie:Movie) WHERE movie.title =~ {title} RETURN movie"
-    params = fromList [("title", T $ "(?i).*" <> q <> ".*")]
+-- | Convert record to MerkleBranchNode
+toMerkleBranchNode :: Monad m => Record -> m (MerkleBranchNode)
+toMerkleBranchNode r = do
+    txid :: Text <- (r `at` "txid") >>= exact
+    isLeft :: Bool <- (r `at` "isleft") >>= exact
+    return (MerkleBranchNode txid isLeft)
 
--- |Returns movie by title
-queryMovie :: Text -> BoltActionT IO undefined
-queryMovie title = do
-    result <- head <$> queryP cypher params
-    T title <- result `at` "title"
-    L members <- result `at` "cast"
-    cast <- traverse toCast members
-    return undefined -- $ MovieInfo title cast
+-- toMerkleBranch :: Monad m => Value -> m MerkleBranchNode
+-- toMerkleBranch (L [T nodeVal, B isLeft]) = return $ MerkleBranchNode nodeVal isLeft
+-- toMerkleBranch _ = fail "Not a Cast value"
+-- -- |Converts some BOLT value to 'Movie'
+-- toMovie2 :: Monad m => Value -> m Movie
+-- toMovie2 v = do
+--     node :: Node <- exact v
+--     let props = nodeProps node
+--     let identity = nodeIdentity node
+--     title :: Text <- (props `at` "title") >>= exact
+--     released :: Int <- (props `at` "released") >>= exact
+--     tagline :: Text <- (props `at` "tagline") >>= exact
+--     return $ Movie identity title released tagline
+--
+-- -- |Converts some BOLT value to 'Cast'
+-- toCast :: Monad m => Value -> m Cast
+-- toCast (L [T name, T job, role']) = return $ Cast name job role'
+-- toCast _ = fail "Not a Cast value"
+--
+-- -- |Converts some BOLT value to 'Movie'
+-- toMovie :: Monad m => Value -> m Movie
+-- toMovie v = do
+--     node :: Node <- exact v
+--     let props = nodeProps node
+--     let identity = nodeIdentity node
+--     title :: Text <- (props `at` "title") >>= exact
+--     released :: Int <- (props `at` "released") >>= exact
+--     tagline :: Text <- (props `at` "tagline") >>= exact
+--     return $ Movie identity title released tagline
+--
+-- -- |Create movie node and actors node from single record
+-- toNodes :: Monad m => Record -> m (MNode, [MNode])
+-- toNodes r = do
+--     title :: Text <- (r `at` "movie") >>= exact
+--     casts :: [Text] <- (r `at` "cast") >>= exact
+--     return (MNode title "movie", (`MNode` "actor") <$> casts)
+--
+-- --
+--
+-- -- -- |Reader monad over IO to store connection pool
+-- -- type WebM = ReaderT ServerState IO
+-- -- |Search movie by title pattern
+-- querySearch :: Text -> BoltActionT IO [undefined]
+-- querySearch q = do
+--     records <- queryP cypher params
+--     nodes <- traverse (`at` "movie") records
+--     traverse toMovie nodes
+--     return [undefined] -- remove this
+--   where
+--     cypher = "MATCH (movie:Movie) WHERE movie.title =~ {title} RETURN movie"
+--     params = fromList [("title", T $ "(?i).*" <> q <> ".*")]
+--
+-- -- |Returns movie by title
+-- queryMovie :: Text -> BoltActionT IO undefined
+-- queryMovie title = do
+--     result <- head <$> queryP cypher params
+--     T title <- result `at` "title"
+--     L members <- result `at` "cast"
+--     cast <- traverse toCast members
+--     return undefined -- $ MovieInfo title cast
+--   where
+--     cypher =
+--         "MATCH (movie:Movie {title:{title}}) " <> "OPTIONAL MATCH (movie)<-[r]-(person:Person) " <>
+--         "RETURN movie.title as title," <>
+--         "collect([person.name, " <>
+--         "         head(split(lower(type(r)), '_')), r.roles]) as cast " <>
+--         "LIMIT 1"
+--     params = fromList [("title", T title)]
+-- Fetch the Merkle branch/proof
+queryMerkleBranch :: Text -> BoltActionT IO [MerkleBranchNode]
+queryMerkleBranch leaf = do
+    records <- queryP cypher params
+    merkleBranch <- traverse toMerkleBranchNode records
+    return merkleBranch
   where
     cypher =
-        "MATCH (movie:Movie {title:{title}}) " <> "OPTIONAL MATCH (movie)<-[r]-(person:Person) " <>
-        "RETURN movie.title as title," <>
-        "collect([person.name, " <>
-        "         head(split(lower(type(r)), '_')), r.roles]) as cast " <>
-        "LIMIT 1"
-    params = fromList [("title", T title)]
+        "MATCH (me:mnode{ v: {leaf} })-[:SIBLING]->(sib)  RETURN sib.v AS txid, sib.l AS isleft  UNION " <>
+        "MATCH p=(start:mnode {v: {leaf}})-[:PARENT*]->(end:mnode) WHERE NOT (end)-[:PARENT]->() " <>
+        "UNWIND tail(nodes(p)) AS elem  RETURN elem.v as txid, elem.l AS isleft"
+    params = fromList [("leaf", T leaf)]
 
 -- |Returns Neo4j DB version
 queryGraphDBVersion :: BoltActionT IO [Text]
