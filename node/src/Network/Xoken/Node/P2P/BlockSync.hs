@@ -166,7 +166,13 @@ getNextBlockToSync = do
     if M.size sy == 0
         then do
             (hash, ht) <- fetchBestSyncedBlock conn net
-            let bks = map (\x -> ht + x) [1 .. 100] -- cache size of 200
+            let cacheInd =
+                    if ht < 500000
+                        then [1 .. 100]
+                        else if ht < 600000
+                                 then [1 .. 20]
+                                 else [1, 2]
+            let bks = map (\x -> ht + x) cacheInd -- cache size of 200
             let str = "SELECT block_height, block_hash from xoken.blocks_by_height where block_height in ?"
                 qstr = str :: Q.QueryString Q.R (Identity [Int32]) ((Int32, T.Text))
                 p = Q.defQueryParams Q.One $ Identity (bks)
@@ -200,7 +206,9 @@ getNextBlockToSync = do
                     markBestSyncedBlock (blockHashToHex $ fst $ lelm) (fromIntegral $ snd $ snd $ lelm) conn
                     return (False, Nothing)
                 else if M.size unsent > 0
-                         then return (True, Just $ BlockInfo (fst $ M.elemAt 0 unsent) (snd $ snd $ M.elemAt 0 unsent))
+                         then do
+                             let sortUnsent = L.sortOn (snd . snd) (M.toList unsent)
+                             return (True, Just $ BlockInfo (fst $ head sortUnsent) (snd $ snd $ head sortUnsent))
                          else do
                              let expired = M.filter (\((RequestSent t), _) -> (diffUTCTime tm t > 300)) sent
                              if M.size expired == 0

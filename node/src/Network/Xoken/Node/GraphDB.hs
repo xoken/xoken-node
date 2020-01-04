@@ -261,9 +261,17 @@ insertMerkleSubTree leaves inodes = do
             (\(rc, rp) -> replace ("<p>") (rp) (replace ("<c>") (rc) (pack parentRelnTempl)))
             (zip (vars rights) (vars nodes))
     cySiblingReln =
-        replace ("<m>") (var $ node $ leaves !! 0) (replace ("<s>") (var $ node $ leaves !! 1) (pack siblingRelnTempl))
-    cyCreate =
         if length leaves == 2
+            then replace
+                     ("<m>")
+                     (var $ node $ leaves !! 0)
+                     (replace ("<s>") (var $ node $ leaves !! 1) (pack siblingRelnTempl))
+            else replace -- must be a single lone leaf
+                     ("<m>")
+                     (var $ node $ leaves !! 0)
+                     (replace ("<s>") (var $ node $ leaves !! 0) (pack siblingRelnTempl))
+    cyCreate =
+        if length leaves > 0
             then if length inodes > 0
                      then Data.Text.intercalate (" , ") $
                           Data.List.filter
@@ -284,11 +292,11 @@ insertMerkleSubTree leaves inodes = do
     parCreate = Prelude.concat parCreateArr
     params =
         fromList $
-        if length leaves == 2
+        if length leaves > 0
             then parCreateLeaves <> parCreate <> parCreateSiblingReln
             else parCreate
     cypher =
-        if length inodes == 0
+        if length matchReq == 0
             then " CREATE " <> cyCreate
             else " MATCH " <> cyMatch <> " CREATE " <> cyCreate
     txtTx i = txHashToHex $ TxHash $ fromJust i

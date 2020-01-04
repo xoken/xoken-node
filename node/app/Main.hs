@@ -155,28 +155,32 @@ defaultConfig path = do
                 9090
     Config.makeConfig config (path <> "/config.yaml")
 
-runNode :: Config.Config -> DatabaseHandles -> BitcoinP2P -> IO ()
-runNode config dbh bp2p = do
+runNode :: Config.Config -> DatabaseHandles -> BitcoinP2P -> Bool -> IO ()
+runNode config dbh bp2p dbg = do
     p2pEnv <- mkP2PEnv config globalHandlerRpc globalHandlerPubSub [AriviService] []
-    lg <- LG.create LG.StdOut
+    let ll =
+            if dbg
+                then LG.Debug
+                else LG.Info
+    lg <- LG.new (LG.setOutput (LG.Path "xoken.log") (LG.setLogLevel ll LG.defSettings))
     let xknEnv = XokenNodeEnv bp2p dbh lg
     let serviceEnv = ServiceEnv xknEnv p2pEnv
     runFileLoggingT (toS $ Config.logFile config) $
         runAppM
             serviceEnv
             (do initP2P config
-                async $ setupPeerConnection
-                liftIO $ threadDelay (12 * 1000000)
-                liftIO $ putStrLn $ "............"
-                async $ initPeerListeners
-                runEgressChainSync
-                async $ runEgressChainSync
+                async setupPeerConnection
+                liftIO $ threadDelay (10 * 1000000)
+                async initPeerListeners
+                async runEgressChainSync
+                async runEgressChainSync
                 runEgressBlockSync)
     return ()
 
 data Config =
     Config
         { configNetwork :: !Network
+        , configDebug :: !Bool
         }
 
 defPort :: Int
@@ -193,6 +197,7 @@ config = do
     configNetwork <-
         option (eitherReader networkReader) $
         metavar netNames <> long "net" <> short 'n' <> help "Network to connect to" <> showDefault <> value defNetwork
+    configDebug <- switch $ long "debug" <> short 'd' <> help "Show debug messages"
     pure Config {..}
 
 networkReader :: String -> Either String Network
@@ -226,7 +231,7 @@ main = do
     conn <- Q.init stng
     op <- Q.runClient conn (Q.query qstr p)
     putStrLn $ "Connected to Cassandra database, version " ++ show (runIdentity (op !! 0))
-    conf <- liftIO (execParser opts)
+    conf <- liftIO $ execParser opts
     let gdbConfig = def {BT.user = "neo4j", BT.password = "admin123"}
     gdbState <- constructState gdbConfig
     a <- withResource (pool gdbState) (`BT.run` queryGraphDBVersion)
@@ -248,9 +253,9 @@ main = do
     g <- newTVarIO M.empty
     mv <- newMVar True
     hl <- newMVar True
-    bl <- newQSem 5 -- allows 12 outstanding blocks
+    bl <- newQSem 2 -- allow N outstanding blocks
     st <- newTVarIO M.empty
-    runNode cnf (DatabaseHandles conn gdbState) (BitcoinP2P nodeConfig g mv hl bl st)
+    runNode cnf (DatabaseHandles conn gdbState) (BitcoinP2P nodeConfig g mv hl bl st) (configDebug conf)
   where
     opts =
         info (helper <*> config) $

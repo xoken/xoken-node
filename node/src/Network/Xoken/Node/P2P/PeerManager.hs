@@ -207,16 +207,23 @@ updateMerkleSubTrees hashMap newhash left right ht ind final = do
                                  then GT
                                  else LT)
                         match
-            res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` insertMerkleSubTree create finMatch)
-            case res of
-                Right () -> do
-                    return (state, [])
-                Left (e :: SomeException) -> do
-                    if T.isInfixOf (T.pack "ConstraintValidationFailed") (T.pack $ show e)
-                        then do
-                            err lg $ msg $ val "Ignoring ConstraintValidationFailed, prev aborted block sync?"
+            debug lg $ msg $ show create ++ show finMatch
+            if L.length create == 1 && L.length finMatch == 0
+                then return (state, [])
+                else do
+                    res <-
+                        liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` insertMerkleSubTree create finMatch)
+                    case res of
+                        Right () -> do
                             return (state, [])
-                        else throw MerkleSubTreeDBInsertException
+                        Left (e :: SomeException) -> do
+                            if T.isInfixOf (T.pack "ConstraintValidationFailed") (T.pack $ show e)
+                                then do
+                                    err lg $ msg $ val "Ignoring ConstraintValidationFailed, prev aborted block sync?"
+                                    return (state, [])
+                                else do
+                                    err lg $ msg $ show e
+                                    throw MerkleSubTreeDBInsertException
         else return (state, res)
 
 readNextMessage ::
@@ -232,14 +239,14 @@ readNextMessage net sock ingss = do
         Just iss -> do
             let blin = issBlockIngest iss
                 maxChunk = (1024 * 100) - (B.length $ binUnspentBytes blin)
-                -- if (binTxPayloadLeft blin - (B.length $ binUnspentBytes blin)) < maxChunk
                 len =
-                    if (binTxPayloadLeft blin) < maxChunk
+                    if (binTxPayloadLeft blin - (B.length $ binUnspentBytes blin)) < maxChunk
+                    -- if (binTxPayloadLeft blin) < maxChunk
                         then (binTxPayloadLeft blin) - (B.length $ binUnspentBytes blin)
                         else maxChunk
-            debug lg $ msg (" | Tx payload left " ++ show (binTxPayloadLeft blin))
-            debug lg $ msg (" | Bytes prev unspent " ++ show (B.length $ binUnspentBytes blin))
-            debug lg $ msg (" | Bytes to read " ++ show len)
+            -- debug lg $ msg (" | Tx payload left " ++ show (binTxPayloadLeft blin))
+            -- debug lg $ msg (" | Bytes prev unspent " ++ show (B.length $ binUnspentBytes blin))
+            -- debug lg $ msg (" | Bytes to read " ++ show len)
             nbyt <- liftIO $ recvAll sock len
             let txbyt = (binUnspentBytes blin) `B.append` nbyt
             case runGetState (getConfirmedTx) txbyt 0 of
@@ -491,7 +498,9 @@ handleIncomingMessages pr = do
     bp2pEnv <- getBitcoinP2P
     lg <- getLogger
     debug lg $ msg $ (val "reading from: ") +++ show (bpAddress pr)
-    res <- LE.try $ runStream $ S.repeatM (readNextMessage' pr) & S.mapM (messageHandler pr) & S.mapM (logMessage)
+    res <-
+        LE.try $
+        runStream $ asyncly $ S.repeatM (readNextMessage' pr) & S.mapM (messageHandler pr) & S.mapM (logMessage)
     case res of
         Right () -> return ()
         Left (e :: SomeException) -> do
