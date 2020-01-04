@@ -337,7 +337,7 @@ processConfTransaction tx bhash txind blkht = do
                                                   TxIDNotFoundRetryException -> True
                                                   otherwise -> False)
                                          120
-                                         (getAddressFromOutpoint_DUMMY conn net $ prevOutput b)
+                                         (getAddressFromOutpoint conn net $ prevOutput b)
                                  case (ma) of
                                      Just x ->
                                          case addrToString net x of
@@ -379,33 +379,25 @@ processConfTransaction tx bhash txind blkht = do
 
 --
 --
--- REMOVE THIS !!!!!!!!!!!!!!!!
---
-getAddressFromOutpoint_DUMMY :: Q.ClientState -> Network -> OutPoint -> IO (Maybe Address)
-getAddressFromOutpoint_DUMMY conn net outPoint = do
-    return $ stringToAddr net "1Q6v5VAUHjrDJiqwCGtwQpxMs4R3R4Gsw4"
-
 --
 --
---
---
-getAddressFromOutpoint :: (HasLogger m, MonadIO m) => Q.ClientState -> Network -> OutPoint -> m (Maybe Address)
+getAddressFromOutpoint :: Q.ClientState -> Network -> OutPoint -> IO (Maybe Address)
 getAddressFromOutpoint conn net outPoint = do
-    lg <- getLogger
     let str = "SELECT tx_serialized from xoken.transactions where tx_id = ?"
         qstr = str :: Q.QueryString Q.R (Identity Text) (Identity Blob)
         p = Q.defQueryParams Q.One $ Identity $ txHashToHex $ outPointHash outPoint
     iop <- Q.runClient conn (Q.query qstr p)
     if L.length iop == 0
+            -- debug lg $ LG.msg ("(retry) TxID not found: " ++ (show $ txHashToHex $ outPointHash outPoint))
         then do
-            debug lg $ LG.msg ("(retry) TxID not found: " ++ (show $ txHashToHex $ outPointHash outPoint))
             liftIO $ threadDelay (1000000 * 1)
             throw TxIDNotFoundRetryException
         else do
             let txbyt = runIdentity $ iop !! 0
             case runGetLazy (getConfirmedTx) (fromBlob txbyt) of
-                Left e -> do
-                    debug lg $ LG.msg (encodeHex $ BSL.toStrict $ fromBlob txbyt)
+                Left e
+                    -- debug lg $ LG.msg (encodeHex $ BSL.toStrict $ fromBlob txbyt)
+                 -> do
                     throw DBTxParseException
                 Right (txd) -> do
                     case txd of

@@ -300,8 +300,8 @@ insertMerkleSubTree leaves inodes = do
             then " CREATE " <> cyCreate
             else " MATCH " <> cyMatch <> " CREATE " <> cyCreate
     txtTx i = txHashToHex $ TxHash $ fromJust i
-    vars m = Prelude.map (\x -> Data.Text.filter (isAlpha) $ Data.Text.take 24 $ txtTx x) (m)
-    var m = Data.Text.filter (isAlpha) $ Data.Text.take 24 $ txtTx m
+    vars m = Prelude.map (\x -> Data.Text.filter (isAlpha) $ Data.Text.take 36 $ txtTx x) (m)
+    var m = Data.Text.filter (isAlpha) $ Data.Text.take 36 $ txtTx m
     bool2Text cond =
         if cond
             then Data.Text.pack " TRUE "
