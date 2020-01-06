@@ -10,7 +10,7 @@
 
 module Network.Xoken.Node.P2P.PeerManager
     ( createSocket
-    , setupPeerConnection
+    , setupSeedPeerConnection
     , initPeerListeners
     ) where
 
@@ -83,8 +83,16 @@ createSocketWithOptions options addr = do
         Right () -> return $ Just sock
         Left (e :: IOException) -> throw $ SocketConnectException (addrAddress addr)
 
-setupPeerConnection :: (HasXokenNodeEnv env m, MonadIO m) => m ()
-setupPeerConnection = do
+createSocketFromSockAddr :: SockAddr -> IO (Maybe Socket)
+createSocketFromSockAddr saddr = do
+    sock <- socket AF_INET Stream defaultProtocol
+    res <- try $ connect sock saddr
+    case res of
+        Right () -> return $ Just sock
+        Left (e :: IOException) -> throw $ SocketConnectException (saddr)
+
+setupSeedPeerConnection :: (HasXokenNodeEnv env m, MonadIO m) => m ()
+setupSeedPeerConnection = do
     bp2pEnv <- getBitcoinP2P
     lg <- getLogger
     let net = bncNet $ bitcoinNodeConfig bp2pEnv
@@ -117,18 +125,51 @@ setupPeerConnection = do
         Left (SocketConnectException addr) -> err lg $ msg ("SocketConnectException: " ++ show addr)
     return ()
 
+setupPeerConnection :: (HasXokenNodeEnv env m, MonadIO m) => SockAddr -> m ()
+setupPeerConnection saddr = do
+    bp2pEnv <- getBitcoinP2P
+    lg <- getLogger
+    let net = bncNet $ bitcoinNodeConfig bp2pEnv
+    allpr <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
+    case M.lookup saddr allpr of
+        Just pr ->
+            if bpConnected pr
+                then debug lg $ msg ("Peer already connected, ignoring.. " ++ show saddr)
+                else do
+                    res <- LE.try $ liftIO $ createSocketFromSockAddr saddr
+                    case res of
+                        Right (sock) -> do
+                            rl <- liftIO $ newMVar True
+                            wl <- liftIO $ newMVar True
+                            ss <- liftIO $ newTVarIO Nothing
+                            case sock of
+                                Just sx -> do
+                                    fl <- doVersionHandshake net sx $ saddr
+                                    let bp = BitcoinPeer (saddr) sock rl wl fl Nothing 99999 Nothing ss
+                                    liftIO $ atomically $ modifyTVar (bitcoinPeers bp2pEnv) (M.insert (saddr) bp)
+                                Nothing -> return ()
+                        Left (SocketConnectException addr) -> err lg $ msg ("SocketConnectException: " ++ show addr)
+                    return ()
+        Nothing -> undefined
+
 -- Helper Functions
-recvAll :: Socket -> Int -> IO B.ByteString
+recvAll :: (HasLogger m, MonadIO m) => Socket -> Int -> m B.ByteString
 recvAll sock len = do
+    lg <- getLogger
     if len > 0
         then do
-            res <- try $ SB.recv sock len
+            res <- liftIO $ try $ SB.recv sock len
             case res of
                 Left (e :: IOException) -> throw SocketReadException
-                Right msg ->
-                    if B.length msg == len
-                        then return msg
-                        else B.append msg <$> recvAll sock (len - B.length msg)
+                Right mesg ->
+                    if B.length mesg == len
+                        then return mesg
+                        else if B.length mesg == 0
+                                 then do
+                                     debug lg $ msg $ val ("Zero length. Conn Closed by peer. ")
+                                     return (B.empty)
+                                 else do
+                                     B.append mesg <$> recvAll sock (len - B.length mesg)
         else return (B.empty)
 
 hashPair :: Hash256 -> Hash256 -> Hash256
@@ -238,7 +279,7 @@ readNextMessage net sock ingss = do
     case ingss of
         Just iss -> do
             let blin = issBlockIngest iss
-                maxChunk = (1024 * 100) - (B.length $ binUnspentBytes blin)
+                maxChunk = (4 * 1024 * 100) - (B.length $ binUnspentBytes blin)
                 len =
                     if (binTxPayloadLeft blin - (B.length $ binUnspentBytes blin)) < maxChunk
                     -- if (binTxPayloadLeft blin) < maxChunk
@@ -247,7 +288,7 @@ readNextMessage net sock ingss = do
             -- debug lg $ msg (" | Tx payload left " ++ show (binTxPayloadLeft blin))
             -- debug lg $ msg (" | Bytes prev unspent " ++ show (B.length $ binUnspentBytes blin))
             -- debug lg $ msg (" | Bytes to read " ++ show len)
-            nbyt <- liftIO $ recvAll sock len
+            nbyt <- recvAll sock len
             let txbyt = (binUnspentBytes blin) `B.append` nbyt
             case runGetState (getConfirmedTx) txbyt 0 of
                 Left e -> do
@@ -283,7 +324,7 @@ readNextMessage net sock ingss = do
                             debug lg $ msg (txbyt)
                             throw ConfirmedTxParseException
         Nothing -> do
-            hdr <- liftIO $ recvAll sock 24
+            hdr <- recvAll sock 24
             case (decode hdr) of
                 Left e -> do
                     err lg $ msg ("Error decoding incoming message header: " ++ e)
@@ -291,7 +332,7 @@ readNextMessage net sock ingss = do
                 Right (MessageHeader _ cmd len cks) -> do
                     if cmd == MCBlock
                         then do
-                            byts <- liftIO $ recvAll sock (88) -- 80 byte Block header + VarInt (max 8 bytes) Tx count
+                            byts <- recvAll sock (88) -- 80 byte Block header + VarInt (max 8 bytes) Tx count
                             case runGetState (getDeflatedBlock) byts 0 of
                                 Left e -> do
                                     err lg $ msg ("Error, unexpected message header: " ++ e)
@@ -324,7 +365,7 @@ readNextMessage net sock ingss = do
                                 if len == 0
                                     then return hdr
                                     else do
-                                        b <- liftIO $ recvAll sock (fromIntegral len)
+                                        b <- recvAll sock (fromIntegral len)
                                         return (hdr `B.append` b)
                             case runGet (getMessage net) byts of
                                 Left e -> throw MessageParsingException
@@ -387,7 +428,6 @@ messageHandler peer (mm, ingss) = do
                     liftIO $ putMVar (headersWriteLock bp2pEnv) True
                     return $ msgType msg
                 MInv inv -> do
-                    let lst = invList inv
                     mapM_
                         (\x ->
                              if (invType x) == InvBlock
@@ -395,7 +435,14 @@ messageHandler peer (mm, ingss) = do
                                      debug lg $ LG.msg ("Unsolicited INV, a new Block: " ++ (show $ invHash x))
                                      liftIO $ putMVar (bestBlockUpdated bp2pEnv) True -- will trigger a GetHeaders to peers
                                  else return ())
-                        lst
+                        (invList inv)
+                    return $ msgType msg
+                MAddr addrs -> do
+                    mapM_
+                        (\(t, x) -> do
+                             debug lg $ LG.msg ("Received Network Address: " ++ (show $ naAddress x))
+                             setupPeerConnection $ naAddress x)
+                        (addrList addrs)
                     return $ msgType msg
                 MTx tx -> do
                     case ingss of

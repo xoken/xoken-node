@@ -12,6 +12,7 @@ module Network.Xoken.Node.P2P.BlockSync
     ( processBlock
     , processConfTransaction
     , runEgressBlockSync
+    , runPeerSync
     ) where
 
 import Control.Concurrent (threadDelay)
@@ -139,6 +140,26 @@ runEgressBlockSync = do
     case res of
         Right () -> return ()
         Left (e :: SomeException) -> debug lg $ LG.msg ("[ERROR] runEgressBlockSync " ++ show e)
+
+runPeerSync :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
+runPeerSync =
+    forever $ do
+        lg <- getLogger
+        bp2pEnv <- getBitcoinP2P
+        dbe' <- getDB
+        let net = bncNet $ bitcoinNodeConfig bp2pEnv
+        allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
+        mapM_
+            (\(_, pr) ->
+                 case (bpSocket pr) of
+                     Just s -> do
+                         let em = runPut . putMessage net $ (MGetAddr)
+                         res <- liftIO $ try $ sendEncMessage (bpWriteMsgLock pr) s (BSL.fromStrict em)
+                         case res of
+                             Right () -> liftIO $ threadDelay (60 * 1000000)
+                             Left (e :: SomeException) -> debug lg $ LG.msg ("[ERROR] runPeerSync " ++ show e)
+                     Nothing -> debug lg $ LG.msg $ val "Error sending, no connections available")
+            (L.filter (\x -> bpConnected (snd x)) (M.toList allPeers))
 
 markBestSyncedBlock :: (HasLogger m, MonadIO m) => Text -> Int32 -> Q.ClientState -> m ()
 markBestSyncedBlock hash height conn = do

@@ -169,12 +169,13 @@ runNode config dbh bp2p dbg = do
         runAppM
             serviceEnv
             (do initP2P config
-                async setupPeerConnection
+                async setupSeedPeerConnection
                 liftIO $ threadDelay (10 * 1000000)
                 async initPeerListeners
                 async runEgressChainSync
                 async runEgressChainSync
-                runEgressBlockSync)
+                async runEgressBlockSync
+                runPeerSync)
     return ()
 
 data Config =

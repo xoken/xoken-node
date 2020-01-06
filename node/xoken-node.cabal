@@ -40,6 +40,7 @@ executable xoken-node
       Network.Xoken.Node.P2P.PeerManager
       Network.Xoken.Node.XokenService
 
+  ghc-options:  -fprof-auto -fprof-cafs -rtsopts
   hs-source-dirs:
       app, src
 
