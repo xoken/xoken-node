@@ -16,7 +16,7 @@ module Network.Xoken.Node.P2P.BlockSync
     ) where
 
 import Control.Concurrent (threadDelay)
-import Control.Concurrent.Async (mapConcurrently)
+import Control.Concurrent.Async (mapConcurrently, race_)
 import Control.Concurrent.Async.Lifted as LA (async)
 import Control.Concurrent.MVar
 import Control.Concurrent.QSem
@@ -87,7 +87,7 @@ produceGetDataMessage = do
     case bl of
         Just b -> do
             if fl == True
-                then liftIO $ waitQSem (blockFetchBalance bp2pEnv)
+                then liftIO $ race_ (threadDelay $ 120 * 1000000) (liftIO $ waitQSem (blockFetchBalance bp2pEnv))
                 else return ()
             t <- liftIO $ getCurrentTime
             liftIO $
@@ -156,7 +156,7 @@ runPeerSync =
                          let em = runPut . putMessage net $ (MGetAddr)
                          res <- liftIO $ try $ sendEncMessage (bpWriteMsgLock pr) s (BSL.fromStrict em)
                          case res of
-                             Right () -> liftIO $ threadDelay (60 * 1000000)
+                             Right () -> liftIO $ threadDelay (120 * 1000000)
                              Left (e :: SomeException) -> debug lg $ LG.msg ("[ERROR] runPeerSync " ++ show e)
                      Nothing -> debug lg $ LG.msg $ val "Error sending, no connections available")
             (L.filter (\x -> bpConnected (snd x)) (M.toList allPeers))
@@ -231,7 +231,14 @@ getNextBlockToSync = do
                              let sortUnsent = L.sortOn (snd . snd) (M.toList unsent)
                              return (True, Just $ BlockInfo (fst $ head sortUnsent) (snd $ snd $ head sortUnsent))
                          else do
-                             let expired = M.filter (\((RequestSent t), _) -> (diffUTCTime tm t > 300)) sent
+                             lastSync <- liftIO $ readTVarIO $ blockSyncLastTime bp2pEnv
+                             let expired =
+                                     case lastSync of
+                                         Just ls ->
+                                             if (diffUTCTime ls tm > 15)
+                                                 then M.filter (\((RequestSent t), _) -> (diffUTCTime tm t > 15)) sent
+                                                 else M.filter (\((RequestSent t), _) -> (diffUTCTime tm t > 300)) sent
+                                         Nothing -> M.filter (\((RequestSent t), _) -> (diffUTCTime tm t > 300)) sent
                              if M.size expired == 0
                                  then return (False, Nothing)
                                  else return

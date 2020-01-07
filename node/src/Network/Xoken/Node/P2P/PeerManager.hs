@@ -89,7 +89,9 @@ createSocketFromSockAddr saddr = do
     res <- try $ connect sock saddr
     case res of
         Right () -> return $ Just sock
-        Left (e :: IOException) -> throw $ SocketConnectException (saddr)
+        Left (e :: IOException) -> do
+            liftIO $ Network.Socket.close sock
+            throw $ SocketConnectException (saddr)
 
 setupSeedPeerConnection :: (HasXokenNodeEnv env m, MonadIO m) => m ()
 setupSeedPeerConnection = do
@@ -125,37 +127,45 @@ setupSeedPeerConnection = do
         Left (SocketConnectException addr) -> err lg $ msg ("SocketConnectException: " ++ show addr)
     return ()
 
-setupPeerConnection :: (HasXokenNodeEnv env m, MonadIO m) => SockAddr -> m ()
+setupPeerConnection :: (HasXokenNodeEnv env m, MonadIO m) => SockAddr -> m (Maybe BitcoinPeer)
 setupPeerConnection saddr = do
     bp2pEnv <- getBitcoinP2P
     lg <- getLogger
     let net = bncNet $ bitcoinNodeConfig bp2pEnv
     allpr <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
-    case M.lookup saddr allpr of
-        Just pr ->
-            if bpConnected pr
-                then debug lg $ msg ("Peer already connected, ignoring.. " ++ show saddr)
-                else do
-                    res <- LE.try $ liftIO $ createSocketFromSockAddr saddr
-                    case res of
-                        Right (sock) -> do
-                            rl <- liftIO $ newMVar True
-                            wl <- liftIO $ newMVar True
-                            ss <- liftIO $ newTVarIO Nothing
-                            case sock of
-                                Just sx -> do
-                                    fl <- doVersionHandshake net sx $ saddr
-                                    let bp = BitcoinPeer (saddr) sock rl wl fl Nothing 99999 Nothing ss
-                                    liftIO $ atomically $ modifyTVar (bitcoinPeers bp2pEnv) (M.insert (saddr) bp)
-                                Nothing -> return ()
-                        Left (SocketConnectException addr) -> err lg $ msg ("SocketConnectException: " ++ show addr)
-                    return ()
-        Nothing -> undefined
+    let toConn =
+            case M.lookup saddr allpr of
+                Just pr ->
+                    if bpConnected pr
+                        then False
+                        else True
+                Nothing -> True
+    if toConn == False
+        then do
+            debug lg $ msg ("Peer already connected, ignoring.. " ++ show saddr)
+            return Nothing
+        else do
+            res <- LE.try $ liftIO $ createSocketFromSockAddr saddr
+            case res of
+                Right (sock) -> do
+                    rl <- liftIO $ newMVar True
+                    wl <- liftIO $ newMVar True
+                    ss <- liftIO $ newTVarIO Nothing
+                    case sock of
+                        Just sx -> do
+                            debug lg $ LG.msg ("Discovered Net-Address: " ++ (show $ saddr))
+                            fl <- doVersionHandshake net sx $ saddr
+                            let bp = BitcoinPeer (saddr) sock rl wl fl Nothing 99999 Nothing ss
+                            liftIO $ atomically $ modifyTVar (bitcoinPeers bp2pEnv) (M.insert (saddr) bp)
+                            return $ Just bp
+                        Nothing -> return (Nothing)
+                Left (SocketConnectException addr) -> do
+                    err lg $ msg ("SocketConnectException: " ++ show addr)
+                    return Nothing
 
 -- Helper Functions
-recvAll :: (HasLogger m, MonadIO m) => Socket -> Int -> m B.ByteString
+recvAll :: (MonadIO m) => Socket -> Int -> m B.ByteString
 recvAll sock len = do
-    lg <- getLogger
     if len > 0
         then do
             res <- liftIO $ try $ SB.recv sock len
@@ -165,9 +175,7 @@ recvAll sock len = do
                     if B.length mesg == len
                         then return mesg
                         else if B.length mesg == 0
-                                 then do
-                                     debug lg $ msg $ val ("Zero length. Conn Closed by peer. ")
-                                     return (B.empty)
+                                 then throw SocketReadException
                                  else do
                                      B.append mesg <$> recvAll sock (len - B.length mesg)
         else return (B.empty)
@@ -298,6 +306,8 @@ readNextMessage net sock ingss = do
                 Right (tx, unused) -> do
                     case tx of
                         Just t -> do
+                            tm <- liftIO $ getCurrentTime
+                            liftIO $ atomically $ writeTVar (blockSyncLastTime p2pEnv) $ Just tm
                             debug lg $
                                 msg ("Confirmed-Tx: " ++ (show $ txHash t) ++ " unused: " ++ show (B.length unused))
                             nst <-
@@ -440,8 +450,11 @@ messageHandler peer (mm, ingss) = do
                 MAddr addrs -> do
                     mapM_
                         (\(t, x) -> do
-                             debug lg $ LG.msg ("Received Network Address: " ++ (show $ naAddress x))
-                             setupPeerConnection $ naAddress x)
+                             bp <- setupPeerConnection $ naAddress x
+                             LA.async $
+                                 case bp of
+                                     Just p -> handleIncomingMessages p
+                                     Nothing -> return ())
                         (addrList addrs)
                     return $ msgType msg
                 MTx tx -> do
@@ -545,13 +558,15 @@ handleIncomingMessages pr = do
     bp2pEnv <- getBitcoinP2P
     lg <- getLogger
     debug lg $ msg $ (val "reading from: ") +++ show (bpAddress pr)
-    res <-
-        LE.try $
-        runStream $ asyncly $ S.repeatM (readNextMessage' pr) & S.mapM (messageHandler pr) & S.mapM (logMessage)
+    res <- LE.try $ runStream $ S.repeatM (readNextMessage' pr) & S.mapM (messageHandler pr) & S.mapM (logMessage)
     case res of
         Right () -> return ()
         Left (e :: SomeException) -> do
-            debug lg $ msg $ (val "[ERROR] handleIncomingMessages ") +++ (show e)
+            debug lg $ msg $ (val "[ERROR] Closing peer connection ") +++ (show e)
+            case (bpSocket pr) of
+                Just sock -> liftIO $ Network.Socket.close sock
+                Nothing -> return ()
+            liftIO $ atomically $ modifyTVar (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
             return ()
 
 logMessage :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => MessageCommand -> m ()

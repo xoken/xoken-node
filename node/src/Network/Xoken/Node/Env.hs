@@ -49,6 +49,7 @@ data BitcoinP2P =
         , headersWriteLock :: !(MVar Bool)
         , blockFetchBalance :: !QSem
         , blockSyncStatusMap :: !(TVar (M.Map BlockHash (BlockSyncStatus, BlockHeight)))
+        , blockSyncLastTime :: !(TVar (Maybe UTCTime))
         }
 
 class HasBitcoinP2P m where
