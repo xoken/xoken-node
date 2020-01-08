@@ -171,7 +171,7 @@ runNode config dbh bp2p dbg = do
             (do initP2P config
                 async setupSeedPeerConnection
                 liftIO $ threadDelay (10 * 1000000)
-                async initPeerListeners
+                -- async initPeerListeners
                 async runEgressChainSync
                 async runEgressChainSync
                 async runEgressBlockSync
@@ -254,10 +254,11 @@ main = do
     g <- newTVarIO M.empty
     mv <- newMVar True
     hl <- newMVar True
-    bl <- newQSem 5 -- allow N outstanding blocks
+    -- bl <- newQSem 5 -- allow N outstanding blocks
     st <- newTVarIO M.empty
     tm <- newTVarIO Nothing
-    runNode cnf (DatabaseHandles conn gdbState) (BitcoinP2P nodeConfig g mv hl bl st tm) (configDebug conf)
+    fl <- newTVarIO False
+    runNode cnf (DatabaseHandles conn gdbState) (BitcoinP2P nodeConfig g mv hl st tm fl) (configDebug conf)
   where
     opts =
         info (helper <*> config) $

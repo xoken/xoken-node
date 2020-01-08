@@ -47,9 +47,10 @@ data BitcoinP2P =
         , bitcoinPeers :: !(TVar (M.Map SockAddr BitcoinPeer))
         , bestBlockUpdated :: !(MVar Bool)
         , headersWriteLock :: !(MVar Bool)
-        , blockFetchBalance :: !QSem
+        -- , blockFetchBalance :: !QSem
         , blockSyncStatusMap :: !(TVar (M.Map BlockHash (BlockSyncStatus, BlockHeight)))
         , blockSyncLastTime :: !(TVar (Maybe UTCTime))
+        , releaseReqFlag :: !(TVar Bool)
         }
 
 class HasBitcoinP2P m where

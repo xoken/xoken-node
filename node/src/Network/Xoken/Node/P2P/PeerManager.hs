@@ -44,6 +44,7 @@ import Data.Time.Clock.POSIX
 import Data.Word
 import qualified Database.Bolt as BT
 
+import Control.Concurrent (threadDelay)
 import Data.Default
 import Data.Pool
 import qualified Database.CQL.IO as Q
@@ -81,7 +82,9 @@ createSocketWithOptions options addr = do
     res <- try $ connect sock (addrAddress addr)
     case res of
         Right () -> return $ Just sock
-        Left (e :: IOException) -> throw $ SocketConnectException (addrAddress addr)
+        Left (e :: IOException) -> do
+            liftIO $ Network.Socket.close' sock
+            throw $ SocketConnectException (addrAddress addr)
 
 createSocketFromSockAddr :: SockAddr -> IO (Maybe Socket)
 createSocketFromSockAddr saddr = do
@@ -90,42 +93,55 @@ createSocketFromSockAddr saddr = do
     case res of
         Right () -> return $ Just sock
         Left (e :: IOException) -> do
-            liftIO $ Network.Socket.close sock
+            liftIO $ Network.Socket.close' sock
             throw $ SocketConnectException (saddr)
 
 setupSeedPeerConnection :: (HasXokenNodeEnv env m, MonadIO m) => m ()
-setupSeedPeerConnection = do
-    bp2pEnv <- getBitcoinP2P
-    lg <- getLogger
-    let net = bncNet $ bitcoinNodeConfig bp2pEnv
-        seeds = getSeeds net
-        hints = defaultHints {addrSocketType = Stream}
-        port = getDefaultPort net
-    debug lg $ msg $ show seeds
-    let sd = map (\x -> Just (x :: HostName)) seeds
-    addrs <- liftIO $ mapConcurrently (\x -> head <$> getAddrInfo (Just hints) (x) (Just (show port))) sd
-    res <-
-        LE.try $
+setupSeedPeerConnection =
+    forever $ do
+        bp2pEnv <- getBitcoinP2P
+        lg <- getLogger
+        let net = bncNet $ bitcoinNodeConfig bp2pEnv
+            seeds = getSeeds net
+            hints = defaultHints {addrSocketType = Stream, addrFamily = AF_INET}
+            port = getDefaultPort net
+        debug lg $ msg $ show seeds
+        let sd = map (\x -> Just (x :: HostName)) seeds
+        addrs <- liftIO $ mapConcurrently (\x -> head <$> getAddrInfo (Just hints) (x) (Just (show port))) sd
         mapM_
             (\y ->
                  LA.async $ do
-                     sock <- liftIO $ createSocket y
-                     rl <- liftIO $ newMVar True
-                     wl <- liftIO $ newMVar True
-                     ss <- liftIO $ newTVarIO Nothing
-                     case sock of
-                         Just sx -> do
-                             fl <- doVersionHandshake net sx $ addrAddress y
-                             let bp = BitcoinPeer (addrAddress y) sock rl wl fl Nothing 99999 Nothing ss
-                             liftIO $ atomically $ modifyTVar (bitcoinPeers bp2pEnv) (M.insert (addrAddress y) bp)
-                         Nothing -> do
-                             let bp = BitcoinPeer (addrAddress y) sock rl wl False Nothing 99999 Nothing ss
-                             liftIO $ atomically $ modifyTVar (bitcoinPeers bp2pEnv) (M.insert (addrAddress y) bp))
-            addrs
-    case res of
-        Right () -> return ()
-        Left (SocketConnectException addr) -> err lg $ msg ("SocketConnectException: " ++ show addr)
-    return ()
+                     allpr <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
+                     let toConn =
+                             case M.lookup (addrAddress y) allpr of
+                                 Just pr ->
+                                     if bpConnected pr
+                                         then False
+                                         else True
+                                 Nothing -> True
+                     if toConn == False
+                         then do
+                             debug lg $ msg ("Seed peer already connected, ignoring.. " ++ show (addrAddress y))
+                         else do
+                             rl <- liftIO $ newMVar True
+                             wl <- liftIO $ newMVar True
+                             ss <- liftIO $ newTVarIO Nothing
+                             res <- LE.try $ liftIO $ createSocket y
+                             case res of
+                                 Right (sock) -> do
+                                     case sock of
+                                         Just sx -> do
+                                             fl <- doVersionHandshake net sx $ addrAddress y
+                                             let bp = BitcoinPeer (addrAddress y) sock rl wl fl Nothing 99999 Nothing ss
+                                             liftIO $
+                                                 atomically $
+                                                 modifyTVar (bitcoinPeers bp2pEnv) (M.insert (addrAddress y) bp)
+                                             handleIncomingMessages bp
+                                         Nothing -> return ()
+                                 Left (SocketConnectException addr) ->
+                                     err lg $ msg ("SocketConnectException: " ++ show addr))
+            (addrs)
+        liftIO $ threadDelay (120 * 1000000)
 
 setupPeerConnection :: (HasXokenNodeEnv env m, MonadIO m) => SockAddr -> m (Maybe BitcoinPeer)
 setupPeerConnection saddr = do
@@ -390,7 +406,12 @@ doVersionHandshake net sock sa = do
     g <- liftIO $ getStdGen
     now <- round <$> liftIO getPOSIXTime
     myaddr <-
-        liftIO $ head <$> getAddrInfo (Just defaultHints {addrSocketType = Stream}) (Just "192.168.0.106") (Just "3000")
+        liftIO $
+        head <$>
+        getAddrInfo
+            (Just defaultHints {addrSocketType = Stream, addrFamily = AF_INET})
+            (Just "192.168.0.106")
+            (Just "3000")
     let nonce = fst (random g :: (Word64, StdGen))
         ad = NetworkAddress 0 $ addrAddress myaddr -- (SockAddrInet 0 0)
         bb = 1 :: Word32 -- ### TODO: getBestBlock ###
@@ -558,13 +579,15 @@ handleIncomingMessages pr = do
     bp2pEnv <- getBitcoinP2P
     lg <- getLogger
     debug lg $ msg $ (val "reading from: ") +++ show (bpAddress pr)
-    res <- LE.try $ runStream $ S.repeatM (readNextMessage' pr) & S.mapM (messageHandler pr) & S.mapM (logMessage)
+    res <-
+        LE.try $
+        runStream $ asyncly $ S.repeatM (readNextMessage' pr) & S.mapM (messageHandler pr) & S.mapM (logMessage)
     case res of
         Right () -> return ()
         Left (e :: SomeException) -> do
             debug lg $ msg $ (val "[ERROR] Closing peer connection ") +++ (show e)
             case (bpSocket pr) of
-                Just sock -> liftIO $ Network.Socket.close sock
+                Just sock -> liftIO $ Network.Socket.close' sock
                 Nothing -> return ()
             liftIO $ atomically $ modifyTVar (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
             return ()

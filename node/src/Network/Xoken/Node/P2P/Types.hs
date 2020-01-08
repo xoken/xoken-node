@@ -62,6 +62,9 @@ data BitcoinPeer =
       -- ^ Block stream processing state
         }
 
+instance Show BitcoinPeer where
+    show p = (show $ bpAddress p) ++ "/" ++ (show $ bpConnected p)
+
 -- | General node configuration.
 data BitcoinNodeConfig =
     BitcoinNodeConfig
