@@ -131,18 +131,18 @@ runEgressBlockSync =
         allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
         let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
         debug lg $ LG.msg $ ("Connected peers: " ++ (show $ map (\x -> snd x) connPeers))
-        tm <- liftIO $ getCurrentTime
         if L.length connPeers == 0
             then liftIO $ threadDelay (5 * 1000000)
             else do
                 mapM_
                     (\(_, peer) -> do
+                         tm <- liftIO $ getCurrentTime
                          fw <- liftIO $ readTVarIO $ bpBlockFetchWindow peer
                          recvtm <- liftIO $ readTVarIO $ bpLastBlockRecvTime peer
                          sendtm <- liftIO $ readTVarIO $ bpLastGetDataSent peer
                          case recvtm of
                              Just rt -> do
-                                 if (fw < 8) && (diffUTCTime tm rt < 15)
+                                 if (fw < 4) && (diffUTCTime tm rt < 30)
                                      then do
                                          msg <- produceGetDataMessage
                                          res <- LE.try $ sendRequestMessages peer msg
@@ -154,7 +154,7 @@ runEgressBlockSync =
                                                      atomically $ modifyTVar (bpBlockFetchWindow peer) (\z -> z + 1)
                                              Left (e :: SomeException) ->
                                                  debug lg $ LG.msg ("[ERROR] runEgressBlockSync " ++ show e)
-                                     else if (diffUTCTime tm rt > 15) && (fw > 0)
+                                     else if (diffUTCTime tm rt > 30) && (fw > 0)
                                               then do
                                                   debug lg $ msg ("Removing unresponsive peer. (1)" ++ show peer)
                                                   case bpSocket peer of
@@ -168,7 +168,7 @@ runEgressBlockSync =
                               -> do
                                  case sendtm of
                                      Just st -> do
-                                         if (diffUTCTime tm st > 15)
+                                         if (diffUTCTime tm st > 30)
                                              then do
                                                  debug lg $ msg ("Removing unresponsive peer. (2)" ++ show peer)
                                                  case bpSocket peer of
@@ -283,7 +283,7 @@ getNextBlockToSync = do
                              let sortUnsent = L.sortOn (snd . snd) (M.toList unsent)
                              return (True, Just $ BlockInfo (fst $ head sortUnsent) (snd $ snd $ head sortUnsent))
                          else do
-                             let recvNotStarted = M.filter (\((RequestSent t), _) -> (diffUTCTime tm t > 5)) sent
+                             let recvNotStarted = M.filter (\((RequestSent t), _) -> (diffUTCTime tm t > 15)) sent
                              if M.size recvNotStarted == 0
                                  then return (False, Nothing)
                                  else return

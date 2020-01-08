@@ -103,7 +103,7 @@ setupSeedPeerConnection =
         lg <- getLogger
         let net = bncNet $ bitcoinNodeConfig bp2pEnv
             seeds = getSeeds net
-            hints = defaultHints {addrSocketType = Stream, addrFamily = AF_INET}
+            hints = defaultHints {addrSocketType = Stream}
             port = getDefaultPort net
         debug lg $ msg $ show seeds
         let sd = map (\x -> Just (x :: HostName)) seeds
@@ -159,7 +159,7 @@ setupSeedPeerConnection =
                                  Left (SocketConnectException addr) ->
                                      err lg $ msg ("SocketConnectException: " ++ show addr))
             (addrs)
-        liftIO $ threadDelay (120 * 1000000)
+        liftIO $ threadDelay (60 * 1000000)
 
 --
 --
@@ -318,7 +318,7 @@ updateMerkleSubTrees hashMap newhash left right ht ind final = do
                                  then GT
                                  else LT)
                         match
-            debug lg $ msg $ show create ++ show finMatch
+            -- debug lg $ msg $ show create ++ show finMatch
             if L.length create == 1 && L.length finMatch == 0
                 then return (state, [])
                 else do
@@ -453,8 +453,8 @@ doVersionHandshake net sock sa = do
         liftIO $
         head <$>
         getAddrInfo
-            (Just defaultHints {addrSocketType = Stream, addrFamily = AF_INET})
-            (Just "192.168.0.106")
+            (Just defaultHints {addrSocketType = Stream})
+            (Just "51.89.40.95") -- "192.168.0.106")
             (Just "3000")
     let nonce = fst (random g :: (Word64, StdGen))
         ad = NetworkAddress 0 $ addrAddress myaddr -- (SockAddrInet 0 0)
@@ -462,6 +462,7 @@ doVersionHandshake net sock sa = do
         rmt = NetworkAddress 0 sa
         ver = buildVersion net nonce bb ad rmt now
         em = runPut . putMessage net $ (MVersion ver)
+    debug lg $ msg ("ADD: " ++ show ad)
     mv <- liftIO $ (newMVar True)
     liftIO $ sendEncMessage mv sock (BSL.fromStrict em)
     (hs1, _) <- readNextMessage net sock Nothing
@@ -555,6 +556,15 @@ messageHandler peer (mm, ingss) = do
                         Left EmptyHeadersMessageException -> return ()
                         Left e -> debug lg $ LG.msg ("[ERROR] Unhandled exception!" ++ show e) >> throw e
                     return $ msgType msg
+                MPing ping -> do
+                    bp2pEnv <- getBitcoinP2P
+                    let net = bncNet $ bitcoinNodeConfig bp2pEnv
+                    let em = runPut . putMessage net $ (MPong $ Pong (pingNonce ping))
+                    case (bpSocket peer) of
+                        Just sock -> do
+                            liftIO $ sendEncMessage (bpWriteMsgLock peer) sock (BSL.fromStrict em)
+                            return $ msgType msg
+                        Nothing -> return $ msgType msg
                 _ -> do
                     return $ msgType msg
         Nothing -> do

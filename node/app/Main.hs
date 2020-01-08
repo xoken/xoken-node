@@ -174,8 +174,8 @@ runNode config dbh bp2p dbg = do
                 async runEgressChainSync
                 async runEgressChainSync
                 async runEgressBlockSync
-                async runPeerSync
-                terminateStalePeers)
+                runPeerSync)
+                -- terminateStalePeers)
     return ()
 
 data Config =
