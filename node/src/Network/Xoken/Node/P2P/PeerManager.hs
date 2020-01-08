@@ -128,6 +128,9 @@ setupSeedPeerConnection =
                              ss <- liftIO $ newTVarIO Nothing
                              imc <- liftIO $ newTVarIO 0
                              res <- LE.try $ liftIO $ createSocket y
+                             rc <- liftIO $ newTVarIO Nothing
+                             st <- liftIO $ newTVarIO Nothing
+                             fw <- liftIO $ newTVarIO 0
                              case res of
                                  Right (sock) -> do
                                      case sock of
@@ -145,6 +148,9 @@ setupSeedPeerConnection =
                                                          Nothing
                                                          ss
                                                          imc
+                                                         rc
+                                                         st
+                                                         fw
                                              liftIO $
                                                  atomically $
                                                  modifyTVar (bitcoinPeers bp2pEnv) (M.insert (addrAddress y) bp)
@@ -205,11 +211,14 @@ setupPeerConnection saddr = do
                     wl <- liftIO $ newMVar True
                     ss <- liftIO $ newTVarIO Nothing
                     imc <- liftIO $ newTVarIO 0
+                    rc <- liftIO $ newTVarIO Nothing
+                    st <- liftIO $ newTVarIO Nothing
+                    fw <- liftIO $ newTVarIO 0
                     case sock of
                         Just sx -> do
                             debug lg $ LG.msg ("Discovered Net-Address: " ++ (show $ saddr))
                             fl <- doVersionHandshake net sx $ saddr
-                            let bp = BitcoinPeer (saddr) sock rl wl fl Nothing 99999 Nothing ss imc
+                            let bp = BitcoinPeer (saddr) sock rl wl fl Nothing 99999 Nothing ss imc rc st fw
                             liftIO $ atomically $ modifyTVar (bitcoinPeers bp2pEnv) (M.insert (saddr) bp)
                             return $ Just bp
                         Nothing -> return (Nothing)
@@ -230,8 +239,7 @@ recvAll sock len = do
                         then return mesg
                         else if B.length mesg == 0
                                  then throw ZeroLengthSocketReadException
-                                 else do
-                                     B.append mesg <$> recvAll sock (len - B.length mesg)
+                                 else B.append mesg <$> recvAll sock (len - B.length mesg)
         else return (B.empty)
 
 hashPair :: Hash256 -> Hash256 -> Hash256
@@ -360,8 +368,6 @@ readNextMessage net sock ingss = do
                 Right (tx, unused) -> do
                     case tx of
                         Just t -> do
-                            tm <- liftIO $ getCurrentTime
-                            liftIO $ atomically $ writeTVar (blockSyncLastTime p2pEnv) $ Just tm
                             debug lg $
                                 msg ("Confirmed-Tx: " ++ (show $ txHash t) ++ " unused: " ++ show (B.length unused))
                             nst <-
@@ -585,6 +591,15 @@ readNextMessage' peer = do
                                              0
                                              (M.empty, []))
                             liftIO $ atomically $ writeTVar (bpIngressState peer) $ iz
+                            tm <- liftIO $ getCurrentTime
+                            liftIO $ atomically $ writeTVar (bpLastBlockRecvTime peer) $ Just tm
+                            liftIO $ atomically $ modifyTVar (bpBlockFetchWindow peer) (\z -> z - 1)
+                            -- BlockReceiveStarted
+                            liftIO $
+                                atomically $
+                                modifyTVar'
+                                    (blockSyncStatusMap bp2pEnv)
+                                    (M.insert (hh) $ (BlockReceiveStarted, ht)) -- mark block receive started
                         Just (MTx ctx) -> do
                             if binTxTotalCount ingst == binTxProcessed ingst
                                 then do

@@ -256,9 +256,9 @@ main = do
     hl <- newMVar True
     -- bl <- newQSem 5 -- allow N outstanding blocks
     st <- newTVarIO M.empty
-    tm <- newTVarIO Nothing
-    fl <- newTVarIO False
-    runNode cnf (DatabaseHandles conn gdbState) (BitcoinP2P nodeConfig g mv hl st tm fl) (configDebug conf)
+    -- tm <- newTVarIO Nothing
+    -- fl <- newTVarIO False
+    runNode cnf (DatabaseHandles conn gdbState) (BitcoinP2P nodeConfig g mv hl st) (configDebug conf)
   where
     opts =
         info (helper <*> config) $

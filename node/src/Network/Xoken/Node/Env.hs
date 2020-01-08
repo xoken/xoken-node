@@ -10,7 +10,7 @@ module Network.Xoken.Node.Env where
 import Arivi.P2P.P2PEnv as PE hiding (option)
 import Codec.Serialise
 import Control.Concurrent.MVar
-import Control.Concurrent.QSem
+
 import Control.Concurrent.STM.TVar
 import Control.Monad.Catch
 import Control.Monad.Reader
@@ -47,10 +47,7 @@ data BitcoinP2P =
         , bitcoinPeers :: !(TVar (M.Map SockAddr BitcoinPeer))
         , bestBlockUpdated :: !(MVar Bool)
         , headersWriteLock :: !(MVar Bool)
-        -- , blockFetchBalance :: !QSem
         , blockSyncStatusMap :: !(TVar (M.Map BlockHash (BlockSyncStatus, BlockHeight)))
-        , blockSyncLastTime :: !(TVar (Maybe UTCTime))
-        , releaseReqFlag :: !(TVar Bool)
         }
 
 class HasBitcoinP2P m where

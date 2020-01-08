@@ -5,6 +5,7 @@
 module Network.Xoken.Node.P2P.Types where
 
 import Control.Concurrent.MVar
+import Control.Concurrent.QSem
 import Control.Concurrent.STM
 import qualified Data.ByteString as B
 import Data.Functor.Identity
@@ -61,6 +62,12 @@ data BitcoinPeer =
         , bpIngressState :: !(TVar (Maybe IngressStreamState))
       -- ^ Block stream processing state
         , bpIngressMsgCount :: !(TVar Int)
+      -- ^ last Block received time
+        , bpLastBlockRecvTime :: !(TVar (Maybe UTCTime))
+      -- ^ last GetData Sent time
+        , bpLastGetDataSent :: !(TVar (Maybe UTCTime))
+      -- ^ block 'GetData' recv window
+        , bpBlockFetchWindow :: !(TVar Int)
         }
 
 instance Show BitcoinPeer where
@@ -128,6 +135,7 @@ data BlockSyncStatus
     = RequestSent !UTCTime
     | RequestQueued
     | BlockReceived
+    | BlockReceiveStarted
     deriving (Eq, Ord, Show)
 
 -- import Type
