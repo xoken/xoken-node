@@ -171,11 +171,11 @@ runNode config dbh bp2p dbg = do
             (do initP2P config
                 async setupSeedPeerConnection
                 liftIO $ threadDelay (10 * 1000000)
-                -- async initPeerListeners
                 async runEgressChainSync
                 async runEgressChainSync
                 async runEgressBlockSync
-                runPeerSync)
+                async runPeerSync
+                terminateStalePeers)
     return ()
 
 data Config =

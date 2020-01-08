@@ -141,7 +141,7 @@ sendRequestMessages mmsg = do
 runEgressBlockSync :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
 runEgressBlockSync = do
     lg <- getLogger
-    res <- LE.try $ runStream $ (S.repeatM produceGetDataMessage) & (S.mapM sendRequestMessages)
+    res <- LE.try $ S.drain $ (S.repeatM produceGetDataMessage) & (S.mapM sendRequestMessages)
     case res of
         Right () -> return ()
         Left (e :: SomeException) -> debug lg $ LG.msg ("[ERROR] runEgressBlockSync " ++ show e)
@@ -239,18 +239,21 @@ getNextBlockToSync = do
                              return (True, Just $ BlockInfo (fst $ head sortUnsent) (snd $ snd $ head sortUnsent))
                          else do
                              lastSync <- liftIO $ readTVarIO $ blockSyncLastTime bp2pEnv
-                             case lastSync of
-                                 Just ls -> do
-                                     debug lg $ LG.msg $ ("Time since lastSync: " ++ show (diffUTCTime tm ls))
-                                     if (diffUTCTime tm ls > 6)
-                                         then liftIO $ atomically $ writeTVar (releaseReqFlag bp2pEnv) True
-                                         else return ()
-                                 Nothing -> return ()
-                             flg <- liftIO $ readTVarIO (releaseReqFlag bp2pEnv)
+                             -- case lastSync of
+                             --     Just ls -> do
+                             --         debug lg $ LG.msg $ ("Time since lastSync: " ++ show (diffUTCTime tm ls))
+                             --         if (diffUTCTime tm ls > 10)
+                             --             then liftIO $ atomically $ writeTVar (releaseReqFlag bp2pEnv) True
+                             --             else return ()
+                             --     Nothing -> return ()
+                             -- flg <- liftIO $ readTVarIO (releaseReqFlag bp2pEnv)
                              let expired =
-                                     if (flg)
-                                         then M.filter (\((RequestSent t), _) -> (diffUTCTime tm t > 6)) sent
-                                         else M.filter (\((RequestSent t), _) -> (diffUTCTime tm t > 300)) sent
+                                     case lastSync of
+                                         Just ls ->
+                                             if (diffUTCTime tm ls > 5)
+                                                 then M.filter (\((RequestSent t), _) -> (diffUTCTime tm t > 5)) sent
+                                                 else M.filter (\((RequestSent t), _) -> (diffUTCTime tm t > 300)) sent
+                                         Nothing -> M.filter (\((RequestSent t), _) -> (diffUTCTime tm t > 5)) sent
                              if M.size expired == 0
                                  then return (False, Nothing)
                                  else return
@@ -311,7 +314,7 @@ commitAddressOutputs conn addr typeRecv otherAddr output blockInfo prevOutpoint 
     case res1 of
         Right () -> return ()
         Left (e :: SomeException) -> do
-            debug lg $ LG.msg $ "Error: INSERTing into 'address_outputs': " ++ show e
+            err lg $ LG.msg $ "Error: INSERTing into 'address_outputs': " ++ show e
             throw KeyValueDBInsertException
 
 processConfTransaction :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Tx -> BlockHash -> Int -> Int -> m ()
@@ -334,7 +337,7 @@ processConfTransaction tx bhash txind blkht = do
     case res of
         Right () -> return ()
         Left (e :: SomeException) -> do
-            liftIO $ debug lg $ LG.msg ("Error: INSERTing into 'xoken.transactions': " ++ show e)
+            liftIO $ err lg $ LG.msg ("Error: INSERTing into 'xoken.transactions': " ++ show par)
             throw KeyValueDBInsertException
     --
     let inAddrs =

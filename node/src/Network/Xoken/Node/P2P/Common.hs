@@ -97,6 +97,7 @@ data PeerMessageException
     | DeflatedBlockParseException
     | ConfirmedTxParseException
     | PeerSocketNotConnectedException
+    | ZeroLengthSocketReadException
     deriving (Show)
 
 instance Exception PeerMessageException

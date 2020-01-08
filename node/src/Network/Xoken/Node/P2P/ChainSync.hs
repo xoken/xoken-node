@@ -134,7 +134,7 @@ msgOrder m1 m2 = do
 runEgressChainSync :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
 runEgressChainSync = do
     lg <- getLogger
-    res <- LE.try $ runStream $ (S.repeatM produceGetHeadersMessage) & (S.mapM sendRequestMessages)
+    res <- LE.try $ S.drain $ (S.repeatM produceGetHeadersMessage) & (S.mapM sendRequestMessages)
     case res of
         Right () -> return ()
         Left (e :: SomeException) -> debug lg $ LG.msg $ "[ERROR] runEgressChainSync " ++ show e

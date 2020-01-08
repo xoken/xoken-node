@@ -36,9 +36,9 @@ type HasXokenNodeEnv env m
 
 data XokenNodeEnv =
     XokenNodeEnv
-        { bitcoinP2PEnv :: BitcoinP2P
-        , dbHandles :: DatabaseHandles
-        , loggerEnv :: Logger
+        { bitcoinP2PEnv :: !BitcoinP2P
+        , dbHandles :: !DatabaseHandles
+        , loggerEnv :: !Logger
         }
 
 data BitcoinP2P =
@@ -64,8 +64,8 @@ class HasDatabaseHandles m where
 
 data ServiceEnv m r t rmsg pmsg =
     ServiceEnv
-        { xokenNodeEnv :: XokenNodeEnv
-        , p2pEnv :: P2PEnv m r t rmsg pmsg
+        { xokenNodeEnv :: !XokenNodeEnv
+        , p2pEnv :: !(P2PEnv m r t rmsg pmsg)
         }
 
 data ServiceResource =

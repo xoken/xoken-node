@@ -11,7 +11,7 @@
 module Network.Xoken.Node.P2P.PeerManager
     ( createSocket
     , setupSeedPeerConnection
-    , initPeerListeners
+    , terminateStalePeers
     ) where
 
 import Control.Concurrent.Async (mapConcurrently)
@@ -66,7 +66,7 @@ import Network.Xoken.Node.P2P.Types
 import Network.Xoken.Transaction.Common
 import Network.Xoken.Util
 import Streamly
-import Streamly.Prelude ((|:), nil)
+import Streamly.Prelude ((|:), drain, nil)
 import qualified Streamly.Prelude as S
 import System.Logger as LG
 import System.Logger.Message
@@ -126,13 +126,25 @@ setupSeedPeerConnection =
                              rl <- liftIO $ newMVar True
                              wl <- liftIO $ newMVar True
                              ss <- liftIO $ newTVarIO Nothing
+                             imc <- liftIO $ newTVarIO 0
                              res <- LE.try $ liftIO $ createSocket y
                              case res of
                                  Right (sock) -> do
                                      case sock of
                                          Just sx -> do
                                              fl <- doVersionHandshake net sx $ addrAddress y
-                                             let bp = BitcoinPeer (addrAddress y) sock rl wl fl Nothing 99999 Nothing ss
+                                             let bp =
+                                                     BitcoinPeer
+                                                         (addrAddress y)
+                                                         sock
+                                                         rl
+                                                         wl
+                                                         fl
+                                                         Nothing
+                                                         99999
+                                                         Nothing
+                                                         ss
+                                                         imc
                                              liftIO $
                                                  atomically $
                                                  modifyTVar (bitcoinPeers bp2pEnv) (M.insert (addrAddress y) bp)
@@ -143,6 +155,31 @@ setupSeedPeerConnection =
             (addrs)
         liftIO $ threadDelay (120 * 1000000)
 
+--
+--
+terminateStalePeers :: (HasXokenNodeEnv env m, MonadIO m) => m ()
+terminateStalePeers =
+    forever $ do
+        liftIO $ threadDelay (300 * 1000000)
+        bp2pEnv <- getBitcoinP2P
+        lg <- getLogger
+        allpr <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
+        mapM_
+            (\(_, pr) -> do
+                 msgCt <- liftIO $ readTVarIO $ bpIngressMsgCount pr
+                 if msgCt < 10
+                     then do
+                         debug lg $ msg ("Removing stale (connected) peer. " ++ show pr)
+                         case bpSocket pr of
+                             Just sock -> liftIO $ close' $ sock
+                             Nothing -> return ()
+                         liftIO $ atomically $ modifyTVar (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
+                     else do
+                         debug lg $ msg ("Peer is active, remain connected. " ++ show pr))
+            (M.toList allpr)
+
+--
+--
 setupPeerConnection :: (HasXokenNodeEnv env m, MonadIO m) => SockAddr -> m (Maybe BitcoinPeer)
 setupPeerConnection saddr = do
     bp2pEnv <- getBitcoinP2P
@@ -167,11 +204,12 @@ setupPeerConnection saddr = do
                     rl <- liftIO $ newMVar True
                     wl <- liftIO $ newMVar True
                     ss <- liftIO $ newTVarIO Nothing
+                    imc <- liftIO $ newTVarIO 0
                     case sock of
                         Just sx -> do
                             debug lg $ LG.msg ("Discovered Net-Address: " ++ (show $ saddr))
                             fl <- doVersionHandshake net sx $ saddr
-                            let bp = BitcoinPeer (saddr) sock rl wl fl Nothing 99999 Nothing ss
+                            let bp = BitcoinPeer (saddr) sock rl wl fl Nothing 99999 Nothing ss imc
                             liftIO $ atomically $ modifyTVar (bitcoinPeers bp2pEnv) (M.insert (saddr) bp)
                             return $ Just bp
                         Nothing -> return (Nothing)
@@ -191,7 +229,7 @@ recvAll sock len = do
                     if B.length mesg == len
                         then return mesg
                         else if B.length mesg == 0
-                                 then throw SocketReadException
+                                 then throw ZeroLengthSocketReadException
                                  else do
                                      B.append mesg <$> recvAll sock (len - B.length mesg)
         else return (B.empty)
@@ -566,22 +604,12 @@ readNextMessage' peer = do
             return (msg, ingressState)
         Nothing -> throw PeerSocketNotConnectedException
 
-initPeerListeners :: (HasService env m) => m ()
-initPeerListeners = do
-    bp2pEnv <- getBitcoinP2P
-    allpr <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
-    let conpr = L.filter (\x -> bpConnected (snd x)) (M.toList allpr)
-    mapM_ (\pr -> LA.async $ handleIncomingMessages $ snd pr) conpr
-    return ()
-
 handleIncomingMessages :: (HasXokenNodeEnv env m, MonadIO m) => BitcoinPeer -> m ()
 handleIncomingMessages pr = do
     bp2pEnv <- getBitcoinP2P
     lg <- getLogger
     debug lg $ msg $ (val "reading from: ") +++ show (bpAddress pr)
-    res <-
-        LE.try $
-        runStream $ asyncly $ S.repeatM (readNextMessage' pr) & S.mapM (messageHandler pr) & S.mapM (logMessage)
+    res <- LE.try $ S.drain $ S.repeatM (readNextMessage' pr) & S.mapM (messageHandler pr) & S.mapM (logMessage pr)
     case res of
         Right () -> return ()
         Left (e :: SomeException) -> do
@@ -592,8 +620,9 @@ handleIncomingMessages pr = do
             liftIO $ atomically $ modifyTVar (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
             return ()
 
-logMessage :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => MessageCommand -> m ()
-logMessage mg = do
+logMessage :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BitcoinPeer -> MessageCommand -> m ()
+logMessage peer mg = do
     lg <- getLogger
+    liftIO $ atomically $ modifyTVar' (bpIngressMsgCount peer) (\z -> z + 1)
     debug lg $ LG.msg $ "processed: " ++ show mg
     return ()

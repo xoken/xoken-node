@@ -60,10 +60,11 @@ data BitcoinPeer =
       -- ^ last sent ping time and nonce
         , bpIngressState :: !(TVar (Maybe IngressStreamState))
       -- ^ Block stream processing state
+        , bpIngressMsgCount :: !(TVar Int)
         }
 
 instance Show BitcoinPeer where
-    show p = (show $ bpAddress p) ++ "/" ++ (show $ bpConnected p)
+    show p = (show $ bpAddress p) ++ " : " ++ (show $ bpConnected p)
 
 -- | General node configuration.
 data BitcoinNodeConfig =
@@ -91,10 +92,10 @@ data BlockInfo =
 
 data MerkleNode =
     MerkleNode
-        { node :: Maybe Hash256
-        , leftChild :: Maybe Hash256
-        , rightChild :: Maybe Hash256
-        , isLeft :: Bool
+        { node :: !(Maybe Hash256)
+        , leftChild :: !(Maybe Hash256)
+        , rightChild :: !(Maybe Hash256)
+        , isLeft :: !Bool
         }
     deriving (Show, Eq, Ord)
 
@@ -133,5 +134,5 @@ data BlockSyncStatus
 -- |A pool of connections to Neo4j server
 data ServerState =
     ServerState
-        { pool :: Pool Pipe
+        { pool :: !(Pool Pipe)
         }
