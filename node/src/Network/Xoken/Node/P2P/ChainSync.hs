@@ -228,7 +228,7 @@ processHeaders hdrs = do
                 else if (blockHashToHex $ fst bb) == headPrevHash
                          then debug lg $ LG.msg $ val "Links okay!"
                          else do
-                             debug lg $ LG.msg $ val "Does not match DB best-block"
+                             err lg $ LG.msg $ val "Does not match DB best-block"
                              throw BlockHashNotFoundException -- likely a previously sync'd block
             let indexed = zip [((snd bb) + 1) ..] (headersList hdrs)
                 str1 = "insert INTO xoken.blocks_by_hash (block_hash, block_header, block_height) values (?, ? , ? )"
@@ -247,13 +247,13 @@ processHeaders hdrs = do
                          Right () -> return ()
                          Left (e :: SomeException) ->
                              liftIO $ do
-                                 debug lg $ LG.msg ("Error: INSERT into 'blocks_hash' failed: " ++ show e)
+                                 err lg $ LG.msg ("Error: INSERT into 'blocks_hash' failed: " ++ show e)
                                  throw KeyValueDBInsertException
                      res2 <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr2) par2)
                      case res2 of
                          Right () -> return ()
                          Left (e :: SomeException) -> do
-                             debug lg $ LG.msg ("Error: INSERT into 'blocks_by_height' failed: " ++ show e)
+                             err lg $ LG.msg ("Error: INSERT into 'blocks_by_height' failed: " ++ show e)
                              throw KeyValueDBInsertException)
                 indexed
             markBestBlock (blockHashToHex $ headerHash $ fst $ snd $ last $ indexed) (fst $ last indexed) conn

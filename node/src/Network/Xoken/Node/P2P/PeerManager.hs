@@ -112,52 +112,56 @@ setupSeedPeerConnection =
             (\y ->
                  LA.async $ do
                      allpr <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
-                     let toConn =
-                             case M.lookup (addrAddress y) allpr of
-                                 Just pr ->
-                                     if bpConnected pr
-                                         then False
-                                         else True
-                                 Nothing -> True
-                     if toConn == False
-                         then do
-                             debug lg $ msg ("Seed peer already connected, ignoring.. " ++ show (addrAddress y))
+                     let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allpr)
+                     if L.length connPeers > 10
+                         then liftIO $ threadDelay (10 * 1000000)
                          else do
-                             rl <- liftIO $ newMVar True
-                             wl <- liftIO $ newMVar True
-                             ss <- liftIO $ newTVarIO Nothing
-                             imc <- liftIO $ newTVarIO 0
-                             res <- LE.try $ liftIO $ createSocket y
-                             rc <- liftIO $ newTVarIO Nothing
-                             st <- liftIO $ newTVarIO Nothing
-                             fw <- liftIO $ newTVarIO 0
-                             case res of
-                                 Right (sock) -> do
-                                     case sock of
-                                         Just sx -> do
-                                             fl <- doVersionHandshake net sx $ addrAddress y
-                                             let bp =
-                                                     BitcoinPeer
-                                                         (addrAddress y)
-                                                         sock
-                                                         rl
-                                                         wl
-                                                         fl
-                                                         Nothing
-                                                         99999
-                                                         Nothing
-                                                         ss
-                                                         imc
-                                                         rc
-                                                         st
-                                                         fw
-                                             liftIO $
-                                                 atomically $
-                                                 modifyTVar (bitcoinPeers bp2pEnv) (M.insert (addrAddress y) bp)
-                                             handleIncomingMessages bp
-                                         Nothing -> return ()
-                                 Left (SocketConnectException addr) ->
-                                     err lg $ msg ("SocketConnectException: " ++ show addr))
+                             let toConn =
+                                     case M.lookup (addrAddress y) allpr of
+                                         Just pr ->
+                                             if bpConnected pr
+                                                 then False
+                                                 else True
+                                         Nothing -> True
+                             if toConn == False
+                                 then do
+                                     debug lg $ msg ("Seed peer already connected, ignoring.. " ++ show (addrAddress y))
+                                 else do
+                                     rl <- liftIO $ newMVar True
+                                     wl <- liftIO $ newMVar True
+                                     ss <- liftIO $ newTVarIO Nothing
+                                     imc <- liftIO $ newTVarIO 0
+                                     res <- LE.try $ liftIO $ createSocket y
+                                     rc <- liftIO $ newTVarIO Nothing
+                                     st <- liftIO $ newTVarIO Nothing
+                                     fw <- liftIO $ newTVarIO 0
+                                     case res of
+                                         Right (sock) -> do
+                                             case sock of
+                                                 Just sx -> do
+                                                     fl <- doVersionHandshake net sx $ addrAddress y
+                                                     let bp =
+                                                             BitcoinPeer
+                                                                 (addrAddress y)
+                                                                 sock
+                                                                 rl
+                                                                 wl
+                                                                 fl
+                                                                 Nothing
+                                                                 99999
+                                                                 Nothing
+                                                                 ss
+                                                                 imc
+                                                                 rc
+                                                                 st
+                                                                 fw
+                                                     liftIO $
+                                                         atomically $
+                                                         modifyTVar (bitcoinPeers bp2pEnv) (M.insert (addrAddress y) bp)
+                                                     handleIncomingMessages bp
+                                                 Nothing -> return ()
+                                         Left (SocketConnectException addr) ->
+                                             err lg $ msg ("SocketConnectException: " ++ show addr))
             (addrs)
         liftIO $ threadDelay (120 * 1000000)
 
