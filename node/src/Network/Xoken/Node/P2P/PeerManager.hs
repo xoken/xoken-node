@@ -83,7 +83,7 @@ createSocketWithOptions options addr = do
     case res of
         Right () -> return $ Just sock
         Left (e :: IOException) -> do
-            liftIO $ Network.Socket.close' sock
+            liftIO $ Network.Socket.close sock
             throw $ SocketConnectException (addrAddress addr)
 
 createSocketFromSockAddr :: SockAddr -> IO (Maybe Socket)
@@ -93,7 +93,7 @@ createSocketFromSockAddr saddr = do
     case res of
         Right () -> return $ Just sock
         Left (e :: IOException) -> do
-            liftIO $ Network.Socket.close' sock
+            liftIO $ Network.Socket.close sock
             throw $ SocketConnectException (saddr)
 
 setupSeedPeerConnection :: (HasXokenNodeEnv env m, MonadIO m) => m ()
@@ -159,7 +159,7 @@ setupSeedPeerConnection =
                                  Left (SocketConnectException addr) ->
                                      err lg $ msg ("SocketConnectException: " ++ show addr))
             (addrs)
-        liftIO $ threadDelay (60 * 1000000)
+        liftIO $ threadDelay (120 * 1000000)
 
 --
 --
@@ -177,7 +177,7 @@ terminateStalePeers =
                      then do
                          debug lg $ msg ("Removing stale (connected) peer. " ++ show pr)
                          case bpSocket pr of
-                             Just sock -> liftIO $ close' $ sock
+                             Just sock -> liftIO $ Network.Socket.close $ sock
                              Nothing -> return ()
                          liftIO $ atomically $ modifyTVar (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
                      else do
@@ -640,7 +640,7 @@ handleIncomingMessages pr = do
         Left (e :: SomeException) -> do
             debug lg $ msg $ (val "[ERROR] Closing peer connection ") +++ (show e)
             case (bpSocket pr) of
-                Just sock -> liftIO $ Network.Socket.close' sock
+                Just sock -> liftIO $ Network.Socket.close sock
                 Nothing -> return ()
             liftIO $ atomically $ modifyTVar (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
             return ()

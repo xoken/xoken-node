@@ -53,7 +53,7 @@ import Data.Time.Clock.POSIX
 import Data.Word
 import qualified Database.CQL.IO as Q
 import Database.CQL.Protocol
-import Network.Socket
+import qualified Network.Socket as NS
 import qualified Network.Socket.ByteString as SB (recv)
 import qualified Network.Socket.ByteString.Lazy as LB (recv, sendAll)
 import Network.Xoken.Address
@@ -82,19 +82,26 @@ produceGetDataMessage :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m (M
 produceGetDataMessage = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    (fl, bl) <- getNextBlockToSync
-    case bl of
-        Just b -> do
-            t <- liftIO $ getCurrentTime
-            liftIO $
-                atomically $
-                modifyTVar (blockSyncStatusMap bp2pEnv) (M.insert (biBlockHash b) $ (RequestSent t, biBlockHeight b))
-            let gd = GetData $ [InvVector InvBlock $ getBlockHash $ biBlockHash b]
-            debug lg $ LG.msg $ "GetData req: " ++ show gd
-            return (Just $ MGetData gd)
-        Nothing -> do
-            debug lg $ LG.msg $ val "producing - empty ..."
-            liftIO $ threadDelay (1000000 * 1)
+    res <- LE.try $ getNextBlockToSync
+    case res of
+        Right ((fl, bl)) -> do
+            case bl of
+                Just b -> do
+                    t <- liftIO $ getCurrentTime
+                    liftIO $
+                        atomically $
+                        modifyTVar
+                            (blockSyncStatusMap bp2pEnv)
+                            (M.insert (biBlockHash b) $ (RequestSent t, biBlockHeight b))
+                    let gd = GetData $ [InvVector InvBlock $ getBlockHash $ biBlockHash b]
+                    debug lg $ LG.msg $ "GetData req: " ++ show gd
+                    return (Just $ MGetData gd)
+                Nothing -> do
+                    debug lg $ LG.msg $ val "producing - empty ..."
+                    liftIO $ threadDelay (1000000 * 1)
+                    return Nothing
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg ("[ERROR] produceGetDataMessage " ++ show e)
             return Nothing
 
 sendRequestMessages :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BitcoinPeer -> Maybe Message -> m ()
@@ -142,7 +149,7 @@ runEgressBlockSync =
                          sendtm <- liftIO $ readTVarIO $ bpLastGetDataSent peer
                          case recvtm of
                              Just rt -> do
-                                 if (fw < 4) && (diffUTCTime tm rt < 30)
+                                 if (fw < 4) && (diffUTCTime tm rt < 15)
                                      then do
                                          msg <- produceGetDataMessage
                                          res <- LE.try $ sendRequestMessages peer msg
@@ -153,12 +160,12 @@ runEgressBlockSync =
                                                  liftIO $
                                                      atomically $ modifyTVar (bpBlockFetchWindow peer) (\z -> z + 1)
                                              Left (e :: SomeException) ->
-                                                 debug lg $ LG.msg ("[ERROR] runEgressBlockSync " ++ show e)
-                                     else if (diffUTCTime tm rt > 30) && (fw > 0)
+                                                 err lg $ LG.msg ("[ERROR] runEgressBlockSync " ++ show e)
+                                     else if (diffUTCTime tm rt > 15) && (fw > 0)
                                               then do
                                                   debug lg $ msg ("Removing unresponsive peer. (1)" ++ show peer)
                                                   case bpSocket peer of
-                                                      Just sock -> liftIO $ close' $ sock
+                                                      Just sock -> liftIO $ NS.close $ sock
                                                       Nothing -> return ()
                                                   liftIO $
                                                       atomically $
@@ -168,11 +175,11 @@ runEgressBlockSync =
                               -> do
                                  case sendtm of
                                      Just st -> do
-                                         if (diffUTCTime tm st > 30)
+                                         if (diffUTCTime tm st > 15)
                                              then do
                                                  debug lg $ msg ("Removing unresponsive peer. (2)" ++ show peer)
                                                  case bpSocket peer of
-                                                     Just sock -> liftIO $ close' $ sock
+                                                     Just sock -> liftIO $ NS.close $ sock
                                                      Nothing -> return ()
                                                  liftIO $
                                                      atomically $
@@ -188,7 +195,7 @@ runEgressBlockSync =
                                                  liftIO $
                                                      atomically $ modifyTVar (bpBlockFetchWindow peer) (\z -> z + 1)
                                              Left (e :: SomeException) ->
-                                                 debug lg $ LG.msg ("[ERROR] runEgressBlockSync " ++ show e))
+                                                 err lg $ LG.msg ("[ERROR] runEgressBlockSync " ++ show e))
                     (connPeers)
 
 runPeerSync :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
@@ -199,18 +206,22 @@ runPeerSync =
         dbe' <- getDB
         let net = bncNet $ bitcoinNodeConfig bp2pEnv
         allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
-        mapM_
-            (\(_, pr) ->
-                 case (bpSocket pr) of
-                     Just s -> do
-                         let em = runPut . putMessage net $ (MGetAddr)
-                         debug lg $ LG.msg ("sending GetAddr to " ++ show pr)
-                         res <- liftIO $ try $ sendEncMessage (bpWriteMsgLock pr) s (BSL.fromStrict em)
-                         case res of
-                             Right () -> liftIO $ threadDelay (60 * 1000000)
-                             Left (e :: SomeException) -> debug lg $ LG.msg ("[ERROR] runPeerSync " ++ show e)
-                     Nothing -> debug lg $ LG.msg $ val "Error sending, no connections available")
-            (L.filter (\x -> bpConnected (snd x)) (M.toList allPeers))
+        let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
+        if L.length connPeers < 10
+            then do
+                mapM_
+                    (\(_, pr) ->
+                         case (bpSocket pr) of
+                             Just s -> do
+                                 let em = runPut . putMessage net $ (MGetAddr)
+                                 debug lg $ LG.msg ("sending GetAddr to " ++ show pr)
+                                 res <- liftIO $ try $ sendEncMessage (bpWriteMsgLock pr) s (BSL.fromStrict em)
+                                 case res of
+                                     Right () -> liftIO $ threadDelay (120 * 1000000)
+                                     Left (e :: SomeException) -> err lg $ LG.msg ("[ERROR] runPeerSync " ++ show e)
+                             Nothing -> debug lg $ LG.msg $ val "Error sending, no connections available")
+                    (connPeers)
+            else liftIO $ threadDelay (120 * 1000000)
 
 markBestSyncedBlock :: (HasLogger m, MonadIO m) => Text -> Int32 -> Q.ClientState -> m ()
 markBestSyncedBlock hash height conn = do
@@ -283,7 +294,7 @@ getNextBlockToSync = do
                              let sortUnsent = L.sortOn (snd . snd) (M.toList unsent)
                              return (True, Just $ BlockInfo (fst $ head sortUnsent) (snd $ snd $ head sortUnsent))
                          else do
-                             let recvNotStarted = M.filter (\((RequestSent t), _) -> (diffUTCTime tm t > 15)) sent
+                             let recvNotStarted = M.filter (\((RequestSent t), _) -> (diffUTCTime tm t > 10)) sent
                              if M.size recvNotStarted == 0
                                  then return (False, Nothing)
                                  else return
