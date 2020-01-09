@@ -134,8 +134,8 @@ data BlockIngestState =
 data BlockSyncStatus
     = RequestSent !UTCTime
     | RequestQueued
-    | BlockReceived
-    | BlockReceiveStarted
+    | BlockReceiveComplete
+    | BlockReceiveStarted !UTCTime
     deriving (Eq, Ord, Show)
 
 -- import Type

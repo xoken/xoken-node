@@ -163,7 +163,7 @@ setupSeedPeerConnection =
                                          Left (SocketConnectException addr) ->
                                              err lg $ msg ("SocketConnectException: " ++ show addr))
             (addrs)
-        liftIO $ threadDelay (120 * 1000000)
+        liftIO $ threadDelay (30 * 1000000)
 
 --
 --
@@ -616,7 +616,7 @@ readNextMessage' peer = do
                                 atomically $
                                 modifyTVar'
                                     (blockSyncStatusMap bp2pEnv)
-                                    (M.insert (hh) $ (BlockReceiveStarted, ht)) -- mark block receive started
+                                    (M.insert (hh) $ (BlockReceiveStarted tm, ht)) -- mark block receive started
                         Just (MTx ctx) -> do
                             if binTxTotalCount ingst == binTxProcessed ingst
                                 then do
@@ -626,7 +626,7 @@ readNextMessage' peer = do
                                             atomically $
                                             modifyTVar'
                                                 (blockSyncStatusMap bp2pEnv)
-                                                (M.insert (biBlockHash bi) $ (BlockReceived, biBlockHeight bi)) -- mark block received
+                                                (M.insert (biBlockHash bi) $ (BlockReceiveComplete, biBlockHeight bi)) -- mark block received
                                         Nothing -> throw InvalidBlockInfoException
                                     liftIO $ atomically $ writeTVar (bpIngressState peer) $ Nothing -- reset state
                                 else liftIO $ atomically $ writeTVar (bpIngressState peer) $ ingressState -- retain state

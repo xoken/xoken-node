@@ -297,8 +297,14 @@ getNextBlockToSync = do
                     return (True, Just $ BlockInfo (fst e) (snd $ snd e))
         else do
             let (unsent, _others) = M.partition (\x -> fst x == RequestQueued) sy
-            let (received, _others2) = M.partition (\x -> fst x == BlockReceived) _others
-            let (receiveStarted, sent) = M.partition (\x -> fst x == BlockReceiveStarted) _others2
+            let (received, _others2) = M.partition (\x -> fst x == BlockReceiveComplete) _others
+            let (receiveStarted, sent) =
+                    M.partition
+                        (\x ->
+                             case fst x of
+                                 BlockReceiveStarted _ -> True
+                                 otherwise -> False)
+                        _others2
             if M.size sent == 0 && M.size unsent == 0 && M.size receiveStarted == 0
                     -- all blocks received, empty the cache, cache-miss gracefully
                 then do
@@ -313,7 +319,22 @@ getNextBlockToSync = do
                          else do
                              let recvNotStarted = M.filter (\((RequestSent t), _) -> (diffUTCTime tm t > 10)) sent
                              if M.size recvNotStarted == 0
-                                 then return (False, Nothing)
+                                     -- allowing 5 minutes to receive the complete block, may need to be relaxed in future
+                                 then do
+                                     let recvTimedOut =
+                                             M.filter
+                                                 (\((BlockReceiveStarted t), _) -> (diffUTCTime tm t > 300))
+                                                 receiveStarted
+                                     if M.size recvTimedOut == 0
+                                         then do
+                                             debug lg $ LG.msg $ val "block receive in progress, awaiting"
+                                             return (False, Nothing)
+                                         else return
+                                                  ( False
+                                                  , Just $
+                                                    BlockInfo
+                                                        (fst $ M.elemAt 0 recvTimedOut)
+                                                        (snd $ snd $ M.elemAt 0 recvTimedOut))
                                  else return
                                           ( False
                                           , Just $
