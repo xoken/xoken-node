@@ -138,18 +138,18 @@ runEgressBlockSync =
             else do
                 mapM_
                     (\(_, peer) -> do
-                         rnd <- liftIO $ randomRIO (1, L.length connPeers) -- dynamic peer shuffle logic
-                         if rnd /= 1
-                             then return ()
-                             else do
-                                 tm <- liftIO $ getCurrentTime
-                                 fw <- liftIO $ readTVarIO $ bpBlockFetchWindow peer
-                                 recvtm <- liftIO $ readTVarIO $ bpLastBlockRecvTime peer
-                                 sendtm <- liftIO $ readTVarIO $ bpLastGetDataSent peer
-                                 case recvtm of
-                                     Just rt -> do
-                                         if (fw < 8) && (diffUTCTime tm rt < 15)
-                                             then do
+                         tm <- liftIO $ getCurrentTime
+                         fw <- liftIO $ readTVarIO $ bpBlockFetchWindow peer
+                         recvtm <- liftIO $ readTVarIO $ bpLastBlockRecvTime peer
+                         sendtm <- liftIO $ readTVarIO $ bpLastGetDataSent peer
+                         case recvtm of
+                             Just rt -> do
+                                 if (fw < 8) && (diffUTCTime tm rt < 15)
+                                     then do
+                                         rnd <- liftIO $ randomRIO (1, L.length connPeers) -- dynamic peer shuffle logic
+                                         if rnd /= 1
+                                             then return ()
+                                             else do
                                                  mmsg <- produceGetDataMessage
                                                  case mmsg of
                                                      Just msg -> do
@@ -167,36 +167,35 @@ runEgressBlockSync =
                                                                  err lg $
                                                                  LG.msg ("[ERROR] runEgressBlockSync " ++ show e)
                                                      Nothing -> return ()
-                                             else if (diffUTCTime tm rt > 15) && (fw > 0)
-                                                      then do
-                                                          debug lg $
-                                                              msg ("Removing unresponsive peer. (1)" ++ show peer)
-                                                          case bpSocket peer of
-                                                              Just sock -> liftIO $ NS.close $ sock
-                                                              Nothing -> return ()
-                                                          liftIO $
-                                                              atomically $
-                                                              modifyTVar
-                                                                  (bitcoinPeers bp2pEnv)
-                                                                  (M.delete (bpAddress peer))
-                                                      else liftIO $ threadDelay (1 * 1000000) -- window is full, but isnt stale either
-                                     Nothing -- never received a block from this peer
-                                      -> do
-                                         case sendtm of
-                                             Just st -> do
-                                                 if (diffUTCTime tm st > 15)
-                                                     then do
-                                                         debug lg $ msg ("Removing unresponsive peer. (2)" ++ show peer)
-                                                         case bpSocket peer of
-                                                             Just sock -> liftIO $ NS.close $ sock
-                                                             Nothing -> return ()
-                                                         liftIO $
-                                                             atomically $
-                                                             modifyTVar
-                                                                 (bitcoinPeers bp2pEnv)
-                                                                 (M.delete (bpAddress peer))
-                                                     else liftIO $ threadDelay (1 * 1000000)
-                                             Nothing -> do
+                                     else if (diffUTCTime tm rt > 15) -- && (fw > 0)
+                                              then do
+                                                  debug lg $ msg ("Removing unresponsive peer. (1)" ++ show peer)
+                                                  case bpSocket peer of
+                                                      Just sock -> liftIO $ NS.close $ sock
+                                                      Nothing -> return ()
+                                                  liftIO $
+                                                      atomically $
+                                                      modifyTVar (bitcoinPeers bp2pEnv) (M.delete (bpAddress peer))
+                                              else liftIO $ threadDelay (1 * 1000000) -- window is full, but isnt stale either
+                             Nothing -- never received a block from this peer
+                              -> do
+                                 case sendtm of
+                                     Just st -> do
+                                         if (diffUTCTime tm st > 15)
+                                             then do
+                                                 debug lg $ msg ("Removing unresponsive peer. (2)" ++ show peer)
+                                                 case bpSocket peer of
+                                                     Just sock -> liftIO $ NS.close $ sock
+                                                     Nothing -> return ()
+                                                 liftIO $
+                                                     atomically $
+                                                     modifyTVar (bitcoinPeers bp2pEnv) (M.delete (bpAddress peer))
+                                             else liftIO $ threadDelay (1 * 1000000)
+                                     Nothing -> do
+                                         rnd <- liftIO $ randomRIO (1, L.length connPeers) -- dynamic peer shuffle logic
+                                         if rnd /= 1
+                                             then return ()
+                                             else do
                                                  mmsg <- produceGetDataMessage
                                                  case mmsg of
                                                      Just msg -> do

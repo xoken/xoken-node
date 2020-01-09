@@ -196,39 +196,43 @@ setupPeerConnection saddr = do
     lg <- getLogger
     let net = bncNet $ bitcoinNodeConfig bp2pEnv
     allpr <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
-    let toConn =
-            case M.lookup saddr allpr of
-                Just pr ->
-                    if bpConnected pr
-                        then False
-                        else True
-                Nothing -> True
-    if toConn == False
-        then do
-            debug lg $ msg ("Peer already connected, ignoring.. " ++ show saddr)
-            return Nothing
+    let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allpr)
+    if L.length connPeers > 10
+        then return Nothing
         else do
-            res <- LE.try $ liftIO $ createSocketFromSockAddr saddr
-            case res of
-                Right (sock) -> do
-                    rl <- liftIO $ newMVar True
-                    wl <- liftIO $ newMVar True
-                    ss <- liftIO $ newTVarIO Nothing
-                    imc <- liftIO $ newTVarIO 0
-                    rc <- liftIO $ newTVarIO Nothing
-                    st <- liftIO $ newTVarIO Nothing
-                    fw <- liftIO $ newTVarIO 0
-                    case sock of
-                        Just sx -> do
-                            debug lg $ LG.msg ("Discovered Net-Address: " ++ (show $ saddr))
-                            fl <- doVersionHandshake net sx $ saddr
-                            let bp = BitcoinPeer (saddr) sock rl wl fl Nothing 99999 Nothing ss imc rc st fw
-                            liftIO $ atomically $ modifyTVar (bitcoinPeers bp2pEnv) (M.insert (saddr) bp)
-                            return $ Just bp
-                        Nothing -> return (Nothing)
-                Left (SocketConnectException addr) -> do
-                    err lg $ msg ("SocketConnectException: " ++ show addr)
+            let toConn =
+                    case M.lookup saddr allpr of
+                        Just pr ->
+                            if bpConnected pr
+                                then False
+                                else True
+                        Nothing -> True
+            if toConn == False
+                then do
+                    debug lg $ msg ("Peer already connected, ignoring.. " ++ show saddr)
                     return Nothing
+                else do
+                    res <- LE.try $ liftIO $ createSocketFromSockAddr saddr
+                    case res of
+                        Right (sock) -> do
+                            rl <- liftIO $ newMVar True
+                            wl <- liftIO $ newMVar True
+                            ss <- liftIO $ newTVarIO Nothing
+                            imc <- liftIO $ newTVarIO 0
+                            rc <- liftIO $ newTVarIO Nothing
+                            st <- liftIO $ newTVarIO Nothing
+                            fw <- liftIO $ newTVarIO 0
+                            case sock of
+                                Just sx -> do
+                                    debug lg $ LG.msg ("Discovered Net-Address: " ++ (show $ saddr))
+                                    fl <- doVersionHandshake net sx $ saddr
+                                    let bp = BitcoinPeer (saddr) sock rl wl fl Nothing 99999 Nothing ss imc rc st fw
+                                    liftIO $ atomically $ modifyTVar (bitcoinPeers bp2pEnv) (M.insert (saddr) bp)
+                                    return $ Just bp
+                                Nothing -> return (Nothing)
+                        Left (SocketConnectException addr) -> do
+                            err lg $ msg ("SocketConnectException: " ++ show addr)
+                            return Nothing
 
 -- Helper Functions
 recvAll :: (MonadIO m) => Socket -> Int -> m B.ByteString
