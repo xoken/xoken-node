@@ -366,8 +366,8 @@ readNextMessage net sock ingss = do
             let txbyt = (binUnspentBytes blin) `B.append` nbyt
             case runGetState (getConfirmedTx) txbyt 0 of
                 Left e -> do
-                    debug lg $ msg $ ("(error) IngressStreamState: " ++ show iss)
-                    debug lg $ msg $ (encodeHex txbyt)
+                    err lg $ msg $ ("(error) IngressStreamState: " ++ show iss)
+                    err lg $ msg $ (encodeHex txbyt)
                     throw ConfirmedTxParseException
                 Right (tx, unused) -> do
                     case tx of
@@ -480,10 +480,10 @@ doVersionHandshake net sock sa = do
                     debug lg $ msg ("Version handshake complete: " ++ show sa)
                     return True
                 __ -> do
-                    debug lg $ msg $ val "Error, unexpected message (2) during handshake"
+                    err lg $ msg $ val "Error, unexpected message (2) during handshake"
                     return False
         __ -> do
-            debug lg $ msg $ val "Error, unexpected message (1) during handshake"
+            err lg $ msg $ val "Error, unexpected message (1) during handshake"
             return False
 
 messageHandler ::
@@ -504,7 +504,7 @@ messageHandler peer (mm, ingss) = do
                         Right () -> return ()
                         Left BlockHashNotFoundException -> return ()
                         Left EmptyHeadersMessageException -> return ()
-                        Left e -> debug lg $ LG.msg ("[ERROR] Unhandled exception!" ++ show e) >> throw e
+                        Left e -> err lg $ LG.msg ("[ERROR] Unhandled exception!" ++ show e) >> throw e
                     liftIO $ putMVar (headersWriteLock bp2pEnv) True
                     return $ msgType msg
                 MInv inv -> do
@@ -545,8 +545,7 @@ messageHandler peer (mm, ingss) = do
                                         Right () -> return ()
                                         Left BlockHashNotFoundException -> return ()
                                         Left EmptyHeadersMessageException -> return ()
-                                        Left e ->
-                                            debug lg $ LG.msg ("[ERROR] Unhandled exception!" ++ show e) >> throw e
+                                        Left e -> err lg $ LG.msg ("[ERROR] Unhandled exception!" ++ show e) >> throw e
                                     return $ msgType msg
                                 Nothing -> throw InvalidStreamStateException
                         Nothing -> do
@@ -558,7 +557,7 @@ messageHandler peer (mm, ingss) = do
                         Right () -> return ()
                         Left BlockHashNotFoundException -> return ()
                         Left EmptyHeadersMessageException -> return ()
-                        Left e -> debug lg $ LG.msg ("[ERROR] Unhandled exception!" ++ show e) >> throw e
+                        Left e -> err lg $ LG.msg ("[ERROR] Unhandled exception!" ++ show e) >> throw e
                     return $ msgType msg
                 MPing ping -> do
                     bp2pEnv <- getBitcoinP2P
@@ -572,7 +571,7 @@ messageHandler peer (mm, ingss) = do
                 _ -> do
                     return $ msgType msg
         Nothing -> do
-            debug lg $ LG.msg $ val "Error, invalid message"
+            err lg $ LG.msg $ val "Error, invalid message"
             throw InvalidMessageTypeException
 
 readNextMessage' :: (HasXokenNodeEnv env m, MonadIO m) => BitcoinPeer -> m ((Maybe Message, Maybe IngressStreamState))
@@ -642,7 +641,7 @@ handleIncomingMessages pr = do
     case res of
         Right () -> return ()
         Left (e :: SomeException) -> do
-            debug lg $ msg $ (val "[ERROR] Closing peer connection ") +++ (show e)
+            err lg $ msg $ (val "[ERROR] Closing peer connection ") +++ (show e)
             case (bpSocket pr) of
                 Just sock -> liftIO $ Network.Socket.close sock
                 Nothing -> return ()

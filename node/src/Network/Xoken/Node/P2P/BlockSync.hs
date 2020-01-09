@@ -121,7 +121,7 @@ sendRequestMessages pr msg = do
                         Right () -> return ()
                         Left (e :: SomeException) -> debug lg $ LG.msg $ "Error, sending out data: " ++ show e
                     debug lg $ LG.msg $ "sending out GetData: " ++ show (bpAddress pr)
-                Nothing -> debug lg $ LG.msg $ val "Error sending, no connections available"
+                Nothing -> err lg $ LG.msg $ val "Error sending, no connections available"
         ___ -> return ()
 
 runEgressBlockSync :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
@@ -138,7 +138,7 @@ runEgressBlockSync =
             else do
                 mapM_
                     (\(_, peer) -> do
-                         rnd <- randomRIO (1, L.length connPeers)
+                         rnd <- liftIO $ randomRIO (1, L.length connPeers) -- dynamic peer shuffle logic
                          if rnd /= 1
                              then return ()
                              else do
@@ -237,7 +237,7 @@ runPeerSync =
                                  case res of
                                      Right () -> liftIO $ threadDelay (120 * 1000000)
                                      Left (e :: SomeException) -> err lg $ LG.msg ("[ERROR] runPeerSync " ++ show e)
-                             Nothing -> debug lg $ LG.msg $ val "Error sending, no connections available")
+                             Nothing -> err lg $ LG.msg $ val "Error sending, no connections available")
                     (connPeers)
             else liftIO $ threadDelay (120 * 1000000)
 
@@ -251,7 +251,7 @@ markBestSyncedBlock hash height conn = do
     case res of
         Right () -> return ()
         Left (e :: SomeException) ->
-            debug lg $
+            err lg $
             LG.msg ("Error: Marking [Best-Synced] blockhash failed: " ++ show e) >> throw KeyValueDBInsertException
 
 getNextBlockToSync :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m (Bool, Maybe BlockInfo)

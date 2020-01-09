@@ -122,7 +122,7 @@ sendRequestMessages msg = do
             case res of
                 Right () -> return ()
                 Left (e :: SomeException) -> do
-                    debug lg $ LG.msg ("Error, sending out data: " ++ show e)
+                    err lg $ LG.msg ("Error, sending out data: " ++ show e)
         ___ -> undefined
 
 msgOrder :: Message -> Message -> Ordering
@@ -137,7 +137,7 @@ runEgressChainSync = do
     res <- LE.try $ S.drain $ (S.repeatM produceGetHeadersMessage) & (S.mapM sendRequestMessages)
     case res of
         Right () -> return ()
-        Left (e :: SomeException) -> debug lg $ LG.msg $ "[ERROR] runEgressChainSync " ++ show e
+        Left (e :: SomeException) -> err lg $ LG.msg $ "[ERROR] runEgressChainSync " ++ show e
 
 validateChainedBlockHeaders :: Headers -> Bool
 validateChainedBlockHeaders hdrs = do
@@ -158,7 +158,7 @@ markBestBlock hash height conn = do
     case res of
         Right () -> return ()
         Left (e :: SomeException) -> do
-            debug lg $ LG.msg ("Error: Marking [Best] blockhash failed: " ++ show e)
+            err lg $ LG.msg ("Error: Marking [Best] blockhash failed: " ++ show e)
             throw KeyValueDBInsertException
 
 getBlockLocator :: (HasLogger m, MonadIO m) => Q.ClientState -> Network -> m ([BlockHash])
@@ -260,6 +260,6 @@ processHeaders hdrs = do
             liftIO $ putMVar (bestBlockUpdated bp2pEnv) True
             return ()
         False -> do
-            debug lg $ LG.msg $ val "Error: BlocksNotChainedException"
+            err lg $ LG.msg $ val "Error: BlocksNotChainedException"
             throw BlocksNotChainedException
     return ()

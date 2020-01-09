@@ -203,7 +203,7 @@ xGetOutputsAddress net address = do
                                      val)
                             iop
         Left (e :: SomeException) -> do
-            debug lg $ LG.msg $ "Error: xGetOutputsAddress: " ++ show e
+            err lg $ LG.msg $ "Error: xGetOutputsAddress: " ++ show e
             throw KeyValueDBLookupException
 
 xGetOutputsAddresses :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> [String] -> m ([AddressOutputs])
@@ -247,7 +247,7 @@ xGetOutputsAddresses net addresses = do
                                      val)
                             iop
         Left (e :: SomeException) -> do
-            debug lg $ LG.msg $ "Error: xGetOutputsAddresses: " ++ show e
+            err lg $ LG.msg $ "Error: xGetOutputsAddresses: " ++ show e
             throw KeyValueDBLookupException
 
 xGetMerkleBranch :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> String -> m ([MerkleBranchNode'])
@@ -259,7 +259,7 @@ xGetMerkleBranch net txid = do
         Right mb -> do
             return $ Data.List.map (\x -> MerkleBranchNode' (DT.unpack $ _nodeValue x) (_isLeftNode x)) mb
         Left (e :: SomeException) -> do
-            debug lg $ LG.msg $ "Error: xGetMerkleBranch: " ++ show e
+            err lg $ LG.msg $ "Error: xGetMerkleBranch: " ++ show e
             throw KeyValueDBLookupException
 
 goGetResource :: (HasXokenNodeEnv env m, MonadIO m) => RPCMessage -> Network -> m (RPCMessage)
