@@ -84,7 +84,7 @@ produceGetDataMessage = do
     bp2pEnv <- getBitcoinP2P
     res <- LE.try $ getNextBlockToSync
     case res of
-        Right ((fl, bl)) -> do
+        Right (bl) -> do
             case bl of
                 Just b -> do
                     t <- liftIO $ getCurrentTime
@@ -140,11 +140,11 @@ runEgressBlockSync =
                     (\(_, peer) -> do
                          tm <- liftIO $ getCurrentTime
                          fw <- liftIO $ readTVarIO $ bpBlockFetchWindow peer
-                         recvtm <- liftIO $ readTVarIO $ bpLastBlockRecvTime peer
+                         recvtm <- liftIO $ readTVarIO $ bpLastTxRecvTime peer
                          sendtm <- liftIO $ readTVarIO $ bpLastGetDataSent peer
                          case recvtm of
                              Just rt -> do
-                                 if (fw < 8) && (diffUTCTime tm rt < 15)
+                                 if (fw < 8) && (diffUTCTime tm rt < 60)
                                      then do
                                          rnd <- liftIO $ randomRIO (1, L.length connPeers) -- dynamic peer shuffle logic
                                          if rnd /= 1
@@ -167,7 +167,7 @@ runEgressBlockSync =
                                                                  err lg $
                                                                  LG.msg ("[ERROR] runEgressBlockSync " ++ show e)
                                                      Nothing -> return ()
-                                     else if (diffUTCTime tm rt > 15) -- && (fw > 0)
+                                     else if (diffUTCTime tm rt > 60) -- && (fw > 0)
                                               then do
                                                   debug lg $ msg ("Removing unresponsive peer. (1)" ++ show peer)
                                                   case bpSocket peer of
@@ -176,7 +176,7 @@ runEgressBlockSync =
                                                   liftIO $
                                                       atomically $
                                                       modifyTVar (bitcoinPeers bp2pEnv) (M.delete (bpAddress peer))
-                                              else liftIO $ threadDelay (1 * 1000000) -- window is full, but isnt stale either
+                                              else liftIO $ threadDelay (100000) -- window is full, but isnt stale either
                              Nothing -- never received a block from this peer
                               -> do
                                  case sendtm of
@@ -190,7 +190,7 @@ runEgressBlockSync =
                                                  liftIO $
                                                      atomically $
                                                      modifyTVar (bitcoinPeers bp2pEnv) (M.delete (bpAddress peer))
-                                             else liftIO $ threadDelay (1 * 1000000)
+                                             else liftIO $ threadDelay (100000)
                                      Nothing -> do
                                          rnd <- liftIO $ randomRIO (1, L.length connPeers) -- dynamic peer shuffle logic
                                          if rnd /= 1
@@ -253,7 +253,7 @@ markBestSyncedBlock hash height conn = do
             err lg $
             LG.msg ("Error: Marking [Best-Synced] blockhash failed: " ++ show e) >> throw KeyValueDBInsertException
 
-getNextBlockToSync :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m (Bool, Maybe BlockInfo)
+getNextBlockToSync :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m (Maybe BlockInfo)
 getNextBlockToSync = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
@@ -280,7 +280,7 @@ getNextBlockToSync = do
             if L.length op == 0
                 then do
                     debug lg $ LG.msg $ val "Synced fully!"
-                    return (False, Nothing)
+                    return (Nothing)
                 else do
                     debug lg $ LG.msg $ val "Reloading cache."
                     let z =
@@ -294,53 +294,66 @@ getNextBlockToSync = do
                         p = map (\x -> (fst x, (RequestQueued, snd x))) z
                     liftIO $ atomically $ writeTVar (blockSyncStatusMap bp2pEnv) (M.fromList p)
                     let e = p !! 0
-                    return (True, Just $ BlockInfo (fst e) (snd $ snd e))
+                    return (Just $ BlockInfo (fst e) (snd $ snd e))
         else do
-            let (unsent, _others) = M.partition (\x -> fst x == RequestQueued) sy
-            let (received, _others2) = M.partition (\x -> fst x == BlockReceiveComplete) _others
-            let (receiveStarted, sent) =
-                    M.partition
+            let unsent = M.filter (\x -> fst x == RequestQueued) sy
+            let received = M.filter (\x -> fst x == BlockReceiveComplete) sy
+            let sent =
+                    M.filter
                         (\x ->
                              case fst x of
-                                 BlockReceiveStarted _ -> True
+                                 RequestSent _ -> True
                                  otherwise -> False)
-                        _others2
-            if M.size sent == 0 && M.size unsent == 0 && M.size receiveStarted == 0
+                        sy
+            let receiveInProgress =
+                    M.filter
+                        (\x ->
+                             case fst x of
+                                 RecentTxReceiveTime _ -> True
+                                 otherwise -> False)
+                        sy
+            if M.size sent == 0 && M.size unsent == 0 && M.size receiveInProgress == 0
                     -- all blocks received, empty the cache, cache-miss gracefully
                 then do
                     let lelm = last $ L.sortOn (snd . snd) (M.toList sy)
                     liftIO $ atomically $ writeTVar (blockSyncStatusMap bp2pEnv) M.empty
                     markBestSyncedBlock (blockHashToHex $ fst $ lelm) (fromIntegral $ snd $ snd $ lelm) conn
-                    return (False, Nothing)
+                    return (Nothing)
                 else if M.size unsent > 0
                          then do
                              let sortUnsent = L.sortOn (snd . snd) (M.toList unsent)
-                             return (True, Just $ BlockInfo (fst $ head sortUnsent) (snd $ snd $ head sortUnsent))
+                             return (Just $ BlockInfo (fst $ head sortUnsent) (snd $ snd $ head sortUnsent))
                          else do
                              let recvNotStarted = M.filter (\((RequestSent t), _) -> (diffUTCTime tm t > 10)) sent
                              if M.size recvNotStarted == 0
                                      -- allowing 5 minutes to receive the complete block, may need to be relaxed in future
                                  then do
-                                     let recvTimedOut =
-                                             M.filter
-                                                 (\((BlockReceiveStarted t), _) -> (diffUTCTime tm t > 300))
-                                                 receiveStarted
-                                     if M.size recvTimedOut == 0
+                                     if M.size receiveInProgress > 0
                                          then do
-                                             debug lg $ LG.msg $ val "block receive in progress, awaiting"
-                                             return (False, Nothing)
-                                         else return
-                                                  ( False
-                                                  , Just $
-                                                    BlockInfo
-                                                        (fst $ M.elemAt 0 recvTimedOut)
-                                                        (snd $ snd $ M.elemAt 0 recvTimedOut))
+                                             let recvTimedOut =
+                                                     M.filter
+                                                         (\((RecentTxReceiveTime t), _) -> (diffUTCTime tm t > 15))
+                                                         receiveInProgress
+                                             if M.size recvTimedOut == 0
+                                                 then do
+                                                     debug lg $
+                                                         LG.msg $
+                                                         ("block receive in progress, awaiting: " ++
+                                                          show receiveInProgress)
+                                                     return (Nothing)
+                                                 else return
+                                                          (Just $
+                                                           BlockInfo
+                                                               (fst $ M.elemAt 0 recvTimedOut)
+                                                               (snd $ snd $ M.elemAt 0 recvTimedOut))
+                                         else do
+                                             debug lg $ LG.msg $ val "nil receiveInProgress - skip"
+                                             return (Nothing)
                                  else return
-                                          ( False
-                                          , Just $
-                                            BlockInfo
-                                                (fst $ M.elemAt 0 recvNotStarted)
-                                                (snd $ snd $ M.elemAt 0 recvNotStarted))
+                                          (Just $
+                                           BlockInfo
+                                               (fst $ M.elemAt 0 recvNotStarted)
+                                               (snd $ snd $ M.elemAt 0 recvNotStarted))
 
 fetchBestSyncedBlock :: (HasLogger m, MonadIO m) => Q.ClientState -> Network -> m ((BlockHash, Int32))
 fetchBestSyncedBlock conn net = do
@@ -461,7 +474,7 @@ processConfTransaction tx bhash txind blkht = do
                                               case e of
                                                   TxIDNotFoundRetryException -> True
                                                   otherwise -> False)
-                                         120
+                                         60
                                          (getAddressFromOutpoint conn net $ prevOutput b)
                                  case (ma) of
                                      Just x ->
@@ -515,7 +528,7 @@ getAddressFromOutpoint conn net outPoint = do
     if L.length iop == 0
             -- debug lg $ LG.msg ("(retry) TxID not found: " ++ (show $ txHashToHex $ outPointHash outPoint))
         then do
-            liftIO $ threadDelay (1000000 * 5)
+            liftIO $ threadDelay (1000000 * 1)
             throw TxIDNotFoundRetryException
         else do
             let txbyt = runIdentity $ iop !! 0

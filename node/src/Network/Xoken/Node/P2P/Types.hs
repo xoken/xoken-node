@@ -63,7 +63,7 @@ data BitcoinPeer =
       -- ^ Block stream processing state
         , bpIngressMsgCount :: !(TVar Int)
       -- ^ last Block received time
-        , bpLastBlockRecvTime :: !(TVar (Maybe UTCTime))
+        , bpLastTxRecvTime :: !(TVar (Maybe UTCTime))
       -- ^ last GetData Sent time
         , bpLastGetDataSent :: !(TVar (Maybe UTCTime))
       -- ^ block 'GetData' recv window
@@ -135,7 +135,7 @@ data BlockSyncStatus
     = RequestSent !UTCTime
     | RequestQueued
     | BlockReceiveComplete
-    | BlockReceiveStarted !UTCTime
+    | RecentTxReceiveTime !UTCTime
     deriving (Eq, Ord, Show)
 
 -- import Type
