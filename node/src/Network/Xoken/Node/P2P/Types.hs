@@ -135,7 +135,7 @@ data BlockSyncStatus
     = RequestSent !UTCTime
     | RequestQueued
     | BlockReceiveComplete
-    | RecentTxReceiveTime !UTCTime
+    | RecentTxReceiveTime !(UTCTime, Int)
     deriving (Eq, Ord, Show)
 
 -- import Type

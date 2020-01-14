@@ -326,13 +326,13 @@ getNextBlockToSync = do
                          else do
                              let recvNotStarted = M.filter (\((RequestSent t), _) -> (diffUTCTime tm t > 10)) sent
                              if M.size recvNotStarted == 0
-                                     -- allowing 5 minutes to receive the complete block, may need to be relaxed in future
+                                     -- allowing 15 secs to receive the next Tx
                                  then do
                                      if M.size receiveInProgress > 0
                                          then do
                                              let recvTimedOut =
                                                      M.filter
-                                                         (\((RecentTxReceiveTime t), _) -> (diffUTCTime tm t > 15))
+                                                         (\((RecentTxReceiveTime (t, c)), _) -> (diffUTCTime tm t > 15))
                                                          receiveInProgress
                                              if M.size recvTimedOut == 0
                                                  then do
@@ -432,7 +432,7 @@ processConfTransaction tx bhash txind blkht = do
     case res of
         Right () -> return ()
         Left (e :: SomeException) -> do
-            liftIO $ err lg $ LG.msg ("Error: INSERTing into 'xoken.transactions': " ++ show par)
+            liftIO $ err lg $ LG.msg ("Error: INSERTing into 'xoken.transactions': " ++ show e)
             throw KeyValueDBInsertException
     --
     let inAddrs =
@@ -467,21 +467,28 @@ processConfTransaction tx bhash txind blkht = do
                          if (outPointHash nullOutPoint) == (outPointHash $ prevOutput b)
                              then return Nothing
                              else do
-                                 ma <-
+                                 res <-
+                                     liftIO $
+                                     try $
                                      liftIO $
                                      EX.retryBool
                                          (\e ->
                                               case e of
                                                   TxIDNotFoundRetryException -> True
                                                   otherwise -> False)
-                                         60
+                                         5
                                          (getAddressFromOutpoint conn net $ prevOutput b)
-                                 case (ma) of
-                                     Just x ->
-                                         case addrToString net x of
-                                             Just as -> return $ Just (as, b, c)
-                                             Nothing -> throw InvalidAddressException
-                                     Nothing -> throw OutpointAddressNotFoundException)
+                                 case res of
+                                     Right (ma) -> do
+                                         case (ma) of
+                                             Just x ->
+                                                 case addrToString net x of
+                                                     Just as -> return $ Just (as, b, c)
+                                                     Nothing -> throw InvalidAddressException
+                                             Nothing -> throw OutpointAddressNotFoundException
+                                     Left TxIDNotFoundRetryException -- ignore if ample time elapsed
+                                      -> do
+                                         return Nothing)
             inAddrs
     mapM_
         (\(x, a, i) ->

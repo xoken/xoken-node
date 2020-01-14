@@ -344,6 +344,7 @@ updateMerkleSubTrees hashMap newhash left right ht ind final = do
                                     err lg $ msg $ show e
                                     throw MerkleSubTreeDBInsertException
         else return (state, res)
+        -- else block --
 
 readNextMessage ::
        (HasBitcoinP2P m, HasLogger m, HasDatabaseHandles m, MonadIO m)
@@ -509,7 +510,9 @@ messageHandler peer (mm, ingss) = do
                         Right () -> return ()
                         Left BlockHashNotFoundException -> return ()
                         Left EmptyHeadersMessageException -> return ()
-                        Left e -> err lg $ LG.msg ("[ERROR] Unhandled exception!" ++ show e) >> throw e
+                        Left e -> do
+                            err lg $ LG.msg ("[ERROR] Unhandled exception!" ++ show e)
+                            throw e
                     liftIO $ putMVar (headersWriteLock bp2pEnv) True
                     return $ msgType msg
                 MInv inv -> do
@@ -550,7 +553,12 @@ messageHandler peer (mm, ingss) = do
                                         Right () -> return ()
                                         Left BlockHashNotFoundException -> return ()
                                         Left EmptyHeadersMessageException -> return ()
-                                        Left e -> err lg $ LG.msg ("[ERROR] Unhandled exception!" ++ show e) >> throw e
+                                        Left KeyValueDBInsertException -> do
+                                            err lg $ LG.msg $ val "[ERROR] KeyValueDBInsertException"
+                                            throw KeyValueDBInsertException
+                                        Left e -> do
+                                            err lg $ LG.msg ("[ERROR] Unhandled exception!" ++ show e)
+                                            throw e
                                     return $ msgType msg
                                 Nothing -> throw InvalidStreamStateException
                         Nothing -> do
@@ -562,7 +570,9 @@ messageHandler peer (mm, ingss) = do
                         Right () -> return ()
                         Left BlockHashNotFoundException -> return ()
                         Left EmptyHeadersMessageException -> return ()
-                        Left e -> err lg $ LG.msg ("[ERROR] Unhandled exception!" ++ show e) >> throw e
+                        Left e -> do
+                            err lg $ LG.msg ("[ERROR] Unhandled exception!" ++ show e)
+                            throw e
                     return $ msgType msg
                 MPing ping -> do
                     bp2pEnv <- getBitcoinP2P
@@ -582,6 +592,7 @@ messageHandler peer (mm, ingss) = do
 readNextMessage' :: (HasXokenNodeEnv env m, MonadIO m) => BitcoinPeer -> m ((Maybe Message, Maybe IngressStreamState))
 readNextMessage' peer = do
     bp2pEnv <- getBitcoinP2P
+    lg <- getLogger
     let net = bncNet $ bitcoinNodeConfig bp2pEnv
     case bpSocket peer of
         Just sock -> do
@@ -596,15 +607,17 @@ readNextMessage' peer = do
                         Just (MBlock blk) -- setup state
                          -> do
                             let hh = headerHash $ defBlockHeader blk
-                                ht =
-                                    case (M.lookup hh mp) of
-                                        Just (_, h) -> h
-                                        Nothing -> throw InvalidBlockSyncStatusMapException
-                                !iz =
+                            let mht = M.lookup hh mp
+                            case (mht) of
+                                Just x -> return ()
+                                Nothing -> do
+                                    debug lg $ LG.msg $ ("InvalidBlockSyncStatusMapException - " ++ show hh)
+                                    throw InvalidBlockSyncStatusMapException
+                            let !iz =
                                     Just
                                         (IngressStreamState
                                              ingst
-                                             (Just $ BlockInfo hh ht)
+                                             (Just $ BlockInfo hh (snd $ fromJust mht))
                                              (computeTreeHeight $ binTxTotalCount ingst)
                                              0
                                              (M.empty, []))
@@ -632,7 +645,7 @@ readNextMessage' peer = do
                                                 modifyTVar'
                                                     (blockSyncStatusMap bp2pEnv)
                                                     (M.insert (biBlockHash bi) $
-                                                     (RecentTxReceiveTime tm, biBlockHeight bi) -- track receive progress
+                                                     (RecentTxReceiveTime (tm, binTxProcessed ingst), biBlockHeight bi) -- track receive progress
                                                      )
                                 Nothing -> throw InvalidBlockInfoException
                         otherwise -> throw UnexpectedDuringBlockProcException
@@ -645,7 +658,7 @@ handleIncomingMessages :: (HasXokenNodeEnv env m, MonadIO m) => BitcoinPeer -> m
 handleIncomingMessages pr = do
     bp2pEnv <- getBitcoinP2P
     lg <- getLogger
-    debug lg $ msg $ (val "reading from: ") +++ show (bpAddress pr)
+    debug lg $ msg $ "reading from: " ++ show (bpAddress pr)
     res <-
         LE.try $
         S.drain $ asyncly $ S.repeatM (readNextMessage' pr) & S.mapM (messageHandler pr) & S.mapM (logMessage pr)

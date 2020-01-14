@@ -122,7 +122,7 @@ instance ToJSON MGraph where
 -- |Create pool of connections (4 stripes, 500 ms timeout, 1 resource per stripe)
 constructState :: BoltCfg -> IO ServerState
 constructState bcfg = do
-    pool <- createPool (BT.connect bcfg) BT.close 4 500 1
+    pool <- createPool (BT.connect bcfg) BT.close 32 500 32
     return (ServerState pool)
 
 -- | Convert record to MerkleBranchNode

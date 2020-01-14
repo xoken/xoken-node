@@ -226,10 +226,11 @@ main :: IO ()
 main = do
     putStrLn $ "Starting Xoken node"
     let logg = Q.stdoutLogger Q.LogWarn
-        stng = Q.setLogger logg Q.defSettings
+        stng = Q.setMaxStreams 1024 $ Q.setMaxConnections 10 $ Q.setPoolStripes 12 $ Q.setLogger logg Q.defSettings
+        stng2 = Q.setRetrySettings Q.eagerRetrySettings stng
         qstr = "SELECT cql_version from system.local" :: Q.QueryString Q.R () (Identity T.Text)
         p = Q.defQueryParams Q.One ()
-    conn <- Q.init stng
+    conn <- Q.init stng2
     op <- Q.runClient conn (Q.query qstr p)
     putStrLn $ "Connected to Cassandra database, version " ++ show (runIdentity (op !! 0))
     conf <- liftIO $ execParser opts
