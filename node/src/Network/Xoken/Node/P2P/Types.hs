@@ -7,6 +7,7 @@ module Network.Xoken.Node.P2P.Types where
 import Control.Concurrent.MVar
 import Control.Concurrent.QSem
 import Control.Concurrent.STM
+import Control.Concurrent.STM.TSem
 import qualified Data.ByteString as B
 import Data.Functor.Identity
 import Data.Int
@@ -68,6 +69,8 @@ data BitcoinPeer =
         , bpLastGetDataSent :: !(TVar (Maybe UTCTime))
       -- ^ block 'GetData' recv window
         , bpBlockFetchWindow :: !(TVar Int)
+      -- ^ Per peer Tx processing concurrency factor
+        , bpTxConcurrency :: ![TSem]
         }
 
 instance Show BitcoinPeer where

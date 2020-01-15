@@ -132,7 +132,7 @@ runEgressBlockSync =
         let net = bncNet $ bitcoinNodeConfig bp2pEnv
         allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
         let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
-        debug lg $ LG.msg $ ("Connected peers: " ++ (show $ map (\x -> snd x) connPeers))
+        -- debug lg $ LG.msg $ ("Connected peers: " ++ (show $ map (\x -> snd x) connPeers))
         if L.length connPeers == 0
             then liftIO $ threadDelay (5 * 1000000)
             else do
@@ -297,7 +297,7 @@ getNextBlockToSync = do
                     return (Just $ BlockInfo (fst e) (snd $ snd e))
         else do
             let unsent = M.filter (\x -> fst x == RequestQueued) sy
-            let received = M.filter (\x -> fst x == BlockReceiveComplete) sy
+            -- let received = M.filter (\x -> fst x == BlockReceiveComplete) sy
             let sent =
                     M.filter
                         (\x ->
@@ -312,48 +312,46 @@ getNextBlockToSync = do
                                  RecentTxReceiveTime _ -> True
                                  otherwise -> False)
                         sy
+            let recvTimedOut =
+                    M.filter (\((RecentTxReceiveTime (t, c)), _) -> (diffUTCTime tm t > 15)) receiveInProgress
+            -- all blocks received, empty the cache, cache-miss gracefully
+            debug lg $ LG.msg $ ("recv in progress, awaiting: " ++ show receiveInProgress)
             if M.size sent == 0 && M.size unsent == 0 && M.size receiveInProgress == 0
-                    -- all blocks received, empty the cache, cache-miss gracefully
                 then do
                     let lelm = last $ L.sortOn (snd . snd) (M.toList sy)
                     liftIO $ atomically $ writeTVar (blockSyncStatusMap bp2pEnv) M.empty
                     markBestSyncedBlock (blockHashToHex $ fst $ lelm) (fromIntegral $ snd $ snd $ lelm) conn
-                    return (Nothing)
-                else if M.size unsent > 0
-                         then do
-                             let sortUnsent = L.sortOn (snd . snd) (M.toList unsent)
-                             return (Just $ BlockInfo (fst $ head sortUnsent) (snd $ snd $ head sortUnsent))
-                         else do
-                             let recvNotStarted = M.filter (\((RequestSent t), _) -> (diffUTCTime tm t > 10)) sent
-                             if M.size recvNotStarted == 0
-                                     -- allowing 15 secs to receive the next Tx
-                                 then do
-                                     if M.size receiveInProgress > 0
-                                         then do
-                                             let recvTimedOut =
-                                                     M.filter
-                                                         (\((RecentTxReceiveTime (t, c)), _) -> (diffUTCTime tm t > 15))
-                                                         receiveInProgress
-                                             if M.size recvTimedOut == 0
-                                                 then do
-                                                     debug lg $
-                                                         LG.msg $
-                                                         ("block receive in progress, awaiting: " ++
-                                                          show receiveInProgress)
-                                                     return (Nothing)
-                                                 else return
-                                                          (Just $
-                                                           BlockInfo
-                                                               (fst $ M.elemAt 0 recvTimedOut)
-                                                               (snd $ snd $ M.elemAt 0 recvTimedOut))
-                                         else do
-                                             debug lg $ LG.msg $ val "nil receiveInProgress - skip"
-                                             return (Nothing)
-                                 else return
-                                          (Just $
-                                           BlockInfo
-                                               (fst $ M.elemAt 0 recvNotStarted)
-                                               (snd $ snd $ M.elemAt 0 recvNotStarted))
+                    return Nothing
+                else if M.size recvTimedOut > 0
+                         then return
+                                  (Just $
+                                   BlockInfo (fst $ M.elemAt 0 recvTimedOut) (snd $ snd $ M.elemAt 0 recvTimedOut))
+                         else if M.size sent > 0
+                                  then do
+                                      let recvNotStarted =
+                                              M.filter (\((RequestSent t), _) -> (diffUTCTime tm t > 10)) sent
+                                      if M.size recvNotStarted > 0
+                                          then return
+                                                   (Just $
+                                                    BlockInfo
+                                                        (fst $ M.elemAt 0 recvNotStarted)
+                                                        (snd $ snd $ M.elemAt 0 recvNotStarted))
+                                          else if M.size unsent > 0
+                                                   then do
+                                                       let sortUnsent = L.sortOn (snd . snd) (M.toList unsent)
+                                                       return
+                                                           (Just $
+                                                            BlockInfo
+                                                                (fst $ head sortUnsent)
+                                                                (snd $ snd $ head sortUnsent))
+                                                   else return Nothing
+                                  else if M.size unsent > 0
+                                           then do
+                                               let sortUnsent = L.sortOn (snd . snd) (M.toList unsent)
+                                               return
+                                                   (Just $
+                                                    BlockInfo (fst $ head sortUnsent) (snd $ snd $ head sortUnsent))
+                                           else return Nothing
 
 fetchBestSyncedBlock :: (HasLogger m, MonadIO m) => Q.ClientState -> Network -> m ((BlockHash, Int32))
 fetchBestSyncedBlock conn net = do
