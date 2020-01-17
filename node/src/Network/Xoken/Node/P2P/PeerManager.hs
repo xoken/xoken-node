@@ -163,7 +163,9 @@ setupSeedPeerConnection =
                                                                  cf
                                                      liftIO $
                                                          atomically $
-                                                         modifyTVar (bitcoinPeers bp2pEnv) (M.insert (addrAddress y) bp)
+                                                         modifyTVar'
+                                                             (bitcoinPeers bp2pEnv)
+                                                             (M.insert (addrAddress y) bp)
                                                      handleIncomingMessages bp
                                                  Nothing -> return ()
                                          Left (SocketConnectException addr) ->
@@ -189,7 +191,7 @@ terminateStalePeers =
                          case bpSocket pr of
                              Just sock -> liftIO $ Network.Socket.close $ sock
                              Nothing -> return ()
-                         liftIO $ atomically $ modifyTVar (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
+                         liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
                      else do
                          debug lg $ msg ("Peer is active, remain connected. " ++ show pr))
             (M.toList allpr)
@@ -234,7 +236,7 @@ setupPeerConnection saddr = do
                                     debug lg $ LG.msg ("Discovered Net-Address: " ++ (show $ saddr))
                                     fl <- doVersionHandshake net sx $ saddr
                                     let bp = BitcoinPeer (saddr) sock rl wl fl Nothing 99999 Nothing ss imc rc st fw cf
-                                    liftIO $ atomically $ modifyTVar (bitcoinPeers bp2pEnv) (M.insert (saddr) bp)
+                                    liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.insert (saddr) bp)
                                     return $ Just bp
                                 Nothing -> return (Nothing)
                         Left (SocketConnectException addr) -> do
@@ -368,7 +370,6 @@ readNextMessage net sock ingss = do
                 maxChunk = (4 * 1024 * 100) - (B.length $ binUnspentBytes blin)
                 len =
                     if (binTxPayloadLeft blin - (B.length $ binUnspentBytes blin)) < maxChunk
-                    -- if (binTxPayloadLeft blin) < maxChunk
                         then (binTxPayloadLeft blin) - (B.length $ binUnspentBytes blin)
                         else maxChunk
             -- debug lg $ msg (" | Tx payload left " ++ show (binTxPayloadLeft blin))
@@ -633,7 +634,7 @@ readNextMessage' peer = do
                                              0
                                              (M.empty, []))
                             liftIO $ atomically $ writeTVar (bpIngressState peer) $ iz
-                            liftIO $ atomically $ modifyTVar (bpBlockFetchWindow peer) (\z -> z - 1)
+                            liftIO $ atomically $ modifyTVar' (bpBlockFetchWindow peer) (\z -> z - 1)
                         Just (MConfTx ctx) -> do
                             case issBlockInfo iss of
                                 Just bi -> do
@@ -697,7 +698,7 @@ handleIncomingMessages pr = do
                     case (bpSocket pr) of
                         Just sock -> liftIO $ Network.Socket.close sock
                         Nothing -> return ()
-                    liftIO $ atomically $ modifyTVar (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
+                    liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
                     liftIO $ writeIORef continue False
 
 --
@@ -716,7 +717,7 @@ handleIncomingMessages pr = do
 --             case (bpSocket pr) of
 --                 Just sock -> liftIO $ Network.Socket.close sock
 --                 Nothing -> return ()
---             liftIO $ atomically $ modifyTVar (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
+--             liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
 --             return ()
 --
 logMessage :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BitcoinPeer -> MessageCommand -> m ()
