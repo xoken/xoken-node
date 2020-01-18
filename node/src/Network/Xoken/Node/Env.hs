@@ -16,6 +16,7 @@ import Control.Monad.Catch
 import Control.Monad.Reader
 import Control.Monad.Trans.Control
 import qualified Data.ByteString.Lazy.Char8 as C
+import qualified Data.HashTable.IO as H
 import Data.Hashable
 import qualified Data.Map.Strict as M
 import Data.Time.Clock
@@ -30,6 +31,8 @@ import Network.Xoken.Transaction
 import System.Logger
 import System.Random
 import Text.Read
+
+type HashTable k v = H.BasicHashTable k v
 
 type HasXokenNodeEnv env m
      = (HasBitcoinP2P m, HasDatabaseHandles m, HasLogger m, MonadReader env m, MonadBaseControl IO m, MonadThrow m)
@@ -48,6 +51,8 @@ data BitcoinP2P =
         , bestBlockUpdated :: !(MVar Bool)
         , headersWriteLock :: !(MVar Bool)
         , blockSyncStatusMap :: !(TVar (M.Map BlockHash (BlockSyncStatus, BlockHeight)))
+        , epochType :: !(TVar Bool)
+        , unconfirmedTxCache :: !(HashTable TxShortHash (Bool, TxHash))
         }
 
 class HasBitcoinP2P m where

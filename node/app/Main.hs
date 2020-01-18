@@ -45,6 +45,7 @@ import Data.Char
 import Data.Default
 import Data.Function
 import Data.Functor.Identity
+import qualified Data.HashTable.IO as H
 import Data.Int
 import Data.List
 import Data.Map.Strict as M
@@ -70,9 +71,9 @@ import Network.Xoken.Node.P2P.BlockSync
 import Network.Xoken.Node.P2P.ChainSync
 import Network.Xoken.Node.P2P.PeerManager
 import Network.Xoken.Node.P2P.Types
+import Network.Xoken.Node.P2P.UnconfTxSync
 import Options.Applicative
 import Paths_xoken_node as P
-import StmContainers.Map as H
 import System.Directory (doesPathExist)
 import System.Environment (getArgs)
 import System.Exit
@@ -174,8 +175,8 @@ runNode config dbh bp2p dbg = do
                 async runEgressChainSync
                 async runEgressChainSync
                 async runEgressBlockSync
-                runPeerSync)
-                -- terminateStalePeers)
+                async runPeerSync
+                runEpochSwitcher)
     return ()
 
 data Config =
@@ -255,11 +256,10 @@ main = do
     g <- newTVarIO M.empty
     mv <- newMVar True
     hl <- newMVar True
-    -- bl <- newQSem 5 -- allow N outstanding blocks
     st <- newTVarIO M.empty
-    -- tm <- newTVarIO Nothing
-    -- fl <- newTVarIO False
-    runNode cnf (DatabaseHandles conn gdbState) (BitcoinP2P nodeConfig g mv hl st) (configDebug conf)
+    ep <- newTVarIO False
+    tc <- H.new
+    runNode cnf (DatabaseHandles conn gdbState) (BitcoinP2P nodeConfig g mv hl st ep tc) (configDebug conf)
   where
     opts =
         info (helper <*> config) $

@@ -33,6 +33,7 @@ import qualified Data.List as L
 import qualified Data.Map.Strict as M
 import Data.Maybe
 import Data.Serialize
+import Data.Serialize as S
 import Data.String.Conversions
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -50,9 +51,9 @@ import Network.Xoken.Crypto.Hash
 import Network.Xoken.Network.Common -- (GetData(..), MessageCommand(..), NetworkAddress(..))
 import Network.Xoken.Network.Message
 import Network.Xoken.Node.Env
-
--- import Network.Xoken.Node.GraphDB
 import Network.Xoken.Node.P2P.Types
+import Network.Xoken.Transaction.Common
+import Network.Xoken.Util
 import Streamly
 import Streamly.Prelude ((|:), nil)
 import qualified Streamly.Prelude as S

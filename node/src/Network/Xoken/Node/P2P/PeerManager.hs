@@ -67,6 +67,7 @@ import Network.Xoken.Node.P2P.BlockSync
 import Network.Xoken.Node.P2P.ChainSync
 import Network.Xoken.Node.P2P.Common
 import Network.Xoken.Node.P2P.Types
+import Network.Xoken.Node.P2P.UnconfTxSync
 import Network.Xoken.Transaction.Common
 import Network.Xoken.Util
 import Streamly
@@ -528,9 +529,13 @@ messageHandler peer (mm, ingss) = do
                         (\x ->
                              if (invType x) == InvBlock
                                  then do
-                                     debug lg $ LG.msg ("Unsolicited INV, a new Block: " ++ (show $ invHash x))
+                                     debug lg $ LG.msg ("INV - new Block: " ++ (show $ invHash x))
                                      liftIO $ putMVar (bestBlockUpdated bp2pEnv) True -- will trigger a GetHeaders to peers
-                                 else return ())
+                                 else if (invType x == InvTx)
+                                          then do
+                                              debug lg $ LG.msg ("INV - new Tx: " ++ (show $ invHash x))
+                                              processTxGetData peer $ invHash x
+                                          else return ())
                         (invList inv)
                     return $ msgType msg
                 MAddr addrs -> do
@@ -570,10 +575,10 @@ messageHandler peer (mm, ingss) = do
                                     return $ msgType msg
                                 Nothing -> throw InvalidStreamStateException
                         Nothing -> do
-                            debug lg $ LG.msg $ val ("[???] Unconfirmed Tx ")
+                            err lg $ LG.msg $ val ("[???] Unconfirmed Tx ")
                             return $ msgType msg
                 MTx tx -> do
-                    debug lg $ LG.msg $ val ("Unconfirmed Tx ")
+                    processUnconfTransaction tx
                     return $ msgType msg
                 MBlock blk -> do
                     res <- LE.try $ processBlock blk
