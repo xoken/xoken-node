@@ -142,7 +142,7 @@ runEpochSwitcher =
             then do
                 let str = "DELETE from xoken.ep_transactions where epoch = ?"
                     qstr = str :: Q.QueryString Q.W (Identity Bool) ()
-                    p = Q.defQueryParams Q.One $ Identity epoch
+                    p = Q.defQueryParams Q.One $ Identity (not epoch)
                 res <- liftIO $ try $ Q.runClient conn (Q.write qstr p)
                 case res of
                     Right () -> return ()
@@ -151,7 +151,7 @@ runEpochSwitcher =
                         throw e
                 let str = "DELETE from xoken.ep_address_outputs where epoch = ?"
                     qstr = str :: Q.QueryString Q.W (Identity Bool) ()
-                    p = Q.defQueryParams Q.One $ Identity epoch
+                    p = Q.defQueryParams Q.One $ Identity (not epoch)
                 res <- liftIO $ try $ Q.runClient conn (Q.write qstr p)
                 case res of
                     Right () -> return ()
