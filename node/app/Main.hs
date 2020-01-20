@@ -173,7 +173,6 @@ runNode config dbh bp2p dbg = do
                 async setupSeedPeerConnection
                 liftIO $ threadDelay (10 * 1000000)
                 async runEgressChainSync
-                async runEgressChainSync
                 async runEgressBlockSync
                 async runPeerSync
                 runEpochSwitcher)

@@ -533,8 +533,7 @@ messageHandler peer (mm, ingss) = do
                                      liftIO $ putMVar (bestBlockUpdated bp2pEnv) True -- will trigger a GetHeaders to peers
                                  else if (invType x == InvTx)
                                           then do
-                                              debug lg $ LG.msg ("INV - new Tx: " ++ (show $ invHash x))
-                                              processTxGetData peer $ invHash x
+                                              debug lg $ LG.msg ("INV - new Tx: " ++ (show $ invHash x)) -- processTxGetData peer $ invHash x
                                           else return ())
                         (invList inv)
                     return $ msgType msg
@@ -679,6 +678,7 @@ handleIncomingMessages pr = do
     whileM_ (liftIO $ readIORef continue) $ do
         bp2pEnv <- getBitcoinP2P -- TODO: move it out?
         res <- LE.try $ readNextMessage' pr
+        debug lg $ LG.msg $ (val " before waitTSem.. ")
         LA.async $
             case res of
                 Right ((msg, state)) -> do
@@ -686,10 +686,11 @@ handleIncomingMessages pr = do
                             case msgType $ fromJust msg of
                                 MCConfTx ->
                                     case state of
-                                        Just st -> bpTxConcurrency pr !! ((binTxProcessed $ issBlockIngest st) `mod` 4)
-                                        Nothing -> (bpTxConcurrency pr !! 0)
+                                        Just st -> bpTxConcurrency pr !! 0 -- ((binTxProcessed $ issBlockIngest st) `mod` 4 )
+                                        Nothing -> bpTxConcurrency pr !! 0
                                 otherwise -> (bpTxConcurrency pr !! 5)
                     liftIO $ atomically $ waitTSem sema
+                    debug lg $ LG.msg $ (val " releasing waitTSem.. ")
                     res <- LE.try $ messageHandler pr (msg, state)
                     case res of
                         Right (msgCmd) -> do

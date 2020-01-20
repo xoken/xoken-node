@@ -85,7 +85,7 @@ processTxGetData pr txHash = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
     let net = bncNet $ bitcoinNodeConfig bp2pEnv
-    debug lg $ LG.msg $ val "sendTxGetData - called."
+    debug lg $ LG.msg $ val "processTxGetData - called."
     bp2pEnv <- getBitcoinP2P
     tuple <- liftIO $ H.lookup (unconfirmedTxCache bp2pEnv) (getTxShortHash $ TxHash txHash)
     case tuple of
@@ -110,7 +110,7 @@ sendTxGetData pr txHash = do
     let net = bncNet $ bitcoinNodeConfig bp2pEnv
     let gd = GetData $ [InvVector InvTx txHash]
         msg = MGetData gd
-    debug lg $ LG.msg $ "GetData Tx req: " ++ show gd
+    debug lg $ LG.msg $ "sendTxGetData: " ++ show gd
     case (bpSocket pr) of
         Just s -> do
             let em = runPut . putMessage net $ msg
@@ -159,7 +159,7 @@ runEpochSwitcher =
                         err lg $ LG.msg ("Error: deleting stale epoch Addr-outputs: " ++ show e)
                         throw e
                 liftIO $ threadDelay (1000000 * 60 * 60)
-            else liftIO $ threadDelay (1000000 * 30)
+            else liftIO $ threadDelay (1000000 * 60 * (60 - minute))
         return ()
 
 commitEpochAddressOutputs ::
@@ -250,7 +250,7 @@ processUnconfTransaction tx = do
                                                   TxIDNotFoundRetryException -> True
                                                   otherwise -> False)
                                          15
-                                         (sourceAddressFromOutpoint conn net $ prevOutput b)
+                                         (sourceAddressFromOutpoint conn lg net $ prevOutput b)
                                  case res of
                                      Right (ma) -> do
                                          case (ma) of
@@ -297,41 +297,46 @@ processUnconfTransaction tx = do
 
 --
 --
-sourceAddressFromOutpoint :: Q.ClientState -> Network -> OutPoint -> IO (Maybe Address)
-sourceAddressFromOutpoint conn net outPoint = do
-    addr <- getAddressFromOutpoint conn net outPoint
+sourceAddressFromOutpoint :: Q.ClientState -> Logger -> Network -> OutPoint -> IO (Maybe Address)
+sourceAddressFromOutpoint conn lg net outPoint = do
+    addr <- getAddressFromOutpoint conn lg net outPoint
     case addr of
-        Nothing -> getEpochAddressFromOutpoint conn net outPoint
+        Nothing -> getEpochAddressFromOutpoint conn lg net outPoint
         Just a -> return addr
 
 --
 --
-getEpochAddressFromOutpoint :: Q.ClientState -> Network -> OutPoint -> IO (Maybe Address)
-getEpochAddressFromOutpoint conn net outPoint = do
+getEpochAddressFromOutpoint :: Q.ClientState -> Logger -> Network -> OutPoint -> IO (Maybe Address)
+getEpochAddressFromOutpoint conn lg net outPoint = do
     let str = "SELECT tx_serialized from xoken.ep_transactions where tx_id = ?"
         qstr = str :: Q.QueryString Q.R (Identity Text) (Identity Blob)
         p = Q.defQueryParams Q.One $ Identity $ txHashToHex $ outPointHash outPoint
-    iop <- Q.runClient conn (Q.query qstr p)
-    if L.length iop == 0
-            -- debug lg $ LG.msg ("(retry) TxID not found: " ++ (show $ txHashToHex $ outPointHash outPoint))
-        then do
-            liftIO $ threadDelay (1000000 * 1)
-            throw TxIDNotFoundRetryException
-        else do
-            let txbyt = runIdentity $ iop !! 0
-            case runGetLazy (getConfirmedTx) (fromBlob txbyt) of
-                Left e
-                    -- debug lg $ LG.msg (encodeHex $ BSL.toStrict $ fromBlob txbyt)
-                 -> do
-                    throw DBTxParseException
-                Right (txd) -> do
-                    case txd of
-                        Just tx ->
-                            if (fromIntegral $ outPointIndex outPoint) > (L.length $ txOut tx)
-                                then throw InvalidOutpointException
-                                else do
-                                    let output = (txOut tx) !! (fromIntegral $ outPointIndex outPoint)
-                                    case scriptToAddressBS $ scriptOutput output of
-                                        Left e -> return Nothing
-                                        Right os -> return $ Just os
-                        Nothing -> undefined
+    res <- liftIO $ try $ Q.runClient conn (Q.query qstr p)
+    case res of
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg ("Error: getEpochAddressFromOutpoint: " ++ show e)
+            throw e
+        Right (iop) -> do
+            if L.length iop == 0
+                        -- debug lg $ LG.msg ("(retry) TxID not found: " ++ (show $ txHashToHex $ outPointHash outPoint))
+                then do
+                    liftIO $ threadDelay (1000000 * 1)
+                    throw TxIDNotFoundRetryException
+                else do
+                    let txbyt = runIdentity $ iop !! 0
+                    case runGetLazy (getConfirmedTx) (fromBlob txbyt) of
+                        Left e
+                                -- debug lg $ LG.msg (encodeHex $ BSL.toStrict $ fromBlob txbyt)
+                         -> do
+                            throw DBTxParseException
+                        Right (txd) -> do
+                            case txd of
+                                Just tx ->
+                                    if (fromIntegral $ outPointIndex outPoint) > (L.length $ txOut tx)
+                                        then throw InvalidOutpointException
+                                        else do
+                                            let output = (txOut tx) !! (fromIntegral $ outPointIndex outPoint)
+                                            case scriptToAddressBS $ scriptOutput output of
+                                                Left e -> return Nothing
+                                                Right os -> return $ Just os
+                                Nothing -> undefined

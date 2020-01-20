@@ -145,7 +145,7 @@ runEgressBlockSync =
                          sendtm <- liftIO $ readTVarIO $ bpLastGetDataSent peer
                          case recvtm of
                              Just rt -> do
-                                 if (fw < 2) && (diffUTCTime tm rt < 60)
+                                 if (fw == 0) && (diffUTCTime tm rt < 60)
                                      then do
                                          rnd <- liftIO $ randomRIO (1, L.length connPeers) -- dynamic peer shuffle logic
                                          if rnd /= 1
@@ -277,25 +277,30 @@ getNextBlockToSync = do
             let str = "SELECT block_height, block_hash from xoken.blocks_by_height where block_height in ?"
                 qstr = str :: Q.QueryString Q.R (Identity [Int32]) ((Int32, T.Text))
                 p = Q.defQueryParams Q.One $ Identity (bks)
-            op <- Q.runClient conn (Q.query qstr p)
-            if L.length op == 0
-                then do
-                    debug lg $ LG.msg $ val "Synced fully!"
-                    return (Nothing)
-                else do
-                    debug lg $ LG.msg $ val "Reloading cache."
-                    let z =
-                            catMaybes $
-                            map
-                                (\x ->
-                                     case (hexToBlockHash $ snd x) of
-                                         Just h -> Just (h, fromIntegral $ fst x)
-                                         Nothing -> Nothing)
-                                (op)
-                        p = map (\x -> (fst x, (RequestQueued, snd x))) z
-                    liftIO $ atomically $ writeTVar (blockSyncStatusMap bp2pEnv) (M.fromList p)
-                    let e = p !! 0
-                    return (Just $ BlockInfo (fst e) (snd $ snd e))
+            res <- liftIO $ try $ Q.runClient conn (Q.query qstr p)
+            case res of
+                Left (e :: SomeException) -> do
+                    err lg $ LG.msg ("Error: getNextBlockToSync: " ++ show e)
+                    throw e
+                Right (op) -> do
+                    if L.length op == 0
+                        then do
+                            debug lg $ LG.msg $ val "Synced fully!"
+                            return (Nothing)
+                        else do
+                            debug lg $ LG.msg $ val "Reloading cache."
+                            let z =
+                                    catMaybes $
+                                    map
+                                        (\x ->
+                                             case (hexToBlockHash $ snd x) of
+                                                 Just h -> Just (h, fromIntegral $ fst x)
+                                                 Nothing -> Nothing)
+                                        (op)
+                                p = map (\x -> (fst x, (RequestQueued, snd x))) z
+                            liftIO $ atomically $ writeTVar (blockSyncStatusMap bp2pEnv) (M.fromList p)
+                            let e = p !! 0
+                            return (Just $ BlockInfo (fst e) (snd $ snd e))
         else do
             let unsent = M.filter (\x -> fst x == RequestQueued) sy
             -- let received = M.filter (\x -> fst x == BlockReceiveComplete) sy
@@ -478,7 +483,7 @@ processConfTransaction tx bhash txind blkht = do
                                                   TxIDNotFoundRetryException -> True
                                                   otherwise -> False)
                                          5
-                                         (getAddressFromOutpoint conn net $ prevOutput b)
+                                         (getAddressFromOutpoint conn lg net $ prevOutput b)
                                  case res of
                                      Right (ma) -> do
                                          case (ma) of
@@ -527,35 +532,39 @@ processConfTransaction tx bhash txind blkht = do
 --
 --
 --
-getAddressFromOutpoint :: Q.ClientState -> Network -> OutPoint -> IO (Maybe Address)
-getAddressFromOutpoint conn net outPoint = do
+getAddressFromOutpoint :: Q.ClientState -> Logger -> Network -> OutPoint -> IO (Maybe Address)
+getAddressFromOutpoint conn lg net outPoint = do
     let str = "SELECT tx_serialized from xoken.transactions where tx_id = ?"
         qstr = str :: Q.QueryString Q.R (Identity Text) (Identity Blob)
         p = Q.defQueryParams Q.One $ Identity $ txHashToHex $ outPointHash outPoint
-    iop <- Q.runClient conn (Q.query qstr p)
-    if L.length iop == 0
-            -- debug lg $ LG.msg ("(retry) TxID not found: " ++ (show $ txHashToHex $ outPointHash outPoint))
-        then do
-            liftIO $ threadDelay (1000000 * 1)
-            throw TxIDNotFoundRetryException
-        else do
-            let txbyt = runIdentity $ iop !! 0
-            case runGetLazy (getConfirmedTx) (fromBlob txbyt) of
-                Left e
-                    -- debug lg $ LG.msg (encodeHex $ BSL.toStrict $ fromBlob txbyt)
-                 -> do
-                    throw DBTxParseException
-                Right (txd) -> do
-                    case txd of
-                        Just tx ->
-                            if (fromIntegral $ outPointIndex outPoint) > (L.length $ txOut tx)
-                                then throw InvalidOutpointException
-                                else do
-                                    let output = (txOut tx) !! (fromIntegral $ outPointIndex outPoint)
-                                    case scriptToAddressBS $ scriptOutput output of
-                                        Left e -> return Nothing
-                                        Right os -> return $ Just os
-                        Nothing -> undefined
+    res <- liftIO $ try $ Q.runClient conn (Q.query qstr p)
+    case res of
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg ("Error: getAddressFromOutpoint: " ++ show e)
+            throw e
+        Right (iop) -> do
+            if L.length iop == 0
+                then do
+                    debug lg $ LG.msg ("(retry) TxID not found: " ++ (show $ txHashToHex $ outPointHash outPoint))
+                    liftIO $ threadDelay (1000000 * 1)
+                    throw TxIDNotFoundRetryException
+                else do
+                    let txbyt = runIdentity $ iop !! 0
+                    case runGetLazy (getConfirmedTx) (fromBlob txbyt) of
+                        Left e -> do
+                            debug lg $ LG.msg (encodeHex $ BSL.toStrict $ fromBlob txbyt)
+                            throw DBTxParseException
+                        Right (txd) -> do
+                            case txd of
+                                Just tx ->
+                                    if (fromIntegral $ outPointIndex outPoint) > (L.length $ txOut tx)
+                                        then throw InvalidOutpointException
+                                        else do
+                                            let output = (txOut tx) !! (fromIntegral $ outPointIndex outPoint)
+                                            case scriptToAddressBS $ scriptOutput output of
+                                                Left e -> return Nothing
+                                                Right os -> return $ Just os
+                                Nothing -> undefined
 
 processBlock :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => DefBlock -> m ()
 processBlock dblk = do
