@@ -299,10 +299,14 @@ processUnconfTransaction tx = do
 --
 sourceAddressFromOutpoint :: Q.ClientState -> Logger -> Network -> OutPoint -> IO (Maybe Address)
 sourceAddressFromOutpoint conn lg net outPoint = do
-    addr <- getAddressFromOutpoint conn lg net outPoint
-    case addr of
-        Nothing -> getEpochAddressFromOutpoint conn lg net outPoint
-        Just a -> return addr
+    res <- liftIO $ try $ getAddressFromOutpoint conn lg net outPoint
+    case res of
+        Right (addr) -> do
+            case addr of
+                Nothing -> getEpochAddressFromOutpoint conn lg net outPoint
+                Just a -> return addr
+        Left TxIDNotFoundRetryException -> do
+            getEpochAddressFromOutpoint conn lg net outPoint
 
 --
 --
