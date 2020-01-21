@@ -84,24 +84,27 @@ processTxGetData :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BitcoinPe
 processTxGetData pr txHash = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    let net = bncNet $ bitcoinNodeConfig bp2pEnv
-    debug lg $ LG.msg $ val "processTxGetData - called."
-    bp2pEnv <- getBitcoinP2P
-    tuple <- liftIO $ H.lookup (unconfirmedTxCache bp2pEnv) (getTxShortHash $ TxHash txHash)
-    case tuple of
-        Just (st, fh) ->
-            if st == False
-                then do
-                    liftIO $ threadDelay (1000000 * 30)
-                    tuple2 <- liftIO $ H.lookup (unconfirmedTxCache bp2pEnv) (getTxShortHash $ TxHash txHash)
-                    case tuple2 of
-                        Just (st2, fh2) ->
-                            if st2 == False
-                                then sendTxGetData pr txHash
-                                else return ()
-                        Nothing -> return ()
-                else return ()
-        Nothing -> sendTxGetData pr txHash
+    if indexUnconfirmedTx bp2pEnv == False
+        then return ()
+        else do
+            let net = bncNet $ bitcoinNodeConfig bp2pEnv
+            debug lg $ LG.msg $ val "processTxGetData - called."
+            bp2pEnv <- getBitcoinP2P
+            tuple <- liftIO $ H.lookup (unconfirmedTxCache bp2pEnv) (getTxShortHash $ TxHash txHash)
+            case tuple of
+                Just (st, fh) ->
+                    if st == False
+                        then do
+                            liftIO $ threadDelay (1000000 * 30)
+                            tuple2 <- liftIO $ H.lookup (unconfirmedTxCache bp2pEnv) (getTxShortHash $ TxHash txHash)
+                            case tuple2 of
+                                Just (st2, fh2) ->
+                                    if st2 == False
+                                        then sendTxGetData pr txHash
+                                        else return ()
+                                Nothing -> return ()
+                        else return ()
+                Nothing -> sendTxGetData pr txHash
 
 sendTxGetData :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BitcoinPeer -> Hash256 -> m ()
 sendTxGetData pr txHash = do

@@ -182,6 +182,7 @@ data Config =
     Config
         { configNetwork :: !Network
         , configDebug :: !Bool
+        , configUnconfirmedTx :: !Bool
         }
 
 defPort :: Int
@@ -199,6 +200,7 @@ config = do
         option (eitherReader networkReader) $
         metavar netNames <> long "net" <> short 'n' <> help "Network to connect to" <> showDefault <> value defNetwork
     configDebug <- switch $ long "debug" <> short 'd' <> help "Show debug messages"
+    configUnconfirmedTx <- switch $ long "unconfirmedTx" <> short 'u' <> help "Index unconfirmed txs."
     pure Config {..}
 
 networkReader :: String -> Either String Network
@@ -258,7 +260,11 @@ main = do
     st <- newTVarIO M.empty
     ep <- newTVarIO False
     tc <- H.new
-    runNode cnf (DatabaseHandles conn gdbState) (BitcoinP2P nodeConfig g mv hl st ep tc) (configDebug conf)
+    runNode
+        cnf
+        (DatabaseHandles conn gdbState)
+        (BitcoinP2P nodeConfig g mv hl st ep tc $ configUnconfirmedTx conf)
+        (configDebug conf)
   where
     opts =
         info (helper <*> config) $

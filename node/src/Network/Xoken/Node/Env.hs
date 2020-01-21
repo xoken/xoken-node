@@ -53,6 +53,7 @@ data BitcoinP2P =
         , blockSyncStatusMap :: !(TVar (M.Map BlockHash (BlockSyncStatus, BlockHeight)))
         , epochType :: !(TVar Bool)
         , unconfirmedTxCache :: !(HashTable TxShortHash (Bool, TxHash))
+        , indexUnconfirmedTx :: !Bool
         }
 
 class HasBitcoinP2P m where

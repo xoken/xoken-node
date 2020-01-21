@@ -464,7 +464,6 @@ processConfTransaction tx bhash txind blkht = do
                      (txOut tx))
                 (txOut tx)
                 [0 :: Int32 ..]
-    debug lg $ LG.msg ("aaa Transaction: " ++ show (txHash tx))
     lookupInAddrs <-
         mapM
             (\(a, b, c) ->
@@ -497,7 +496,6 @@ processConfTransaction tx bhash txind blkht = do
                                       -> do
                                          return Nothing)
             inAddrs
-    debug lg $ LG.msg ("bbb Transaction: " ++ show (txHash tx))
     mapM_
         (\(x, a, i) ->
              mapM_
@@ -513,7 +511,6 @@ processConfTransaction tx bhash txind blkht = do
                           (fromIntegral $ outValue a))
                  inAddrs)
         outAddrs
-    debug lg $ LG.msg ("ccc Transaction: " ++ show (txHash tx))
     mapM_
         (\(x, a, i) ->
              mapM_
@@ -529,7 +526,6 @@ processConfTransaction tx bhash txind blkht = do
                           (fromIntegral $ outValue b))
                  outAddrs)
         (catMaybes lookupInAddrs)
-    debug lg $ LG.msg ("returning Transaction: " ++ show (txHash tx))
     return ()
 
 --
