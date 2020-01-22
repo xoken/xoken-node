@@ -29,7 +29,6 @@ executable xoken-node
       Xoken.Node
       Paths_xoken_node
       Network.Xoken.Node.Data
-      Network.Xoken.Node.Logic
       Network.Xoken.Node.AriviService
       Network.Xoken.Node.P2P.ChainSync
       Network.Xoken.Node.P2P.Types
