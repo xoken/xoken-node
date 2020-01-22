@@ -15,6 +15,7 @@ import Control.Concurrent (threadDelay)
 import Control.Concurrent.MVar
 import Control.Concurrent.STM.TVar
 import Control.Exception
+import qualified Control.Exception.Lifted as LE (try)
 import Control.Monad.Reader
 import Control.Monad.Trans (liftIO)
 import Control.Monad.Trans.Reader (ReaderT(..))
@@ -27,7 +28,7 @@ import Data.Maybe (fromJust)
 import Data.Monoid ((<>))
 import Data.Pool (Pool, createPool)
 import qualified Data.Set as SE
-import Data.Text (Text, concat, filter, intercalate, null, pack, replace, take, takeWhileEnd, unpack)
+import Data.Text (Text, concat, filter, intercalate, map, null, pack, replace, take, takeWhileEnd, unpack)
 import Data.Time.Clock
 import Data.Word
 import Database.Bolt as BT
@@ -226,8 +227,16 @@ queryGraphDBVersion = do
 
 insertMerkleSubTree :: [MerkleNode] -> [MerkleNode] -> BoltActionT IO ()
 insertMerkleSubTree leaves inodes = do
-    records <- queryP cypher params
-    return ()
+    res <- LE.try $ queryP cypher params
+    case res of
+        Left (e :: SomeException) -> do
+            liftIO $ print ("[ERROR] ######### insertMerkleSubTree ######### " ++ show e)
+            -- liftIO $ print (show leaves)
+            -- liftIO $ print (show inodes)
+            -- liftIO $ print (show cypher)
+            -- liftIO $ print (show params)
+            throw e
+        Right (records) -> return ()
   where
     lefts = Prelude.map (leftChild) inodes
     rights = Prelude.map (rightChild) inodes
@@ -300,8 +309,24 @@ insertMerkleSubTree leaves inodes = do
             then " CREATE " <> cyCreate
             else " MATCH " <> cyMatch <> " CREATE " <> cyCreate
     txtTx i = txHashToHex $ TxHash $ fromJust i
-    vars m = Prelude.map (\x -> Data.Text.filter (isAlpha) $ Data.Text.take 36 $ txtTx x) (m)
-    var m = Data.Text.filter (isAlpha) $ Data.Text.take 36 $ txtTx m
+    vars m = Prelude.map (\x -> Data.Text.filter (isAlpha) $ numrepl $ Data.Text.take 8 $ txtTx x) (m)
+    var m = Data.Text.filter (isAlpha) $ numrepl $ Data.Text.take 8 $ txtTx m
+    numrepl txt =
+        Data.Text.map
+            (\x ->
+                 case x of
+                     '0' -> 'k'
+                     '1' -> 'l'
+                     '2' -> 'm'
+                     '3' -> 'n'
+                     '4' -> 'o'
+                     '5' -> 'p'
+                     '6' -> 'q'
+                     '7' -> 'r'
+                     '8' -> 's'
+                     '9' -> 't'
+                     otherwise -> x)
+            txt
     bool2Text cond =
         if cond
             then Data.Text.pack " TRUE "

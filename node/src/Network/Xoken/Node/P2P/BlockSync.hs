@@ -491,7 +491,11 @@ processConfTransaction tx bhash txind blkht = do
                                                  case addrToString net x of
                                                      Just as -> return $ Just (as, b, c)
                                                      Nothing -> throw InvalidAddressException
-                                             Nothing -> throw OutpointAddressNotFoundException
+                                             Nothing -> do
+                                                 liftIO $
+                                                     err lg $ LG.msg $ val "Error: OutpointAddressNotFoundException "
+                                                 return Nothing
+                                                 -- throw OutpointAddressNotFoundException
                                      Left TxIDNotFoundRetryException -- ignore if ample time elapsed
                                       -> do
                                          return Nothing)

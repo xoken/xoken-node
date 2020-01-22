@@ -25,6 +25,7 @@ import Control.Monad.Logger
 import Control.Monad.Reader
 import Control.Monad.STM
 import Control.Monad.State.Strict
+import Control.Monad.Trans.Control
 import qualified Data.Aeson as A (decode, encode)
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as C
@@ -357,7 +358,7 @@ updateMerkleSubTrees hashMap newhash left right ht ind final = do
         -- else block --
 
 readNextMessage ::
-       (HasBitcoinP2P m, HasLogger m, HasDatabaseHandles m, MonadIO m)
+       (HasBitcoinP2P m, HasLogger m, HasDatabaseHandles m, MonadBaseControl IO m, MonadIO m)
     => Network
     -> Socket
     -> Maybe IngressStreamState
@@ -388,7 +389,8 @@ readNextMessage net sock ingss = do
                         Just t -> do
                             debug lg $
                                 msg ("Confirmed-Tx: " ++ (show $ txHash t) ++ " unused: " ++ show (B.length unused))
-                            nst <-
+                            res <-
+                                LE.try $
                                 updateMerkleSubTrees
                                     (merklePrevNodesMap iss)
                                     (getTxHash $ txHash t)
@@ -397,17 +399,24 @@ readNextMessage net sock ingss = do
                                     (merkleTreeHeight iss)
                                     (merkleTreeCurIndex iss)
                                     ((binTxTotalCount blin) == (1 + binTxProcessed blin))
-                            let !bio =
-                                    BlockIngestState
-                                        { binUnspentBytes = unused
-                                        , binTxPayloadLeft = binTxPayloadLeft blin - (B.length txbyt - B.length unused)
-                                        , binTxTotalCount = binTxTotalCount blin
-                                        , binTxProcessed = 1 + binTxProcessed blin
-                                        , binChecksum = binChecksum blin
-                                        }
-                            return
-                                ( Just $ MConfTx t
-                                , Just $ IngressStreamState bio (issBlockInfo iss) (merkleTreeHeight iss) 0 nst)
+                            case res of
+                                Left (e :: SomeException) -> do
+                                    err lg $ LG.msg ("[ERROR] ######### updateMerkleSubTrees ######### " ++ show e)
+                                    throw e
+                                Right (nst) -> do
+                                    debug lg $ msg ("updateMerkleSubTrees returned " ++ (show $ txHash t))
+                                    let !bio =
+                                            BlockIngestState
+                                                { binUnspentBytes = unused
+                                                , binTxPayloadLeft =
+                                                      binTxPayloadLeft blin - (B.length txbyt - B.length unused)
+                                                , binTxTotalCount = binTxTotalCount blin
+                                                , binTxProcessed = 1 + binTxProcessed blin
+                                                , binChecksum = binChecksum blin
+                                                }
+                                    return
+                                        ( Just $ MConfTx t
+                                        , Just $ IngressStreamState bio (issBlockInfo iss) (merkleTreeHeight iss) 0 nst)
                         Nothing -> do
                             debug lg $ msg (txbyt)
                             throw ConfirmedTxParseException
@@ -462,7 +471,11 @@ readNextMessage net sock ingss = do
                                     return (Just msg, Nothing)
 
 doVersionHandshake ::
-       (HasBitcoinP2P m, HasLogger m, HasDatabaseHandles m, MonadIO m) => Network -> Socket -> SockAddr -> m (Bool)
+       (HasBitcoinP2P m, HasLogger m, HasDatabaseHandles m, MonadBaseControl IO m, MonadIO m)
+    => Network
+    -> Socket
+    -> SockAddr
+    -> m (Bool)
 doVersionHandshake net sock sa = do
     p2pEnv <- getBitcoinP2P
     lg <- getLogger
