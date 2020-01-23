@@ -357,6 +357,41 @@ updateMerkleSubTrees hashMap newhash left right ht ind final = do
         else return (state, res)
         -- else block --
 
+resilientRead ::
+       (HasLogger m, MonadBaseControl IO m, MonadIO m)
+    => Socket
+    -> BlockIngestState
+    -> m ((Maybe Tx, C.ByteString), Int)
+resilientRead sock blin = do
+    lg <- getLogger
+    let chunkSize = 400 * 1024
+        delta =
+            if binTxPayloadLeft blin > chunkSize
+                then chunkSize - (B.length $ binUnspentBytes blin)
+                else (binTxPayloadLeft blin) - (B.length $ binUnspentBytes blin)
+    -- debug lg $ msg (" | Tx payload left " ++ show (binTxPayloadLeft blin))
+    -- debug lg $ msg (" | Bytes prev unspent " ++ show (B.length $ binUnspentBytes blin))
+    -- debug lg $ msg (" | Bytes to read " ++ show delta)
+    nbyt <- recvAll sock delta
+    let txbyt = (binUnspentBytes blin) `B.append` nbyt
+    case runGetState (getConfirmedTx) txbyt 0 of
+        Left e -> do
+            err lg $ msg $ "1st attempt|" ++ show e
+            let chunkSizeFB = (1024 * 1024 * 1024)
+                deltaNew =
+                    if binTxPayloadLeft blin > chunkSizeFB
+                        then chunkSizeFB - ((B.length $ binUnspentBytes blin) + delta)
+                        else (binTxPayloadLeft blin) - ((B.length $ binUnspentBytes blin) + delta)
+            nbyt2 <- recvAll sock deltaNew
+            let txbyt2 = txbyt `B.append` nbyt2
+            case runGetState (getConfirmedTx) txbyt2 0 of
+                Left e -> do
+                    err lg $ msg $ "2nd attempt|" ++ show e
+                    throw ConfirmedTxParseException
+                Right res -> do
+                    return (res, B.length txbyt2)
+        Right res -> return (res, B.length txbyt)
+
 readNextMessage ::
        (HasBitcoinP2P m, HasLogger m, HasDatabaseHandles m, MonadBaseControl IO m, MonadIO m)
     => Network
@@ -369,57 +404,39 @@ readNextMessage net sock ingss = do
     case ingss of
         Just iss -> do
             let blin = issBlockIngest iss
-                maxChunk = (4 * 1024 * 100) - (B.length $ binUnspentBytes blin)
-                len =
-                    if (binTxPayloadLeft blin - (B.length $ binUnspentBytes blin)) < maxChunk
-                        then (binTxPayloadLeft blin) - (B.length $ binUnspentBytes blin)
-                        else maxChunk
-            -- debug lg $ msg (" | Tx payload left " ++ show (binTxPayloadLeft blin))
-            -- debug lg $ msg (" | Bytes prev unspent " ++ show (B.length $ binUnspentBytes blin))
-            -- debug lg $ msg (" | Bytes to read " ++ show len)
-            nbyt <- recvAll sock len
-            let txbyt = (binUnspentBytes blin) `B.append` nbyt
-            case runGetState (getConfirmedTx) txbyt 0 of
-                Left e -> do
-                    err lg $ msg $ ("(error) IngressStreamState: " ++ show iss)
-                    err lg $ msg $ (encodeHex txbyt)
+            ((tx, unused), txbytLen) <- resilientRead sock blin
+            case tx of
+                Just t -> do
+                    debug lg $ msg ("Confirmed-Tx: " ++ (show $ txHash t) ++ " unused: " ++ show (B.length unused))
+                    res <-
+                        LE.try $
+                        updateMerkleSubTrees
+                            (merklePrevNodesMap iss)
+                            (getTxHash $ txHash t)
+                            Nothing
+                            Nothing
+                            (merkleTreeHeight iss)
+                            (merkleTreeCurIndex iss)
+                            ((binTxTotalCount blin) == (1 + binTxProcessed blin))
+                    case res of
+                        Left (e :: SomeException) -> do
+                            err lg $ LG.msg ("[ERROR] ######### updateMerkleSubTrees ######### " ++ show e)
+                            throw e
+                        Right (nst) -> do
+                            debug lg $ msg ("updateMerkleSubTrees returned " ++ (show $ txHash t))
+                            let !bio =
+                                    BlockIngestState
+                                        { binUnspentBytes = unused
+                                        , binTxPayloadLeft = binTxPayloadLeft blin - (txbytLen - B.length unused)
+                                        , binTxTotalCount = binTxTotalCount blin
+                                        , binTxProcessed = 1 + binTxProcessed blin
+                                        , binChecksum = binChecksum blin
+                                        }
+                            return
+                                ( Just $ MConfTx t
+                                , Just $ IngressStreamState bio (issBlockInfo iss) (merkleTreeHeight iss) 0 nst)
+                Nothing -> do
                     throw ConfirmedTxParseException
-                Right (tx, unused) -> do
-                    case tx of
-                        Just t -> do
-                            debug lg $
-                                msg ("Confirmed-Tx: " ++ (show $ txHash t) ++ " unused: " ++ show (B.length unused))
-                            res <-
-                                LE.try $
-                                updateMerkleSubTrees
-                                    (merklePrevNodesMap iss)
-                                    (getTxHash $ txHash t)
-                                    Nothing
-                                    Nothing
-                                    (merkleTreeHeight iss)
-                                    (merkleTreeCurIndex iss)
-                                    ((binTxTotalCount blin) == (1 + binTxProcessed blin))
-                            case res of
-                                Left (e :: SomeException) -> do
-                                    err lg $ LG.msg ("[ERROR] ######### updateMerkleSubTrees ######### " ++ show e)
-                                    throw e
-                                Right (nst) -> do
-                                    debug lg $ msg ("updateMerkleSubTrees returned " ++ (show $ txHash t))
-                                    let !bio =
-                                            BlockIngestState
-                                                { binUnspentBytes = unused
-                                                , binTxPayloadLeft =
-                                                      binTxPayloadLeft blin - (B.length txbyt - B.length unused)
-                                                , binTxTotalCount = binTxTotalCount blin
-                                                , binTxProcessed = 1 + binTxProcessed blin
-                                                , binChecksum = binChecksum blin
-                                                }
-                                    return
-                                        ( Just $ MConfTx t
-                                        , Just $ IngressStreamState bio (issBlockInfo iss) (merkleTreeHeight iss) 0 nst)
-                        Nothing -> do
-                            debug lg $ msg (txbyt)
-                            throw ConfirmedTxParseException
         Nothing -> do
             hdr <- recvAll sock 24
             case (decode hdr) of
@@ -470,6 +487,7 @@ readNextMessage net sock ingss = do
                                 Right msg -> do
                                     return (Just msg, Nothing)
 
+--
 doVersionHandshake ::
        (HasBitcoinP2P m, HasLogger m, HasDatabaseHandles m, MonadBaseControl IO m, MonadIO m)
     => Network
