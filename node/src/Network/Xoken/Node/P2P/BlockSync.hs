@@ -225,7 +225,7 @@ runPeerSync =
         let net = bncNet $ bitcoinNodeConfig bp2pEnv
         allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
         let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
-        if L.length connPeers < 10
+        if L.length connPeers < 16
             then do
                 mapM_
                     (\(_, pr) ->

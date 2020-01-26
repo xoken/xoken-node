@@ -119,7 +119,7 @@ setupSeedPeerConnection =
                  LA.async $ do
                      allpr <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
                      let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allpr)
-                     if L.length connPeers > 10
+                     if L.length connPeers > 16
                          then liftIO $ threadDelay (10 * 1000000)
                          else do
                              let toConn =
@@ -141,7 +141,6 @@ setupSeedPeerConnection =
                                      rc <- liftIO $ newTVarIO Nothing
                                      st <- liftIO $ newTVarIO Nothing
                                      fw <- liftIO $ newTVarIO 0
-                                     cf <- mapM (\x -> liftIO $ atomically $ newTSem 4) [0 .. 5]
                                      case res of
                                          Right (sock) -> do
                                              case sock of
@@ -162,7 +161,6 @@ setupSeedPeerConnection =
                                                                  rc
                                                                  st
                                                                  fw
-                                                                 cf
                                                      liftIO $
                                                          atomically $
                                                          modifyTVar'
@@ -207,7 +205,7 @@ setupPeerConnection saddr = do
     let net = bncNet $ bitcoinNodeConfig bp2pEnv
     allpr <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
     let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allpr)
-    if L.length connPeers > 10
+    if L.length connPeers > 16
         then return Nothing
         else do
             let toConn =
@@ -232,12 +230,11 @@ setupPeerConnection saddr = do
                             rc <- liftIO $ newTVarIO Nothing
                             st <- liftIO $ newTVarIO Nothing
                             fw <- liftIO $ newTVarIO 0
-                            cf <- mapM (\x -> liftIO $ atomically $ newTSem 4) [0 .. 5]
                             case sock of
                                 Just sx -> do
                                     debug lg $ LG.msg ("Discovered Net-Address: " ++ (show $ saddr))
                                     fl <- doVersionHandshake net sx $ saddr
-                                    let bp = BitcoinPeer (saddr) sock rl wl fl Nothing 99999 Nothing ss imc rc st fw cf
+                                    let bp = BitcoinPeer (saddr) sock rl wl fl Nothing 99999 Nothing ss imc rc st fw
                                     liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.insert (saddr) bp)
                                     return $ Just bp
                                 Nothing -> return (Nothing)
@@ -668,12 +665,18 @@ readNextMessage' peer = do
                                              0
                                              (M.empty, []))
                             liftIO $ atomically $ writeTVar (bpIngressState peer) $ iz
-                            liftIO $ atomically $ modifyTVar' (bpBlockFetchWindow peer) (\z -> z - 1)
                         Just (MConfTx ctx) -> do
                             case issBlockInfo iss of
                                 Just bi -> do
                                     tm <- liftIO $ getCurrentTime
                                     liftIO $ atomically $ writeTVar (bpLastTxRecvTime peer) $ Just tm
+                                    let trig =
+                                            if (binTxTotalCount ingst - 4) <= 0
+                                                then binTxTotalCount ingst
+                                                else (binTxTotalCount ingst - 4)
+                                    if binTxProcessed ingst == trig
+                                        then liftIO $ atomically $ modifyTVar' (bpBlockFetchWindow peer) (\z -> z - 1)
+                                        else return ()
                                     if binTxTotalCount ingst == binTxProcessed ingst
                                         then do
                                             liftIO $ atomically $ writeTVar (bpIngressState peer) $ Nothing -- reset state

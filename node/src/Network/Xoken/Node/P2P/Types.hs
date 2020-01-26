@@ -63,14 +63,13 @@ data BitcoinPeer =
         , bpIngressState :: !(TVar (Maybe IngressStreamState))
       -- ^ Block stream processing state
         , bpIngressMsgCount :: !(TVar Int)
-      -- ^ last Block received time
+      -- ^ recent msg count for detecting stale peer connections
         , bpLastTxRecvTime :: !(TVar (Maybe UTCTime))
-      -- ^ last GetData Sent time
+      -- ^ last tx recv time
         , bpLastGetDataSent :: !(TVar (Maybe UTCTime))
-      -- ^ block 'GetData' recv window
+      -- ^ block 'GetData' sent time
         , bpBlockFetchWindow :: !(TVar Int)
-      -- ^ Per peer Tx processing concurrency factor
-        , bpTxConcurrency :: ![TSem]
+      -- number of outstanding blocks
         }
 
 instance Show BitcoinPeer where
