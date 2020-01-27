@@ -12,6 +12,7 @@ module Network.Xoken.Node.P2P.PeerManager
     ( createSocket
     , setupSeedPeerConnection
     , terminateStalePeers
+    , resetPeers
     ) where
 
 import Control.Concurrent.Async (mapConcurrently)
@@ -137,10 +138,10 @@ setupSeedPeerConnection =
                                      wl <- liftIO $ newMVar True
                                      ss <- liftIO $ newTVarIO Nothing
                                      imc <- liftIO $ newTVarIO 0
-                                     res <- LE.try $ liftIO $ createSocket y
                                      rc <- liftIO $ newTVarIO Nothing
                                      st <- liftIO $ newTVarIO Nothing
                                      fw <- liftIO $ newTVarIO 0
+                                     res <- LE.try $ liftIO $ createSocket y
                                      case res of
                                          Right (sock) -> do
                                              case sock of
@@ -197,6 +198,23 @@ terminateStalePeers =
             (M.toList allpr)
 
 --
+resetPeers :: (HasXokenNodeEnv env m, MonadIO m) => m ()
+resetPeers
+    -- liftIO $ threadDelay (120 * 1000000)
+ = do
+    bp2pEnv <- getBitcoinP2P
+    lg <- getLogger
+    allpr <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
+    debug lg $ msg $ val (" ### Resetting peers ### ")
+    mapM_
+        (\(_, pr) -> do
+             debug lg $ msg ("Terminating peer connection " ++ show pr)
+             case bpSocket pr of
+                 Just sock -> liftIO $ Network.Socket.close $ sock
+                 Nothing -> return ()
+             liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr)))
+        (M.toList allpr)
+
 --
 setupPeerConnection :: (HasXokenNodeEnv env m, MonadIO m) => SockAddr -> m (Maybe BitcoinPeer)
 setupPeerConnection saddr = do

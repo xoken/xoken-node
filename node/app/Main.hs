@@ -24,7 +24,7 @@ import Arivi.P2P.RPC.Types
 import Arivi.P2P.ServiceRegistry
 import Control.Arrow
 import Control.Concurrent (threadDelay)
-import Control.Concurrent.Async.Lifted (async)
+import Control.Concurrent.Async.Lifted (async, wait, withAsync)
 import Control.Concurrent.MVar
 import Control.Concurrent.QSem
 import Control.Concurrent.STM.TVar
@@ -156,6 +156,23 @@ defaultConfig path = do
                 9090
     Config.makeConfig config (path <> "/config.yaml")
 
+runThreads :: Config.Config -> (ServiceEnv AppM ServiceResource ServiceTopic RPCMessage PubNotifyMessage) -> IO ()
+runThreads config serviceEnv =
+    forever $ do
+        runFileLoggingT (toS $ Config.logFile config) $
+            runAppM
+                serviceEnv
+                (do initP2P config
+                    liftIO $ print ("begin of loop..")
+                    withAsync runEpochSwitcher $ \a -> do
+                        withAsync setupSeedPeerConnection $ \b -> do
+                            withAsync runEgressChainSync $ \c -> do
+                                withAsync runEgressBlockSync $ \d -> do
+                                    withAsync runPeerSync $ \e -> do
+                                        withAsync resetPeers $ \f -> do liftIO $ threadDelay (2 * 3600 * 1000000)
+                    liftIO $ print ("end of loop..")
+                    liftIO $ threadDelay (30 * 1000000))
+
 runNode :: Config.Config -> DatabaseHandles -> BitcoinP2P -> Bool -> IO ()
 runNode config dbh bp2p dbg = do
     p2pEnv <- mkP2PEnv config globalHandlerRpc globalHandlerPubSub [AriviService] []
@@ -166,16 +183,7 @@ runNode config dbh bp2p dbg = do
     lg <- LG.new (LG.setOutput (LG.Path "xoken.log") (LG.setLogLevel ll LG.defSettings))
     let xknEnv = XokenNodeEnv bp2p dbh lg
     let serviceEnv = ServiceEnv xknEnv p2pEnv
-    runFileLoggingT (toS $ Config.logFile config) $
-        runAppM
-            serviceEnv
-            (do initP2P config
-                async setupSeedPeerConnection
-                liftIO $ threadDelay (10 * 1000000)
-                async runEgressChainSync
-                async runEgressBlockSync
-                async runPeerSync
-                runEpochSwitcher)
+    runThreads config serviceEnv
     return ()
 
 data Config =
