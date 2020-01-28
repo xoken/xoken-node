@@ -54,6 +54,7 @@ data BitcoinP2P =
         , epochType :: !(TVar Bool)
         , unconfirmedTxCache :: !(HashTable TxShortHash (Bool, TxHash))
         , indexUnconfirmedTx :: !Bool
+        , peerReset :: !(MVar Bool, TVar Int)
         }
 
 class HasBitcoinP2P m where

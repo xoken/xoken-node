@@ -16,7 +16,7 @@ module Network.Xoken.Node.P2P.PeerManager
     ) where
 
 import Control.Concurrent.Async (mapConcurrently)
-import Control.Concurrent.Async.Lifted as LA (async)
+import Control.Concurrent.Async.Lifted as LA (async, withAsync)
 import Control.Concurrent.MVar
 import Control.Concurrent.STM.TSem
 import Control.Concurrent.STM.TVar
@@ -116,61 +116,68 @@ setupSeedPeerConnection =
         let sd = map (\x -> Just (x :: HostName)) seeds
         addrs <- liftIO $ mapConcurrently (\x -> head <$> getAddrInfo (Just hints) (x) (Just (show port))) sd
         mapM_
-            (\y ->
-                 LA.async $ do
-                     allpr <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
-                     let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allpr)
-                     if L.length connPeers > 16
-                         then liftIO $ threadDelay (10 * 1000000)
-                         else do
-                             let toConn =
-                                     case M.lookup (addrAddress y) allpr of
-                                         Just pr ->
-                                             if bpConnected pr
-                                                 then False
-                                                 else True
-                                         Nothing -> True
-                             if toConn == False
-                                 then do
-                                     debug lg $ msg ("Seed peer already connected, ignoring.. " ++ show (addrAddress y))
+            (\y -> do
+                 debug lg $ msg ("YYYY.. " ++ show (addrAddress y))
+                 LA.async $
+                     LA.withAsync
+                         (do allpr <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
+                             let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allpr)
+                             if L.length connPeers > 16
+                                 then liftIO $ threadDelay (10 * 1000000)
                                  else do
-                                     rl <- liftIO $ newMVar True
-                                     wl <- liftIO $ newMVar True
-                                     ss <- liftIO $ newTVarIO Nothing
-                                     imc <- liftIO $ newTVarIO 0
-                                     rc <- liftIO $ newTVarIO Nothing
-                                     st <- liftIO $ newTVarIO Nothing
-                                     fw <- liftIO $ newTVarIO 0
-                                     res <- LE.try $ liftIO $ createSocket y
-                                     case res of
-                                         Right (sock) -> do
-                                             case sock of
-                                                 Just sx -> do
-                                                     fl <- doVersionHandshake net sx $ addrAddress y
-                                                     let bp =
-                                                             BitcoinPeer
-                                                                 (addrAddress y)
-                                                                 sock
-                                                                 rl
-                                                                 wl
-                                                                 fl
-                                                                 Nothing
-                                                                 99999
-                                                                 Nothing
-                                                                 ss
-                                                                 imc
-                                                                 rc
-                                                                 st
-                                                                 fw
-                                                     liftIO $
-                                                         atomically $
-                                                         modifyTVar'
-                                                             (bitcoinPeers bp2pEnv)
-                                                             (M.insert (addrAddress y) bp)
-                                                     handleIncomingMessages bp
-                                                 Nothing -> return ()
-                                         Left (SocketConnectException addr) ->
-                                             err lg $ msg ("SocketConnectException: " ++ show addr))
+                                     let toConn =
+                                             case M.lookup (addrAddress y) allpr of
+                                                 Just pr ->
+                                                     if bpConnected pr
+                                                         then False
+                                                         else True
+                                                 Nothing -> True
+                                     if toConn == False
+                                         then do
+                                             debug lg $
+                                                 msg
+                                                     ("Seed peer already connected, ignoring.. " ++ show (addrAddress y))
+                                         else do
+                                             rl <- liftIO $ newMVar True
+                                             wl <- liftIO $ newMVar True
+                                             ss <- liftIO $ newTVarIO Nothing
+                                             imc <- liftIO $ newTVarIO 0
+                                             rc <- liftIO $ newTVarIO Nothing
+                                             st <- liftIO $ newTVarIO Nothing
+                                             fw <- liftIO $ newTVarIO 0
+                                             res <- LE.try $ liftIO $ createSocket y
+                                             case res of
+                                                 Right (sock) -> do
+                                                     case sock of
+                                                         Just sx -> do
+                                                             fl <- doVersionHandshake net sx $ addrAddress y
+                                                             let bp =
+                                                                     BitcoinPeer
+                                                                         (addrAddress y)
+                                                                         sock
+                                                                         rl
+                                                                         wl
+                                                                         fl
+                                                                         Nothing
+                                                                         99999
+                                                                         Nothing
+                                                                         ss
+                                                                         imc
+                                                                         rc
+                                                                         st
+                                                                         fw
+                                                             liftIO $
+                                                                 atomically $
+                                                                 modifyTVar'
+                                                                     (bitcoinPeers bp2pEnv)
+                                                                     (M.insert (addrAddress y) bp)
+                                                             handleIncomingMessages bp
+                                                         Nothing -> return ()
+                                                 Left (SocketConnectException addr) ->
+                                                     err lg $ msg ("SocketConnectException: " ++ show addr))
+                         (\_ -> do
+                              liftIO $ readMVar $ fst $ peerReset bp2pEnv
+                              return ()))
             (addrs)
         liftIO $ threadDelay (30 * 1000000)
 
@@ -199,12 +206,11 @@ terminateStalePeers =
 
 --
 resetPeers :: (HasXokenNodeEnv env m, MonadIO m) => m ()
-resetPeers
-    -- liftIO $ threadDelay (120 * 1000000)
- = do
+resetPeers = do
     bp2pEnv <- getBitcoinP2P
     lg <- getLogger
     allpr <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
+    liftIO $ readMVar $ fst $ peerReset bp2pEnv -- will be blocked until 'n' GetData cache batches are complete
     debug lg $ msg $ val (" ### Resetting peers ### ")
     mapM_
         (\(_, pr) -> do
@@ -588,9 +594,13 @@ messageHandler peer (mm, ingss) = do
                         (\(t, x) -> do
                              bp <- setupPeerConnection $ naAddress x
                              LA.async $
-                                 case bp of
-                                     Just p -> handleIncomingMessages p
-                                     Nothing -> return ())
+                                 LA.withAsync
+                                     (case bp of
+                                          Just p -> handleIncomingMessages p
+                                          Nothing -> return ())
+                                     (\_ -> do
+                                          liftIO $ readMVar $ fst $ peerReset bp2pEnv
+                                          return ()))
                         (addrList addrs)
                     return $ msgType msg
                 MConfTx tx -> do

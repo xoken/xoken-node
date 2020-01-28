@@ -164,14 +164,17 @@ runThreads config serviceEnv =
                 serviceEnv
                 (do initP2P config
                     liftIO $ print ("begin of loop..")
+                    bp2pEnv <- getBitcoinP2P
+                    liftIO $ tryTakeMVar (fst $ peerReset bp2pEnv)
                     withAsync runEpochSwitcher $ \a -> do
                         withAsync setupSeedPeerConnection $ \b -> do
                             withAsync runEgressChainSync $ \c -> do
                                 withAsync runEgressBlockSync $ \d -> do
                                     withAsync runPeerSync $ \e -> do
-                                        withAsync resetPeers $ \f -> do liftIO $ threadDelay (2 * 3600 * 1000000)
+                                        resetPeers
+                                        liftIO $ print ("loop..")
                     liftIO $ print ("end of loop..")
-                    liftIO $ threadDelay (30 * 1000000))
+                    liftIO $ threadDelay (10 * 1000000))
 
 runNode :: Config.Config -> DatabaseHandles -> BitcoinP2P -> Bool -> IO ()
 runNode config dbh bp2p dbg = do
@@ -268,10 +271,12 @@ main = do
     st <- newTVarIO M.empty
     ep <- newTVarIO False
     tc <- H.new
+    rpf <- newEmptyMVar
+    rpc <- newTVarIO 0
     runNode
         cnf
         (DatabaseHandles conn gdbState)
-        (BitcoinP2P nodeConfig g mv hl st ep tc $ configUnconfirmedTx conf)
+        (BitcoinP2P nodeConfig g mv hl st ep tc (configUnconfirmedTx conf) (rpf, rpc))
         (configDebug conf)
   where
     opts =

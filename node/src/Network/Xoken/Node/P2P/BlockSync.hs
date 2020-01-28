@@ -17,7 +17,7 @@ module Network.Xoken.Node.P2P.BlockSync
     ) where
 
 import Control.Concurrent (threadDelay)
-import Control.Concurrent.Async (mapConcurrently, race_)
+import Control.Concurrent.Async (AsyncCancelled, mapConcurrently, race_)
 import Control.Concurrent.Async.Lifted as LA (async)
 import Control.Concurrent.MVar
 import Control.Concurrent.QSem
@@ -102,8 +102,11 @@ produceGetDataMessage = do
                     liftIO $ threadDelay (1000000 * 1)
                     return Nothing
         Left (e :: SomeException) -> do
-            err lg $ LG.msg ("[ERROR] produceGetDataMessage " ++ show e)
-            return Nothing
+            case fromException e of
+                Just (t :: AsyncCancelled) -> throw e
+                otherwise -> do
+                    err lg $ LG.msg ("[ERROR] produceGetDataMessage " ++ show e)
+                    return Nothing
 
 sendRequestMessages :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BitcoinPeer -> Message -> m ()
 sendRequestMessages pr msg = do
@@ -120,7 +123,10 @@ sendRequestMessages pr msg = do
                     res <- liftIO $ try $ sendEncMessage (bpWriteMsgLock pr) s (BSL.fromStrict em)
                     case res of
                         Right () -> return ()
-                        Left (e :: SomeException) -> debug lg $ LG.msg $ "Error, sending out data: " ++ show e
+                        Left (e :: SomeException) -> do
+                            case fromException e of
+                                Just (t :: AsyncCancelled) -> throw e
+                                otherwise -> debug lg $ LG.msg $ "Error, sending out data: " ++ show e
                     debug lg $ LG.msg $ "sending out GetData: " ++ show (bpAddress pr)
                 Nothing -> err lg $ LG.msg $ val "Error sending, no connections available"
         ___ -> return ()
@@ -266,6 +272,13 @@ getNextBlockToSync = do
     -- reload cache
     if M.size sy == 0
         then do
+            liftIO $ atomically $ modifyTVar' (snd $ peerReset bp2pEnv) (\x -> x + 1)
+            v <- liftIO $ readTVarIO $ snd $ peerReset bp2pEnv
+            if v == 2
+                then do
+                    liftIO $ atomically $ modifyTVar' (snd $ peerReset bp2pEnv) (\x -> 0)
+                    liftIO $ putMVar (fst $ peerReset bp2pEnv) True -- will trigger peer reset
+                else return ()
             (hash, ht) <- fetchBestSyncedBlock conn net
             let cacheInd =
                     if ht < 500000
