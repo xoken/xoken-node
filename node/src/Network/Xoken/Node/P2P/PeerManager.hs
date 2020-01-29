@@ -16,7 +16,7 @@ module Network.Xoken.Node.P2P.PeerManager
     ) where
 
 import Control.Concurrent.Async (mapConcurrently)
-import Control.Concurrent.Async.Lifted as LA (async, withAsync)
+import Control.Concurrent.Async.Lifted as LA (async, race, withAsync)
 import Control.Concurrent.MVar
 import Control.Concurrent.STM.TSem
 import Control.Concurrent.STM.TVar
@@ -325,7 +325,7 @@ pushHash (stateMap, res) nhash left right ht ind final =
             Nothing -> emptyMerkleNode
 
 updateMerkleSubTrees ::
-       (HasDatabaseHandles m, HasLogger m, MonadIO m)
+       (HasDatabaseHandles m, MonadBaseControl IO m, HasLogger m, MonadIO m)
     => HashCompute
     -> Hash256
     -> Maybe Hash256
@@ -362,19 +362,37 @@ updateMerkleSubTrees hashMap newhash left right ht ind final = do
             if L.length create == 1 && L.length finMatch == 0
                 then return (state, [])
                 else do
-                    res <-
-                        liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` insertMerkleSubTree create finMatch)
-                    case res of
+                    debug lg $ msg ("about to insertMerkleSubTree" ++ show newhash)
+                    ores <-
+                        LA.race
+                            (liftIO $
+                             try $ tryWithResource (pool $ graphDB dbe) (`BT.run` insertMerkleSubTree create finMatch))
+                            (liftIO $ threadDelay (30 * 1000000))
+                    case ores of
                         Right () -> do
-                            return (state, [])
-                        Left (e :: SomeException) -> do
-                            if T.isInfixOf (T.pack "ConstraintValidationFailed") (T.pack $ show e)
-                                then do
-                                    err lg $ msg $ val "Ignoring ConstraintValidationFailed, prev aborted block sync?"
-                                    return (state, [])
-                                else do
-                                    err lg $ msg $ show e
-                                    throw MerkleSubTreeDBInsertException
+                            debug lg $ msg (" ########## INSERT TIMEOUT ########### " ++ show newhash)
+                            throw MerkleSubTreeDBInsertException
+                        Left res -> do
+                            case res of
+                                Right rt -> do
+                                    case rt of
+                                        Just r -> do
+                                            debug lg $ msg ("insert success " ++ show newhash)
+                                            return (state, [])
+                                        Nothing -> do
+                                            err lg $ msg ("Unable to fetch resource from pool" ++ show newhash)
+                                            throw MerkleSubTreeDBInsertException
+                                Left (e :: SomeException) -> do
+                                    if T.isInfixOf (T.pack "ConstraintValidationFailed") (T.pack $ show e)
+                                        then do
+                                            err lg $
+                                                msg
+                                                    ("Ignoring ConstraintValidationFailed, prev aborted block sync?" ++
+                                                     show newhash)
+                                            return (state, [])
+                                        else do
+                                            err lg $ msg $ show e
+                                            throw MerkleSubTreeDBInsertException
         else return (state, res)
         -- else block --
 

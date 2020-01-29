@@ -156,9 +156,27 @@ defaultConfig path = do
                 9090
     Config.makeConfig config (path <> "/config.yaml")
 
-runThreads :: Config.Config -> (ServiceEnv AppM ServiceResource ServiceTopic RPCMessage PubNotifyMessage) -> IO ()
-runThreads config serviceEnv =
+makeGraphDBResPool :: IO (ServerState)
+makeGraphDBResPool = do
+    let gdbConfig = def {BT.user = "neo4j", BT.password = "admin123"}
+    gdbState <- constructState gdbConfig
+    a <- withResource (pool gdbState) (`BT.run` queryGraphDBVersion)
+    putStrLn $ "Connected to Neo4j database, version " ++ show (a !! 0)
+    return gdbState
+
+runThreads ::
+       Config.Config
+    -> BitcoinP2P
+    -> Q.ClientState
+    -> LG.Logger
+    -> (P2PEnv AppM ServiceResource ServiceTopic RPCMessage PubNotifyMessage)
+    -> IO ()
+runThreads config bp2p conn lg p2pEnv =
     forever $ do
+        gdbState <- makeGraphDBResPool
+        let dbh = DatabaseHandles conn gdbState
+        let xknEnv = XokenNodeEnv bp2p dbh lg
+        let serviceEnv = ServiceEnv xknEnv p2pEnv
         runFileLoggingT (toS $ Config.logFile config) $
             runAppM
                 serviceEnv
@@ -172,22 +190,20 @@ runThreads config serviceEnv =
                                 withAsync runEgressBlockSync $ \d -> do
                                     withAsync runPeerSync $ \e -> do
                                         resetPeers
-                                        liftIO $ print ("loop..")
+                                        liftIO $ print ("exiting..")
                     liftIO $ print ("end of loop..")
+                    liftIO $ destroyAllResources (pool gdbState)
                     liftIO $ threadDelay (10 * 1000000))
 
-runNode :: Config.Config -> DatabaseHandles -> BitcoinP2P -> Bool -> IO ()
-runNode config dbh bp2p dbg = do
+runNode :: Config.Config -> Q.ClientState -> BitcoinP2P -> Bool -> IO ()
+runNode config conn bp2p dbg = do
     p2pEnv <- mkP2PEnv config globalHandlerRpc globalHandlerPubSub [AriviService] []
     let ll =
             if dbg
                 then LG.Debug
                 else LG.Info
     lg <- LG.new (LG.setOutput (LG.Path "xoken.log") (LG.setLogLevel ll LG.defSettings))
-    let xknEnv = XokenNodeEnv bp2p dbh lg
-    let serviceEnv = ServiceEnv xknEnv p2pEnv
-    runThreads config serviceEnv
-    return ()
+    runThreads config bp2p conn lg p2pEnv
 
 data Config =
     Config
@@ -247,10 +263,10 @@ main = do
     op <- Q.runClient conn (Q.query qstr p)
     putStrLn $ "Connected to Cassandra database, version " ++ show (runIdentity (op !! 0))
     conf <- liftIO $ execParser opts
-    let gdbConfig = def {BT.user = "neo4j", BT.password = "admin123"}
-    gdbState <- constructState gdbConfig
-    a <- withResource (pool gdbState) (`BT.run` queryGraphDBVersion)
-    putStrLn $ "Connected to Neo4j database, version " ++ show (a !! 0)
+    -- let gdbConfig = def {BT.user = "neo4j", BT.password = "admin123"}
+    -- gdbState <- constructState gdbConfig
+    -- a <- withResource (pool gdbState) (`BT.run` queryGraphDBVersion)
+    -- putStrLn $ "Connected to Neo4j database, version " ++ show (a !! 0)
     --
     --
     let path = "."
@@ -273,11 +289,7 @@ main = do
     tc <- H.new
     rpf <- newEmptyMVar
     rpc <- newTVarIO 0
-    runNode
-        cnf
-        (DatabaseHandles conn gdbState)
-        (BitcoinP2P nodeConfig g mv hl st ep tc (configUnconfirmedTx conf) (rpf, rpc))
-        (configDebug conf)
+    runNode cnf (conn) (BitcoinP2P nodeConfig g mv hl st ep tc (configUnconfirmedTx conf) (rpf, rpc)) (configDebug conf)
   where
     opts =
         info (helper <*> config) $

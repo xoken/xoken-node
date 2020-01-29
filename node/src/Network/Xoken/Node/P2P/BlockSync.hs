@@ -274,7 +274,7 @@ getNextBlockToSync = do
         then do
             liftIO $ atomically $ modifyTVar' (snd $ peerReset bp2pEnv) (\x -> x + 1)
             v <- liftIO $ readTVarIO $ snd $ peerReset bp2pEnv
-            if v == 2
+            if v >= 10
                 then do
                     liftIO $ atomically $ modifyTVar' (snd $ peerReset bp2pEnv) (\x -> 0)
                     liftIO $ putMVar (fst $ peerReset bp2pEnv) True -- will trigger peer reset
@@ -579,9 +579,11 @@ getAddressFromOutpoint conn lg net outPoint = do
                                         else do
                                             let output = (txOut tx) !! (fromIntegral $ outPointIndex outPoint)
                                             case scriptToAddressBS $ scriptOutput output of
-                                                Left e -> return Nothing
+                                                Left e -> do
+                                                    err lg $ LG.msg ("Error: failed decoding addr: " ++ show e)
+                                                    return Nothing
                                                 Right os -> return $ Just os
-                                Nothing -> undefined
+                                Nothing -> return Nothing
 
 processBlock :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => DefBlock -> m ()
 processBlock dblk = do
