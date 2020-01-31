@@ -13,8 +13,9 @@ module Network.Xoken.Node.P2P.ChainSync
     , processHeaders
     ) where
 
+import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (mapConcurrently)
-import Control.Concurrent.Async.Lifted as LA (async)
+import Control.Concurrent.Async.Lifted as LA (async, race)
 import Control.Concurrent.MVar
 import Control.Concurrent.STM.TVar
 import Control.Exception
@@ -70,7 +71,8 @@ produceGetHeadersMessage = do
     debug lg $ LG.msg $ val "produceGetHeadersMessage - called."
     bp2pEnv <- getBitcoinP2P
     dbe' <- getDB
-    liftIO $ takeMVar (bestBlockUpdated bp2pEnv) -- be blocked until a new best-block is updated in DB.
+    -- be blocked until a new best-block is updated in DB, or a set timeout.
+    LA.race (liftIO $ takeMVar (bestBlockUpdated bp2pEnv)) (liftIO $ threadDelay (15 * 1000000))
     let conn = keyValDB $ dbe'
     let net = bncNet $ bitcoinNodeConfig bp2pEnv
     bl <- getBlockLocator conn net
@@ -223,15 +225,32 @@ processHeaders hdrs = do
                 conn = keyValDB $ dbe'
                 headPrevHash = (blockHashToHex $ prevBlock $ fst $ head $ headersList hdrs)
             bb <- fetchBestBlock conn net
-            if (blockHashToHex $ fst bb) == genesisHash
-                then debug lg $ LG.msg $ val "First Headers set from genesis"
-                else if (blockHashToHex $ fst bb) == headPrevHash
-                         then debug lg $ LG.msg $ val "Links okay!"
-                         else do
-                             err lg $ LG.msg $ val "Does not match DB best-block"
-                             throw BlockHashNotFoundException -- likely a previously sync'd block
-            let indexed = zip [((snd bb) + 1) ..] (headersList hdrs)
-                str1 = "insert INTO xoken.blocks_by_hash (block_hash, block_header, block_height) values (?, ? , ? )"
+            indexed <-
+                if (blockHashToHex $ fst bb) == genesisHash
+                    then do
+                        debug lg $ LG.msg $ val "First Headers set from genesis"
+                        return $ zip [((snd bb) + 1) ..] (headersList hdrs)
+                    else if (blockHashToHex $ fst bb) == headPrevHash
+                             then do
+                                 debug lg $ LG.msg $ val "Building on current Best block"
+                                 return $ zip [((snd bb) + 1) ..] (headersList hdrs)
+                             else do
+                                 res <- fetchMatchBlockOffset conn net headPrevHash
+                                 case res of
+                                     Just (matchBHash, matchBHt) -> do
+                                         if ((fst bb) == (headerHash $ fst $ last $ headersList hdrs))
+                                             then do
+                                                 debug lg $
+                                                     LG.msg $
+                                                     LG.val ("Does not match best-block, redundant Headers msg")
+                                                 return [] -- already synced
+                                             else do
+                                                 debug lg $
+                                                     LG.msg $
+                                                     LG.val ("Does not match best-block, potential block re-org ")
+                                                 return $ zip [(matchBHt + 1) ..] (headersList hdrs) -- potential re-org
+                                     Nothing -> throw BlockHashNotFoundException
+            let str1 = "insert INTO xoken.blocks_by_hash (block_hash, block_header, block_height) values (?, ? , ? )"
                 qstr1 = str1 :: Q.QueryString Q.W (Text, Text, Int32) ()
                 str2 = "insert INTO xoken.blocks_by_height (block_height, block_hash, block_header) values (?, ? , ? )"
                 qstr2 = str2 :: Q.QueryString Q.W (Int32, Text, Text) ()
@@ -256,10 +275,26 @@ processHeaders hdrs = do
                              err lg $ LG.msg ("Error: INSERT into 'blocks_by_height' failed: " ++ show e)
                              throw KeyValueDBInsertException)
                 indexed
-            markBestBlock (blockHashToHex $ headerHash $ fst $ snd $ last $ indexed) (fst $ last indexed) conn
-            liftIO $ putMVar (bestBlockUpdated bp2pEnv) True
+            if L.length indexed > 0
+                then do
+                    markBestBlock (blockHashToHex $ headerHash $ fst $ snd $ last $ indexed) (fst $ last indexed) conn
+                    liftIO $ putMVar (bestBlockUpdated bp2pEnv) True
+                else return ()
             return ()
         False -> do
             err lg $ LG.msg $ val "Error: BlocksNotChainedException"
             throw BlocksNotChainedException
     return ()
+
+fetchMatchBlockOffset :: (HasLogger m, MonadIO m) => Q.ClientState -> Network -> Text -> m (Maybe (Text, Int32))
+fetchMatchBlockOffset conn net hashes = do
+    lg <- getLogger
+    let str = "SELECT block_height, block_hash from xoken.blocks_by_hash where block_hash = ?"
+        qstr = str :: Q.QueryString Q.R (Identity Text) (Int32, Text)
+        p = Q.defQueryParams Q.One $ Identity hashes
+    iop <- Q.runClient conn (Q.query qstr p)
+    if L.length iop == 0
+        then return Nothing
+        else do
+            let (maxHt, bhash) = iop !! 0
+            return $ Just (bhash, maxHt)

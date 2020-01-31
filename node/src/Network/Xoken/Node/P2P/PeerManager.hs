@@ -589,6 +589,8 @@ messageHandler peer (mm, ingss) = do
                         Right () -> return ()
                         Left BlockHashNotFoundException -> return ()
                         Left EmptyHeadersMessageException -> return ()
+                        Left KeyValueDBInsertException -> do
+                            err lg $ LG.msg $ LG.val ("[ERROR] Insert failed. KeyValueDBInsertException")
                         Left e -> do
                             err lg $ LG.msg ("[ERROR] Unhandled exception!" ++ show e)
                             throw e
