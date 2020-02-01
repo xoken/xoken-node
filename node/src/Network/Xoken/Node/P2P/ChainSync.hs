@@ -235,21 +235,30 @@ processHeaders hdrs = do
                                  debug lg $ LG.msg $ val "Building on current Best block"
                                  return $ zip [((snd bb) + 1) ..] (headersList hdrs)
                              else do
-                                 res <- fetchMatchBlockOffset conn net headPrevHash
-                                 case res of
-                                     Just (matchBHash, matchBHt) -> do
-                                         if ((fst bb) == (headerHash $ fst $ last $ headersList hdrs))
-                                             then do
-                                                 debug lg $
-                                                     LG.msg $
-                                                     LG.val ("Does not match best-block, redundant Headers msg")
-                                                 return [] -- already synced
-                                             else do
-                                                 debug lg $
-                                                     LG.msg $
-                                                     LG.val ("Does not match best-block, potential block re-org ")
-                                                 return $ zip [(matchBHt + 1) ..] (headersList hdrs) -- potential re-org
-                                     Nothing -> throw BlockHashNotFoundException
+                                 if ((fst bb) == (headerHash $ fst $ last $ headersList hdrs))
+                                     then do
+                                         debug lg $ LG.msg $ LG.val ("Does not match best-block, redundant Headers msg")
+                                         return [] -- already synced
+                                     else do
+                                         res <- fetchMatchBlockOffset conn net headPrevHash
+                                         case res of
+                                             Just (matchBHash, matchBHt) -> do
+                                                 if ((snd bb) >
+                                                     (matchBHt + fromIntegral (L.length $ headersList hdrs) + 12) -- reorg limit of 12 blocks
+                                                     )
+                                                     then do
+                                                         debug lg $
+                                                             LG.msg $
+                                                             LG.val
+                                                                 ("Does not match best-block, assuming stale Headers msg")
+                                                         return [] -- assuming its stale/redundant and ignore
+                                                     else do
+                                                         debug lg $
+                                                             LG.msg $
+                                                             LG.val
+                                                                 ("Does not match best-block, potential block re-org ")
+                                                         return $ zip [(matchBHt + 1) ..] (headersList hdrs) -- potential re-org
+                                             Nothing -> throw BlockHashNotFoundException
             let str1 = "insert INTO xoken.blocks_by_hash (block_hash, block_header, block_height) values (?, ? , ? )"
                 qstr1 = str1 :: Q.QueryString Q.W (Text, Text, Int32) ()
                 str2 = "insert INTO xoken.blocks_by_height (block_height, block_hash, block_header) values (?, ? , ? )"
