@@ -18,6 +18,7 @@ import Arivi.Env
 import Arivi.Network
 import Arivi.P2P
 import qualified Arivi.P2P.Config as Config
+import Arivi.P2P.Kademlia.Types
 import Arivi.P2P.P2PEnv as PE hiding (option)
 import Arivi.P2P.PubSub.Types
 import Arivi.P2P.RPC.Types
@@ -38,9 +39,11 @@ import Control.Monad.Trans.Control
 import Control.Monad.Trans.Maybe
 import Data.Aeson.Encoding (encodingToLazyByteString, fromEncoding)
 import Data.Bits
+import qualified Data.ByteString.Base16 as B16
 import Data.ByteString.Builder
+import qualified Data.ByteString.Char8 as C
 import qualified Data.ByteString.Lazy as L
-import qualified Data.ByteString.Lazy.Char8 as C
+import qualified Data.ByteString.Lazy.Char8 as CL
 import Data.Char
 import Data.Default
 import Data.Function
@@ -140,12 +143,17 @@ runAppM env (AppM app) = runReaderT app env
 defaultConfig :: FilePath -> IO ()
 defaultConfig path = do
     (sk, _) <- ACUPS.generateKeyPair
+    let bootstrapPeer =
+            Peer
+                ((fst . B16.decode)
+                     "a07b8847dc19d77f8ef966ba5a954dac2270779fb028b77829f8ba551fd2f7ab0c73441456b402792c731d8d39c116cb1b4eb3a18a98f4b099a5f9bdffee965c")
+                (NodeEndPoint "51.89.40.95" 5678 5678)
     let config =
             Config.Config
                 5678
                 5678
                 sk
-                []
+                [bootstrapPeer]
                 (generateNodeId sk)
                 "127.0.0.1"
                 (T.pack (path <> "/node.log"))
