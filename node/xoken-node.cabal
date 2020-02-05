@@ -23,7 +23,7 @@ source-repository head
 
 
 
-executable xoken-node
+executable xoken-nexa
   main-is: Main.hs
   other-modules:
       Xoken.Node

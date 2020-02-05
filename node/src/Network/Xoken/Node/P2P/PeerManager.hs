@@ -117,7 +117,7 @@ setupSeedPeerConnection =
         addrs <- liftIO $ mapConcurrently (\x -> head <$> getAddrInfo (Just hints) (x) (Just (show port))) sd
         mapM_
             (\y -> do
-                 debug lg $ msg ("YYYY.. " ++ show (addrAddress y))
+                 debug lg $ msg ("Peer.. " ++ show (addrAddress y))
                  LA.async $
                      LA.withAsync
                          (do allpr <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)

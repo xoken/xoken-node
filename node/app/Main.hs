@@ -261,7 +261,7 @@ peerReader s = do
 
 main :: IO ()
 main = do
-    putStrLn $ "Starting Xoken node"
+    putStrLn $ "Starting Xoken Nexa"
     let logg = Q.stdoutLogger Q.LogWarn
         stng = Q.setMaxStreams 1024 $ Q.setMaxConnections 10 $ Q.setPoolStripes 12 $ Q.setLogger logg Q.defSettings
         stng2 = Q.setRetrySettings Q.eagerRetrySettings stng
@@ -271,12 +271,6 @@ main = do
     op <- Q.runClient conn (Q.query qstr p)
     putStrLn $ "Connected to Cassandra database, version " ++ show (runIdentity (op !! 0))
     conf <- liftIO $ execParser opts
-    -- let gdbConfig = def {BT.user = "neo4j", BT.password = "admin123"}
-    -- gdbState <- constructState gdbConfig
-    -- a <- withResource (pool gdbState) (`BT.run` queryGraphDBVersion)
-    -- putStrLn $ "Connected to Neo4j database, version " ++ show (a !! 0)
-    --
-    --
     let path = "."
     b <- System.Directory.doesPathExist (path <> "/config.yaml")
     unless b (defaultConfig path)
