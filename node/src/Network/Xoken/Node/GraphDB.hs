@@ -229,12 +229,13 @@ insertMerkleSubTree :: [MerkleNode] -> [MerkleNode] -> BoltActionT IO ()
 insertMerkleSubTree leaves inodes = do
     res <- LE.try $ queryP cypher params
     case res of
-        Left (e :: SomeException) -> do
-            liftIO $ print ("[ERROR] ######### insertMerkleSubTree ######### " ++ show e)
+        Left (e :: SomeException)
+            -- liftIO $ print ("[ERROR] ######### insertMerkleSubTree ######### " ++ show e)
             -- liftIO $ print (show leaves)
             -- liftIO $ print (show inodes)
             -- liftIO $ print (show cypher)
             -- liftIO $ print (show params)
+         -> do
             throw e
         Right (records) -> return ()
   where

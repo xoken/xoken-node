@@ -385,7 +385,7 @@ updateMerkleSubTrees hashMap newhash left right ht ind final = do
                                 Left (e :: SomeException) -> do
                                     if T.isInfixOf (T.pack "ConstraintValidationFailed") (T.pack $ show e)
                                         then do
-                                            err lg $
+                                            debug lg $
                                                 msg
                                                     ("Ignoring ConstraintValidationFailed, prev aborted block sync?" ++
                                                      show newhash)
