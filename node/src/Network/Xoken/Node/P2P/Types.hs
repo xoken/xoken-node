@@ -4,6 +4,7 @@
 
 module Network.Xoken.Node.P2P.Types where
 
+import Control.Concurrent.MSem
 import Control.Concurrent.MVar
 import Control.Concurrent.QSem
 import Control.Concurrent.STM
@@ -70,6 +71,8 @@ data BitcoinPeer =
       -- ^ block 'GetData' sent time
         , bpBlockFetchWindow :: !(TVar Int)
       -- number of outstanding blocks
+        , bpTxSem :: !(MSem Int)
+        -- number of outstanding transactions
         }
 
 instance Show BitcoinPeer where

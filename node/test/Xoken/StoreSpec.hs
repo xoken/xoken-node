@@ -1,2 +1,3 @@
-
---                         }
+module Xoken.StoreSpec
+    (
+    ) where
