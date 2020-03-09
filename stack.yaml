@@ -35,3 +35,4 @@ extra-deps:
     - resource-pool-0.2.3.2
     - cql-4.0.2
     - hashtables-1.2.3.4
+    - yaml-0.11.1.2

@@ -94,6 +94,9 @@ data RPCReqParams
     | GetMerkleBranchByTxID
           { gmbMerkleBranch :: String
           }
+    | RelayTx
+          { rTx :: String
+          }
     deriving (Generic, Show, Hashable, Eq, Serialise)
 
 data RPCResponseBody
@@ -123,6 +126,9 @@ data RPCResponseBody
           }
     | RespMerkleBranchByTxID
           { merkleBranch :: [MerkleBranchNode']
+          }
+    | RespRelayTx
+          { rrTx :: Bool
           }
     deriving (Generic, Show, Hashable, Eq, Serialise)
 
