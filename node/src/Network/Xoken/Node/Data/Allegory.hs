@@ -2,9 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
-module Network.Xoken.Node.Data.Allegory
-    ( module Network.Xoken.Node.Data.Allegory
-    ) where
+module Network.Xoken.Node.Data.Allegory where
 
 import Control.Exception
 import Control.Monad (guard)
@@ -23,36 +21,51 @@ data Allegory =
         { version :: Int
         , namespaceId :: String
         , localName :: String
-        , inputs :: Inputs'
-        , outputs :: Outputs'
+        , action :: Action
         }
     deriving (Show, Generic)
 
-data Inputs' =
-    Inputs'
-        { iOwner :: Maybe Owner
-        , iProducer :: Maybe Producer
-        }
+data Action
+    = ProducerAction
+          { prInput :: !ProducerInput
+          , prOutput :: !ProducerOutput
+          }
+    | OwnerAction
+          { ownInput :: !OwnerInput
+          , ownOutput :: !OwnerOutput
+          }
     deriving (Show, Generic)
 
-data Outputs' =
-    Outputs'
-        { oOwner :: Maybe Owner
-        , oProducer :: Maybe Producer
-        , extensions :: Maybe [Extension]
+data OwnerOutput =
+    OwnerOutput
+        { ownerO :: !Index
         , proxyProviders :: Maybe [ProxyProvider]
         }
     deriving (Show, Generic)
 
-data Producer =
-    Producer
-        { indexP :: !Int
+data OwnerInput =
+    OwnerInput
+        { owner :: !Index
         }
     deriving (Show, Generic)
 
-data Owner =
-    Owner
-        { indexO :: !Int
+data ProducerOutput =
+    ProducerOutput
+        { producerO :: !Index
+        , extensions :: Maybe [Extension]
+        , ownerOutput :: Maybe [OwnerOutput]
+        }
+    deriving (Show, Generic)
+
+data ProducerInput =
+    ProducerInput
+        { producer :: !Index
+        }
+    deriving (Show, Generic)
+
+data Index =
+    Index
+        { index :: !Int
         }
     deriving (Show, Generic)
 
@@ -97,28 +110,33 @@ instance FromJSON Endpoint' where
         withObject "XokenP2P' or HTTPS'" $ \o ->
             asum [XokenP2P' <$> o .: "protocol" <*> o .: "nodeid", HTTPS' <$> o .: "protocol" <*> o .: "uri"]
 
+instance FromJSON Action where
+    parseJSON =
+        withObject "ProducerAction or OwnerAction" $ \o ->
+            asum [ProducerAction <$> o .: "input" <*> o .: "output", OwnerAction <$> o .: "input" <*> o .: "output"]
+
 instance FromJSON Allegory where
     parseJSON (Object v) =
-        Allegory <$> v .: "version" <*> v .: "namespace-identifier" <*> v .: "local-name" <*> v .: "inputs" <*>
-        v .: "outputs"
+        Allegory <$> v .: "version" <*> v .: "namespace-identifier" <*> v .: "local-name" <*> v .: "action"
     parseJSON _ = error "Can't parse XokenP2P' "
 
-instance FromJSON Inputs' where
-    parseJSON (Object v) = Inputs' <$> v .:? "owner" <*> v .:? "producer"
+instance FromJSON ProducerInput where
+    parseJSON (Object v) = ProducerInput <$> v .: "producer"
     parseJSON _ = error "Can't parse Inputs' "
 
-instance FromJSON Outputs' where
-    parseJSON (Object v) =
-        Outputs' <$> v .:? "owner" <*> v .:? "producer" <*> v .:? "proxy-providers" <*> v .:? "extensions"
-    parseJSON _ = error "Can't parse Outputs' "
-
-instance FromJSON Owner where
-    parseJSON (Object v) = Owner <$> v .: "index"
+instance FromJSON OwnerInput where
+    parseJSON (Object v) = OwnerInput <$> v .: "producer"
     parseJSON _ = error "Can't parse Inputs' "
 
-instance FromJSON Producer where
-    parseJSON (Object v) = Producer <$> v .: "index"
-    parseJSON _ = error "Can't parse Inputs' "
+instance FromJSON ProducerOutput where
+    parseJSON (Object v) = ProducerOutput <$> v .: "producer" <*> v .: "extensions" <*> v .: "owner"
+    parseJSON _ = error "Can't parse XokenP2P' "
+
+instance FromJSON OwnerOutput where
+    parseJSON (Object v) = OwnerOutput <$> v .: "index" <*> v .: "proxy-providers"
+    parseJSON _ = error "Can't parse XokenP2P' "
+
+instance FromJSON Index
 
 instance FromJSON Extension where
     parseJSON (Object v) = Extension <$> v .: "index" <*> v .: "code-point"
@@ -127,16 +145,6 @@ instance FromJSON Extension where
 instance FromJSON ProxyProvider
 
 instance FromJSON Registration
-
-instance ToJSON Allegory
-
-instance ToJSON Inputs'
-
-instance ToJSON Outputs'
-
-instance ToJSON Owner
-
-instance ToJSON Producer
 
 instance ToJSON Extension
 

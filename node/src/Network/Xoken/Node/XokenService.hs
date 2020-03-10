@@ -343,6 +343,10 @@ xRelayTx net rawTx = do
                                                     case decodeEither' payload of
                                                         Right (allegory :: Allegory) -> do
                                                             liftIO $ print (allegory)
+                                                            liftIO $
+                                                                withResource
+                                                                    (pool $ graphDB dbe)
+                                                                    (`BT.run` updateAllegoryStateTrees tx allegory)
                                                         Left (e) -> do
                                                             err lg $
                                                                 LG.msg $ "error decoding embedded Yaml data" ++ show e
