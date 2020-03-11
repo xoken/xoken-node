@@ -117,7 +117,12 @@ updateAllegoryStateTrees tx allegory = do
                         , ("namespace", T $ pack $ namespaceId allegory)
                         , ("localname", T $ pack $ localName allegory)
                         ]
-            return ()
+            res <- LE.try $ queryP cypher params
+            case res of
+                Left (e :: SomeException) -> do
+                    liftIO $ print ("[ERROR] updateAllegoryStateTrees (Prod) " ++ show e)
+                    throw e
+                Right (records) -> return ()
         ProducerAction v n l s e t -> do
             let iop = prevOutput $ (txIn tx !! (index $ producer $ s))
             let iops = append (txHashToHex $ outPointHash $ iop) $ pack (":" ++ show (outPointIndex $ iop))
@@ -136,7 +141,7 @@ updateAllegoryStateTrees tx allegory = do
                                                  (pack $ numrepl (show (outPointIndex $ pop)))
                                                  "(<j>:nutxo { op: {op_<j>}, ns:{namespace}, ln:{localname}}), (<i>)-[:OWNER]->(<j>)"
                                      let opr = "op_" ++ (numrepl (show (outPointIndex $ pop)))
-                                     let parOwn = (opr, T $ val)
+                                     let parOwn = (pack opr, T $ val)
                                      (cyOwnStr, parOwn)
                                  ProducerT p -> do
                                      let pop = prevOutput $ (txIn tx !! (index $ producer $ producerT $ x))
@@ -149,7 +154,7 @@ updateAllegoryStateTrees tx allegory = do
                                                  (pack $ numrepl (show (outPointIndex $ pop)))
                                                  "(<j>:nutxo { op: {op_<j>}, ns:{namespace}, ln:{localname}}), (<i>)-[:PRODUCER]->(<j>)"
                                      let opr = "op_" ++ (numrepl (show (outPointIndex $ pop)))
-                                     let parPro = (opr, T $ val)
+                                     let parPro = (pack opr, T $ val)
                                      (cyProStr, parPro))
                         (t)
             let extensions =
@@ -171,7 +176,7 @@ updateAllegoryStateTrees tx allegory = do
                                                          (pack $ numrepl (show (outPointIndex $ eop)))
                                                          "(<j>:nutxo { op: {op_<j>}, ns:{namespace}, ln:{localname}}), (<i>)-[:EXTENSION]->(<j>)"
                                              let opr = "op_" ++ (numrepl (show (outPointIndex $ eop)))
-                                             let parExt = (opr, T $ val)
+                                             let parExt = (pack opr, T $ val)
                                              (cyExtStr, parExt)
                                          ProducerExtension pr cp -> do
                                              undefined)
@@ -190,7 +195,14 @@ updateAllegoryStateTrees tx allegory = do
                              , ("localname", T $ pack $ localName allegory)
                              ] ++
                              (snd $ unzip $ transfers) ++ (snd $ unzip $ extn))
-                    return ()
+                    liftIO $ print (cypher)
+                    liftIO $ print (params)
+                    res <- LE.try $ queryP cypher params
+                    case res of
+                        Left (e :: SomeException) -> do
+                            liftIO $ print ("[ERROR] updateAllegoryStateTrees (Prod) " ++ show e)
+                            throw e
+                        Right (records) -> return ()
   where
     numrepl txt =
         Prelude.map
@@ -212,12 +224,6 @@ updateAllegoryStateTrees tx allegory = do
         if cond
             then Data.Text.pack " TRUE "
             else Data.Text.pack " FALSE "
-            -- res <- LE.try $ queryP cypher params
-            -- case res of
-            --     Left (e :: SomeException) -> do
-            --         liftIO $ print ("[ERROR] updateAllegoryStateTrees  " ++ show e)
-            --         throw e
-            --     Right (records) -> return ()
 
 insertMerkleSubTree :: [MerkleNode] -> [MerkleNode] -> BoltActionT IO ()
 insertMerkleSubTree leaves inodes = do
