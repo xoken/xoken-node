@@ -341,7 +341,7 @@ xRelayTx net rawTx = do
                                             case last $ scriptOps script of
                                                 (OP_PUSHDATA payload _) -> do
                                                     case decodeEither' payload of
-                                                        Right (allegory :: Allegory) -> do
+                                                        Right (allegory :: AllegoryAction) -> do
                                                             liftIO $ print (allegory)
                                                             liftIO $
                                                                 withResource

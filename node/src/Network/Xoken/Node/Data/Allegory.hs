@@ -16,50 +16,49 @@ import qualified Data.Text.Encoding as E
 import Data.Yaml
 import GHC.Generics
 
-data Allegory =
-    Allegory
-        { version :: Int
-        , namespaceId :: String
-        , localName :: String
-        , action :: Action
-        }
-    deriving (Show, Generic)
-
-data Action
+data AllegoryAction
     = ProducerAction
-          { prInput :: !ProducerInput
-          , prOutput :: !ProducerOutput
+          { version :: Int
+          , namespaceId :: String
+          , localName :: String
+          , prSource :: Producer
+          , prExtensions :: Maybe [Extension]
+          , prTransfers :: [ProducerTransfer]
           }
     | OwnerAction
-          { ownInput :: !OwnerInput
-          , ownOutput :: !OwnerOutput
+          { version :: Int
+          , namespaceId :: String
+          , localName :: String
+          , owSource :: Owner
+          , owTransfers :: OwnerTransfer
+          , proxyProviders :: [ProxyProvider]
           }
     deriving (Show, Generic)
 
-data OwnerOutput =
-    OwnerOutput
-        { ownerO :: !Index
-        , proxyProviders :: Maybe [ProxyProvider]
+data OwnerTransfer =
+    OwnerTransfer
+        { ownerTran :: !Owner
         }
     deriving (Show, Generic)
 
-data OwnerInput =
-    OwnerInput
-        { owner :: !Index
-        }
+data ProducerTransfer
+    = OwnerT
+          { ownerT :: !Owner
+          }
+    | ProducerT
+          { producerT :: !Producer
+          }
     deriving (Show, Generic)
 
-data ProducerOutput =
-    ProducerOutput
-        { producerO :: !Index
-        , extensions :: Maybe [Extension]
-        , ownerOutput :: Maybe [OwnerOutput]
-        }
-    deriving (Show, Generic)
-
-data ProducerInput =
-    ProducerInput
+data Producer =
+    Producer
         { producer :: !Index
+        }
+    deriving (Show, Generic)
+
+data Owner =
+    Owner
+        { owner :: !Index
         }
     deriving (Show, Generic)
 
@@ -69,11 +68,15 @@ data Index =
         }
     deriving (Show, Generic)
 
-data Extension =
-    Extension
-        { indexE :: !Int
-        , codePoint :: !String
-        }
+data Extension
+    = OwnerExtension
+          { ownerE :: !Owner
+          , codePoint :: !String
+          }
+    | ProducerExtension
+          { producerE :: !Producer
+          , codePoint :: !String
+          }
     deriving (Show, Generic)
 
 data ProxyProvider =
@@ -110,43 +113,47 @@ instance FromJSON Endpoint' where
         withObject "XokenP2P' or HTTPS'" $ \o ->
             asum [XokenP2P' <$> o .: "protocol" <*> o .: "nodeid", HTTPS' <$> o .: "protocol" <*> o .: "uri"]
 
-instance FromJSON Action where
+instance FromJSON ProducerTransfer where
+    parseJSON = withObject "OwnerT or ProducerT" $ \o -> asum [OwnerT <$> o .: "owner", ProducerT <$> o .: "producer"]
+
+instance FromJSON AllegoryAction where
     parseJSON =
-        withObject "ProducerAction or OwnerAction" $ \o ->
-            asum [ProducerAction <$> o .: "input" <*> o .: "output", OwnerAction <$> o .: "input" <*> o .: "output"]
+        withObject "ProducerAction or OwnerAction" $ \v ->
+            asum
+                [ ProducerAction <$> v .: "version" <*> v .: "namespace-identifier" <*> v .: "local-name" <*>
+                  v .: "source" <*>
+                  v .: "extensions" <*>
+                  v .: "transfers"
+                , OwnerAction <$> v .: "version" <*> v .: "namespace-identifier" <*> v .: "local-name" <*> v .: "source" <*>
+                  v .: "proxy-providers" <*>
+                  v .: "transfers"
+                ]
 
-instance FromJSON Allegory where
-    parseJSON (Object v) =
-        Allegory <$> v .: "version" <*> v .: "namespace-identifier" <*> v .: "local-name" <*> v .: "action"
-    parseJSON _ = error "Can't parse XokenP2P' "
-
-instance FromJSON ProducerInput where
-    parseJSON (Object v) = ProducerInput <$> v .: "producer"
+instance FromJSON OwnerTransfer where
+    parseJSON (Object v) = OwnerTransfer <$> v .: "owner"
     parseJSON _ = error "Can't parse Inputs' "
 
-instance FromJSON OwnerInput where
-    parseJSON (Object v) = OwnerInput <$> v .: "producer"
+instance FromJSON Owner where
+    parseJSON (Object v) = Owner <$> v .: "owner"
     parseJSON _ = error "Can't parse Inputs' "
 
-instance FromJSON ProducerOutput where
-    parseJSON (Object v) = ProducerOutput <$> v .: "producer" <*> v .: "extensions" <*> v .: "owner"
-    parseJSON _ = error "Can't parse XokenP2P' "
-
-instance FromJSON OwnerOutput where
-    parseJSON (Object v) = OwnerOutput <$> v .: "index" <*> v .: "proxy-providers"
-    parseJSON _ = error "Can't parse XokenP2P' "
+instance FromJSON Producer where
+    parseJSON (Object v) = Producer <$> v .: "producer"
+    parseJSON _ = error "Can't parse Inputs' "
 
 instance FromJSON Index
 
 instance FromJSON Extension where
-    parseJSON (Object v) = Extension <$> v .: "index" <*> v .: "code-point"
-    parseJSON _ = error "Can't parse Inputs' "
+    parseJSON =
+        withObject "OwnerExtension or ProducerExtension" $ \o ->
+            asum
+                [ OwnerExtension <$> o .: "owner" <*> o .: "code-point"
+                , ProducerExtension <$> o .: "producer" <*> o .: "code-point"
+                ]
 
 instance FromJSON ProxyProvider
 
 instance FromJSON Registration
-
-instance ToJSON Extension
 
 instance ToJSON ProxyProvider
 
