@@ -98,13 +98,13 @@ queryGraphDBVersion = do
         "call dbms.components() yield name, versions, edition unwind versions as version return name, version, edition"
     params = fromList []
 
-updateAllegoryStateTrees :: Tx -> AllegoryAction -> BoltActionT IO ()
+updateAllegoryStateTrees :: Tx -> Allegory -> BoltActionT IO ()
 updateAllegoryStateTrees tx allegory = do
-    case allegory of
-        OwnerAction v n l s t p -> do
-            let iop = prevOutput $ (txIn tx !! (index $ owner $ s))
+    case action allegory of
+        OwnerAction oin oout proxy -> do
+            let iop = prevOutput $ (txIn tx !! (index $ oiOwner oin))
             let iops = append (txHashToHex $ outPointHash $ iop) $ pack (":" ++ show (outPointIndex $ iop))
-            let oop = prevOutput $ (txIn tx !! (index $ owner $ ownerTran $ t))
+            let oop = prevOutput $ (txIn tx !! (index $ ooOwner oout))
             let oops = append (txHashToHex $ outPointHash $ oop) $ pack (":" ++ show (outPointIndex $ oop))
             let cypher =
                     "MATCH (a:nutxo) WHERE a.op = {in_op}" <>
@@ -123,86 +123,78 @@ updateAllegoryStateTrees tx allegory = do
                     liftIO $ print ("[ERROR] updateAllegoryStateTrees (Prod) " ++ show e)
                     throw e
                 Right (records) -> return ()
-        ProducerAction v n l s e t -> do
-            let iop = prevOutput $ (txIn tx !! (index $ producer $ s))
+        ProducerAction pin pout extn -> do
+            let iop = prevOutput $ (txIn tx !! (index $ piProducer pin))
             let iops = append (txHashToHex $ outPointHash $ iop) $ pack (":" ++ show (outPointIndex $ iop))
-            let transfers =
+            -- Producer (required)
+            let pop = prevOutput $ (txIn tx !! (index $ poProducer pout))
+            let val = append (txHashToHex $ outPointHash $ pop) $ pack (":" ++ show (outPointIndex $ pop))
+            let cyProStr =
+                    replace
+                        ("<j>")
+                        (pack $ numrepl (show (outPointIndex $ pop)))
+                        "(<j>:nutxo { op: {op_<j>}, ns:{namespace}, ln:{localname}}), (<i>)-[:PRODUCER]->(<j>)"
+            let opr = "op_" ++ (numrepl (show (outPointIndex $ pop)))
+            let poutPro = (cyProStr, (pack opr, T $ val))
+            -- Owner (optional)
+            let poutOwn =
+                    case (poOwner pout) of
+                        Nothing -> Nothing
+                        Just poo -> do
+                            let pop = prevOutput $ (txIn tx !! (index poo))
+                            let val =
+                                    append (txHashToHex $ outPointHash $ pop) $ pack (":" ++ show (outPointIndex $ pop))
+                            let cyOwnStr =
+                                    replace
+                                        ("<j>")
+                                        (pack $ numrepl (show (outPointIndex $ pop)))
+                                        "(<j>:nutxo { op: {op_<j>}, ns:{namespace}, ln:{localname}}), (<i>)-[:OWNER]->(<j>)"
+                            let opr = "op_" ++ (numrepl (show (outPointIndex $ pop)))
+                            let parOwn = (pack opr, T $ val)
+                            Just (cyOwnStr, parOwn)
+            let extensions =
                     Prelude.map
                         (\x ->
                              case x of
-                                 OwnerT o -> do
-                                     let pop = prevOutput $ (txIn tx !! (index $ owner $ ownerT $ x))
+                                 OwnerExtension ow cp -> do
+                                     let eop = prevOutput $ (txIn tx !! (index $ ownerEx x))
                                      let val =
-                                             append (txHashToHex $ outPointHash $ pop) $
-                                             pack (":" ++ show (outPointIndex $ pop))
-                                     let cyOwnStr =
+                                             append (txHashToHex $ outPointHash $ eop) $
+                                             pack (":" ++ show (outPointIndex $ eop))
+                                     let cyExtStr =
                                              replace
                                                  ("<j>")
-                                                 (pack $ numrepl (show (outPointIndex $ pop)))
-                                                 "(<j>:nutxo { op: {op_<j>}, ns:{namespace}, ln:{localname}}), (<i>)-[:OWNER]->(<j>)"
-                                     let opr = "op_" ++ (numrepl (show (outPointIndex $ pop)))
-                                     let parOwn = (pack opr, T $ val)
-                                     (cyOwnStr, parOwn)
-                                 ProducerT p -> do
-                                     let pop = prevOutput $ (txIn tx !! (index $ producer $ producerT $ x))
-                                     let val =
-                                             append (txHashToHex $ outPointHash $ pop) $
-                                             pack (":" ++ show (outPointIndex $ pop))
-                                     let cyProStr =
-                                             replace
-                                                 ("<j>")
-                                                 (pack $ numrepl (show (outPointIndex $ pop)))
-                                                 "(<j>:nutxo { op: {op_<j>}, ns:{namespace}, ln:{localname}}), (<i>)-[:PRODUCER]->(<j>)"
-                                     let opr = "op_" ++ (numrepl (show (outPointIndex $ pop)))
-                                     let parPro = (pack opr, T $ val)
-                                     (cyProStr, parPro))
-                        (t)
-            let extensions =
-                    case (e) of
-                        Nothing -> Nothing
-                        Just ext ->
-                            Just $
-                            Prelude.map
-                                (\x ->
-                                     case x of
-                                         OwnerExtension ow cp -> do
-                                             let eop = prevOutput $ (txIn tx !! (index $ owner $ ow))
-                                             let val =
-                                                     append (txHashToHex $ outPointHash $ eop) $
-                                                     pack (":" ++ show (outPointIndex $ eop))
-                                             let cyExtStr =
-                                                     replace
-                                                         ("<j>")
-                                                         (pack $ numrepl (show (outPointIndex $ eop)))
-                                                         "(<j>:nutxo { op: {op_<j>}, ns:{namespace}, ln:{localname}}), (<i>)-[:EXTENSION]->(<j>)"
-                                             let opr = "op_" ++ (numrepl (show (outPointIndex $ eop)))
-                                             let parExt = (pack opr, T $ val)
-                                             (cyExtStr, parExt)
-                                         ProducerExtension pr cp -> do
-                                             undefined)
-                                (ext)
-            case extensions of
-                Nothing -> return ()
-                Just extn -> do
-                    let cypher =
-                            "MATCH (a:nutxo) WHERE a.op = {in_op} CREATE " <>
-                            (Data.Text.intercalate (" , ") $ fst $ unzip $ transfers) <>
-                            (Data.Text.intercalate (" , ") $ fst $ unzip $ extn)
-                    let params =
-                            fromList $
-                            ([ ("in_op", T $ iops)
-                             , ("namespace", T $ pack $ namespaceId allegory)
-                             , ("localname", T $ pack $ localName allegory)
-                             ] ++
-                             (snd $ unzip $ transfers) ++ (snd $ unzip $ extn))
-                    liftIO $ print (cypher)
-                    liftIO $ print (params)
-                    res <- LE.try $ queryP cypher params
-                    case res of
-                        Left (e :: SomeException) -> do
-                            liftIO $ print ("[ERROR] updateAllegoryStateTrees (Prod) " ++ show e)
-                            throw e
-                        Right (records) -> return ()
+                                                 (pack $ numrepl (show (outPointIndex $ eop)))
+                                                 "(<j>:nutxo { op: {op_<j>}, ns:{namespace}, ln:{localname}}), (<i>)-[:EXTENSION]->(<j>)"
+                                     let opr = "op_" ++ (numrepl (show (outPointIndex $ eop)))
+                                     let parExt = (pack opr, T $ val)
+                                     (cyExtStr, parExt)
+                                 ProducerExtension pr cp -> do
+                                     undefined)
+                        (extn)
+            let cypher =
+                    "MATCH (a:nutxo) WHERE a.op = {in_op} CREATE " <> fst poutPro <>
+                    (case poutOwn of
+                         Just po -> fst po
+                         Nothing -> " ") <>
+                    (Data.Text.intercalate (" , ") $ fst $ unzip $ extensions)
+            let params =
+                    fromList $
+                    ([ ("in_op", T $ iops)
+                     , ("namespace", T $ pack $ namespaceId allegory)
+                     , ("localname", T $ pack $ localName allegory)
+                     ] ++
+                     (case poutOwn of
+                          Just po -> [(snd poutPro), (snd po)]
+                          Nothing -> [(snd poutPro)]))
+            liftIO $ print (cypher)
+            liftIO $ print (params)
+            res <- LE.try $ queryP cypher params
+            case res of
+                Left (e :: SomeException) -> do
+                    liftIO $ print ("[ERROR] updateAllegoryStateTrees (Prod) " ++ show e)
+                    throw e
+                Right (records) -> return ()
   where
     numrepl txt =
         Prelude.map

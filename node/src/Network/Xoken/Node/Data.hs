@@ -95,7 +95,7 @@ data RPCReqParams
           { gmbMerkleBranch :: String
           }
     | RelayTx
-          { rTx :: String
+          { rTx :: ByteString
           }
     deriving (Generic, Show, Hashable, Eq, Serialise)
 

@@ -22,6 +22,7 @@ import Arivi.P2P.RPC.Fetch
 import Arivi.P2P.Types hiding (msgType)
 import Codec.Compression.GZip as GZ
 import Codec.Serialise
+import Codec.Serialise
 import Conduit hiding (runResourceT)
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async.Lifted (async)
@@ -270,7 +271,7 @@ xGetMerkleBranch net txid = do
             err lg $ LG.msg $ "Error: xGetMerkleBranch: " ++ show e
             throw KeyValueDBLookupException
 
-xRelayTx :: (HasXokenNodeEnv env m, MonadIO m) => Network -> String -> m (Bool)
+xRelayTx :: (HasXokenNodeEnv env m, MonadIO m) => Network -> BC.ByteString -> m (Bool)
 xRelayTx net rawTx = do
     dbe <- getDB
     bp2pEnv <- getBitcoinP2P
@@ -279,7 +280,8 @@ xRelayTx net rawTx = do
     allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
     let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
     -- broadcast Tx
-    case runGetState (getConfirmedTx) ((fst . B16.decode) $ BC.pack rawTx) 0 of
+    -- case runGetState (getConfirmedTx) ((fst . B16.decode) $ BC.pack rawTx) 0 of
+    case runGetState (getConfirmedTx) (rawTx) 0 of
         Left e -> do
             err lg $ LG.msg $ "error decoding rawTx :" ++ show e
             throw ConfirmedTxParseException
@@ -330,6 +332,9 @@ xRelayTx net rawTx = do
                             mapM_ (\(_, peer) -> do sendRequestMessages peer (MTx (fromJust $ fst res))) (connPeers)
                         else do
                             debug lg $ LG.msg $ val $ "transaction invalid"
+                            let test =
+                                    Allegory 1 "aa" "bb" (OwnerAction (OwnerInput $ Index 2) (OwnerOutput $ Index 3) [])
+                            liftIO $ print (serialise test)
                             let op_return = head (txOut tx)
                             let hexstr = B16.encode (scriptOutput op_return)
                             if "006a0f416c6c65676f72792f416c6c506179" `isPrefixOf` (BC.unpack hexstr)
@@ -340,16 +345,17 @@ xRelayTx net rawTx = do
                                             liftIO $ print (script)
                                             case last $ scriptOps script of
                                                 (OP_PUSHDATA payload _) -> do
-                                                    case decodeEither' payload of
-                                                        Right (allegory :: AllegoryAction) -> do
+                                                    case (deserialiseOrFail $ C.fromStrict payload) of
+                                                        Right (allegory) -> do
                                                             liftIO $ print (allegory)
                                                             liftIO $
                                                                 withResource
                                                                     (pool $ graphDB dbe)
                                                                     (`BT.run` updateAllegoryStateTrees tx allegory)
-                                                        Left (e) -> do
+                                                        Left (e :: DeserialiseFailure) -> do
                                                             err lg $
-                                                                LG.msg $ "error decoding embedded Yaml data" ++ show e
+                                                                LG.msg $
+                                                                "error deserialising OP_RETURN CBOR data" ++ show e
                                             return ()
                                         Left (e) -> do
                                             err lg $ LG.msg $ "error decoding rawTx (3):" ++ show e
