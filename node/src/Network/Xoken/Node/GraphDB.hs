@@ -22,7 +22,7 @@ import qualified Control.Exception.Lifted as LE (try)
 import Control.Monad.Reader
 import Control.Monad.Trans (liftIO)
 import Control.Monad.Trans.Reader (ReaderT(..))
-import Data.Aeson (ToJSON(..), (.=), object)
+import Data.Aeson (Object, ToJSON(..), (.=), object)
 import Data.Char
 import Data.Hashable
 import Data.List ((\\), filter, intersect, nub, nubBy, union, zip4)
@@ -39,7 +39,7 @@ import qualified Database.CQL.IO as Q
 import GHC.Generics
 import Network.Socket hiding (send)
 import Network.Xoken.Crypto.Hash
-import Network.Xoken.Node.Data.Allegory
+import Network.Xoken.Node.Data.Allegory as AL
 import Network.Xoken.Node.P2P.Common
 import Network.Xoken.Node.P2P.Types
 import Network.Xoken.Transaction
@@ -59,6 +59,7 @@ instance ToJSON Value where
     toJSON (F d) = toJSON d
     toJSON (T t) = toJSON t
     toJSON (L l) = toJSON l
+    toJSON (M m) = toJSON m
     toJSON _ = undefined -- we do not need Maps and Structures in this example
 
 -- |Create pool of connections (4 stripes, 500 ms timeout, 1 resource per stripe)
@@ -104,18 +105,39 @@ updateAllegoryStateTrees tx allegory = do
         OwnerAction oin oout proxy -> do
             let iop = prevOutput $ (txIn tx !! (index $ oiOwner oin))
             let iops = append (txHashToHex $ outPointHash $ iop) $ pack (":" ++ show (outPointIndex $ iop))
-            let oop = prevOutput $ (txIn tx !! (index $ ooOwner oout))
-            let oops = append (txHashToHex $ outPointHash $ oop) $ pack (":" ++ show (outPointIndex $ oop))
+            let oops = append (txHashToHex $ txHash tx) $ pack (":" ++ show (index $ ooOwner oout))
             let cypher =
-                    "MATCH (a:nutxo) WHERE a.op = {in_op}" <>
-                    "CREATE (b:nutxo { op: {out_op}, ns:{namespace}, ln:{localname}})," <>
-                    " (a)-[:OWNER]->(b) "
+                    "MATCH (a:nutxo) WHERE a.op = {in_op}" <> "CREATE (b:nutxo { outpoint: {out_op}, name:{name} }) ," <>
+                    " (b)-[:INPUT]->(a) "
+            let proxies =
+                    Prelude.map
+                        (\x ->
+                             M $
+                             fromList
+                                 [ ("service", T $ pack $ service x)
+                                 , ("mode", T $ pack $ mode x)
+                                 , ( "endpoint"
+                                   , M $
+                                     fromList
+                                         [ ("protocol", T $ pack $ protocol $ endpoint x)
+                                         , ("uri", T $ pack $ uri $ endpoint x)
+                                         ])
+                                 , ( "registration"
+                                   , M $
+                                     fromList
+                                         [ ("addrCommit", T $ pack $ addressCommitment $ registration x)
+                                         , ("utxoCommit", T $ pack $ providerUtxoCommitment $ registration x)
+                                         , ("signature", T $ pack $ AL.signature $ registration x)
+                                         , ("expiry", I $ expiry $ registration x)
+                                         ])
+                                 ])
+                        proxy
             let params =
                     fromList
                         [ ("in_op", T $ iops)
                         , ("out_op", T $ oops)
-                        , ("namespace", T $ pack $ namespaceId allegory)
-                        , ("localname", T $ pack $ localName allegory)
+                        , ("name", T $ pack $ Prelude.map (\x -> chr x) (name allegory))
+                        , ("proxies", L $ proxies)
                         ]
             res <- LE.try $ queryP cypher params
             case res of
@@ -127,66 +149,67 @@ updateAllegoryStateTrees tx allegory = do
             let iop = prevOutput $ (txIn tx !! (index $ piProducer pin))
             let iops = append (txHashToHex $ outPointHash $ iop) $ pack (":" ++ show (outPointIndex $ iop))
             -- Producer (required)
-            let pop = prevOutput $ (txIn tx !! (index $ poProducer pout))
-            let val = append (txHashToHex $ outPointHash $ pop) $ pack (":" ++ show (outPointIndex $ pop))
+            let pop = index $ poProducer pout
+            let val = append (txHashToHex $ txHash tx) $ pack (":" ++ show (pop))
             let cyProStr =
                     replace
                         ("<j>")
-                        (pack $ numrepl (show (outPointIndex $ pop)))
-                        "(<j>:nutxo { op: {op_<j>}, ns:{namespace}, ln:{localname}}), (<i>)-[:PRODUCER]->(<j>)"
-            let opr = "op_" ++ (numrepl (show (outPointIndex $ pop)))
+                        (pack $ numrepl (show pop))
+                        "(<j>:nutxo { outpoint: {op_<j>}, name:{name}, producer: True }) , (<j>)-[:INPUT]->(a)"
+            let opr = "op_" ++ (numrepl (show pop))
             let poutPro = (cyProStr, (pack opr, T $ val))
             -- Owner (optional)
             let poutOwn =
                     case (poOwner pout) of
                         Nothing -> Nothing
                         Just poo -> do
-                            let pop = prevOutput $ (txIn tx !! (index poo))
-                            let val =
-                                    append (txHashToHex $ outPointHash $ pop) $ pack (":" ++ show (outPointIndex $ pop))
+                            let pop = index poo
+                            let val = append (txHashToHex $ txHash tx) $ pack (":" ++ show pop)
                             let cyOwnStr =
                                     replace
                                         ("<j>")
-                                        (pack $ numrepl (show (outPointIndex $ pop)))
-                                        "(<j>:nutxo { op: {op_<j>}, ns:{namespace}, ln:{localname}}), (<i>)-[:OWNER]->(<j>)"
-                            let opr = "op_" ++ (numrepl (show (outPointIndex $ pop)))
+                                        (pack $ numrepl (show pop))
+                                        "(<j>:nutxo { outpoint: {op_<j>}, name:{name}, producer: False }) ,(<j>)-[:INPUT]->(a)"
+                            let opr = "op_" ++ (numrepl (show pop))
                             let parOwn = (pack opr, T $ val)
                             Just (cyOwnStr, parOwn)
             let extensions =
                     Prelude.map
-                        (\x ->
-                             case x of
-                                 OwnerExtension ow cp -> do
-                                     let eop = prevOutput $ (txIn tx !! (index $ ownerEx x))
-                                     let val =
-                                             append (txHashToHex $ outPointHash $ eop) $
-                                             pack (":" ++ show (outPointIndex $ eop))
-                                     let cyExtStr =
-                                             replace
-                                                 ("<j>")
-                                                 (pack $ numrepl (show (outPointIndex $ eop)))
-                                                 "(<j>:nutxo { op: {op_<j>}, ns:{namespace}, ln:{localname}}), (<i>)-[:EXTENSION]->(<j>)"
-                                     let opr = "op_" ++ (numrepl (show (outPointIndex $ eop)))
-                                     let parExt = (pack opr, T $ val)
-                                     (cyExtStr, parExt)
-                                 ProducerExtension pr cp -> do
-                                     undefined)
+                        (\x -> do
+                             let eop = index $ ownerEx x
+                             let ss =
+                                     case x of
+                                         OwnerExtension ow cp ->
+                                             "(<j>:nutxo { outpoint: {op_<j>}, name:{name_ext_<j>}, producer: False }) ,(<j>)-[:INPUT]->(a)"
+                                         ProducerExtension pr cp ->
+                                             "(<j>:nutxo { outpoint: {op_<j>}, name:{name_ext_<j>}, producer: True }) ,(<j>)-[:INPUT]->(a)"
+                             let val = append (txHashToHex $ txHash tx) $ pack (":" ++ show (eop))
+                             let cyExtStr = replace ("<j>") (pack $ numrepl (show eop)) ss
+                             let opr = "op_" ++ (numrepl (show eop))
+                             let next = "name_ext_" ++ (numrepl (show eop))
+                             let parExt =
+                                     [ (pack opr, T $ val)
+                                     , ( pack next
+                                       , T $ pack $ Prelude.map (\x -> chr x) (name allegory ++ [codePoint x]))
+                                     ]
+                             (cyExtStr, parExt))
                         (extn)
             let cypher =
                     "MATCH (a:nutxo) WHERE a.op = {in_op} CREATE " <> fst poutPro <>
                     (case poutOwn of
-                         Just po -> fst po
-                         Nothing -> " ") <>
+                         Just po -> " , " <> fst po <> " , "
+                         Nothing -> " , ") <>
                     (Data.Text.intercalate (" , ") $ fst $ unzip $ extensions)
             let params =
                     fromList $
                     ([ ("in_op", T $ iops)
-                     , ("namespace", T $ pack $ namespaceId allegory)
-                     , ("localname", T $ pack $ localName allegory)
+                     , ("name", T $ pack $ Prelude.map (\x -> chr x) (name allegory))
+                     -- , ("localname", T $ pack $ Prelude.map (\x -> chr x) (localName allegory))
                      ] ++
                      (case poutOwn of
                           Just po -> [(snd poutPro), (snd po)]
-                          Nothing -> [(snd poutPro)]))
+                          Nothing -> [(snd poutPro)])) ++
+                    (Prelude.concat $ snd $ unzip extensions)
             liftIO $ print (cypher)
             liftIO $ print (params)
             res <- LE.try $ queryP cypher params

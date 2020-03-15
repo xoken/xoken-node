@@ -280,7 +280,6 @@ xRelayTx net rawTx = do
     allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
     let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
     -- broadcast Tx
-    -- case runGetState (getConfirmedTx) ((fst . B16.decode) $ BC.pack rawTx) 0 of
     case runGetState (getConfirmedTx) (rawTx) 0 of
         Left e -> do
             err lg $ LG.msg $ "error decoding rawTx :" ++ show e
@@ -330,10 +329,14 @@ xRelayTx net rawTx = do
                         then do
                             debug lg $ LG.msg $ val $ "transaction verified - broadcasting tx"
                             mapM_ (\(_, peer) -> do sendRequestMessages peer (MTx (fromJust $ fst res))) (connPeers)
+                            return True
                         else do
                             debug lg $ LG.msg $ val $ "transaction invalid"
                             let test =
-                                    Allegory 1 "aa" "bb" (OwnerAction (OwnerInput $ Index 2) (OwnerOutput $ Index 3) [])
+                                    Allegory
+                                        1
+                                        [45, 46, 47]
+                                        (OwnerAction (OwnerInput $ Index 2) (OwnerOutput $ Index 3) [])
                             liftIO $ print (serialise test)
                             let op_return = head (txOut tx)
                             let hexstr = B16.encode (scriptOutput op_return)
@@ -348,23 +351,28 @@ xRelayTx net rawTx = do
                                                     case (deserialiseOrFail $ C.fromStrict payload) of
                                                         Right (allegory) -> do
                                                             liftIO $ print (allegory)
-                                                            liftIO $
+                                                            ores <-
+                                                                liftIO $
+                                                                try $
                                                                 withResource
                                                                     (pool $ graphDB dbe)
                                                                     (`BT.run` updateAllegoryStateTrees tx allegory)
+                                                            case ores of
+                                                                Right () -> return True
+                                                                Left (SomeException e) -> return $ False
                                                         Left (e :: DeserialiseFailure) -> do
                                                             err lg $
                                                                 LG.msg $
                                                                 "error deserialising OP_RETURN CBOR data" ++ show e
-                                            return ()
+                                                            return False
                                         Left (e) -> do
-                                            err lg $ LG.msg $ "error decoding rawTx (3):" ++ show e
-                                    return ()
+                                            err lg $ LG.msg $ "error decoding op_return data:" ++ show e
+                                            return False
                                 else do
-                                    liftIO $ print ("sdfsdfsdf..........")
-                                    return ()
-                Nothing -> err lg $ LG.msg $ val $ "error decoding rawTx (2)"
-    return $ True
+                                    return True
+                Nothing -> do
+                    err lg $ LG.msg $ val $ "error decoding rawTx (2)"
+                    return $ False
 
 goGetResource :: (HasXokenNodeEnv env m, MonadIO m) => RPCMessage -> Network -> m (RPCMessage)
 goGetResource msg net = do

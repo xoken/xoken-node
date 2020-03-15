@@ -21,8 +21,7 @@ import GHC.Generics
 data Allegory =
     Allegory
         { version :: Int
-        , namespaceId :: String
-        , localName :: String
+        , name :: [Int]
         , action :: Action
         }
     deriving (Show, Generic, Eq, Serialise)
@@ -74,11 +73,11 @@ data Index =
 data Extension
     = OwnerExtension
           { ownerEx :: !Index
-          , codePoint :: !String
+          , codePoint :: !Int
           }
     | ProducerExtension
           { producerEx :: !Index
-          , codePoint :: !String
+          , codePoint :: !Int
           }
     deriving (Show, Generic, Eq, Serialise)
 
