@@ -332,12 +332,6 @@ xRelayTx net rawTx = do
                             return True
                         else do
                             debug lg $ LG.msg $ val $ "transaction invalid"
-                            let test =
-                                    Allegory
-                                        1
-                                        [45, 46, 47]
-                                        (OwnerAction (OwnerInput $ Index 2) (OwnerOutput $ Index 3) [])
-                            liftIO $ print (serialise test)
                             let op_return = head (txOut tx)
                             let hexstr = B16.encode (scriptOutput op_return)
                             if "006a0f416c6c65676f72792f416c6c506179" `isPrefixOf` (BC.unpack hexstr)

@@ -22,7 +22,8 @@ import qualified Control.Exception.Lifted as LE (try)
 import Control.Monad.Reader
 import Control.Monad.Trans (liftIO)
 import Control.Monad.Trans.Reader (ReaderT(..))
-import Data.Aeson (Object, ToJSON(..), (.=), object)
+import Data.Aeson (ToJSON(..), (.=), decode, encode, object)
+import qualified Data.ByteString.Lazy.Char8 as BL
 import Data.Char
 import Data.Hashable
 import Data.List ((\\), filter, intersect, nub, nubBy, union, zip4)
@@ -103,41 +104,21 @@ updateAllegoryStateTrees :: Tx -> Allegory -> BoltActionT IO ()
 updateAllegoryStateTrees tx allegory = do
     case action allegory of
         OwnerAction oin oout proxy -> do
-            let iop = prevOutput $ (txIn tx !! (index $ oiOwner oin))
+            let iop = prevOutput $ (txIn tx !! (index $ oin))
             let iops = append (txHashToHex $ outPointHash $ iop) $ pack (":" ++ show (outPointIndex $ iop))
-            let oops = append (txHashToHex $ txHash tx) $ pack (":" ++ show (index $ ooOwner oout))
+            let oops = append (txHashToHex $ txHash tx) $ pack (":" ++ show (index $ owner oout))
             let cypher =
-                    "MATCH (a:nutxo) WHERE a.op = {in_op}" <> "CREATE (b:nutxo { outpoint: {out_op}, name:{name} }) ," <>
-                    " (b)-[:INPUT]->(a) "
-            let proxies =
-                    Prelude.map
-                        (\x ->
-                             M $
-                             fromList
-                                 [ ("service", T $ pack $ service x)
-                                 , ("mode", T $ pack $ mode x)
-                                 , ( "endpoint"
-                                   , M $
-                                     fromList
-                                         [ ("protocol", T $ pack $ protocol $ endpoint x)
-                                         , ("uri", T $ pack $ uri $ endpoint x)
-                                         ])
-                                 , ( "registration"
-                                   , M $
-                                     fromList
-                                         [ ("addrCommit", T $ pack $ addressCommitment $ registration x)
-                                         , ("utxoCommit", T $ pack $ providerUtxoCommitment $ registration x)
-                                         , ("signature", T $ pack $ AL.signature $ registration x)
-                                         , ("expiry", I $ expiry $ registration x)
-                                         ])
-                                 ])
-                        proxy
+                    "MATCH (a:nutxo) WHERE a.outpoint = {in_op}" <>
+                    (if length proxy == 0
+                         then "CREATE (b:nutxo { outpoint: {out_op}, name:{name} }) "
+                         else "CREATE (b:nutxo { outpoint: {out_op}, name:{name} , proxy:{proxies} }) ") <>
+                    " , (b)-[:INPUT]->(a) "
             let params =
                     fromList
                         [ ("in_op", T $ iops)
                         , ("out_op", T $ oops)
                         , ("name", T $ pack $ Prelude.map (\x -> chr x) (name allegory))
-                        , ("proxies", L $ proxies)
+                        , ("proxies", T $ pack $ BL.unpack $ Data.Aeson.encode proxy)
                         ]
             res <- LE.try $ queryP cypher params
             case res of
@@ -145,44 +126,56 @@ updateAllegoryStateTrees tx allegory = do
                     liftIO $ print ("[ERROR] updateAllegoryStateTrees (Prod) " ++ show e)
                     throw e
                 Right (records) -> return ()
-        ProducerAction pin pout extn -> do
-            let iop = prevOutput $ (txIn tx !! (index $ piProducer pin))
+        ProducerAction pin pout oout extn -> do
+            let iop = prevOutput $ (txIn tx !! (index $ pin))
             let iops = append (txHashToHex $ outPointHash $ iop) $ pack (":" ++ show (outPointIndex $ iop))
             -- Producer (required)
-            let pop = index $ poProducer pout
+            let pop = index $ producer pout
             let val = append (txHashToHex $ txHash tx) $ pack (":" ++ show (pop))
-            let cyProStr =
-                    replace
-                        ("<j>")
-                        (pack $ numrepl (show pop))
-                        "(<j>:nutxo { outpoint: {op_<j>}, name:{name}, producer: True }) , (<j>)-[:INPUT]->(a)"
+            let tstr =
+                    case pVendorEndpoint pout of
+                        Just e ->
+                            "(<j>:nutxo { outpoint: {op_<j>}, name:{name}, producer: True , vendor:{endpoint}}) , (<j>)-[:INPUT]->(a)"
+                        Nothing ->
+                            "(<j>:nutxo { outpoint: {op_<j>}, name:{name}, producer: True }) , (<j>)-[:INPUT]->(a)"
+            let cyProStr = replace ("<j>") (pack $ numrepl (show pop)) tstr
             let opr = "op_" ++ (numrepl (show pop))
-            let poutPro = (cyProStr, (pack opr, T $ val))
+            let poutPro =
+                    ( cyProStr
+                    , [ (pack opr, T $ val)
+                      , ("endpoint", T $ pack $ BL.unpack $ Data.Aeson.encode $ pVendorEndpoint pout)
+                      ])
             -- Owner (optional)
             let poutOwn =
-                    case (poOwner pout) of
+                    case oout of
                         Nothing -> Nothing
                         Just poo -> do
-                            let pop = index poo
+                            let pop = index $ owner $ poo
                             let val = append (txHashToHex $ txHash tx) $ pack (":" ++ show pop)
-                            let cyOwnStr =
-                                    replace
-                                        ("<j>")
-                                        (pack $ numrepl (show pop))
-                                        "(<j>:nutxo { outpoint: {op_<j>}, name:{name}, producer: False }) ,(<j>)-[:INPUT]->(a)"
+                            let tstr =
+                                    case oVendorEndpoint poo of
+                                        Just e ->
+                                            "(<j>:nutxo { outpoint: {op_<j>}, name:{name}, producer: False , vendor:{endpoint} }) ,(<j>)-[:INPUT]->(a)"
+                                        Nothing ->
+                                            "(<j>:nutxo { outpoint: {op_<j>}, name:{name}, producer: False }) ,(<j>)-[:INPUT]->(a)"
+                            let cyOwnStr = replace ("<j>") (pack $ numrepl (show pop)) tstr
                             let opr = "op_" ++ (numrepl (show pop))
-                            let parOwn = (pack opr, T $ val)
+                            let parOwn =
+                                    [ (pack opr, T $ val)
+                                    , ("endpoint", T $ pack $ BL.unpack $ Data.Aeson.encode $ oVendorEndpoint poo)
+                                    ]
                             Just (cyOwnStr, parOwn)
             let extensions =
                     Prelude.map
                         (\x -> do
-                             let eop = index $ ownerEx x
-                             let ss =
+                             let (ss, eop) =
                                      case x of
                                          OwnerExtension ow cp ->
-                                             "(<j>:nutxo { outpoint: {op_<j>}, name:{name_ext_<j>}, producer: False }) ,(<j>)-[:INPUT]->(a)"
+                                             ( "(<j>:nutxo { outpoint: {op_<j>}, name:{name_ext_<j>}, producer: False }) ,(<j>)-[:INPUT]->(a)"
+                                             , index $ owner $ ow)
                                          ProducerExtension pr cp ->
-                                             "(<j>:nutxo { outpoint: {op_<j>}, name:{name_ext_<j>}, producer: True }) ,(<j>)-[:INPUT]->(a)"
+                                             ( "(<j>:nutxo { outpoint: {op_<j>}, name:{name_ext_<j>}, producer: True }) ,(<j>)-[:INPUT]->(a)"
+                                             , index $ producer $ pr)
                              let val = append (txHashToHex $ txHash tx) $ pack (":" ++ show (eop))
                              let cyExtStr = replace ("<j>") (pack $ numrepl (show eop)) ss
                              let opr = "op_" ++ (numrepl (show eop))
@@ -195,20 +188,17 @@ updateAllegoryStateTrees tx allegory = do
                              (cyExtStr, parExt))
                         (extn)
             let cypher =
-                    "MATCH (a:nutxo) WHERE a.op = {in_op} CREATE " <> fst poutPro <>
+                    "MATCH (a:nutxo) WHERE a.outpoint = {in_op} CREATE " <> fst poutPro <>
                     (case poutOwn of
                          Just po -> " , " <> fst po <> " , "
                          Nothing -> " , ") <>
                     (Data.Text.intercalate (" , ") $ fst $ unzip $ extensions)
             let params =
                     fromList $
-                    ([ ("in_op", T $ iops)
-                     , ("name", T $ pack $ Prelude.map (\x -> chr x) (name allegory))
-                     -- , ("localname", T $ pack $ Prelude.map (\x -> chr x) (localName allegory))
-                     ] ++
-                     (case poutOwn of
-                          Just po -> [(snd poutPro), (snd po)]
-                          Nothing -> [(snd poutPro)])) ++
+                    [("in_op", T $ iops), ("name", T $ pack $ Prelude.map (\x -> chr x) (name allegory))] ++
+                    (case poutOwn of
+                         Just po -> (snd poutPro) ++ (snd po)
+                         Nothing -> (snd poutPro)) ++
                     (Prelude.concat $ snd $ unzip extensions)
             liftIO $ print (cypher)
             liftIO $ print (params)

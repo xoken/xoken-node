@@ -8,9 +8,11 @@ module Network.Xoken.Node.Data.Allegory where
 import Codec.Serialise
 import Control.Exception
 import Control.Monad (guard)
+import Data.Aeson
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as B16
 import Data.ByteString.Char8 as C
+import qualified Data.ByteString.Lazy.Char8 as BL
 import Data.Foldable
 import Data.Maybe
 import Data.Text as T
@@ -20,47 +22,37 @@ import GHC.Generics
 
 data Allegory =
     Allegory
-        { version :: Int
-        , name :: [Int]
-        , action :: Action
+        { version :: !Int
+        , name :: ![Int]
+        , action :: !Action
         }
     deriving (Show, Generic, Eq, Serialise)
 
 data Action
     = ProducerAction
-          { pInput :: ProducerInput
-          , pOutput :: ProducerOutput
-          , pOutExtensions :: [Extension]
+          { producerInput :: !Index
+          , producerOutput :: !ProducerOutput
+          , pOwnerOutput :: !(Maybe OwnerOutput)
+          , extensions :: ![Extension]
           }
     | OwnerAction
-          { oInput :: OwnerInput
-          , oOutput :: OwnerOutput
-          , oProxyProviders :: [ProxyProvider]
+          { ownerInput :: !Index
+          , ownerOutput :: !OwnerOutput
+          , oProxyProviders :: ![ProxyProvider]
           }
-    deriving (Show, Generic, Eq, Serialise)
-
-data ProducerInput =
-    ProducerInput
-        { piProducer :: !Index
-        }
     deriving (Show, Generic, Eq, Serialise)
 
 data ProducerOutput =
     ProducerOutput
-        { poProducer :: !Index
-        , poOwner :: Maybe Index
-        }
-    deriving (Show, Generic, Eq, Serialise)
-
-data OwnerInput =
-    OwnerInput
-        { oiOwner :: Index
+        { producer :: !Index
+        , pVendorEndpoint :: !(Maybe Endpoint)
         }
     deriving (Show, Generic, Eq, Serialise)
 
 data OwnerOutput =
     OwnerOutput
-        { ooOwner :: Index
+        { owner :: !Index
+        , oVendorEndpoint :: !(Maybe Endpoint)
         }
     deriving (Show, Generic, Eq, Serialise)
 
@@ -72,11 +64,11 @@ data Index =
 
 data Extension
     = OwnerExtension
-          { ownerEx :: !Index
+          { ownerOutputEx :: !OwnerOutput
           , codePoint :: !Int
           }
     | ProducerExtension
-          { producerEx :: !Index
+          { producerOutputEx :: !ProducerOutput
           , codePoint :: !Int
           }
     deriving (Show, Generic, Eq, Serialise)
@@ -86,7 +78,7 @@ data ProxyProvider =
         { service :: !String
         , mode :: !String
         , endpoint :: !Endpoint
-        , registration :: Registration
+        , registration :: !Registration
         }
     deriving (Show, Generic, Eq, Serialise)
 
@@ -99,12 +91,25 @@ data Endpoint =
 
 data Registration =
     Registration
-        { addressCommitment :: String
-        , providerUtxoCommitment :: String
-        , signature :: String
-        , expiry :: Int
+        { addressCommitment :: !String
+        , utxoCommitment :: !String
+        , signature :: !String
+        , expiry :: !Int
         }
     deriving (Show, Generic, Eq, Serialise)
+
+--
+-- instance ToJSON Allegory
+--
+-- instance ToJSON Action
+instance ToJSON ProxyProvider --
+
+instance ToJSON Registration
+
+instance ToJSON Endpoint
+--
+-- instance ToJSON OwnerInput
+--
 -- instance FromJSON Endpoint' where
 --     parseJSON =
 --         withObject "XokenP2P' or HTTPS'" $ \o ->
