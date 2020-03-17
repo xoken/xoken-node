@@ -110,8 +110,13 @@ updateAllegoryStateTrees tx allegory = do
             let cypher =
                     "MATCH (a:nutxo) WHERE a.outpoint = {in_op}" <>
                     (if length proxy == 0
-                         then "CREATE (b:nutxo { outpoint: {out_op}, name:{name} }) "
-                         else "CREATE (b:nutxo { outpoint: {out_op}, name:{name} , proxy:{proxies} }) ") <>
+                         then case oVendorEndpoint oout of
+                                  Just e -> "CREATE (b:nutxo { outpoint: {out_op}, name:{name} , vendor:{endpoint} }) "
+                                  Nothing -> "CREATE (b:nutxo { outpoint: {out_op}, name:{name} }) "
+                         else case oVendorEndpoint oout of
+                                  Just e ->
+                                      "CREATE (b:nutxo { outpoint: {out_op}, name:{name}, proxy:{proxies}, vendor:{endpoint} }) "
+                                  Nothing -> "CREATE (b:nutxo { outpoint: {out_op}, name:{name} , proxy:{proxies} }) ") <>
                     " , (b)-[:INPUT]->(a) "
             let params =
                     fromList
@@ -119,6 +124,7 @@ updateAllegoryStateTrees tx allegory = do
                         , ("out_op", T $ oops)
                         , ("name", T $ pack $ Prelude.map (\x -> chr x) (name allegory))
                         , ("proxies", T $ pack $ BL.unpack $ Data.Aeson.encode proxy)
+                        , ("endpoint", T $ pack $ BL.unpack $ Data.Aeson.encode $ oVendorEndpoint oout)
                         ]
             res <- LE.try $ queryP cypher params
             case res of
@@ -135,7 +141,7 @@ updateAllegoryStateTrees tx allegory = do
             let tstr =
                     case pVendorEndpoint pout of
                         Just e ->
-                            "(<j>:nutxo { outpoint: {op_<j>}, name:{name}, producer: True , vendor:{endpoint}}) , (<j>)-[:INPUT]->(a)"
+                            "(<j>:nutxo { outpoint: {op_<j>}, name:{name}, producer: True , vendor:{endpoint_prod}}) , (<j>)-[:INPUT]->(a)"
                         Nothing ->
                             "(<j>:nutxo { outpoint: {op_<j>}, name:{name}, producer: True }) , (<j>)-[:INPUT]->(a)"
             let cyProStr = replace ("<j>") (pack $ numrepl (show pop)) tstr
@@ -143,7 +149,7 @@ updateAllegoryStateTrees tx allegory = do
             let poutPro =
                     ( cyProStr
                     , [ (pack opr, T $ val)
-                      , ("endpoint", T $ pack $ BL.unpack $ Data.Aeson.encode $ pVendorEndpoint pout)
+                      , ("endpoint_prod", T $ pack $ BL.unpack $ Data.Aeson.encode $ pVendorEndpoint pout)
                       ])
             -- Owner (optional)
             let poutOwn =
@@ -155,14 +161,14 @@ updateAllegoryStateTrees tx allegory = do
                             let tstr =
                                     case oVendorEndpoint poo of
                                         Just e ->
-                                            "(<j>:nutxo { outpoint: {op_<j>}, name:{name}, producer: False , vendor:{endpoint} }) ,(<j>)-[:INPUT]->(a)"
+                                            "(<j>:nutxo { outpoint: {op_<j>}, name:{name}, producer: False , vendor:{endpoint_owner} }) ,(<j>)-[:INPUT]->(a)"
                                         Nothing ->
                                             "(<j>:nutxo { outpoint: {op_<j>}, name:{name}, producer: False }) ,(<j>)-[:INPUT]->(a)"
                             let cyOwnStr = replace ("<j>") (pack $ numrepl (show pop)) tstr
                             let opr = "op_" ++ (numrepl (show pop))
                             let parOwn =
                                     [ (pack opr, T $ val)
-                                    , ("endpoint", T $ pack $ BL.unpack $ Data.Aeson.encode $ oVendorEndpoint poo)
+                                    , ("endpoint_owner", T $ pack $ BL.unpack $ Data.Aeson.encode $ oVendorEndpoint poo)
                                     ]
                             Just (cyOwnStr, parOwn)
             let extensions =
@@ -171,7 +177,11 @@ updateAllegoryStateTrees tx allegory = do
                              let (ss, eop) =
                                      case x of
                                          OwnerExtension ow cp ->
-                                             ( "(<j>:nutxo { outpoint: {op_<j>}, name:{name_ext_<j>}, producer: False }) ,(<j>)-[:INPUT]->(a)"
+                                             ( case oVendorEndpoint ow of
+                                                   Just ep ->
+                                                       "(<j>:nutxo { outpoint: {op_<j>}, name:{name_ext_<j>}, producer: False , vendor:{endpoint_<j>}}) ,(<j>)-[:INPUT]->(a)"
+                                                   Nothing ->
+                                                       "(<j>:nutxo { outpoint: {op_<j>}, name:{name_ext_<j>}, producer: False }) ,(<j>)-[:INPUT]->(a)"
                                              , index $ owner $ ow)
                                          ProducerExtension pr cp ->
                                              ( "(<j>:nutxo { outpoint: {op_<j>}, name:{name_ext_<j>}, producer: True }) ,(<j>)-[:INPUT]->(a)"
@@ -180,11 +190,21 @@ updateAllegoryStateTrees tx allegory = do
                              let cyExtStr = replace ("<j>") (pack $ numrepl (show eop)) ss
                              let opr = "op_" ++ (numrepl (show eop))
                              let next = "name_ext_" ++ (numrepl (show eop))
+                             let eep = "endpoint_" ++ (numrepl (show eop))
                              let parExt =
                                      [ (pack opr, T $ val)
                                      , ( pack next
                                        , T $ pack $ Prelude.map (\x -> chr x) (name allegory ++ [codePoint x]))
-                                     ]
+                                     ] ++
+                                     case x of
+                                         OwnerExtension ow cp ->
+                                             case oVendorEndpoint ow of
+                                                 Just ep -> [(pack eep, T $ pack $ BL.unpack $ Data.Aeson.encode $ ep)]
+                                                 Nothing -> []
+                                         ProducerExtension pr cp ->
+                                             case pVendorEndpoint pr of
+                                                 Just ep -> [(pack eep, T $ pack $ BL.unpack $ Data.Aeson.encode $ ep)]
+                                                 Nothing -> []
                              (cyExtStr, parExt))
                         (extn)
             let cypher =
