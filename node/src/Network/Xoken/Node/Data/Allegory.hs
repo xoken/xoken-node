@@ -98,7 +98,6 @@ data Registration =
         }
     deriving (Show, Generic, Eq, Serialise)
 
---
 -- instance ToJSON Allegory
 --
 -- instance ToJSON Action
