@@ -142,15 +142,16 @@ updateAllegoryStateTrees tx allegory = do
             let tstr =
                     case pVendorEndpoint pout of
                         Just e ->
-                            "(<j>:nutxo { outpoint: {op_<j>}, name:{name}, producer: True , vendor:{endpoint_prod}}) , (<j>)-[:INPUT]->(a)"
+                            "(ppro:nutxo { outpoint: {op_ppro}, name:{name}, producer: True , vendor:{endpoint_prod}}) , (ppro)-[:INPUT]->(a) "
                         Nothing ->
-                            "(<j>:nutxo { outpoint: {op_<j>}, name:{name}, producer: True }) , (<j>)-[:INPUT]->(a)"
-            let cyProStr = replace ("<j>") (pack $ numrepl (show pop)) tstr
-            let opr = "op_" ++ (numrepl (show pop))
+                            "(ppro:nutxo { outpoint: {op_ppro}, name:{name}, producer: True }) , (ppro)-[:INPUT]->(a) "
+            let cyProStr = tstr
+            let opr = "op_ppro"
             let poutPro =
                     ( cyProStr
                     , [ (pack opr, T $ val)
                       , ("endpoint_prod", T $ pack $ BL.unpack $ Data.Aeson.encode $ pVendorEndpoint pout)
+                      , ("nn_pr_str", T $ pack $ Prelude.map (\x -> chr x) (name allegory) ++ "|producer")
                       ])
             -- Owner (optional)
             let poutOwn =
@@ -160,17 +161,16 @@ updateAllegoryStateTrees tx allegory = do
                             let pop = index $ owner $ poo
                             let val = append (txHashToHex $ txHash tx) $ pack (":" ++ show pop)
                             let mstr =
-                                    " OPTIONAL MATCH (y:namestate)-[r:REVISION]->(ow:nutxo) WHERE ow.outpoint = {op_<j>} AND y.name = {nn_ow_str}  WITH rootname + collect(y) AS owner_exists "
+                                    " OPTIONAL MATCH (nsown:namestate)-[:REVISION]->() WHERE nsown.name = {nn_ow_str}  WITH rootname + collect(nsown) AS owner_exists "
+                            let cstr = " , (nsown:namestate { name:{nn_ow_str} }) , (nsown)-[:REVISION]->(pown)  "
                             let tstr =
                                     case oVendorEndpoint poo of
                                         Just e ->
-                                            " (<j>:nutxo { outpoint: {op_<j>}, name:{name}, producer: False , vendor:{endpoint_owner} }) ,(<j>)-[:INPUT]->(a)"
+                                            " (pown:nutxo { outpoint: {op_pown}, name:{name}, producer: False , vendor:{endpoint_owner} }) ,(pown)-[:INPUT]->(a) "
                                         Nothing ->
-                                            " (<j>:nutxo { outpoint: {op_<j>}, name:{name}, producer: False }) ,(<j>)-[:INPUT]->(a)"
-                            let cyOwnStr =
-                                    ( replace ("<j>") (pack $ numrepl (show pop)) mstr
-                                    , replace ("<j>") (pack $ numrepl (show pop)) tstr)
-                            let opr = "op_" ++ (numrepl (show pop))
+                                            " (pown:nutxo { outpoint: {op_pown}, name:{name}, producer: False }) ,(pown)-[:INPUT]->(a) "
+                            let cyOwnStr = (mstr, tstr)
+                            let opr = "op_pown"
                             let parOwn =
                                     [ (pack opr, T $ val)
                                     , ("endpoint_owner", T $ pack $ BL.unpack $ Data.Aeson.encode $ oVendorEndpoint poo)
@@ -181,21 +181,25 @@ updateAllegoryStateTrees tx allegory = do
                     Prelude.map
                         (\(x, ind) -> do
                              let mstr =
-                                     " OPTIONAL MATCH (ns_<j>:namestate)-[r:REVISION]->(ex_<j>:nutxo) WHERE ex_<j>.outpoint = {op_<j>} AND ns_<j>.name = {nn_<j>_str}   WITH <previous> + collect(ns_<j>) AS owner_extn_exists_<i> "
+                                     " OPTIONAL MATCH (ns_<j>:namestate)-[:REVISION]->() WHERE ns_<j>.name = {nn_<j>_str}  WITH <previous> + collect(ns_<j>) AS owner_extn_exists_<i> "
+                             let cstr = " , (ns_<j>:namestate { name:{nn_<j>_str} }) , (ns_<j>)-[:REVISION]->(<j>)  "
                              let (ss, eop) =
                                      case x of
                                          OwnerExtension ow cp ->
                                              ( case oVendorEndpoint ow of
                                                    Just ep ->
                                                        ( mstr
-                                                       , "(<j>:nutxo { outpoint: {op_<j>}, name:{name_ext_<j>}, producer: False , vendor:{endpoint_<j>}}) ,(<j>)-[:INPUT]->(a)")
+                                                       , "(<j>:nutxo { outpoint: {op_<j>}, name:{name_ext_<j>}, producer: False , vendor:{endpoint_<j>}}) ,(<j>)-[:INPUT]->(a) " ++
+                                                         cstr)
                                                    Nothing ->
                                                        ( mstr
-                                                       , "(<j>:nutxo { outpoint: {op_<j>}, name:{name_ext_<j>}, producer: False }) ,(<j>)-[:INPUT]->(a)")
+                                                       , "(<j>:nutxo { outpoint: {op_<j>}, name:{name_ext_<j>}, producer: False }) ,(<j>)-[:INPUT]->(a) " ++
+                                                         cstr)
                                              , index $ owner $ ow)
                                          ProducerExtension pr cp ->
                                              ( ( mstr
-                                               , "(<j>:nutxo { outpoint: {op_<j>}, name:{name_ext_<j>}, producer: True }) ,(<j>)-[:INPUT]->(a)")
+                                               , "(<j>:nutxo { outpoint: {op_<j>}, name:{name_ext_<j>}, producer: True }) ,(<j>)-[:INPUT]->(a) " ++
+                                                 cstr)
                                              , index $ producer $ pr)
                              let val = append (txHashToHex $ txHash tx) $ pack (":" ++ show (eop))
                              let cyExtStr =
@@ -223,8 +227,8 @@ updateAllegoryStateTrees tx allegory = do
                                          pack $
                                          Prelude.map (\x -> chr x) (name allegory) ++
                                          case x of
-                                             OwnerExtension _ _ -> "|owner"
-                                             ProducerExtension _ _ -> "|producer")
+                                             OwnerExtension _ cp -> [chr cp] ++ "|owner"
+                                             ProducerExtension _ cp -> [chr cp] ++ "|producer")
                                      ] ++
                                      case x of
                                          OwnerExtension ow cp ->
@@ -246,19 +250,19 @@ updateAllegoryStateTrees tx allegory = do
                     replace ("<j>") (pack $ show $ length extn) " UNWIND owner_extn_exists_<j> AS owner_or_extn_exists " <>
                     " WITH owner_or_extn_exists " <>
                     " UNWIND  CASE WHEN (owner_or_extn_exists.name={rtname}) THEN [1] ELSE [] END AS relation " <>
-                    " MATCH (x:namestate)-[r:REVISION]->(a:nutxo) WHERE a.outpoint = {in_op} AND x.name = {nn_str} CREATE " <>
+                    " MATCH (x:namestate)-[r:REVISION]->(a:nutxo) WHERE a.outpoint = {in_op} AND x.name = {nn_pr_str} " <>
+                    " CREATE " <>
                     fst poutPro <>
                     (case poutOwn of
                          Just po -> " , " <> (snd $ fst po) <> " , "
                          Nothing -> " , ") <>
                     (Data.Text.intercalate (" , ") $ snd $ unzip $ fst $ unzip $ extensions) <>
-                    "  (x)-[:REVISION]->(b)  DELETE r  "
+                    " , (x)-[:REVISION]->(ppro) DELETE r  "
             let params =
                     fromList $
                     [ ("rtname", T $ "")
                     , ("in_op", T $ iops)
                     , ("name", T $ pack $ Prelude.map (\x -> chr x) (name allegory))
-                    , ("nn_str", T $ pack $ Prelude.map (\x -> chr x) (name allegory) ++ "|producer")
                     ] ++
                     (case poutOwn of
                          Just po -> (snd poutPro) ++ (snd po)
