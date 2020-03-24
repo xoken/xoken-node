@@ -100,6 +100,23 @@ queryGraphDBVersion = do
         "call dbms.components() yield name, versions, edition unwind versions as version return name, version, edition"
     params = fromList []
 
+-- Fetch the Allegory Name branch
+queryAllegoryNameBranch :: Text -> Bool -> BoltActionT IO [Text]
+queryAllegoryNameBranch name isProducer = do
+    records <- queryP cypher params
+    x <- traverse (`at` "outpoint") records
+    return $ x >>= exact
+  where
+    cypher =
+        " MATCH p=(pointer:namestate {name: {namestr}})-[:REVISION]-()-[:INPUT*]->(start:nutxo) " <>
+        " WHERE NOT (start)-[:INPUT]->() " <>
+        " UNWIND tail(nodes(p)) AS elem " <>
+        " RETURN elem.outpoint as outpoint "
+    params =
+        if isProducer
+            then fromList [("namestr", T (name <> pack "|producer"))]
+            else fromList [("namestr", T (name <> pack "|owner"))]
+
 updateAllegoryStateTrees :: Tx -> Allegory -> BoltActionT IO ()
 updateAllegoryStateTrees tx allegory = do
     case action allegory of

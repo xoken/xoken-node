@@ -67,6 +67,7 @@ import Network.Xoken.Node.P2P.Common
 import Network.Xoken.Node.P2P.Types
 import System.Logger as LG
 import System.Logger.Message
+import Text.Read
 import Xoken
 
 data AriviServiceException
@@ -271,6 +272,28 @@ xGetMerkleBranch net txid = do
             err lg $ LG.msg $ "Error: xGetMerkleBranch: " ++ show e
             throw KeyValueDBLookupException
 
+xGetAllegoryNameBranch ::
+       (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> String -> Bool -> m ([OutPoint'])
+xGetAllegoryNameBranch net name isProducer = do
+    dbe <- getDB
+    lg <- getLogger
+    res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameBranch (DT.pack name) isProducer)
+    case res of
+        Right nb -> do
+            return $
+                Data.List.map
+                    (\x -> do
+                         let sp = DT.split (== ':') x
+                         let txid = DT.unpack $ sp !! 0
+                         let index = readMaybe (DT.unpack $ sp !! 1) :: Maybe Int
+                         case index of
+                             Just i -> OutPoint' txid i
+                             Nothing -> throw KeyValueDBLookupException)
+                    (nb)
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: xGetAllegoryNameBranch: " ++ show e
+            throw KeyValueDBLookupException
+
 xRelayTx :: (HasXokenNodeEnv env m, MonadIO m) => Network -> BC.ByteString -> m (Bool)
 xRelayTx net rawTx = do
     dbe <- getDB
@@ -363,7 +386,8 @@ xRelayTx net rawTx = do
                                             err lg $ LG.msg $ "error decoding op_return data:" ++ show e
                                             return False
                                 else do
-                                    return True
+                                    err lg $ LG.msg $ val $ "error: OP_RETURN prefix mismatch"
+                                    return False
                 Nothing -> do
                     err lg $ LG.msg $ val $ "error decoding rawTx (2)"
                     return $ False
@@ -432,6 +456,12 @@ goGetResource msg net = do
                 Just (GetMerkleBranchByTxID txid) -> do
                     ops <- xGetMerkleBranch net txid
                     return $ RPCResponse 200 Nothing $ Just $ RespMerkleBranchByTxID ops
+                Nothing -> return $ RPCResponse 400 (Just "Error: Invalid Params") Nothing
+        "NAME->[OUTPOINT]" -> do
+            case rqParams msg of
+                Just (GetAllegoryNameBranch name isProducer) -> do
+                    ops <- xGetAllegoryNameBranch net name isProducer
+                    return $ RPCResponse 200 Nothing $ Just $ RespAllegoryNameBranch ops
                 Nothing -> return $ RPCResponse 400 (Just "Error: Invalid Params") Nothing
         "RELAY_TX" -> do
             case rqParams msg of

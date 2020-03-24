@@ -94,6 +94,10 @@ data RPCReqParams
     | GetMerkleBranchByTxID
           { gmbMerkleBranch :: String
           }
+    | GetAllegoryNameBranch
+          { gaName :: String
+          , gaIsProducer :: Bool
+          }
     | RelayTx
           { rTx :: ByteString
           }
@@ -126,6 +130,9 @@ data RPCResponseBody
           }
     | RespMerkleBranchByTxID
           { merkleBranch :: [MerkleBranchNode']
+          }
+    | RespAllegoryNameBranch
+          { nameBranch :: [OutPoint']
           }
     | RespRelayTx
           { rrTx :: Bool
