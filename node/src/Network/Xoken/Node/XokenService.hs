@@ -73,6 +73,7 @@ import Xoken
 data AriviServiceException
     = KeyValueDBLookupException
     | GraphDBLookupException
+    | InvalidOutputAddressException
     deriving (Show)
 
 instance Exception AriviServiceException
@@ -294,6 +295,51 @@ xGetAllegoryNameBranch net name isProducer = do
             err lg $ LG.msg $ "Error: xGetAllegoryNameBranch: " ++ show e
             throw KeyValueDBLookupException
 
+xGetPartiallySignedAllegoryTx ::
+       (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
+    => Network
+    -> [OutPoint']
+    -> String
+    -> Bool
+    -> (String, Int)
+    -> (String, Int)
+    -> m (BC.ByteString)
+xGetPartiallySignedAllegoryTx net payips name isProducer owner change = do
+    dbe <- getDB
+    bp2pEnv <- getBitcoinP2P
+    lg <- getLogger
+    let conn = keyValDB (dbe)
+    res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameBranch (DT.pack name) isProducer)
+    nameip <-
+        case res of
+            Left (e :: SomeException) -> do
+                err lg $ LG.msg $ "error fetching allegory name input :" ++ show e
+                throw e
+            Right nb -> do
+                let sp = DT.split (== ':') (last nb)
+                let txid = DT.unpack $ sp !! 0
+                let index = readMaybe (DT.unpack $ sp !! 1) :: Maybe Int
+                case index of
+                    Just i -> return $ OutPoint' txid i
+                    Nothing -> throw KeyValueDBLookupException
+    let ins =
+            L.map (\x -> TxIn (OutPoint (read $ opTxHash x) (fromIntegral $ opIndex x)) BC.empty 0) (payips ++ [nameip])
+    let outs =
+            L.map
+                (\x -> do
+                     let addr =
+                             case stringToAddr net (DT.pack $ fst x) of
+                                 Just a -> a
+                                 Nothing -> throw InvalidOutputAddressException
+                     let script = addressToScriptBS addr
+                     TxOut (fromIntegral $ snd x) script)
+                [owner, change]
+    let psatx = Tx version ins outs locktime
+    return $ BC.empty
+  where
+    version = 1
+    locktime = 0
+
 xRelayTx :: (HasXokenNodeEnv env m, MonadIO m) => Network -> BC.ByteString -> m (Bool)
 xRelayTx net rawTx = do
     dbe <- getDB
@@ -468,6 +514,12 @@ goGetResource msg net = do
                 Just (RelayTx tx) -> do
                     ops <- xRelayTx net tx
                     return $ RPCResponse 200 Nothing $ Just $ RespRelayTx ops
+                Nothing -> return $ RPCResponse 400 (Just "Error: Invalid Params") Nothing
+        "PS_ALLEGORY_TX" -> do
+            case rqParams msg of
+                Just (GetPartiallySignedAllegoryTx payips name isProducer owner change) -> do
+                    ops <- xGetPartiallySignedAllegoryTx net payips name isProducer owner change
+                    return $ RPCResponse 200 Nothing $ Just $ RespPartiallySignedAllegoryTx ops
                 Nothing -> return $ RPCResponse 400 (Just "Error: Invalid Params") Nothing
         _____ -> do
             return $ RPCResponse 400 (Just "Error: Invalid Method") Nothing

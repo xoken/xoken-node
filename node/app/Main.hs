@@ -14,6 +14,7 @@
 
 import Arivi.Crypto.Utils.PublicKey.Signature as ACUPS
 import Arivi.Crypto.Utils.PublicKey.Utils
+import Arivi.Crypto.Utils.Random
 import Arivi.Env
 import Arivi.Network
 import Arivi.P2P
@@ -33,6 +34,7 @@ import Control.Exception ()
 import Control.Monad
 import Control.Monad.Base
 import Control.Monad.Catch
+import Control.Monad.Except
 import Control.Monad.Logger
 import Control.Monad.Reader
 import Control.Monad.Trans.Control
@@ -87,6 +89,7 @@ import qualified System.Logger.Class as LG
 import Text.Read (readMaybe)
 import Xoken
 import Xoken.Node
+import Xoken.NodeConfig as NC
 
 newtype AppM a =
     AppM (ReaderT (ServiceEnv AppM ServiceResource ServiceTopic RPCMessage PubNotifyMessage) (LoggingT IO) a)
@@ -140,6 +143,13 @@ instance HasPRT AppM where
 runAppM :: ServiceEnv AppM ServiceResource ServiceTopic RPCMessage PubNotifyMessage -> AppM a -> LoggingT IO a
 runAppM env (AppM app) = runReaderT app env
 
+data ConfigException
+    = ConfigParseException
+    | RandomSecretKeyException
+    deriving (Eq, Ord, Show)
+
+instance Exception ConfigException
+
 defaultConfig :: FilePath -> IO ()
 defaultConfig path = do
     (sk, _) <- ACUPS.generateKeyPair
@@ -160,8 +170,6 @@ defaultConfig path = do
                 20
                 5
                 3
-                "127.0.0.1"
-                9090
     Config.makeConfig config (path <> "/config.yaml")
 
 makeGraphDBResPool :: IO (ServerState)
@@ -203,14 +211,14 @@ runThreads config bp2p conn lg p2pEnv =
                     liftIO $ destroyAllResources (pool gdbState)
                     liftIO $ threadDelay (10 * 1000000))
 
-runNode :: Config.Config -> Q.ClientState -> BitcoinP2P -> Bool -> IO ()
-runNode config conn bp2p dbg = do
+runNode :: Config.Config -> NC.NodeConfig -> Q.ClientState -> BitcoinP2P -> IO ()
+runNode config nodeConf conn bp2p = do
     p2pEnv <- mkP2PEnv config globalHandlerRpc globalHandlerPubSub [AriviService] []
-    let ll =
-            if dbg
-                then LG.Debug
-                else LG.Info
-    lg <- LG.new (LG.setOutput (LG.Path "xoken.log") (LG.setLogLevel ll LG.defSettings))
+    lg <-
+        LG.new
+            (LG.setOutput
+                 (LG.Path $ T.unpack $ NC.logFileName nodeConf)
+                 (LG.setLogLevel (logLevel nodeConf) LG.defSettings))
     runThreads config bp2p conn lg p2pEnv
 
 data Config =
@@ -229,36 +237,6 @@ defNetwork = bsvTest
 netNames :: String
 netNames = intercalate "|" (Data.List.map getNetworkName allNets)
 
-config :: Parser Config
-config = do
-    configNetwork <-
-        option (eitherReader networkReader) $
-        metavar netNames <> long "net" <> short 'n' <> help "Network to connect to" <> showDefault <> value defNetwork
-    configDebug <- switch $ long "debug" <> short 'd' <> help "Show debug messages"
-    configUnconfirmedTx <- switch $ long "unconfirmedTx" <> short 'u' <> help "Index unconfirmed txs."
-    pure Config {..}
-
-networkReader :: String -> Either String Network
-networkReader s
-    | s == getNetworkName bsv = Right bsv
-    | s == getNetworkName bsvTest = Right bsvTest
-    | s == getNetworkName bsvSTN = Right bsvSTN
-    | otherwise = Left "Network name invalid"
-
-peerReader :: String -> Either String (Host, Maybe Port)
-peerReader s = do
-    let (host, p) = span (/= ':') s
-    when (Data.List.null host) (Left "Peer name or address not defined")
-    port <-
-        case p of
-            [] -> return Nothing
-            ':':p' ->
-                case readMaybe p' of
-                    Nothing -> Left "Peer port number cannot be read"
-                    Just n -> return (Just n)
-            _ -> Left "Peer information could not be parsed"
-    return (host, port)
-
 main :: IO ()
 main = do
     putStrLn $ "Starting Xoken Nexa"
@@ -270,18 +248,19 @@ main = do
     conn <- Q.init stng2
     op <- Q.runClient conn (Q.query qstr p)
     putStrLn $ "Connected to Cassandra database, version " ++ show (runIdentity (op !! 0))
-    conf <- liftIO $ execParser opts
     let path = "."
     b <- System.Directory.doesPathExist (path <> "/config.yaml")
     unless b (defaultConfig path)
     cnf <- Config.readConfig (path <> "/config.yaml")
+    nodeCnf <- NC.readConfig (path <> "/node-config.yaml")
+    print (show nodeCnf)
     let nodeConfig =
             BitcoinNodeConfig
                 5 -- maximum connected peers allowed
                 [] -- static list of peers to connect to
                 False -- activate peer discovery
                 (NetworkAddress 0 (SockAddrInet 0 0)) -- local host n/w addr
-                (configNetwork conf) -- network constants
+                (bitcoinNetwork nodeCnf) -- network constants
                 60 -- timeout in seconds
     g <- newTVarIO M.empty
     mv <- newMVar True
@@ -291,9 +270,4 @@ main = do
     tc <- H.new
     rpf <- newEmptyMVar
     rpc <- newTVarIO 0
-    runNode cnf (conn) (BitcoinP2P nodeConfig g mv hl st ep tc (configUnconfirmedTx conf) (rpf, rpc)) (configDebug conf)
-  where
-    opts =
-        info (helper <*> config) $
-        fullDesc <> progDesc "Blockchain store and API" <>
-        Options.Applicative.header ("xoken-node version " <> showVersion P.version)
+    runNode cnf nodeCnf conn (BitcoinP2P nodeConfig g mv hl st ep tc (NC.indexUnconfirmedTx nodeCnf) (rpf, rpc))
