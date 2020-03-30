@@ -308,6 +308,7 @@ xGetPartiallySignedAllegoryTx net payips name isProducer owner change = do
     dbe <- getDB
     bp2pEnv <- getBitcoinP2P
     lg <- getLogger
+    alg <- getAllegory
     let conn = keyValDB (dbe)
     res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameBranch (DT.pack name) isProducer)
     nameip <-

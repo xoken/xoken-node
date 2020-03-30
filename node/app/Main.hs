@@ -113,6 +113,9 @@ instance HasBitcoinP2P AppM where
 instance HasDatabaseHandles AppM where
     getDB = asks (dbHandles . xokenNodeEnv)
 
+instance HasAllegoryEnv AppM where
+    getAllegory = asks (allegoryEnv . xokenNodeEnv)
+
 instance HasLogger AppM where
     getLogger = asks (loggerEnv . xokenNodeEnv)
 
@@ -166,11 +169,11 @@ defaultConfig path = do
                 [bootstrapPeer]
                 (generateNodeId sk)
                 "127.0.0.1"
-                (T.pack (path <> "/node.log"))
+                (T.pack (path <> "/arivi.log"))
                 20
                 5
                 3
-    Config.makeConfig config (path <> "/config.yaml")
+    Config.makeConfig config (path <> "/arivi-config.yaml")
 
 makeGraphDBResPool :: IO (ServerState)
 makeGraphDBResPool = do
@@ -182,16 +185,18 @@ makeGraphDBResPool = do
 
 runThreads ::
        Config.Config
+    -> NC.NodeConfig
     -> BitcoinP2P
     -> Q.ClientState
     -> LG.Logger
     -> (P2PEnv AppM ServiceResource ServiceTopic RPCMessage PubNotifyMessage)
     -> IO ()
-runThreads config bp2p conn lg p2pEnv =
+runThreads config nodeConf bp2p conn lg p2pEnv =
     forever $ do
         gdbState <- makeGraphDBResPool
         let dbh = DatabaseHandles conn gdbState
-        let xknEnv = XokenNodeEnv bp2p dbh lg
+        let allegoryEnv = AllegoryEnv $ allegoryVendorSecretKey nodeConf
+        let xknEnv = XokenNodeEnv bp2p dbh lg allegoryEnv
         let serviceEnv = ServiceEnv xknEnv p2pEnv
         runFileLoggingT (toS $ Config.logFile config) $
             runAppM
@@ -219,7 +224,7 @@ runNode config nodeConf conn bp2p = do
             (LG.setOutput
                  (LG.Path $ T.unpack $ NC.logFileName nodeConf)
                  (LG.setLogLevel (logLevel nodeConf) LG.defSettings))
-    runThreads config bp2p conn lg p2pEnv
+    runThreads config nodeConf bp2p conn lg p2pEnv
 
 data Config =
     Config
@@ -249,9 +254,9 @@ main = do
     op <- Q.runClient conn (Q.query qstr p)
     putStrLn $ "Connected to Cassandra database, version " ++ show (runIdentity (op !! 0))
     let path = "."
-    b <- System.Directory.doesPathExist (path <> "/config.yaml")
+    b <- System.Directory.doesPathExist (path <> "/arivi-config.yaml")
     unless b (defaultConfig path)
-    cnf <- Config.readConfig (path <> "/config.yaml")
+    cnf <- Config.readConfig (path <> "/arivi-config.yaml")
     nodeCnf <- NC.readConfig (path <> "/node-config.yaml")
     print (show nodeCnf)
     let nodeConfig =
@@ -270,4 +275,5 @@ main = do
     tc <- H.new
     rpf <- newEmptyMVar
     rpc <- newTVarIO 0
-    runNode cnf nodeCnf conn (BitcoinP2P nodeConfig g mv hl st ep tc (NC.indexUnconfirmedTx nodeCnf) (rpf, rpc))
+    let bp2p = BitcoinP2P nodeConfig g mv hl st ep tc (NC.indexUnconfirmedTx nodeCnf) (rpf, rpc)
+    runNode cnf nodeCnf conn bp2p

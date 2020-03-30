@@ -23,6 +23,8 @@ import Control.Monad.Reader
 import Control.Monad.Trans (liftIO)
 import Control.Monad.Trans.Reader (ReaderT(..))
 import Data.Aeson (ToJSON(..), (.=), decode, encode, object)
+import qualified Data.ByteString.Base16 as B16 (decode, encode)
+import qualified Data.ByteString.Char8 as C
 import qualified Data.ByteString.Lazy.Char8 as BL
 import Data.Char
 import Data.Hashable
@@ -124,21 +126,25 @@ updateAllegoryStateTrees tx allegory = do
             let iop = prevOutput $ (txIn tx !! (index $ oin))
             let iops = append (txHashToHex $ outPointHash $ iop) $ pack (":" ++ show (outPointIndex $ iop))
             let oops = append (txHashToHex $ txHash tx) $ pack (":" ++ show (index $ owner oout))
+            let scr = scriptOutput ((txOut tx) !! (index $ owner oout))
             let cypher =
                     " MATCH (x:namestate)-[r:REVISION]->(a:nutxo) WHERE a.outpoint = {in_op} AND x.name = {nn_str} " <>
                     (if length proxy == 0
                          then case oVendorEndpoint oout of
-                                  Just e -> " CREATE (b:nutxo { outpoint: {out_op}, name:{name} , vendor:{endpoint} }) "
-                                  Nothing -> " CREATE (b:nutxo { outpoint: {out_op}, name:{name} }) "
+                                  Just e ->
+                                      " CREATE (b:nutxo { outpoint: {out_op}, name:{name}, script: {scr} , vendor:{endpoint} }) "
+                                  Nothing -> " CREATE (b:nutxo { outpoint: {out_op}, name:{name}, script: {scr} }) "
                          else case oVendorEndpoint oout of
                                   Just e ->
-                                      " CREATE (b:nutxo { outpoint: {out_op}, name:{name}, proxy:{proxies}, vendor:{endpoint} }) "
-                                  Nothing -> " CREATE (b:nutxo { outpoint: {out_op}, name:{name} , proxy:{proxies} }) ") <>
+                                      " CREATE (b:nutxo { outpoint: {out_op}, name:{name}, script: {scr} , proxy:{proxies}, vendor:{endpoint} }) "
+                                  Nothing ->
+                                      " CREATE (b:nutxo { outpoint: {out_op}, name:{name}, script: {scr} , proxy:{proxies} }) ") <>
                     " , (b)-[:INPUT]->(a) , (x)-[:REVISION]->(b)  DELETE r "
             let params =
                     fromList
                         [ ("in_op", T $ iops)
                         , ("out_op", T $ oops)
+                        , ("scr", T $ pack $ C.unpack $ B16.encode scr)
                         , ("name", T $ pack $ Prelude.map (\x -> chr x) (name allegory))
                         , ("proxies", T $ pack $ BL.unpack $ Data.Aeson.encode proxy)
                         , ("endpoint", T $ pack $ BL.unpack $ Data.Aeson.encode $ oVendorEndpoint oout)
@@ -156,17 +162,18 @@ updateAllegoryStateTrees tx allegory = do
             -- Producer (required)
             let pop = index $ producer pout
             let val = append (txHashToHex $ txHash tx) $ pack (":" ++ show (pop))
+            let pproScr = scriptOutput ((txOut tx) !! pop)
             let tstr =
                     case pVendorEndpoint pout of
                         Just e ->
-                            "(ppro:nutxo { outpoint: {op_ppro}, name:{name}, producer: True , vendor:{endpoint_prod}}) , (ppro)-[:INPUT]->(a) "
+                            "(ppro:nutxo { outpoint: {op_ppro}, script: {ppro_scr} , name:{name}, producer: True , vendor:{endpoint_prod}}) , (ppro)-[:INPUT]->(a) "
                         Nothing ->
-                            "(ppro:nutxo { outpoint: {op_ppro}, name:{name}, producer: True }) , (ppro)-[:INPUT]->(a) "
+                            "(ppro:nutxo { outpoint: {op_ppro}, script: {ppro_scr} , name:{name}, producer: True }) , (ppro)-[:INPUT]->(a) "
             let cyProStr = tstr
-            let opr = "op_ppro"
             let poutPro =
                     ( cyProStr
-                    , [ (pack opr, T $ val)
+                    , [ ("op_ppro", T $ val)
+                      , ("ppro_scr", T $ pack $ C.unpack $ B16.encode pproScr)
                       , ("endpoint_prod", T $ pack $ BL.unpack $ Data.Aeson.encode $ pVendorEndpoint pout)
                       , ("nn_pr_str", T $ pack $ Prelude.map (\x -> chr x) (name allegory) ++ "|producer")
                       ])
@@ -177,19 +184,20 @@ updateAllegoryStateTrees tx allegory = do
                         Just poo -> do
                             let pop = index $ owner $ poo
                             let val = append (txHashToHex $ txHash tx) $ pack (":" ++ show pop)
+                            let pownScr = scriptOutput ((txOut tx) !! pop)
                             let mstr =
                                     " OPTIONAL MATCH (nsown:namestate)-[:REVISION]->() WHERE nsown.name = {nn_ow_str}  WITH rootname + collect(nsown) AS owner_exists "
                             let cstr = " , (nsown:namestate { name:{nn_ow_str} }) , (nsown)-[:REVISION]->(pown)  "
                             let tstr =
                                     case oVendorEndpoint poo of
                                         Just e ->
-                                            " (pown:nutxo { outpoint: {op_pown}, name:{name}, producer: False , vendor:{endpoint_owner} }) ,(pown)-[:INPUT]->(a) "
+                                            " (pown:nutxo { outpoint: {op_pown}, script: {pown_scr} , name:{name}, producer: False , vendor:{endpoint_owner} }) ,(pown)-[:INPUT]->(a) "
                                         Nothing ->
-                                            " (pown:nutxo { outpoint: {op_pown}, name:{name}, producer: False }) ,(pown)-[:INPUT]->(a) "
+                                            " (pown:nutxo { outpoint: {op_pown}, script: {pown_scr} , name:{name}, producer: False }) ,(pown)-[:INPUT]->(a) "
                             let cyOwnStr = (mstr, tstr)
-                            let opr = "op_pown"
                             let parOwn =
-                                    [ (pack opr, T $ val)
+                                    [ ("op_pown", T $ val)
+                                    , ("pown_scr", T $ pack $ C.unpack $ B16.encode pownScr)
                                     , ("endpoint_owner", T $ pack $ BL.unpack $ Data.Aeson.encode $ oVendorEndpoint poo)
                                     , ("nn_ow_str", T $ pack $ Prelude.map (\x -> chr x) (name allegory) ++ "|owner")
                                     ]
@@ -206,19 +214,20 @@ updateAllegoryStateTrees tx allegory = do
                                              ( case oVendorEndpoint ow of
                                                    Just ep ->
                                                        ( mstr
-                                                       , "(<j>:nutxo { outpoint: {op_<j>}, name:{name_ext_<j>}, producer: False , vendor:{endpoint_<j>}}) ,(<j>)-[:INPUT]->(a) " ++
+                                                       , "(<j>:nutxo { outpoint: {op_<j>}, script: {pext_<j>_scr} , name:{name_ext_<j>}, producer: False , vendor:{endpoint_<j>}}) ,(<j>)-[:INPUT]->(a) " ++
                                                          cstr)
                                                    Nothing ->
                                                        ( mstr
-                                                       , "(<j>:nutxo { outpoint: {op_<j>}, name:{name_ext_<j>}, producer: False }) ,(<j>)-[:INPUT]->(a) " ++
+                                                       , "(<j>:nutxo { outpoint: {op_<j>}, script: {pext_<j>_scr} , name:{name_ext_<j>}, producer: False }) ,(<j>)-[:INPUT]->(a) " ++
                                                          cstr)
                                              , index $ owner $ ow)
                                          ProducerExtension pr cp ->
                                              ( ( mstr
-                                               , "(<j>:nutxo { outpoint: {op_<j>}, name:{name_ext_<j>}, producer: True }) ,(<j>)-[:INPUT]->(a) " ++
+                                               , "(<j>:nutxo { outpoint: {op_<j>}, script: {pext_<j>_scr} , name:{name_ext_<j>}, producer: True }) ,(<j>)-[:INPUT]->(a) " ++
                                                  cstr)
                                              , index $ producer $ pr)
                              let val = append (txHashToHex $ txHash tx) $ pack (":" ++ show (eop))
+                             let pextScr = scriptOutput ((txOut tx) !! eop)
                              let cyExtStr =
                                      ( replace
                                            ("<previous>")
@@ -235,8 +244,10 @@ updateAllegoryStateTrees tx allegory = do
                              let next = "name_ext_" ++ (numrepl (show eop))
                              let eep = "endpoint_" ++ (numrepl (show eop))
                              let mep = "nn_" ++ (numrepl (show eop)) ++ "_str"
+                             let pextv = "pext_" ++ (numrepl (show eop)) ++ "_scr"
                              let parExt =
                                      [ (pack opr, T $ val)
+                                     , (pack pextv, T $ pack $ C.unpack $ B16.encode pextScr)
                                      , ( pack next
                                        , T $ pack $ Prelude.map (\x -> chr x) (name allegory ++ [codePoint x]))
                                      , ( pack mep
