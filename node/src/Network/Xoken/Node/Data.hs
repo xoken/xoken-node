@@ -94,6 +94,20 @@ data RPCReqParams
     | GetMerkleBranchByTxID
           { gmbMerkleBranch :: String
           }
+    | GetAllegoryNameBranch
+          { gaName :: String
+          , gaIsProducer :: Bool
+          }
+    | RelayTx
+          { rTx :: ByteString
+          }
+    | GetPartiallySignedAllegoryTx
+          { gpsaPaymentInputs :: [OutPoint']
+          , gpsaName :: String
+          , gpsaIsProducer :: Bool
+          , gpsaOutputOwner :: (String, Int)
+          , gpsaOutputChange :: (String, Int)
+          }
     deriving (Generic, Show, Hashable, Eq, Serialise)
 
 data RPCResponseBody
@@ -123,6 +137,15 @@ data RPCResponseBody
           }
     | RespMerkleBranchByTxID
           { merkleBranch :: [MerkleBranchNode']
+          }
+    | RespAllegoryNameBranch
+          { nameBranch :: [OutPoint']
+          }
+    | RespRelayTx
+          { rrTx :: Bool
+          }
+    | RespPartiallySignedAllegoryTx
+          { psaTx :: ByteString
           }
     deriving (Generic, Show, Hashable, Eq, Serialise)
 

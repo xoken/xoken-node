@@ -15,6 +15,7 @@ import Control.Concurrent.STM.TVar
 import Control.Monad.Catch
 import Control.Monad.Reader
 import Control.Monad.Trans.Control
+import Crypto.Secp256k1
 import qualified Data.ByteString.Lazy.Char8 as C
 import qualified Data.HashTable.IO as H
 import Data.Hashable
@@ -35,13 +36,25 @@ import Text.Read
 type HashTable k v = H.BasicHashTable k v
 
 type HasXokenNodeEnv env m
-     = (HasBitcoinP2P m, HasDatabaseHandles m, HasLogger m, MonadReader env m, MonadBaseControl IO m, MonadThrow m)
+     = ( HasBitcoinP2P m
+       , HasDatabaseHandles m
+       , HasLogger m
+       , HasAllegoryEnv m
+       , MonadReader env m
+       , MonadBaseControl IO m
+       , MonadThrow m)
 
 data XokenNodeEnv =
     XokenNodeEnv
         { bitcoinP2PEnv :: !BitcoinP2P
         , dbHandles :: !DatabaseHandles
         , loggerEnv :: !Logger
+        , allegoryEnv :: !AllegoryEnv
+        }
+
+data AllegoryEnv =
+    AllegoryEnv
+        { allegorySecretKey :: !SecKey
         }
 
 data BitcoinP2P =
@@ -65,6 +78,9 @@ class HasLogger m where
 
 class HasDatabaseHandles m where
     getDB :: m (DatabaseHandles)
+
+class HasAllegoryEnv m where
+    getAllegory :: m (AllegoryEnv)
 
 data ServiceEnv m r t rmsg pmsg =
     ServiceEnv

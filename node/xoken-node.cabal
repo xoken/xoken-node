@@ -27,6 +27,7 @@ executable xoken-nexa
   main-is: Main.hs
   other-modules:
       Xoken.Node
+      Xoken.NodeConfig
       Paths_xoken_node
       Network.Xoken.Node.Data
       Network.Xoken.Node.AriviService
@@ -39,6 +40,7 @@ executable xoken-nexa
       Network.Xoken.Node.P2P.PeerManager
       Network.Xoken.Node.XokenService
       Network.Xoken.Node.P2P.UnconfTxSync
+      Network.Xoken.Node.Data.Allegory
 
   ghc-options:  -fprof-auto -fprof-cafs -rtsopts -threaded
   hs-source-dirs:
@@ -104,6 +106,8 @@ executable xoken-nexa
     , hashtables
     , base16-bytestring
     , SafeSemaphore
+    , yaml
+    , secp256k1-haskell
   default-language: Haskell2010
 
 test-suite xoken-node-test
@@ -120,7 +124,9 @@ test-suite xoken-node-test
         Network.Xoken.Node.P2P.Common
         Network.Xoken.Node.P2P.Types
         Network.Xoken.Node.XokenService
+        Network.Xoken.Node.Data.Allegory
         Xoken.Node
+        Xoken.NodeConfig
 
   hs-source-dirs:
       test, src
@@ -177,6 +183,8 @@ test-suite xoken-node-test
     , zlib
     , monad-loops
     , utf8-string
+    , yaml
+    , secp256k1-haskell
 
 
   default-language: Haskell2010

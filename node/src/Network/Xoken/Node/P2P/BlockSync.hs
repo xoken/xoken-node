@@ -14,6 +14,7 @@ module Network.Xoken.Node.P2P.BlockSync
     , runEgressBlockSync
     , runPeerSync
     , getAddressFromOutpoint
+    , sendRequestMessages
     ) where
 
 import Control.Concurrent (threadDelay)
