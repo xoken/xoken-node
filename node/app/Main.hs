@@ -275,5 +275,6 @@ main = do
     tc <- H.new
     rpf <- newEmptyMVar
     rpc <- newTVarIO 0
-    let bp2p = BitcoinP2P nodeConfig g mv hl st ep tc (NC.indexUnconfirmedTx nodeCnf) (rpf, rpc)
+    mq <- newTVarIO M.empty
+    let bp2p = BitcoinP2P nodeConfig g mv hl st ep tc (NC.indexUnconfirmedTx nodeCnf) (rpf, rpc) mq
     runNode cnf nodeCnf conn bp2p

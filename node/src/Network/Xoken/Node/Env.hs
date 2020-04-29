@@ -11,6 +11,7 @@ import Arivi.P2P.P2PEnv as PE hiding (option)
 import Codec.Serialise
 import Control.Concurrent.MVar
 
+import Control.Concurrent.STM.TQueue
 import Control.Concurrent.STM.TVar
 import Control.Monad.Catch
 import Control.Monad.Reader
@@ -68,6 +69,7 @@ data BitcoinP2P =
         , unconfirmedTxCache :: !(HashTable TxShortHash (Bool, TxHash))
         , indexUnconfirmedTx :: !Bool
         , peerReset :: !(MVar Bool, TVar Int)
+        , merkleQueueMap :: !(TVar (M.Map BlockHash (TQueue (TxHash, Bool))))
         }
 
 class HasBitcoinP2P m where

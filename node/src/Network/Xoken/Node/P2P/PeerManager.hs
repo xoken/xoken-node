@@ -21,6 +21,7 @@ import Control.Concurrent.Async.Lifted as LA (async, race, wait, withAsync)
 import qualified Control.Concurrent.MSem as MS
 import Control.Concurrent.MVar
 import Control.Concurrent.QSem
+import Control.Concurrent.STM.TQueue
 import Control.Concurrent.STM.TSem
 import Control.Concurrent.STM.TVar
 import Control.Exception
@@ -95,7 +96,11 @@ createSocketWithOptions options addr = do
 
 createSocketFromSockAddr :: SockAddr -> IO (Maybe Socket)
 createSocketFromSockAddr saddr = do
-    sock <- socket AF_INET Stream defaultProtocol
+    (host, srv) <- getNameInfo [NI_NUMERICHOST, NI_NUMERICSERV] True True $ saddr
+    sock <-
+        case L.findIndex (\c -> c == '.') (fromJust host) of
+            Nothing -> socket AF_INET6 Stream defaultProtocol
+            Just ind -> socket AF_INET Stream defaultProtocol
     res <- try $ connect sock saddr
     case res of
         Right () -> return $ Just sock
@@ -434,6 +439,34 @@ resilientRead sock blin = do
                     return (res, B.length txbyt2)
         Right res -> return (res, B.length txbyt)
 
+merkleTreeBuilder ::
+       (HasBitcoinP2P m, HasLogger m, HasDatabaseHandles m, MonadBaseControl IO m, MonadIO m)
+    => TQueue (TxHash, Bool)
+    -> BlockHash
+    -> Int8
+    -> m ()
+merkleTreeBuilder tque blockHash treeHt = do
+    p2pEnv <- getBitcoinP2P
+    lg <- getLogger
+    continue <- liftIO $ newIORef True
+    tv <- liftIO $ atomically $ newTVar (M.empty, [])
+    whileM_ (liftIO $ readIORef continue) $ do
+        (txh, isLast) <- liftIO $ atomically $ readTQueue tque
+        val <- liftIO $ atomically $ readTVar tv
+        res <- LE.try $ updateMerkleSubTrees (val) (getTxHash txh) Nothing Nothing (treeHt) (0) (isLast)
+        case res of
+            Left (e :: SomeException) -> do
+                err lg $ LG.msg ("[ERROR] ######### updateMerkleSubTrees ######### " ++ show e)
+                throw e
+            Right (hc) -> do
+                liftIO $ atomically $ writeTVar tv hc
+                debug lg $ msg ("updateMerkleSubTrees returned " ++ (show $ txh))
+        if isLast == True
+            then do
+                liftIO $ writeIORef continue False
+                liftIO $ atomically $ modifyTVar' (merkleQueueMap p2pEnv) (M.delete blockHash)
+            else return ()
+
 readNextMessage ::
        (HasBitcoinP2P m, HasLogger m, HasDatabaseHandles m, MonadBaseControl IO m, MonadIO m)
     => Network
@@ -450,33 +483,54 @@ readNextMessage net sock ingss = do
             case tx of
                 Just t -> do
                     debug lg $ msg ("Confirmed-Tx: " ++ (show $ txHash t) ++ " unused: " ++ show (B.length unused))
-                    res <-
-                        LE.try $
-                        updateMerkleSubTrees
-                            (merklePrevNodesMap iss)
-                            (getTxHash $ txHash t)
-                            Nothing
-                            Nothing
-                            (merkleTreeHeight iss)
-                            (merkleTreeCurIndex iss)
-                            ((binTxTotalCount blin) == (1 + binTxProcessed blin))
-                    case res of
-                        Left (e :: SomeException) -> do
-                            err lg $ LG.msg ("[ERROR] ######### updateMerkleSubTrees ######### " ++ show e)
-                            throw e
-                        Right (nst) -> do
-                            debug lg $ msg ("updateMerkleSubTrees returned " ++ (show $ txHash t))
-                            let !bio =
-                                    BlockIngestState
-                                        { binUnspentBytes = unused
-                                        , binTxPayloadLeft = binTxPayloadLeft blin - (txbytLen - B.length unused)
-                                        , binTxTotalCount = binTxTotalCount blin
-                                        , binTxProcessed = 1 + binTxProcessed blin
-                                        , binChecksum = binChecksum blin
-                                        }
-                            return
-                                ( Just $ MConfTx t
-                                , Just $ IngressStreamState bio (issBlockInfo iss) (merkleTreeHeight iss) 0 nst)
+                    mqm <- liftIO $ readTVarIO $ merkleQueueMap p2pEnv
+                    qe <-
+                        case (issBlockInfo iss) of
+                            Just bf ->
+                                case M.lookup (biBlockHash $ bf) mqm of
+                                    Just q -> return q
+                                    Nothing -> do
+                                        qq <- liftIO $ atomically $ newTQueue
+                                        liftIO $
+                                            atomically $
+                                            modifyTVar' (merkleQueueMap p2pEnv) (M.insert (biBlockHash $ bf) qq)
+                                        LA.async $
+                                            merkleTreeBuilder
+                                                qq
+                                                (biBlockHash $ bf)
+                                                (computeTreeHeight $ binTxTotalCount blin)
+                                        return qq
+                            Nothing -> undefined
+                    let isLast = ((binTxTotalCount blin) == (1 + binTxProcessed blin))
+                    liftIO $ atomically $ writeTQueue qe ((txHash t), isLast)
+                    -- res <-
+                    --     LE.try $
+                    --     updateMerkleSubTrees
+                    --         (merklePrevNodesMap iss)
+                    --         (getTxHash $ txHash t)
+                    --         Nothing
+                    --         Nothing
+                    --         (merkleTreeHeight iss)
+                    --         (merkleTreeCurIndex iss)
+                    --         ((binTxTotalCount blin) == (1 + binTxProcessed blin))
+                    -- case res of
+                    --     Left (e :: SomeException) -> do
+                    --         err lg $ LG.msg ("[ERROR] ######### updateMerkleSubTrees ######### " ++ show e)
+                    --         throw e
+                    --     Right (nst) -> do
+                    --         debug lg $ msg ("updateMerkleSubTrees returned " ++ (show $ txHash t))
+                    let !bio =
+                            BlockIngestState
+                                { binUnspentBytes = unused
+                                , binTxPayloadLeft = binTxPayloadLeft blin - (txbytLen - B.length unused)
+                                , binTxTotalCount = binTxTotalCount blin
+                                , binTxProcessed = 1 + binTxProcessed blin
+                                , binChecksum = binChecksum blin
+                                }
+                    return
+                        ( Just $ MConfTx t
+                        , Just $ IngressStreamState bio (issBlockInfo iss) -- (merkleTreeHeight iss) 0 nst)
+                         )
                 Nothing -> do
                     throw ConfirmedTxParseException
         Nothing -> do
@@ -507,15 +561,10 @@ readNextMessage net sock ingss = do
                                                         , binTxProcessed = 0
                                                         , binChecksum = cks
                                                         }
-                                            return
-                                                ( Just $ MBlock b
-                                                , Just $
-                                                  IngressStreamState
-                                                      bi
-                                                      Nothing
-                                                      (computeTreeHeight $ binTxTotalCount bi)
-                                                      0
-                                                      (M.empty, []))
+                                            return (Just $ MBlock b, Just $ IngressStreamState bi Nothing)
+                                                      -- (computeTreeHeight $ binTxTotalCount bi)
+                                                      -- 0
+                                                      -- (M.empty, []))
                                         Nothing -> throw DeflatedBlockParseException
                         else do
                             byts <-
@@ -628,7 +677,9 @@ messageHandler peer (mm, ingss) = do
                     return $ msgType msg
                 MConfTx tx -> do
                     case ingss of
-                        Just iss -> do
+                        Just iss
+                            -- debug lg $ LG.msg $ LG.val ("DEBUG receiving confirmed Tx ")
+                         -> do
                             let bi = issBlockIngest iss
                             let binfo = issBlockInfo iss
                             case binfo of
@@ -658,7 +709,9 @@ messageHandler peer (mm, ingss) = do
                 MTx tx -> do
                     processUnconfTransaction tx
                     return $ msgType msg
-                MBlock blk -> do
+                MBlock blk
+                    -- debug lg $ LG.msg $ LG.val ("DEBUG receiving block ")
+                 -> do
                     res <- LE.try $ processBlock blk
                     case res of
                         Right () -> return ()
@@ -707,14 +760,10 @@ readNextMessage' peer = do
                                 Nothing -> do
                                     debug lg $ LG.msg $ ("InvalidBlockSyncStatusMapException - " ++ show hh)
                                     throw InvalidBlockSyncStatusMapException
-                            let !iz =
-                                    Just
-                                        (IngressStreamState
-                                             ingst
-                                             (Just $ BlockInfo hh (snd $ fromJust mht))
-                                             (computeTreeHeight $ binTxTotalCount ingst)
-                                             0
-                                             (M.empty, []))
+                            let !iz = Just (IngressStreamState ingst (Just $ BlockInfo hh (snd $ fromJust mht)))
+                                             -- (computeTreeHeight $ binTxTotalCount ingst)
+                                             -- 0
+                                             -- (M.empty, []))
                             liftIO $ atomically $ writeTVar (bpIngressState peer) $ iz
                         Just (MConfTx ctx) -> do
                             case issBlockInfo iss of
@@ -729,6 +778,7 @@ readNextMessage' peer = do
                                         then liftIO $ atomically $ modifyTVar' (bpBlockFetchWindow peer) (\z -> z - 1)
                                         else return ()
                                     if binTxTotalCount ingst == binTxProcessed ingst
+                                            -- debug lg $ LG.msg $ ("DEBUG Block receive complete - " ++ show " ")
                                         then do
                                             liftIO $ atomically $ writeTVar (bpIngressState peer) $ Nothing -- reset state
                                             liftIO $

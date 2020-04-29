@@ -78,6 +78,13 @@ toMerkleBranchNode r = do
     isLeft :: Bool <- (r `at` "isleft") >>= exact
     return (MerkleBranchNode txid isLeft)
 
+-- | Convert record to Name & ScriptOp
+toNameScriptOp :: Monad m => Record -> m ((Text, Text))
+toNameScriptOp r = do
+    outpoint :: Text <- (r `at` "outpoint") >>= exact
+    script :: Text <- (r `at` "script") >>= exact
+    return ((outpoint, script))
+
 -- Fetch the Merkle branch/proof
 queryMerkleBranch :: Text -> BoltActionT IO [MerkleBranchNode]
 queryMerkleBranch leaf = do
@@ -108,6 +115,23 @@ queryAllegoryNameBranch name isProducer = do
     records <- queryP cypher params
     x <- traverse (`at` "outpoint") records
     return $ x >>= exact
+  where
+    cypher =
+        " MATCH p=(pointer:namestate {name: {namestr}})-[:REVISION]-()-[:INPUT*]->(start:nutxo) " <>
+        " WHERE NOT (start)-[:INPUT]->() " <>
+        " UNWIND tail(nodes(p)) AS elem " <>
+        " RETURN elem.outpoint as outpoint "
+    params =
+        if isProducer
+            then fromList [("namestr", T (name <> pack "|producer"))]
+            else fromList [("namestr", T (name <> pack "|owner"))]
+
+-- Fetch the Allegory Name branch with scriptOutput
+queryAllegoryNameBranchScriptOp :: Text -> Bool -> BoltActionT IO [(Text, Text)]
+queryAllegoryNameBranchScriptOp name isProducer = do
+    records <- queryP cypher params
+    x <- traverse toNameScriptOp records
+    return x
   where
     cypher =
         " MATCH p=(pointer:namestate {name: {namestr}})-[:REVISION]-()-[:INPUT*]->(start:nutxo) " <>
