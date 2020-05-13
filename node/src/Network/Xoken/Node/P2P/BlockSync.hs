@@ -282,11 +282,13 @@ getNextBlockToSync = do
                 else return ()
             (hash, ht) <- fetchBestSyncedBlock conn net
             let cacheInd =
-                    if ht < 500000
-                        then [1 .. 100]
-                        else if ht < 600000
-                                 then [1 .. 20]
-                                 else [1, 2]
+                    if ht < 200000
+                        then [1 .. 400]
+                        else if ht < 500000
+                                 then [1 .. 300]
+                                 else if ht < 600000
+                                          then [1 .. 20]
+                                          else [1, 2]
             let bks = map (\x -> ht + x) cacheInd -- cache size of 200
             let str = "SELECT block_height, block_hash from xoken.blocks_by_height where block_height in ?"
                 qstr = str :: Q.QueryString Q.R (Identity [Int32]) ((Int32, T.Text))
@@ -340,6 +342,7 @@ getNextBlockToSync = do
                 then do
                     let lelm = last $ L.sortOn (snd . snd) (M.toList sy)
                     liftIO $ atomically $ writeTVar (blockSyncStatusMap bp2pEnv) M.empty
+                    -- debug lg $ LG.msg $ ("DEBUG, marking best synced " ++ show (blockHashToHex $ fst $ lelm))
                     markBestSyncedBlock (blockHashToHex $ fst $ lelm) (fromIntegral $ snd $ snd $ lelm) conn
                     return Nothing
                 else if M.size recvTimedOut > 0

@@ -1,0 +1,7 @@
+bitcoinNetwork: bsv
+indexUnconfirmedTx: False
+logLevel: Debug
+logFileName: ./xoken.log
+endPointListenPort: 9090
+endPointListenIP: 127.0.0.1
+allegoryVendorSecretKey: 1435cf8e437d789eac332c3c66b2a51876e58c21db4b4da15488c3decb1a8b57 

@@ -120,9 +120,9 @@ data IngressStreamState =
     IngressStreamState
         { issBlockIngest :: !BlockIngestState
         , issBlockInfo :: !(Maybe BlockInfo)
-        , merkleTreeHeight :: !Int8
-        , merkleTreeCurIndex :: !Int8
-        , merklePrevNodesMap :: !HashCompute
+        -- , merkleTreeHeight :: !Int8
+        -- , merkleTreeCurIndex :: !Int8
+        -- , merklePrevNodesMap :: !HashCompute
         }
     deriving (Show)
 
