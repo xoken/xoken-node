@@ -115,7 +115,6 @@ sendRequestMessages pr msg = do
     bp2pEnv <- getBitcoinP2P
     let net = bncNet $ bitcoinNodeConfig bp2pEnv
     debug lg $ LG.msg $ val "sendRequestMessages - called."
-    bp2pEnv <- getBitcoinP2P
     case msg of
         MGetData gd -> do
             case (bpSocket pr) of
@@ -139,7 +138,8 @@ runEgressBlockSync =
         bp2pEnv <- getBitcoinP2P
         let net = bncNet $ bitcoinNodeConfig bp2pEnv
         allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
-        let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
+        blockedPeers <- liftIO $ readTVarIO (blacklistedPeers bp2pEnv)
+        let connPeers = L.filter (\x -> bpConnected (snd x) && not (M.member (fst x) blockedPeers)) (M.toList allPeers)
         -- debug lg $ LG.msg $ ("Connected peers: " ++ (show $ map (\x -> snd x) connPeers))
         if L.length connPeers == 0
             then liftIO $ threadDelay (5 * 1000000)
@@ -231,7 +231,8 @@ runPeerSync =
         dbe' <- getDB
         let net = bncNet $ bitcoinNodeConfig bp2pEnv
         allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
-        let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
+        blockedPeers <- liftIO $ readTVarIO (blacklistedPeers bp2pEnv)
+        let connPeers = L.filter (\x -> bpConnected (snd x) && not (M.member (fst x) blockedPeers)) (M.toList allPeers)
         if L.length connPeers < 16
             then do
                 mapM_

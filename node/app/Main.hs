@@ -270,6 +270,7 @@ main = do
                 (bitcoinNetwork nodeCnf) -- network constants
                 60 -- timeout in seconds
     g <- newTVarIO M.empty
+    bp <- newTVarIO M.empty
     mv <- newMVar True
     hl <- newMVar True
     st <- newTVarIO M.empty
@@ -278,5 +279,5 @@ main = do
     rpf <- newEmptyMVar
     rpc <- newTVarIO 0
     mq <- newTVarIO M.empty
-    let bp2p = BitcoinP2P nodeConfig g mv hl st ep tc (NC.indexUnconfirmedTx nodeCnf) (rpf, rpc) mq
+    let bp2p = BitcoinP2P nodeConfig g bp mv hl st ep tc (NC.indexUnconfirmedTx nodeCnf) (rpf, rpc) mq
     runNode cnf nodeCnf conn bp2p

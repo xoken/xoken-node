@@ -94,7 +94,8 @@ sendRequestMessages msg = do
     let conn = keyValDB $ dbe'
     let net = bncNet $ bitcoinNodeConfig bp2pEnv
     allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
-    let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
+    blockedPeers <- liftIO $ readTVarIO (blacklistedPeers bp2pEnv)
+    let connPeers = L.filter (\x -> bpConnected (snd x) && not (M.member (fst x) blockedPeers)) (M.toList allPeers)
     case msg of
         MGetHeaders hdr -> do
             let fbh = getHash256 $ getBlockHash $ (getHeadersBL hdr) !! 0
@@ -225,6 +226,7 @@ processHeaders hdrs = do
                 conn = keyValDB $ dbe'
                 headPrevHash = (blockHashToHex $ prevBlock $ fst $ head $ headersList hdrs)
             bb <- fetchBestBlock conn net
+            -- TODO: throw exception if it's a bitcoin cash block
             indexed <-
                 if (blockHashToHex $ fst bb) == genesisHash
                     then do

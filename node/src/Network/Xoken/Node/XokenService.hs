@@ -347,8 +347,6 @@ xRelayTx net rawTx = do
     bp2pEnv <- getBitcoinP2P
     lg <- getLogger
     let conn = keyValDB (dbe)
-    allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
-    let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
     -- broadcast Tx
     case runGetState (getConfirmedTx) (rawTx) 0 of
         Left e -> do
@@ -397,9 +395,13 @@ xRelayTx net rawTx = do
                             (txIn tx)
                     if verifyStdTx net tx $ catMaybes tr
                         then do
-                            debug lg $ LG.msg $ val $ "transaction verified - broadcasting tx"
-                            mapM_ (\(_, peer) -> do sendRequestMessages peer (MTx (fromJust $ fst res))) (connPeers)
-                            return True
+                          allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
+                          blockedPeers <- liftIO $ readTVarIO (blacklistedPeers bp2pEnv)
+                          -- connected and non-blacklisted peers
+                          let connPeers = L.filter (\x -> bpConnected (snd x) && not (M.member (fst x) blockedPeers)) (M.toList allPeers)
+                          debug lg $ LG.msg $ val $ "transaction verified - broadcasting tx"
+                          mapM_ (\(_, peer) -> do sendRequestMessages peer (MTx (fromJust $ fst res))) connPeers
+                          return True
                         else do
                             debug lg $ LG.msg $ val $ "transaction invalid"
                             let op_return = head (txOut tx)
