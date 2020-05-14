@@ -225,6 +225,8 @@ processHeaders hdrs = do
                 genesisHash = blockHashToHex $ headerHash $ getGenesisHeader net
                 conn = keyValDB $ dbe'
                 headPrevHash = (blockHashToHex $ prevBlock $ fst $ head $ headersList hdrs)
+                hdrHash y = headerHash $ fst y
+                validate m = validateWithCheckPoint net (fromIntegral m) (hdrHash <$> (headersList hdrs))
             bb <- fetchBestBlock conn net
             -- TODO: throw exception if it's a bitcoin cash block
             indexed <-
@@ -234,6 +236,7 @@ processHeaders hdrs = do
                         return $ zip [((snd bb) + 1) ..] (headersList hdrs)
                     else if (blockHashToHex $ fst bb) == headPrevHash
                              then do
+                                 unless (validate (snd bb)) $ throw InvalidBlocksException
                                  debug lg $ LG.msg $ val "Building on current Best block"
                                  return $ zip [((snd bb) + 1) ..] (headersList hdrs)
                              else do
@@ -245,6 +248,7 @@ processHeaders hdrs = do
                                          res <- fetchMatchBlockOffset conn net headPrevHash
                                          case res of
                                              Just (matchBHash, matchBHt) -> do
+                                                 unless (validate matchBHt) $ throw InvalidBlocksException
                                                  if ((snd bb) >
                                                      (matchBHt + fromIntegral (L.length $ headersList hdrs) + 12) -- reorg limit of 12 blocks
                                                      )

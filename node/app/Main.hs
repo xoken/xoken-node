@@ -1,95 +1,96 @@
-{-# LANGUAGE ApplicativeDo #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE MultiWayIf #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE ApplicativeDo              #-}
+{-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE GADTs                      #-}
+{-# LANGUAGE LambdaCase                 #-}
+{-# LANGUAGE MultiWayIf                 #-}
+{-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE RecordWildCards            #-}
+{-# LANGUAGE TemplateHaskell            #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
-{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE StandaloneDeriving         #-}
+{-# LANGUAGE UndecidableInstances       #-}
 
-import Arivi.Crypto.Utils.PublicKey.Signature as ACUPS
-import Arivi.Crypto.Utils.PublicKey.Utils
-import Arivi.Crypto.Utils.Random
-import Arivi.Env
-import Arivi.Network
-import Arivi.P2P
-import qualified Arivi.P2P.Config as Config
-import Arivi.P2P.Kademlia.Types
-import Arivi.P2P.P2PEnv as PE hiding (option)
-import Arivi.P2P.PubSub.Types
-import Arivi.P2P.RPC.Types
-import Arivi.P2P.ServiceRegistry
-import Control.Arrow
-import Control.Concurrent (threadDelay)
-import Control.Concurrent.Async.Lifted (async, wait, withAsync)
-import Control.Concurrent.MVar
-import Control.Concurrent.QSem
-import Control.Concurrent.STM.TVar
-import Control.Exception ()
-import Control.Monad
-import Control.Monad.Base
-import Control.Monad.Catch
-import Control.Monad.Except
-import Control.Monad.Logger
-import Control.Monad.Reader
-import Control.Monad.Trans.Control
-import Control.Monad.Trans.Maybe
-import Data.Aeson.Encoding (encodingToLazyByteString, fromEncoding)
-import Data.Bits
-import qualified Data.ByteString.Base16 as B16
-import Data.ByteString.Builder
-import qualified Data.ByteString.Char8 as C
-import qualified Data.ByteString.Lazy as L
-import qualified Data.ByteString.Lazy.Char8 as CL
-import Data.Char
-import Data.Default
-import Data.Function
-import Data.Functor.Identity
-import qualified Data.HashTable.IO as H
-import Data.Int
-import Data.List
-import Data.Map.Strict as M
-import Data.Maybe
-import Data.Pool
-import Data.Serialize as Serialize
-import Data.String.Conv
-import Data.String.Conversions
-import qualified Data.Text as T
-import qualified Data.Text.Lazy as TL
-import Data.Typeable
-import Data.Version
-import Data.Word (Word32)
-import qualified Database.Bolt as BT
-import qualified Database.CQL.IO as Q
-import Network.Simple.TCP
-import Network.Socket
-import Network.Xoken.Node.AriviService
-import Network.Xoken.Node.Data
-import Network.Xoken.Node.Env
-import Network.Xoken.Node.GraphDB
-import Network.Xoken.Node.P2P.BlockSync
-import Network.Xoken.Node.P2P.ChainSync
-import Network.Xoken.Node.P2P.PeerManager
-import Network.Xoken.Node.P2P.Types
-import Network.Xoken.Node.P2P.UnconfTxSync
-import Options.Applicative
-import Paths_xoken_node as P
-import System.Directory (doesPathExist)
-import System.Environment (getArgs)
-import System.Exit
-import System.FilePath
-import System.IO.Unsafe
-import qualified System.Logger as LG
-import qualified System.Logger.Class as LG
-import Text.Read (readMaybe)
-import Xoken
-import Xoken.Node
-import Xoken.NodeConfig as NC
+import           Arivi.Crypto.Utils.PublicKey.Signature as ACUPS
+import           Arivi.Crypto.Utils.PublicKey.Utils
+import           Arivi.Crypto.Utils.Random
+import           Arivi.Env
+import           Arivi.Network
+import           Arivi.P2P
+import qualified Arivi.P2P.Config                       as Config
+import           Arivi.P2P.Kademlia.Types
+import           Arivi.P2P.P2PEnv                       as PE hiding (option)
+import           Arivi.P2P.PubSub.Types
+import           Arivi.P2P.RPC.Types
+import           Arivi.P2P.ServiceRegistry
+import           Control.Arrow
+import           Control.Concurrent                     (threadDelay)
+import           Control.Concurrent.Async.Lifted        (async, wait, withAsync)
+import           Control.Concurrent.MVar
+import           Control.Concurrent.QSem
+import           Control.Concurrent.STM.TVar
+import           Control.Exception                      ()
+import           Control.Monad
+import           Control.Monad.Base
+import           Control.Monad.Catch
+import           Control.Monad.Except
+import           Control.Monad.Logger
+import           Control.Monad.Reader
+import           Control.Monad.Trans.Control
+import           Control.Monad.Trans.Maybe
+import           Data.Aeson.Encoding                    (encodingToLazyByteString,
+                                                         fromEncoding)
+import           Data.Bits
+import qualified Data.ByteString.Base16                 as B16
+import           Data.ByteString.Builder
+import qualified Data.ByteString.Char8                  as C
+import qualified Data.ByteString.Lazy                   as L
+import qualified Data.ByteString.Lazy.Char8             as CL
+import           Data.Char
+import           Data.Default
+import           Data.Function
+import           Data.Functor.Identity
+import qualified Data.HashTable.IO                      as H
+import           Data.Int
+import           Data.List
+import           Data.Map.Strict                        as M
+import           Data.Maybe
+import           Data.Pool
+import           Data.Serialize                         as Serialize
+import           Data.String.Conv
+import           Data.String.Conversions
+import qualified Data.Text                              as T
+import qualified Data.Text.Lazy                         as TL
+import           Data.Typeable
+import           Data.Version
+import           Data.Word                              (Word32)
+import qualified Database.Bolt                          as BT
+import qualified Database.CQL.IO                        as Q
+import           Network.Simple.TCP
+import           Network.Socket
+import           Network.Xoken.Node.AriviService
+import           Network.Xoken.Node.Data
+import           Network.Xoken.Node.Env
+import           Network.Xoken.Node.GraphDB
+import           Network.Xoken.Node.P2P.BlockSync
+import           Network.Xoken.Node.P2P.ChainSync
+import           Network.Xoken.Node.P2P.PeerManager
+import           Network.Xoken.Node.P2P.Types
+import           Network.Xoken.Node.P2P.UnconfTxSync
+import           Options.Applicative
+import           Paths_xoken_node                       as P
+import           System.Directory                       (doesPathExist)
+import           System.Environment                     (getArgs)
+import           System.Exit
+import           System.FilePath
+import           System.IO.Unsafe
+import qualified System.Logger                          as LG
+import qualified System.Logger.Class                    as LG
+import           Text.Read                              (readMaybe)
+import           Xoken
+import           Xoken.Node
+import           Xoken.NodeConfig                       as NC
 
 newtype AppM a =
     AppM (ReaderT (ServiceEnv AppM ServiceResource ServiceTopic RPCMessage PubNotifyMessage) (LoggingT IO) a)
@@ -230,8 +231,8 @@ runNode config nodeConf conn bp2p = do
 
 data Config =
     Config
-        { configNetwork :: !Network
-        , configDebug :: !Bool
+        { configNetwork       :: !Network
+        , configDebug         :: !Bool
         , configUnconfirmedTx :: !Bool
         }
 

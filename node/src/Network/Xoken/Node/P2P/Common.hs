@@ -66,6 +66,7 @@ data ChainSyncException
     | BlockHashNotFoundException
     | DuplicateBlockHeaderException
     | InvalidMessageTypeException
+    | InvalidBlocksException
     | EmptyHeadersMessageException
     deriving (Show)
 

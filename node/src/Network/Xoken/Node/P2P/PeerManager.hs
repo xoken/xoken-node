@@ -651,8 +651,9 @@ messageHandler ::
        (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
     => BitcoinPeer
     -> (Maybe Message, Maybe IngressStreamState)
+    -> IORef Bool
     -> m (MessageCommand)
-messageHandler peer (mm, ingss) = do
+messageHandler peer (mm, ingss) continue = do
     bp2pEnv <- getBitcoinP2P
     lg <- getLogger
     case mm of
@@ -661,11 +662,18 @@ messageHandler peer (mm, ingss) = do
                 MHeaders hdrs -> do
                     liftIO $ takeMVar (headersWriteLock bp2pEnv)
                     res <- LE.try $ processHeaders hdrs
-                    -- TODO: check whether Peer is sending blockchain cash blocks and add it to blacklistedPeers
                     case res of
                         Right () -> return ()
                         Left BlockHashNotFoundException -> return ()
                         Left EmptyHeadersMessageException -> return ()
+                        Left InvalidBlocksException -> do
+                            err lg $ LG.msg $ (val "[ERROR] Closing peer connection, Checkpoint verification failed")
+                            case (bpSocket peer) of
+                                Just sock -> liftIO $ Network.Socket.close sock
+                                Nothing   -> return ()
+                            liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress peer))
+                            liftIO $ atomically $ modifyTVar' (blacklistedPeers bp2pEnv) (M.insert (bpAddress peer) peer)
+                            liftIO $ writeIORef continue False
                         Left KeyValueDBInsertException -> do
                             err lg $ LG.msg $ LG.val ("[ERROR] Insert failed. KeyValueDBInsertException")
                         Left e -> do
@@ -879,7 +887,7 @@ handleIncomingMessages pr = do
         res <- LE.try $ (readNextMessage' pr)
         case res of
             Right (msg, iss) -> do
-                t <- LA.async $ messageHandler pr (msg, iss)
+                t <- LA.async $ messageHandler pr (msg, iss) continue
                 ares <- LE.try $ LA.wait t
                 case ares of
                     Right (msgCmd) -> do
