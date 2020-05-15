@@ -174,8 +174,6 @@ defaultConfig path = do
                 20
                 5
                 3
-                "127.0.0.1"
-                9090
     Config.makeConfig config (path <> "/arivi-config.yaml")
 
 makeGraphDBResPool :: IO (ServerState)
