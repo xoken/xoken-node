@@ -1,0 +1,4 @@
+{
+    "hindent-format.enable": true,
+    "hindent-format.command": "hindent"
+}
