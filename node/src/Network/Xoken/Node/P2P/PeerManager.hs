@@ -781,11 +781,11 @@ readNextMessage' peer = do
             (msg, ingressState) <- readNextMessage net sock prevIngressState
             case ingressState of
                 Just iss -> do
-                    mp <- liftIO $ readTVarIO $ blockSyncStatusMap bp2pEnv
                     let ingst = issBlockIngest iss
                     case msg of
                         Just (MBlock blk) -- setup state
                          -> do
+                            mp <- liftIO $ readTVarIO $ blockSyncStatusMap bp2pEnv
                             let hh = headerHash $ defBlockHeader blk
                             let mht = M.lookup hh mp
                             case (mht) of

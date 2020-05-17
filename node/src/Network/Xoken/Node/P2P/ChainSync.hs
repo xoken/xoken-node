@@ -70,10 +70,9 @@ produceGetHeadersMessage = do
     lg <- getLogger
     debug lg $ LG.msg $ val "produceGetHeadersMessage - called."
     bp2pEnv <- getBitcoinP2P
-    dbe' <- getDB
     -- be blocked until a new best-block is updated in DB, or a set timeout.
     LA.race (liftIO $ takeMVar (bestBlockUpdated bp2pEnv)) (liftIO $ threadDelay (15 * 1000000))
-    let conn = keyValDB $ dbe'
+    conn <- keyValDB <$> getDB
     let net = bncNet $ bitcoinNodeConfig bp2pEnv
     bl <- getBlockLocator conn net
     let gh =
