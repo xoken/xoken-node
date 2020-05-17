@@ -7,6 +7,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE BangPatterns #-}
 
 module Network.Xoken.Node.P2P.BlockSync
     ( processBlock
@@ -232,7 +233,7 @@ runPeerSync =
         let net = bncNet $ bitcoinNodeConfig bp2pEnv
         allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
         blockedPeers <- liftIO $ readTVarIO (blacklistedPeers bp2pEnv)
-        let connPeers = L.filter (\x -> bpConnected (snd x) && not (M.member (fst x) blockedPeers)) (M.toList allPeers)
+        let !connPeers = L.filter (\x -> bpConnected (snd x) && not (M.member (fst x) blockedPeers)) (M.toList allPeers)
         if L.length connPeers < 16
             then do
                 mapM_
@@ -287,7 +288,7 @@ getNextBlockToSync = do
                                  else if ht < 600000
                                           then [1 .. 20]
                                           else [1, 2]
-            let bks = map (\x -> ht + x) cacheInd -- cache size of 200
+            let !bks = map (\x -> ht + x) cacheInd -- cache size of 200
             let str = "SELECT block_height, block_hash from xoken.blocks_by_height where block_height in ?"
                 qstr = str :: Q.QueryString Q.R (Identity [Int32]) ((Int32, T.Text))
                 p = Q.defQueryParams Q.One $ Identity (bks)
@@ -303,7 +304,7 @@ getNextBlockToSync = do
                             return (Nothing)
                         else do
                             debug lg $ LG.msg $ val "Reloading cache."
-                            let p =
+                            let !p =
                                     catMaybes $
                                     map
                                         (\x ->
@@ -337,7 +338,7 @@ getNextBlockToSync = do
             debug lg $ LG.msg $ ("recv in progress, awaiting: " ++ show receiveInProgress)
             if M.size sent == 0 && M.size unsent == 0 && M.size receiveInProgress == 0
                 then do
-                    let lelm = last $ L.sortOn (snd . snd) (M.toList sy)
+                    let !lelm = last $ L.sortOn (snd . snd) (M.toList sy)
                     liftIO $ atomically $ writeTVar (blockSyncStatusMap bp2pEnv) M.empty
                     -- debug lg $ LG.msg $ ("DEBUG, marking best synced " ++ show (blockHashToHex $ fst $ lelm))
                     markBestSyncedBlock (blockHashToHex $ fst $ lelm) (fromIntegral $ snd $ snd $ lelm) conn
@@ -345,15 +346,15 @@ getNextBlockToSync = do
                 else if M.size recvTimedOut > 0
                          then do
                              -- TODO: can be replaced with minimum using Ord instance based on (snd . snd)
-                             let sortRecvTimedOutHead = head $ L.sortOn (snd . snd) (M.toList recvTimedOut)
+                             let !sortRecvTimedOutHead = head $ L.sortOn (snd . snd) (M.toList recvTimedOut)
                              return (Just $ BlockInfo (fst sortRecvTimedOutHead) (snd $ snd sortRecvTimedOutHead))
                          else if M.size sent > 0
                                   then do
-                                      let recvNotStarted =
+                                      let !recvNotStarted =
                                               M.filter (\((RequestSent t), _) -> (diffUTCTime tm t > 66)) sent
                                       if M.size recvNotStarted > 0
                                           then do
-                                              let sortRecvNotStartedHead = head $ L.sortOn (snd . snd) (M.toList recvNotStarted)
+                                              let !sortRecvNotStartedHead = head $ L.sortOn (snd . snd) (M.toList recvNotStarted)
                                               return
                                                   (Just $
                                                    BlockInfo
@@ -361,7 +362,7 @@ getNextBlockToSync = do
                                                        (snd $ snd $ sortRecvNotStartedHead))
                                           else if M.size unsent > 0
                                                    then do
-                                                       let sortUnsentHead = head $ L.sortOn (snd . snd) (M.toList unsent)
+                                                       let !sortUnsentHead = head $ L.sortOn (snd . snd) (M.toList unsent)
                                                        return
                                                            (Just $
                                                             BlockInfo
@@ -370,7 +371,7 @@ getNextBlockToSync = do
                                                    else return Nothing
                                   else if M.size unsent > 0
                                            then do
-                                               let sortUnsentHead = head $ L.sortOn (snd . snd) (M.toList unsent)
+                                               let !sortUnsentHead = head $ L.sortOn (snd . snd) (M.toList unsent)
                                                return
                                                    (Just $
                                                     BlockInfo (fst sortUnsentHead) (snd $ snd sortUnsentHead))

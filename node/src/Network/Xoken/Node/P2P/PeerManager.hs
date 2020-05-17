@@ -228,8 +228,8 @@ resetPeers :: (HasXokenNodeEnv env m, MonadIO m) => m ()
 resetPeers = do
     bp2pEnv <- getBitcoinP2P
     lg <- getLogger
-    allpr <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
     liftIO $ readMVar $ fst $ peerReset bp2pEnv -- will be blocked until 'n' GetData cache batches are complete
+    allpr <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
     debug lg $ msg $ val (" ### Resetting peers ### ")
     mapM_
         (\(_, pr) -> do
