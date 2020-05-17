@@ -372,7 +372,7 @@ updateMerkleSubTrees hashMap newhash left right ht ind final = do
     let (state, res) = pushHash hashMap newhash left right ht ind final
     if L.length res > 0
         then do
-            let (create, match) =
+            let (!create, match) =
                     L.partition
                         (\x ->
                              case x of
@@ -383,7 +383,7 @@ updateMerkleSubTrees hashMap newhash left right ht ind final = do
                                                   then True
                                                   else throw MerkleTreeComputeException)
                         (res)
-            let finMatch =
+            let !finMatch =
                     L.sortBy
                         (\x y ->
                              if (leftChild x == node y) || (rightChild x == node y)
@@ -484,12 +484,10 @@ merkleTreeBuilder tque blockHash treeHt = do
                 throw e
             Right (hc) -> do
                 liftIO $ atomically $ writeTVar tv hc
-                debug lg $ msg ("updateMerkleSubTrees returned " ++ (show $ txh))
-        if isLast == True
-            then do
-                liftIO $ writeIORef continue False
-                liftIO $ atomically $ modifyTVar' (merkleQueueMap p2pEnv) (M.delete blockHash)
-            else return ()
+                --debug lg $ msg ("updateMerkleSubTrees returned " ++ (show $ txh))
+        when isLast $ do
+             liftIO $ writeIORef continue False
+             liftIO $ atomically $ modifyTVar' (merkleQueueMap p2pEnv) (M.delete blockHash)
 
 readNextMessage ::
        (HasBitcoinP2P m, HasLogger m, HasDatabaseHandles m, MonadBaseControl IO m, MonadIO m)
