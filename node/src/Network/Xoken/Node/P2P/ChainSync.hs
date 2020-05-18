@@ -145,10 +145,7 @@ validateChainedBlockHeaders :: Headers -> Bool
 validateChainedBlockHeaders hdrs = do
     let xs = headersList hdrs
         pairs = zip xs (drop 1 xs)
-        res = map (\x -> (headerHash $ fst (fst x)) == (prevBlock $ fst (snd x))) pairs
-    if all (== True) res
-        then True
-        else False
+    L.foldl' (\ac x -> ac && (headerHash $ fst (fst x)) == (prevBlock $ fst (snd x))) True pairs
 
 markBestBlock :: (HasLogger m, MonadIO m) => Text -> Int32 -> Q.ClientState -> m ()
 markBestBlock hash height conn = do
@@ -228,7 +225,7 @@ processHeaders hdrs = do
                 validate m = validateWithCheckPoint net (fromIntegral m) (hdrHash <$> (headersList hdrs))
             bb <- fetchBestBlock conn net
             -- TODO: throw exception if it's a bitcoin cash block
-            indexed <-
+            !indexed <-
                 if (blockHashToHex $ fst bb) == genesisHash
                     then do
                         debug lg $ LG.msg $ val "First Headers set from genesis"

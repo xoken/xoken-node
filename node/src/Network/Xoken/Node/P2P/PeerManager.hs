@@ -120,7 +120,7 @@ setupSeedPeerConnection =
             port = getDefaultPort net
         debug lg $ msg $ show seeds
         --let sd = map (\x -> Just (x :: HostName)) seeds
-        addrs <- liftIO $ mapConcurrently (\x -> head <$> getAddrInfo (Just hints) (Just x) (Just (show port))) seeds
+        !addrs <- liftIO $ mapConcurrently (\x -> head <$> getAddrInfo (Just hints) (Just x) (Just (show port))) seeds
         mapM_
             (\y -> do
                  debug lg $ msg ("Peer.. " ++ show (addrAddress y))
@@ -129,7 +129,7 @@ setupSeedPeerConnection =
                          (do allpr <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
                              blockedpr <- liftIO $ readTVarIO (blacklistedPeers bp2pEnv)
                              -- this can be optimized
-                             let connPeers = L.foldl (\c x -> if bpConnected (snd x) && not (M.member (fst x) blockedpr) then c + 1 else c) 0 (M.toList allpr)
+                             let connPeers = L.foldl' (\c x -> if bpConnected (snd x) && not (M.member (fst x) blockedpr) then c + 1 else c) 0 (M.toList allpr)
                              if connPeers > 16
                                  then liftIO $ threadDelay (10 * 1000000)
                                  else do
@@ -811,18 +811,16 @@ readNextMessage' peer = do
                                     if binTxTotalCount ingst == binTxProcessed ingst
                                             -- debug lg $ LG.msg $ ("DEBUG Block receive complete - " ++ show " ")
                                         then do
-                                            liftIO $ atomically $ writeTVar (bpIngressState peer) $ Nothing -- reset state
-                                            liftIO $
-                                                atomically $
+                                            liftIO $ atomically $ do
+                                                writeTVar (bpIngressState peer) $ Nothing -- reset state
                                                 modifyTVar'
                                                     (blockSyncStatusMap bp2pEnv)
                                                     (M.insert (biBlockHash bi) $
                                                      (BlockReceiveComplete, biBlockHeight bi) -- mark block received
                                                      )
                                         else do
-                                            liftIO $ atomically $ writeTVar (bpIngressState peer) $ ingressState -- retain state
-                                            liftIO $
-                                                atomically $
+                                            liftIO $ atomically $ do
+                                                writeTVar (bpIngressState peer) $ ingressState -- retain state
                                                 modifyTVar'
                                                     (blockSyncStatusMap bp2pEnv)
                                                     (M.insert (biBlockHash bi) $
