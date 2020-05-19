@@ -31,20 +31,21 @@ pipeline {
     }
 
     stage('Build') {
-
       steps {
         dir(path: 'xoken-node') {
-          
-          sh "stack install  --local-bin-path  ../build/reg/"
-          
-          sh "stack install  --executable-profiling  --local-bin-path  ../build/prof/"
+          sh 'stack install  --local-bin-path  ../build/reg/'
+          sh 'stack install  --executable-profiling  --local-bin-path  ../build/prof/'
         }
 
-        archiveArtifacts(artifacts: "build/**/xoken-nexa" , followSymlinks: true)
-        
+        archiveArtifacts(artifacts: 'build/**/xoken-nexa', followSymlinks: true)
+      }
+    }
+
+    stage('Notify') {
+      steps {
+        emailext(subject: 'xoken-node build __', body: 'build result __', attachLog: true, from: 'buildmaster@xoken.org', replyTo: 'buildmaster@xoken.org', to: 'nithin@xoken.org, aravind@xoken.org')
       }
     }
 
   }
 }
-
