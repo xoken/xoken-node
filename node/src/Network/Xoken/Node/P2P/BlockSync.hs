@@ -267,7 +267,7 @@ getNextBlockToSync :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m (Mayb
 getNextBlockToSync = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    conn  <- keyValDB <$> getDB
+    conn <- keyValDB <$> getDB
     let net = bncNet $ bitcoinNodeConfig bp2pEnv
     sy <- liftIO $ readTVarIO $ blockSyncStatusMap bp2pEnv
     tm <- liftIO $ getCurrentTime
@@ -284,7 +284,7 @@ getNextBlockToSync = do
                     if ht < 200000
                         then [1 .. 400]
                         else if ht < 500000
-                                 then [1 .. 100]
+                                 then [1 .. 200]
                                  else if ht < 600000
                                           then [1 .. 20]
                                           else [1, 2]
@@ -344,8 +344,8 @@ getNextBlockToSync = do
                     markBestSyncedBlock (blockHashToHex $ fst $ lelm) (fromIntegral $ snd $ snd $ lelm) conn
                     return Nothing
                 else if M.size recvTimedOut > 0
-                         then do
                              -- TODO: can be replaced with minimum using Ord instance based on (snd . snd)
+                         then do
                              let !sortRecvTimedOutHead = head $ L.sortOn (snd . snd) (M.toList recvTimedOut)
                              return (Just $ BlockInfo (fst sortRecvTimedOutHead) (snd $ snd sortRecvTimedOutHead))
                          else if M.size sent > 0
@@ -354,7 +354,8 @@ getNextBlockToSync = do
                                               M.filter (\((RequestSent t), _) -> (diffUTCTime tm t > 66)) sent
                                       if M.size recvNotStarted > 0
                                           then do
-                                              let !sortRecvNotStartedHead = head $ L.sortOn (snd . snd) (M.toList recvNotStarted)
+                                              let !sortRecvNotStartedHead =
+                                                      head $ L.sortOn (snd . snd) (M.toList recvNotStarted)
                                               return
                                                   (Just $
                                                    BlockInfo
@@ -362,19 +363,16 @@ getNextBlockToSync = do
                                                        (snd $ snd $ sortRecvNotStartedHead))
                                           else if M.size unsent > 0
                                                    then do
-                                                       let !sortUnsentHead = head $ L.sortOn (snd . snd) (M.toList unsent)
+                                                       let !sortUnsentHead =
+                                                               head $ L.sortOn (snd . snd) (M.toList unsent)
                                                        return
                                                            (Just $
-                                                            BlockInfo
-                                                                (fst sortUnsentHead)
-                                                                (snd $ snd sortUnsentHead))
+                                                            BlockInfo (fst sortUnsentHead) (snd $ snd sortUnsentHead))
                                                    else return Nothing
                                   else if M.size unsent > 0
                                            then do
                                                let !sortUnsentHead = head $ L.sortOn (snd . snd) (M.toList unsent)
-                                               return
-                                                   (Just $
-                                                    BlockInfo (fst sortUnsentHead) (snd $ snd sortUnsentHead))
+                                               return (Just $ BlockInfo (fst sortUnsentHead) (snd $ snd sortUnsentHead))
                                            else return Nothing
 
 fetchBestSyncedBlock :: (HasLogger m, MonadIO m) => Q.ClientState -> Network -> m ((BlockHash, Int32))
