@@ -233,7 +233,7 @@ runPeerSync =
         let net = bncNet $ bitcoinNodeConfig bp2pEnv
         allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
         blockedPeers <- liftIO $ readTVarIO (blacklistedPeers bp2pEnv)
-        let !connPeers = L.filter (\x -> bpConnected (snd x) && not (M.member (fst x) blockedPeers)) (M.toList allPeers)
+        let connPeers = L.filter (\x -> bpConnected (snd x) && not (M.member (fst x) blockedPeers)) (M.toList allPeers)
         if L.length connPeers < 16
             then do
                 mapM_
@@ -457,7 +457,7 @@ processConfTransaction tx bhash txind blkht = do
             liftIO $ err lg $ LG.msg ("Error: INSERTing into 'xoken.transactions': " ++ show e)
             throw KeyValueDBInsertException
     --
-    let !inAddrs =
+    let inAddrs =
             zip3
                 (map (\x -> do
                           case decodeInputBS net $ scriptInput x of
@@ -469,7 +469,7 @@ processConfTransaction tx bhash txind blkht = do
                      (txIn tx))
                 (txIn tx)
                 [0 :: Int32 ..]
-    let !outAddrs =
+    let outAddrs =
             zip3
                 (catMaybes $
                  map
@@ -480,7 +480,7 @@ processConfTransaction tx bhash txind blkht = do
                      (txOut tx))
                 (txOut tx)
                 [0 :: Int32 ..]
-    !lookupInAddrs <-
+    lookupInAddrs <-
         mapM
             (\(a, b, c) ->
                  case a of

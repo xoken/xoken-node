@@ -126,8 +126,8 @@ setupSeedPeerConnection =
                  debug lg $ msg ("Peer.. " ++ show (addrAddress y))
                  LA.async $
                      LA.withAsync
-                         (do allpr <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
-                             blockedpr <- liftIO $ readTVarIO (blacklistedPeers bp2pEnv)
+                         (do blockedpr <- liftIO $ readTVarIO (blacklistedPeers bp2pEnv)
+                             allpr <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
                              -- this can be optimized
                              let connPeers = L.foldl' (\c x -> if bpConnected (snd x) && not (M.member (fst x) blockedpr) then c + 1 else c) 0 (M.toList allpr)
                              if connPeers > 16
@@ -246,9 +246,9 @@ setupPeerConnection saddr = do
     bp2pEnv <- getBitcoinP2P
     lg <- getLogger
     let net = bncNet $ bitcoinNodeConfig bp2pEnv
-    allpr <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
     blockedpr <- liftIO $ readTVarIO (blacklistedPeers bp2pEnv)
-    let connPeers = L.foldl
+    allpr <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
+    let connPeers = L.foldl'
                       (\c x -> if bpConnected (snd x) && not (M.member (fst x) blockedpr) then c + 1 else c)
                       0
                       (M.toList allpr)
@@ -262,10 +262,7 @@ setupPeerConnection saddr = do
                           then False
                           else True
                       Nothing -> True
-              isBlacklisted =
-                case M.lookup saddr blockedpr of
-                    Just _  -> True
-                    Nothing -> False
+              isBlacklisted = M.member saddr blockedpr
           if toConn == False
             then do
               debug lg $ msg ("Peer already connected, ignoring.. " ++ show saddr)
@@ -318,7 +315,7 @@ hashPair :: Hash256 -> Hash256 -> Hash256
 hashPair a b = doubleSHA256 $ encode a `B.append` encode b
 
 pushHash :: HashCompute -> Hash256 -> Maybe Hash256 -> Maybe Hash256 -> Int8 -> Int8 -> Bool -> HashCompute
-pushHash (stateMap, res) nhash left right ht ind final =
+pushHash (stateMap, res) nhash left right ht !ind final =
     case node prev of
         Just pv ->
             pushHash
@@ -370,9 +367,9 @@ updateMerkleSubTrees hashMap newhash left right ht ind final = do
     dbe <- getDB
     lg <- getLogger
     let (state, res) = pushHash hashMap newhash left right ht ind final
-    if L.length res > 0
+    if not $ L.null res
         then do
-            let (!create, match) =
+            let (create, match) =
                     L.partition
                         (\x ->
                              case x of
@@ -383,7 +380,7 @@ updateMerkleSubTrees hashMap newhash left right ht ind final = do
                                                   then True
                                                   else throw MerkleTreeComputeException)
                         (res)
-            let !finMatch =
+            let finMatch =
                     L.sortBy
                         (\x y ->
                              if (leftChild x == node y) || (rightChild x == node y)
@@ -391,7 +388,7 @@ updateMerkleSubTrees hashMap newhash left right ht ind final = do
                                  else LT)
                         match
             -- debug lg $ msg $ show create ++ show finMatch
-            if L.length create == 1 && L.length finMatch == 0
+            if L.length create == 1 && L.null finMatch
                 then return (state, [])
                 else do
                     debug lg $ msg ("about to insertMerkleSubTree" ++ show newhash)
@@ -475,8 +472,8 @@ merkleTreeBuilder tque blockHash treeHt = do
     continue <- liftIO $ newIORef True
     tv <- liftIO $ atomically $ newTVar (M.empty, [])
     whileM_ (liftIO $ readIORef continue) $ do
-        (txh, isLast) <- liftIO $ atomically $ readTQueue tque
         val <- liftIO $ atomically $ readTVar tv
+        (txh, isLast) <- liftIO $ atomically $ readTQueue tque
         res <- LE.try $ updateMerkleSubTrees (val) (getTxHash txh) Nothing Nothing (treeHt) (0) (isLast)
         case res of
             Left (e :: SomeException) -> do
@@ -541,7 +538,7 @@ readNextMessage net sock ingss = do
                     --         throw e
                     --     Right (nst) -> do
                     --         debug lg $ msg ("updateMerkleSubTrees returned " ++ (show $ txHash t))
-                    let !bio =
+                    let bio =
                             BlockIngestState
                                 { binUnspentBytes = unused
                                 , binTxPayloadLeft = binTxPayloadLeft blin - (txbytLen - B.length unused)
@@ -575,7 +572,7 @@ readNextMessage net sock ingss = do
                                             -- debug lg $
                                             --     msg ("DefBlock: " ++ show blk ++ " unused: " ++ show (B.length unused))
                                          -> do
-                                            let !bi =
+                                            let bi =
                                                     BlockIngestState
                                                         { binUnspentBytes = unused
                                                         , binTxPayloadLeft = fromIntegral (len) - (88 - B.length unused)
@@ -669,8 +666,9 @@ messageHandler peer (mm, ingss) continue = do
                             case (bpSocket peer) of
                                 Just sock -> liftIO $ Network.Socket.close sock
                                 Nothing   -> return ()
-                            liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress peer))
-                            liftIO $ atomically $ modifyTVar' (blacklistedPeers bp2pEnv) (M.insert (bpAddress peer) peer)
+                            liftIO $ atomically $ do
+                                modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress peer))
+                                modifyTVar' (blacklistedPeers bp2pEnv) (M.insert (bpAddress peer) peer)
                             liftIO $ writeIORef continue False
                         Left KeyValueDBInsertException -> do
                             err lg $ LG.msg $ LG.val ("[ERROR] Insert failed. KeyValueDBInsertException")
@@ -775,7 +773,7 @@ readNextMessage' peer = do
     case bpSocket peer of
         Just sock -> do
             liftIO $ takeMVar $ bpReadMsgLock peer
-            !prevIngressState <- liftIO $ readTVarIO $ bpIngressState peer
+            prevIngressState <- liftIO $ readTVarIO $ bpIngressState peer
             (msg, ingressState) <- readNextMessage net sock prevIngressState
             case ingressState of
                 Just iss -> do
@@ -791,7 +789,7 @@ readNextMessage' peer = do
                                 Nothing -> do
                                     debug lg $ LG.msg $ ("InvalidBlockSyncStatusMapException - " ++ show hh)
                                     throw InvalidBlockSyncStatusMapException
-                            let !iz = Just (IngressStreamState ingst (Just $ BlockInfo hh (snd $ fromJust mht)))
+                            let iz = Just (IngressStreamState ingst (Just $ BlockInfo hh (snd $ fromJust mht)))
                                              -- (computeTreeHeight $ binTxTotalCount ingst)
                                              -- 0
                                              -- (M.empty, []))

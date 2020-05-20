@@ -92,11 +92,12 @@ sendRequestMessages msg = do
     dbe' <- getDB
     let conn = keyValDB $ dbe'
     let net = bncNet $ bitcoinNodeConfig bp2pEnv
-    allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
-    blockedPeers <- liftIO $ readTVarIO (blacklistedPeers bp2pEnv)
-    let connPeers = L.filter (\x -> bpConnected (snd x) && not (M.member (fst x) blockedPeers)) (M.toList allPeers)
     case msg of
         MGetHeaders hdr -> do
+            blockedPeers <- liftIO $ readTVarIO (blacklistedPeers bp2pEnv)
+            allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
+            let connPeers = L.filter (\x -> bpConnected (snd x) && not (M.member (fst x) blockedPeers)) (M.toList allPeers)
+
             let fbh = getHash256 $ getBlockHash $ (getHeadersBL hdr) !! 0
                 md = BSS.index fbh $ (BSS.length fbh) - 1
                 pds =
@@ -169,17 +170,13 @@ getBlockLocator conn net = do
         qstr = str :: Q.QueryString Q.R (Identity [Int32]) ((Int32, T.Text))
         p = Q.defQueryParams Q.One $ Identity bl
     op <- Q.runClient conn (Q.query qstr p)
-    if L.length op == 0
+    if L.null op
         then return [headerHash $ getGenesisHeader net]
         else do
             debug lg $ LG.msg $ "Best-block from DB: " ++ (show $ last op)
             return $
-                catMaybes $
-                (map (\x ->
-                          case (hexToBlockHash $ snd x) of
-                              Just y -> Just y
-                              Nothing -> Nothing)
-                     (reverse op))
+                reverse $
+                    catMaybes $ map (hexToBlockHash . snd) op
 
 fetchBestBlock :: (HasLogger m, MonadIO m) => Q.ClientState -> Network -> m ((BlockHash, Int32))
 fetchBestBlock conn net = do
@@ -188,7 +185,7 @@ fetchBestBlock conn net = do
         qstr = str :: Q.QueryString Q.R (Identity Text) (Identity (Maybe Bool, Maybe Int32, Maybe Int64, Maybe T.Text))
         p = Q.defQueryParams Q.One $ Identity "best_chain_tip"
     iop <- Q.runClient conn (Q.query qstr p)
-    if L.length iop == 0
+    if L.null iop
         then do
             debug lg $ LG.msg $ val "Bestblock is genesis."
             return ((headerHash $ getGenesisHeader net), 0)
@@ -210,7 +207,7 @@ processHeaders hdrs = do
     dbe' <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    if (L.length $ headersList hdrs) == 0
+    if (L.null $ headersList hdrs)
         then do
             debug lg $ LG.msg $ val "Nothing to process!"
             throw EmptyHeadersMessageException
@@ -225,7 +222,7 @@ processHeaders hdrs = do
                 validate m = validateWithCheckPoint net (fromIntegral m) (hdrHash <$> (headersList hdrs))
             bb <- fetchBestBlock conn net
             -- TODO: throw exception if it's a bitcoin cash block
-            !indexed <-
+            indexed <-
                 if (blockHashToHex $ fst bb) == genesisHash
                     then do
                         debug lg $ LG.msg $ val "First Headers set from genesis"
@@ -286,16 +283,12 @@ processHeaders hdrs = do
                              err lg $ LG.msg ("Error: INSERT into 'blocks_by_height' failed: " ++ show e)
                              throw KeyValueDBInsertException)
                 indexed
-            if L.length indexed > 0
-                then do
+            unless (L.null indexed) $ do
                     markBestBlock (blockHashToHex $ headerHash $ fst $ snd $ last $ indexed) (fst $ last indexed) conn
                     liftIO $ putMVar (bestBlockUpdated bp2pEnv) True
-                else return ()
-            return ()
         False -> do
             err lg $ LG.msg $ val "Error: BlocksNotChainedException"
             throw BlocksNotChainedException
-    return ()
 
 fetchMatchBlockOffset :: (HasLogger m, MonadIO m) => Q.ClientState -> Network -> Text -> m (Maybe (Text, Int32))
 fetchMatchBlockOffset conn net hashes = do
@@ -304,7 +297,7 @@ fetchMatchBlockOffset conn net hashes = do
         qstr = str :: Q.QueryString Q.R (Identity Text) (Int32, Text)
         p = Q.defQueryParams Q.One $ Identity hashes
     iop <- Q.runClient conn (Q.query qstr p)
-    if L.length iop == 0
+    if L.null iop
         then return Nothing
         else do
             let (maxHt, bhash) = iop !! 0
