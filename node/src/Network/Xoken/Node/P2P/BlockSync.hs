@@ -19,7 +19,7 @@ module Network.Xoken.Node.P2P.BlockSync
     ) where
 
 import Control.Concurrent (threadDelay)
-import Control.Concurrent.Async (AsyncCancelled, mapConcurrently, race_)
+import Control.Concurrent.Async (AsyncCancelled, mapConcurrently, mapConcurrently_, race_)
 import Control.Concurrent.Async.Lifted as LA (async)
 import Control.Concurrent.MVar
 import Control.Concurrent.QSem
@@ -142,7 +142,7 @@ runEgressBlockSync =
         blockedPeers <- liftIO $ readTVarIO (blacklistedPeers bp2pEnv)
         let connPeers = L.filter (\x -> bpConnected (snd x) && not (M.member (fst x) blockedPeers)) (M.toList allPeers)
         -- debug lg $ LG.msg $ ("Connected peers: " ++ (show $ map (\x -> snd x) connPeers))
-        if L.length connPeers == 0
+        if L.null connPeers
             then liftIO $ threadDelay (5 * 1000000)
             else do
                 mapM_
@@ -236,7 +236,8 @@ runPeerSync =
         let connPeers = L.filter (\x -> bpConnected (snd x) && not (M.member (fst x) blockedPeers)) (M.toList allPeers)
         if L.length connPeers < 16
             then do
-                mapM_
+                liftIO $
+                  mapConcurrently_
                     (\(_, pr) ->
                          case (bpSocket pr) of
                              Just s -> do

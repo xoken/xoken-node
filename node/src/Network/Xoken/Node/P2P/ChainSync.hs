@@ -14,7 +14,7 @@ module Network.Xoken.Node.P2P.ChainSync
     ) where
 
 import Control.Concurrent (threadDelay)
-import Control.Concurrent.Async (mapConcurrently)
+import Control.Concurrent.Async (mapConcurrently_)
 import Control.Concurrent.Async.Lifted as LA (async, race)
 import Control.Concurrent.MVar
 import Control.Concurrent.STM.TVar
@@ -263,7 +263,7 @@ processHeaders hdrs = do
                 str2 = "insert INTO xoken.blocks_by_height (block_height, block_hash, block_header) values (?, ? , ? )"
                 qstr2 = str2 :: Q.QueryString Q.W (Int32, Text, Text) ()
             debug lg $ LG.msg $ "indexed " ++ show (L.length indexed)
-            mapM_
+            liftIO $ mapConcurrently_
                 (\y -> do
                      let hdrHash = blockHashToHex $ headerHash $ fst $ snd y
                          hdrJson = T.pack $ LC.unpack $ A.encode $ fst $ snd y
