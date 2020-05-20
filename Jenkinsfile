@@ -33,14 +33,15 @@ pipeline {
     stage('Build') {
       steps {
         dir(path: 'xoken-node') {
-          sh "stack install  --local-bin-path  ../build/reg/"
+          sh 'stack install  --local-bin-path  ../build/reg/'
+          sh 'stack install  --executable-profiling  --local-bin-path  ../build/prof/'
         }
 
-        archiveArtifacts(artifacts: "build/reg/xoken-nexa" , followSymlinks: true)
+        archiveArtifacts(artifacts: 'build/**/xoken-nexa', followSymlinks: true)
       }
     }
 
-     stage('Notify') {
+    stage('Notify') {
       steps {
        echo 'done..'
       }

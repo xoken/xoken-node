@@ -14,7 +14,7 @@ module Network.Xoken.Node.P2P.ChainSync
     ) where
 
 import Control.Concurrent (threadDelay)
-import Control.Concurrent.Async (mapConcurrently)
+import Control.Concurrent.Async (mapConcurrently_)
 import Control.Concurrent.Async.Lifted as LA (async, race)
 import Control.Concurrent.MVar
 import Control.Concurrent.STM.TVar
@@ -70,10 +70,9 @@ produceGetHeadersMessage = do
     lg <- getLogger
     debug lg $ LG.msg $ val "produceGetHeadersMessage - called."
     bp2pEnv <- getBitcoinP2P
-    dbe' <- getDB
     -- be blocked until a new best-block is updated in DB, or a set timeout.
     LA.race (liftIO $ takeMVar (bestBlockUpdated bp2pEnv)) (liftIO $ threadDelay (15 * 1000000))
-    let conn = keyValDB $ dbe'
+    conn <- keyValDB <$> getDB
     let net = bncNet $ bitcoinNodeConfig bp2pEnv
     bl <- getBlockLocator conn net
     let gh =
@@ -93,10 +92,12 @@ sendRequestMessages msg = do
     dbe' <- getDB
     let conn = keyValDB $ dbe'
     let net = bncNet $ bitcoinNodeConfig bp2pEnv
-    allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
-    let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
     case msg of
         MGetHeaders hdr -> do
+            blockedPeers <- liftIO $ readTVarIO (blacklistedPeers bp2pEnv)
+            allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
+            let connPeers = L.filter (\x -> bpConnected (snd x) && not (M.member (fst x) blockedPeers)) (M.toList allPeers)
+
             let fbh = getHash256 $ getBlockHash $ (getHeadersBL hdr) !! 0
                 md = BSS.index fbh $ (BSS.length fbh) - 1
                 pds =
@@ -145,10 +146,7 @@ validateChainedBlockHeaders :: Headers -> Bool
 validateChainedBlockHeaders hdrs = do
     let xs = headersList hdrs
         pairs = zip xs (drop 1 xs)
-        res = map (\x -> (headerHash $ fst (fst x)) == (prevBlock $ fst (snd x))) pairs
-    if all (== True) res
-        then True
-        else False
+    L.foldl' (\ac x -> ac && (headerHash $ fst (fst x)) == (prevBlock $ fst (snd x))) True pairs
 
 markBestBlock :: (HasLogger m, MonadIO m) => Text -> Int32 -> Q.ClientState -> m ()
 markBestBlock hash height conn = do
@@ -172,17 +170,13 @@ getBlockLocator conn net = do
         qstr = str :: Q.QueryString Q.R (Identity [Int32]) ((Int32, T.Text))
         p = Q.defQueryParams Q.One $ Identity bl
     op <- Q.runClient conn (Q.query qstr p)
-    if L.length op == 0
+    if L.null op
         then return [headerHash $ getGenesisHeader net]
         else do
             debug lg $ LG.msg $ "Best-block from DB: " ++ (show $ last op)
             return $
-                catMaybes $
-                (map (\x ->
-                          case (hexToBlockHash $ snd x) of
-                              Just y -> Just y
-                              Nothing -> Nothing)
-                     (reverse op))
+                reverse $
+                    catMaybes $ map (hexToBlockHash . snd) op
 
 fetchBestBlock :: (HasLogger m, MonadIO m) => Q.ClientState -> Network -> m ((BlockHash, Int32))
 fetchBestBlock conn net = do
@@ -191,7 +185,7 @@ fetchBestBlock conn net = do
         qstr = str :: Q.QueryString Q.R (Identity Text) (Identity (Maybe Bool, Maybe Int32, Maybe Int64, Maybe T.Text))
         p = Q.defQueryParams Q.One $ Identity "best_chain_tip"
     iop <- Q.runClient conn (Q.query qstr p)
-    if L.length iop == 0
+    if L.null iop
         then do
             debug lg $ LG.msg $ val "Bestblock is genesis."
             return ((headerHash $ getGenesisHeader net), 0)
@@ -213,7 +207,7 @@ processHeaders hdrs = do
     dbe' <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    if (L.length $ headersList hdrs) == 0
+    if (L.null $ headersList hdrs)
         then do
             debug lg $ LG.msg $ val "Nothing to process!"
             throw EmptyHeadersMessageException
@@ -224,7 +218,10 @@ processHeaders hdrs = do
                 genesisHash = blockHashToHex $ headerHash $ getGenesisHeader net
                 conn = keyValDB $ dbe'
                 headPrevHash = (blockHashToHex $ prevBlock $ fst $ head $ headersList hdrs)
+                hdrHash y = headerHash $ fst y
+                validate m = validateWithCheckPoint net (fromIntegral m) (hdrHash <$> (headersList hdrs))
             bb <- fetchBestBlock conn net
+            -- TODO: throw exception if it's a bitcoin cash block
             indexed <-
                 if (blockHashToHex $ fst bb) == genesisHash
                     then do
@@ -232,6 +229,7 @@ processHeaders hdrs = do
                         return $ zip [((snd bb) + 1) ..] (headersList hdrs)
                     else if (blockHashToHex $ fst bb) == headPrevHash
                              then do
+                                 unless (validate (snd bb)) $ throw InvalidBlocksException
                                  debug lg $ LG.msg $ val "Building on current Best block"
                                  return $ zip [((snd bb) + 1) ..] (headersList hdrs)
                              else do
@@ -243,6 +241,7 @@ processHeaders hdrs = do
                                          res <- fetchMatchBlockOffset conn net headPrevHash
                                          case res of
                                              Just (matchBHash, matchBHt) -> do
+                                                 unless (validate matchBHt) $ throw InvalidBlocksException
                                                  if ((snd bb) >
                                                      (matchBHt + fromIntegral (L.length $ headersList hdrs) + 12) -- reorg limit of 12 blocks
                                                      )
@@ -264,7 +263,7 @@ processHeaders hdrs = do
                 str2 = "insert INTO xoken.blocks_by_height (block_height, block_hash, block_header) values (?, ? , ? )"
                 qstr2 = str2 :: Q.QueryString Q.W (Int32, Text, Text) ()
             debug lg $ LG.msg $ "indexed " ++ show (L.length indexed)
-            mapM_
+            liftIO $ mapConcurrently_
                 (\y -> do
                      let hdrHash = blockHashToHex $ headerHash $ fst $ snd y
                          hdrJson = T.pack $ LC.unpack $ A.encode $ fst $ snd y
@@ -284,16 +283,12 @@ processHeaders hdrs = do
                              err lg $ LG.msg ("Error: INSERT into 'blocks_by_height' failed: " ++ show e)
                              throw KeyValueDBInsertException)
                 indexed
-            if L.length indexed > 0
-                then do
+            unless (L.null indexed) $ do
                     markBestBlock (blockHashToHex $ headerHash $ fst $ snd $ last $ indexed) (fst $ last indexed) conn
                     liftIO $ putMVar (bestBlockUpdated bp2pEnv) True
-                else return ()
-            return ()
         False -> do
             err lg $ LG.msg $ val "Error: BlocksNotChainedException"
             throw BlocksNotChainedException
-    return ()
 
 fetchMatchBlockOffset :: (HasLogger m, MonadIO m) => Q.ClientState -> Network -> Text -> m (Maybe (Text, Int32))
 fetchMatchBlockOffset conn net hashes = do
@@ -302,7 +297,7 @@ fetchMatchBlockOffset conn net hashes = do
         qstr = str :: Q.QueryString Q.R (Identity Text) (Int32, Text)
         p = Q.defQueryParams Q.One $ Identity hashes
     iop <- Q.runClient conn (Q.query qstr p)
-    if L.length iop == 0
+    if L.null iop
         then return Nothing
         else do
             let (maxHt, bhash) = iop !! 0

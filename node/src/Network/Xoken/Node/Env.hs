@@ -62,6 +62,7 @@ data BitcoinP2P =
     BitcoinP2P
         { bitcoinNodeConfig :: !BitcoinNodeConfig
         , bitcoinPeers :: !(TVar (M.Map SockAddr BitcoinPeer))
+        , blacklistedPeers :: !(TVar (M.Map SockAddr BitcoinPeer))
         , bestBlockUpdated :: !(MVar Bool)
         , headersWriteLock :: !(MVar Bool)
         , blockSyncStatusMap :: !(TVar (M.Map BlockHash (BlockSyncStatus, BlockHeight)))

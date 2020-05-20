@@ -42,7 +42,7 @@ executable xoken-nexa
       Network.Xoken.Node.P2P.UnconfTxSync
       Network.Xoken.Node.Data.Allegory
 
-  ghc-options:  -fprof-auto -fprof-cafs -rtsopts -threaded
+  ghc-options:  -fprof-auto -fprof-cafs -rtsopts -O2 -threaded
   hs-source-dirs:
       app, src
 

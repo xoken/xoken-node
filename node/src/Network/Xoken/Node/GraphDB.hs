@@ -33,7 +33,6 @@ import Data.Map.Strict as M (fromList)
 import Data.Maybe (fromJust)
 import Data.Monoid ((<>))
 import Data.Pool (Pool, createPool)
-import qualified Data.Set as SE
 import Data.Text (Text, append, concat, filter, intercalate, map, null, pack, replace, take, takeWhileEnd, unpack)
 import Data.Time.Clock
 import Data.Word
