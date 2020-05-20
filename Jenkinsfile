@@ -10,7 +10,7 @@ pipeline {
 
         sh 'mkdir -p xoken-core'
         dir(path: 'xoken-core') {
-          git(url: 'https://github.com/xoken/xoken-core/', branch: "${env.BRANCH_NAME}")
+          git(url: 'https://github.com/xoken/xoken-core/', branch: 'master')
         }
 
         sh 'mkdir -p xoken-node'
