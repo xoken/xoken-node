@@ -1,12 +1,12 @@
-{-# LANGUAGE BangPatterns          #-}
-{-# LANGUAGE ConstraintKinds       #-}
-{-# LANGUAGE FlexibleContexts      #-}
+{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE OverloadedStrings     #-}
-{-# LANGUAGE RecordWildCards       #-}
-{-# LANGUAGE ScopedTypeVariables   #-}
-{-# LANGUAGE TemplateHaskell       #-}
-{-# LANGUAGE TypeFamilies          #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeFamilies #-}
 
 module Network.Xoken.Node.P2P.PeerManager
     ( createSocket
@@ -15,71 +15,71 @@ module Network.Xoken.Node.P2P.PeerManager
     , resetPeers
     ) where
 
-import           Control.Concurrent                  (threadDelay)
-import           Control.Concurrent.Async            (mapConcurrently)
-import           Control.Concurrent.Async.Lifted     as LA (async, race, wait,
-                                                            withAsync)
-import qualified Control.Concurrent.MSem             as MS
-import           Control.Concurrent.MVar
-import           Control.Concurrent.QSem
-import           Control.Concurrent.STM.TQueue
-import           Control.Concurrent.STM.TSem
-import           Control.Concurrent.STM.TVar
-import           Control.Exception
-import qualified Control.Exception.Lifted            as LE (try)
-import           Control.Monad.Logger
-import           Control.Monad.Loops
-import           Control.Monad.Reader
-import           Control.Monad.State.Strict
-import           Control.Monad.STM
-import           Control.Monad.Trans.Control
-import qualified Data.Aeson                          as A (decode, encode)
-import qualified Data.ByteString                     as B
-import qualified Data.ByteString.Char8               as C
-import qualified Data.ByteString.Lazy                as BSL
-import qualified Data.ByteString.Lazy.Char8          as LC
-import           Data.ByteString.Short               as BSS
-import           Data.Char
-import           Data.Default
-import           Data.Function                       ((&))
-import           Data.Functor.Identity
-import           Data.Int
-import           Data.IORef
-import qualified Data.List                           as L
-import qualified Data.Map.Strict                     as M
-import           Data.Maybe
-import           Data.Pool
-import           Data.Serialize
-import           Data.String.Conversions
-import qualified Data.Text                           as T
-import           Data.Time.Clock.POSIX
-import           Data.Word
-import qualified Database.Bolt                       as BT
-import qualified Database.CQL.IO                     as Q
-import           Network.Socket
-import qualified Network.Socket.ByteString           as SB (recv)
-import qualified Network.Socket.ByteString.Lazy      as LB (recv, sendAll)
-import           Network.Xoken.Block.Common
-import           Network.Xoken.Block.Headers
-import           Network.Xoken.Constants
-import           Network.Xoken.Crypto.Hash
-import           Network.Xoken.Network.Common
-import           Network.Xoken.Network.Message
-import           Network.Xoken.Node.Env
-import           Network.Xoken.Node.GraphDB
-import           Network.Xoken.Node.P2P.BlockSync
-import           Network.Xoken.Node.P2P.ChainSync
-import           Network.Xoken.Node.P2P.Common
-import           Network.Xoken.Node.P2P.Types
-import           Network.Xoken.Node.P2P.UnconfTxSync
-import           Network.Xoken.Transaction.Common
-import           Network.Xoken.Util
-import           Streamly
-import           Streamly.Prelude                    (drain, nil, (|:))
-import qualified Streamly.Prelude                    as S
-import           System.Logger                       as LG
-import           System.Logger.Message
-import           System.Random
+import Control.Concurrent (threadDelay)
+import Control.Concurrent.Async (mapConcurrently)
+import Control.Concurrent.Async.Lifted as LA (async, race, wait, withAsync)
+import qualified Control.Concurrent.MSem as MS
+import Control.Concurrent.MVar
+import Control.Concurrent.QSem
+import Control.Concurrent.STM.TQueue
+import Control.Concurrent.STM.TSem
+import Control.Concurrent.STM.TVar
+import Control.Exception
+import qualified Control.Exception.Extra as EX
+import qualified Control.Exception.Lifted as LE (try)
+import Control.Monad.Logger
+import Control.Monad.Loops
+import Control.Monad.Reader
+import Control.Monad.STM
+import Control.Monad.State.Strict
+import Control.Monad.Trans.Control
+import qualified Data.Aeson as A (decode, encode)
+import qualified Data.ByteString as B
+import qualified Data.ByteString.Char8 as C
+import qualified Data.ByteString.Lazy as BSL
+import qualified Data.ByteString.Lazy.Char8 as LC
+import Data.ByteString.Short as BSS
+import Data.Char
+import Data.Default
+import Data.Function ((&))
+import Data.Functor.Identity
+import Data.IORef
+import Data.Int
+import qualified Data.List as L
+import qualified Data.Map.Strict as M
+import Data.Maybe
+import Data.Pool
+import Data.Serialize
+import Data.String.Conversions
+import qualified Data.Text as T
+import Data.Time.Clock.POSIX
+import Data.Word
+import qualified Database.Bolt as BT
+import qualified Database.CQL.IO as Q
+import Network.Socket
+import qualified Network.Socket.ByteString as SB (recv)
+import qualified Network.Socket.ByteString.Lazy as LB (recv, sendAll)
+import Network.Xoken.Block.Common
+import Network.Xoken.Block.Headers
+import Network.Xoken.Constants
+import Network.Xoken.Crypto.Hash
+import Network.Xoken.Network.Common
+import Network.Xoken.Network.Message
+import Network.Xoken.Node.Env
+import Network.Xoken.Node.GraphDB
+import Network.Xoken.Node.P2P.BlockSync
+import Network.Xoken.Node.P2P.ChainSync
+import Network.Xoken.Node.P2P.Common
+import Network.Xoken.Node.P2P.Types
+import Network.Xoken.Node.P2P.UnconfTxSync
+import Network.Xoken.Transaction.Common
+import Network.Xoken.Util
+import Streamly
+import Streamly.Prelude ((|:), drain, nil)
+import qualified Streamly.Prelude as S
+import System.Logger as LG
+import System.Logger.Message
+import System.Random
 
 createSocket :: AddrInfo -> IO (Maybe Socket)
 createSocket = createSocketWithOptions []
@@ -100,7 +100,7 @@ createSocketFromSockAddr saddr = do
     (host, srv) <- getNameInfo [NI_NUMERICHOST, NI_NUMERICSERV] True True $ saddr
     sock <-
         case L.findIndex (\c -> c == '.') (fromJust host) of
-            Nothing  -> socket AF_INET6 Stream defaultProtocol
+            Nothing -> socket AF_INET6 Stream defaultProtocol
             Just ind -> socket AF_INET Stream defaultProtocol
     res <- try $ connect sock saddr
     case res of
@@ -129,71 +129,79 @@ setupSeedPeerConnection =
                          (do blockedpr <- liftIO $ readTVarIO (blacklistedPeers bp2pEnv)
                              allpr <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
                              -- this can be optimized
-                             let connPeers = L.foldl' (\c x -> if bpConnected (snd x) && not (M.member (fst x) blockedpr) then c + 1 else c) 0 (M.toList allpr)
+                             let connPeers =
+                                     L.foldl'
+                                         (\c x ->
+                                              if bpConnected (snd x) && not (M.member (fst x) blockedpr)
+                                                  then c + 1
+                                                  else c)
+                                         0
+                                         (M.toList allpr)
                              if connPeers > 16
                                  then liftIO $ threadDelay (10 * 1000000)
                                  else do
                                      let toConn =
                                              case M.lookup (addrAddress y) allpr of
                                                  Just pr ->
-                                                   if bpConnected pr
-                                                     then False
-                                                     else True
+                                                     if bpConnected pr
+                                                         then False
+                                                         else True
                                                  Nothing -> True
                                          isBlacklisted =
-                                           case M.lookup (addrAddress y) blockedpr of
-                                               Just _  -> True
-                                               Nothing -> False
+                                             case M.lookup (addrAddress y) blockedpr of
+                                                 Just _ -> True
+                                                 Nothing -> False
                                      if toConn == False
                                          then do
-                                           debug lg $
-                                             msg
-                                             ("Seed peer already connected, ignoring.. " ++ show (addrAddress y))
-                                         else if isBlacklisted
-                                           then do
                                              debug lg $
-                                               msg
-                                               ("Seed peer blacklisted, ignoring.. " ++ show (addrAddress y))
-                                           else do
-                                             rl <- liftIO $ newMVar True
-                                             wl <- liftIO $ newMVar True
-                                             ss <- liftIO $ newTVarIO Nothing
-                                             imc <- liftIO $ newTVarIO 0
-                                             rc <- liftIO $ newTVarIO Nothing
-                                             st <- liftIO $ newTVarIO Nothing
-                                             fw <- liftIO $ newTVarIO 0
-                                             res <- LE.try $ liftIO $ createSocket y
-                                             ms <- liftIO $ MS.new 80
-                                             case res of
-                                               Right (sock) -> do
-                                                 case sock of
-                                                   Just sx -> do
-                                                     fl <- doVersionHandshake net sx $ addrAddress y
-                                                     let bp =
-                                                              BitcoinPeer
-                                                                (addrAddress y)
-                                                                sock
-                                                                rl
-                                                                wl
-                                                                fl
-                                                                Nothing
-                                                                99999
-                                                                Nothing
-                                                                ss
-                                                                imc
-                                                                rc
-                                                                st
-                                                                fw
-                                                                ms
-                                                     liftIO $
-                                                       atomically $
-                                                         modifyTVar'
-                                                           (bitcoinPeers bp2pEnv)
-                                                           (M.insert (addrAddress y) bp)
-                                                     handleIncomingMessages bp
-                                                   Nothing -> return ()
-                                               Left (SocketConnectException addr) ->
-                                                 err lg $ msg ("SocketConnectException: " ++ show addr))
+                                                 msg
+                                                     ("Seed peer already connected, ignoring.. " ++ show (addrAddress y))
+                                         else if isBlacklisted
+                                                  then do
+                                                      debug lg $
+                                                          msg
+                                                              ("Seed peer blacklisted, ignoring.. " ++
+                                                               show (addrAddress y))
+                                                  else do
+                                                      rl <- liftIO $ newMVar True
+                                                      wl <- liftIO $ newMVar True
+                                                      ss <- liftIO $ newTVarIO Nothing
+                                                      imc <- liftIO $ newTVarIO 0
+                                                      rc <- liftIO $ newTVarIO Nothing
+                                                      st <- liftIO $ newTVarIO Nothing
+                                                      fw <- liftIO $ newTVarIO 0
+                                                      res <- LE.try $ liftIO $ createSocket y
+                                                      ms <- liftIO $ MS.new 80
+                                                      case res of
+                                                          Right (sock) -> do
+                                                              case sock of
+                                                                  Just sx -> do
+                                                                      fl <- doVersionHandshake net sx $ addrAddress y
+                                                                      let bp =
+                                                                              BitcoinPeer
+                                                                                  (addrAddress y)
+                                                                                  sock
+                                                                                  rl
+                                                                                  wl
+                                                                                  fl
+                                                                                  Nothing
+                                                                                  99999
+                                                                                  Nothing
+                                                                                  ss
+                                                                                  imc
+                                                                                  rc
+                                                                                  st
+                                                                                  fw
+                                                                                  ms
+                                                                      liftIO $
+                                                                          atomically $
+                                                                          modifyTVar'
+                                                                              (bitcoinPeers bp2pEnv)
+                                                                              (M.insert (addrAddress y) bp)
+                                                                      handleIncomingMessages bp
+                                                                  Nothing -> return ()
+                                                          Left (SocketConnectException addr) ->
+                                                              err lg $ msg ("SocketConnectException: " ++ show addr))
                          (\_ -> do
                               liftIO $ readMVar $ fst $ peerReset bp2pEnv
                               return ()))
@@ -236,7 +244,7 @@ resetPeers = do
              debug lg $ msg ("Terminating peer connection " ++ show pr)
              case bpSocket pr of
                  Just sock -> liftIO $ Network.Socket.close $ sock
-                 Nothing   -> return ()
+                 Nothing -> return ()
              liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr)))
         (M.toList allpr)
 
@@ -248,52 +256,72 @@ setupPeerConnection saddr = do
     let net = bncNet $ bitcoinNodeConfig bp2pEnv
     blockedpr <- liftIO $ readTVarIO (blacklistedPeers bp2pEnv)
     allpr <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
-    let connPeers = L.foldl'
-                      (\c x -> if bpConnected (snd x) && not (M.member (fst x) blockedpr) then c + 1 else c)
-                      0
-                      (M.toList allpr)
+    let connPeers =
+            L.foldl'
+                (\c x ->
+                     if bpConnected (snd x) && not (M.member (fst x) blockedpr)
+                         then c + 1
+                         else c)
+                0
+                (M.toList allpr)
     if connPeers > 16
         then return Nothing
         else do
-          let toConn =
-                  case M.lookup saddr allpr of
-                      Just pr ->
-                        if bpConnected pr
-                          then False
-                          else True
-                      Nothing -> True
-              isBlacklisted = M.member saddr blockedpr
-          if toConn == False
-            then do
-              debug lg $ msg ("Peer already connected, ignoring.. " ++ show saddr)
-              return Nothing
-            else if isBlacklisted
-              then do
-                debug lg $ msg ("Peer blacklisted, ignoring.. " ++ show saddr)
-                return Nothing
-              else do
-                res <- LE.try $ liftIO $ createSocketFromSockAddr saddr
-                case res of
-                  Right (sock) -> do
-                    rl <- liftIO $ newMVar True
-                    wl <- liftIO $ newMVar True
-                    ss <- liftIO $ newTVarIO Nothing
-                    imc <- liftIO $ newTVarIO 0
-                    rc <- liftIO $ newTVarIO Nothing
-                    st <- liftIO $ newTVarIO Nothing
-                    fw <- liftIO $ newTVarIO 0
-                    ms <- liftIO $ MS.new 80
-                    case sock of
-                        Just sx -> do
-                            debug lg $ LG.msg ("Discovered Net-Address: " ++ (show $ saddr))
-                            fl <- doVersionHandshake net sx $ saddr
-                            let bp = BitcoinPeer (saddr) sock rl wl fl Nothing 99999 Nothing ss imc rc st fw ms
-                            liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.insert (saddr) bp)
-                            return $ Just bp
-                        Nothing -> return (Nothing)
-                  Left (SocketConnectException addr) -> do
-                    err lg $ msg ("SocketConnectException: " ++ show addr)
+            let toConn =
+                    case M.lookup saddr allpr of
+                        Just pr ->
+                            if bpConnected pr
+                                then False
+                                else True
+                        Nothing -> True
+                isBlacklisted = M.member saddr blockedpr
+            if toConn == False
+                then do
+                    debug lg $ msg ("Peer already connected, ignoring.. " ++ show saddr)
                     return Nothing
+                else if isBlacklisted
+                         then do
+                             debug lg $ msg ("Peer blacklisted, ignoring.. " ++ show saddr)
+                             return Nothing
+                         else do
+                             res <- LE.try $ liftIO $ createSocketFromSockAddr saddr
+                             case res of
+                                 Right (sock) -> do
+                                     rl <- liftIO $ newMVar True
+                                     wl <- liftIO $ newMVar True
+                                     ss <- liftIO $ newTVarIO Nothing
+                                     imc <- liftIO $ newTVarIO 0
+                                     rc <- liftIO $ newTVarIO Nothing
+                                     st <- liftIO $ newTVarIO Nothing
+                                     fw <- liftIO $ newTVarIO 0
+                                     ms <- liftIO $ MS.new 80
+                                     case sock of
+                                         Just sx -> do
+                                             debug lg $ LG.msg ("Discovered Net-Address: " ++ (show $ saddr))
+                                             fl <- doVersionHandshake net sx $ saddr
+                                             let bp =
+                                                     BitcoinPeer
+                                                         (saddr)
+                                                         sock
+                                                         rl
+                                                         wl
+                                                         fl
+                                                         Nothing
+                                                         99999
+                                                         Nothing
+                                                         ss
+                                                         imc
+                                                         rc
+                                                         st
+                                                         fw
+                                                         ms
+                                             liftIO $
+                                                 atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.insert (saddr) bp)
+                                             return $ Just bp
+                                         Nothing -> return (Nothing)
+                                 Left (SocketConnectException addr) -> do
+                                     err lg $ msg ("SocketConnectException: " ++ show addr)
+                                     return Nothing
 
 -- Helper Functions
 recvAll :: (MonadIO m) => Socket -> Int -> m B.ByteString
@@ -315,23 +343,25 @@ hashPair :: Hash256 -> Hash256 -> Hash256
 hashPair a b = doubleSHA256 $ encode a `B.append` encode b
 
 pushHash :: HashCompute -> Hash256 -> Maybe Hash256 -> Maybe Hash256 -> Int8 -> Int8 -> Bool -> HashCompute
-pushHash (stateMap, res) nhash left right ht !ind final =
+pushHash (stateMap, res) nhash left right ht ind final =
     case node prev of
         Just pv ->
-            pushHash
-                ( (M.insert ind emptyMerkleNode stateMap)
-                , (insertSpecial
-                       (Just pv)
-                       (left)
-                       (right)
-                       True
-                       (insertSpecial (Just nhash) (leftChild prev) (rightChild prev) False res)))
-                (hashPair pv nhash)
-                (Just pv)
-                (Just nhash)
-                ht
-                (ind + 1)
-                final
+            if ht == ind
+                then throw MerkleTreeInvalidException -- Fatal error, can only happen in case of invalid leaf nodes
+                else pushHash
+                         ( (M.insert ind emptyMerkleNode stateMap)
+                         , (insertSpecial
+                                (Just pv)
+                                (left)
+                                (right)
+                                True
+                                (insertSpecial (Just nhash) (leftChild prev) (rightChild prev) False res)))
+                         (hashPair pv nhash)
+                         (Just pv)
+                         (Just nhash)
+                         ht
+                         (ind + 1)
+                         final
         Nothing ->
             if ht == ind
                 then (updateState, (insertSpecial (Just nhash) left right True res))
@@ -350,23 +380,21 @@ pushHash (stateMap, res) nhash left right ht !ind final =
     updateState = M.insert ind (MerkleNode (Just nhash) left right True) stateMap
     prev =
         case M.lookupIndex (fromIntegral ind) stateMap of
-            Just i  -> snd $ M.elemAt i stateMap
+            Just i -> snd $ M.elemAt i stateMap
             Nothing -> emptyMerkleNode
 
 updateMerkleSubTrees ::
-       (HasDatabaseHandles m, MonadBaseControl IO m, HasLogger m, MonadIO m)
-    => HashCompute
+       DatabaseHandles
+    -> HashCompute
     -> Hash256
     -> Maybe Hash256
     -> Maybe Hash256
     -> Int8
     -> Int8
     -> Bool
-    -> m (HashCompute)
-updateMerkleSubTrees hashMap newhash left right ht ind final = do
-    dbe <- getDB
-    lg <- getLogger
-    let (state, res) = pushHash hashMap newhash left right ht ind final
+    -> IO (HashCompute)
+updateMerkleSubTrees dbe hashComp newhash left right ht ind final = do
+    let (state, res) = pushHash hashComp newhash left right ht ind final
     if not $ L.null res
         then do
             let (create, match) =
@@ -387,11 +415,9 @@ updateMerkleSubTrees hashMap newhash left right ht ind final = do
                                  then GT
                                  else LT)
                         match
-            -- debug lg $ msg $ show create ++ show finMatch
             if L.length create == 1 && L.null finMatch
                 then return (state, [])
                 else do
-                    debug lg $ msg ("about to insertMerkleSubTree" ++ show newhash)
                     ores <-
                         LA.race
                             (liftIO $
@@ -399,28 +425,23 @@ updateMerkleSubTrees hashMap newhash left right ht ind final = do
                             (liftIO $ threadDelay (30 * 1000000))
                     case ores of
                         Right () -> do
-                            debug lg $ msg (" ########## INSERT TIMEOUT ########### " ++ show newhash)
-                            throw MerkleSubTreeDBInsertException
+                            throw DBInsertTimeOutException
                         Left res -> do
                             case res of
                                 Right rt -> do
                                     case rt of
                                         Just r -> do
-                                            debug lg $ msg ("insert success " ++ show newhash)
                                             return (state, [])
                                         Nothing -> do
-                                            err lg $ msg ("Unable to fetch resource from pool" ++ show newhash)
-                                            throw MerkleSubTreeDBInsertException
+                                            liftIO $ threadDelay (1000000 * 2) -- time to recover
+                                            throw ResourcePoolFetchException
                                 Left (e :: SomeException) -> do
                                     if T.isInfixOf (T.pack "ConstraintValidationFailed") (T.pack $ show e)
+                                            -- not considered an error, could be a previously aborted block being reprocessed.
                                         then do
-                                            debug lg $
-                                                msg
-                                                    ("Ignoring ConstraintValidationFailed, prev aborted block sync?" ++
-                                                     show newhash)
                                             return (state, [])
                                         else do
-                                            err lg $ msg $ show e
+                                            liftIO $ threadDelay (1000000 * 2) -- time to recover
                                             throw MerkleSubTreeDBInsertException
         else return (state, res)
         -- else block --
@@ -469,22 +490,39 @@ merkleTreeBuilder ::
 merkleTreeBuilder tque blockHash treeHt = do
     p2pEnv <- getBitcoinP2P
     lg <- getLogger
+    dbe <- getDB
     continue <- liftIO $ newIORef True
     tv <- liftIO $ atomically $ newTVar (M.empty, [])
     whileM_ (liftIO $ readIORef continue) $ do
-        val <- liftIO $ atomically $ readTVar tv
-        (txh, isLast) <- liftIO $ atomically $ readTQueue tque
-        res <- LE.try $ updateMerkleSubTrees (val) (getTxHash txh) Nothing Nothing (treeHt) (0) (isLast)
-        case res of
-            Left (e :: SomeException) -> do
-                err lg $ LG.msg ("[ERROR] ######### updateMerkleSubTrees ######### " ++ show e)
-                throw e
-            Right (hc) -> do
-                liftIO $ atomically $ writeTVar tv hc
-                --debug lg $ msg ("updateMerkleSubTrees returned " ++ (show $ txh))
-        when isLast $ do
-             liftIO $ writeIORef continue False
-             liftIO $ atomically $ modifyTVar' (merkleQueueMap p2pEnv) (M.delete blockHash)
+        hcstate <- liftIO $ readTVarIO tv
+        ores <- LA.race (liftIO $ threadDelay (1000000 * 60)) (liftIO $ atomically $ readTQueue tque)
+        case ores of
+            Left ()
+                    -- likely the peer conn terminated, just end this thread
+                    -- do NOT delete queue as another peer connection could have establised meanwhile
+             -> do
+                liftIO $ writeIORef continue False
+            Right (txh, isLast) -> do
+                res <-
+                    liftIO $
+                    try $
+                    liftIO $
+                    EX.retry 5 $ updateMerkleSubTrees dbe hcstate (getTxHash txh) Nothing Nothing treeHt 0 isLast
+                case res of
+                    Left (e :: SomeException) -> do
+                        err lg $
+                            LG.msg
+                                ("[ERROR] Quitting Transpose Merkle Tree building for block. FATAL Bug! " ++
+                                 show e ++ show (getTxHash txh) ++ " last:" ++ show isLast)
+                        liftIO $ writeIORef continue False
+                        -- do NOT delete queue here, merely end this thread
+                        throw e
+                    Right (hcs) -> do
+                        liftIO $ atomically $ writeTVar tv hcs
+                        --debug lg $ msg ("updateMerkleSubTrees returned " ++ (show $ txh) ++ show)
+                when isLast $ do
+                    liftIO $ writeIORef continue False
+                    liftIO $ atomically $ modifyTVar' (merkleQueueMap p2pEnv) (M.delete blockHash)
 
 readNextMessage ::
        (HasBitcoinP2P m, HasLogger m, HasDatabaseHandles m, MonadBaseControl IO m, MonadIO m)
@@ -506,9 +544,8 @@ readNextMessage net sock ingss = do
                     qe <-
                         case (issBlockInfo iss) of
                             Just bf ->
-                                case M.lookup (biBlockHash $ bf) mqm of
-                                    Just q -> return q
-                                    Nothing -> do
+                                if (binTxProcessed blin == 0) -- very first Tx
+                                    then do
                                         qq <- liftIO $ atomically $ newTQueue
                                         liftIO $
                                             atomically $
@@ -519,25 +556,12 @@ readNextMessage net sock ingss = do
                                                 (biBlockHash $ bf)
                                                 (computeTreeHeight $ binTxTotalCount blin)
                                         return qq
+                                    else case M.lookup (biBlockHash $ bf) mqm of
+                                             Just q -> return q
+                                             Nothing -> throw MerkleQueueNotFoundException
                             Nothing -> undefined
                     let isLast = ((binTxTotalCount blin) == (1 + binTxProcessed blin))
                     liftIO $ atomically $ writeTQueue qe ((txHash t), isLast)
-                    -- res <-
-                    --     LE.try $
-                    --     updateMerkleSubTrees
-                    --         (merklePrevNodesMap iss)
-                    --         (getTxHash $ txHash t)
-                    --         Nothing
-                    --         Nothing
-                    --         (merkleTreeHeight iss)
-                    --         (merkleTreeCurIndex iss)
-                    --         ((binTxTotalCount blin) == (1 + binTxProcessed blin))
-                    -- case res of
-                    --     Left (e :: SomeException) -> do
-                    --         err lg $ LG.msg ("[ERROR] ######### updateMerkleSubTrees ######### " ++ show e)
-                    --         throw e
-                    --     Right (nst) -> do
-                    --         debug lg $ msg ("updateMerkleSubTrees returned " ++ (show $ txHash t))
                     let bio =
                             BlockIngestState
                                 { binUnspentBytes = unused
@@ -665,10 +689,11 @@ messageHandler peer (mm, ingss) continue = do
                             err lg $ LG.msg $ (val "[ERROR] Closing peer connection, Checkpoint verification failed")
                             case (bpSocket peer) of
                                 Just sock -> liftIO $ Network.Socket.close sock
-                                Nothing   -> return ()
-                            liftIO $ atomically $ do
-                                modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress peer))
-                                modifyTVar' (blacklistedPeers bp2pEnv) (M.insert (bpAddress peer) peer)
+                                Nothing -> return ()
+                            liftIO $
+                                atomically $ do
+                                    modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress peer))
+                                    modifyTVar' (blacklistedPeers bp2pEnv) (M.insert (bpAddress peer) peer)
                             liftIO $ writeIORef continue False
                         Left KeyValueDBInsertException -> do
                             err lg $ LG.msg $ LG.val ("[ERROR] Insert failed. KeyValueDBInsertException")
@@ -697,7 +722,7 @@ messageHandler peer (mm, ingss) continue = do
                              LA.async $
                                  LA.withAsync
                                      (case bp of
-                                          Just p  -> handleIncomingMessages p
+                                          Just p -> handleIncomingMessages p
                                           Nothing -> return ())
                                      (\_ -> do
                                           liftIO $ readMVar $ fst $ peerReset bp2pEnv
@@ -809,21 +834,24 @@ readNextMessage' peer = do
                                     if binTxTotalCount ingst == binTxProcessed ingst
                                             -- debug lg $ LG.msg $ ("DEBUG Block receive complete - " ++ show " ")
                                         then do
-                                            liftIO $ atomically $ do
-                                                writeTVar (bpIngressState peer) $ Nothing -- reset state
-                                                modifyTVar'
-                                                    (blockSyncStatusMap bp2pEnv)
-                                                    (M.insert (biBlockHash bi) $
-                                                     (BlockReceiveComplete, biBlockHeight bi) -- mark block received
-                                                     )
+                                            liftIO $
+                                                atomically $ do
+                                                    writeTVar (bpIngressState peer) $ Nothing -- reset state
+                                                    modifyTVar'
+                                                        (blockSyncStatusMap bp2pEnv)
+                                                        (M.insert (biBlockHash bi) $
+                                                         (BlockReceiveComplete, biBlockHeight bi) -- mark block received
+                                                         )
                                         else do
-                                            liftIO $ atomically $ do
-                                                writeTVar (bpIngressState peer) $ ingressState -- retain state
-                                                modifyTVar'
-                                                    (blockSyncStatusMap bp2pEnv)
-                                                    (M.insert (biBlockHash bi) $
-                                                     (RecentTxReceiveTime (tm, binTxProcessed ingst), biBlockHeight bi) -- track receive progress
-                                                     )
+                                            liftIO $
+                                                atomically $ do
+                                                    writeTVar (bpIngressState peer) $ ingressState -- retain state
+                                                    modifyTVar'
+                                                        (blockSyncStatusMap bp2pEnv)
+                                                        (M.insert (biBlockHash bi) $
+                                                         ( RecentTxReceiveTime (tm, binTxProcessed ingst)
+                                                         , biBlockHeight bi -- track receive progress
+                                                          ))
                                 Nothing -> throw InvalidBlockInfoException
                         otherwise -> throw UnexpectedDuringBlockProcException
                 Nothing -> return ()
@@ -895,7 +923,7 @@ handleIncomingMessages pr = do
                 err lg $ msg $ (val "[ERROR] Closing peer connection ") +++ (show e)
                 case (bpSocket pr) of
                     Just sock -> liftIO $ Network.Socket.close sock
-                    Nothing   -> return ()
+                    Nothing -> return ()
                 liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
                 liftIO $ writeIORef continue False
 

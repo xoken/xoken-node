@@ -89,6 +89,10 @@ data BlockSyncException
     | MerkleTreeComputeException
     | InvalidCreateListException
     | MerkleSubTreeDBInsertException
+    | ResourcePoolFetchException
+    | DBInsertTimeOutException
+    | MerkleTreeInvalidException
+    | MerkleQueueNotFoundException
     deriving (Show)
 
 instance Exception BlockSyncException
