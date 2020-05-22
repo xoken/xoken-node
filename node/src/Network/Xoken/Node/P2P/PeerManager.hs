@@ -12,7 +12,6 @@ module Network.Xoken.Node.P2P.PeerManager
     ( createSocket
     , setupSeedPeerConnection
     , terminateStalePeers
-    , resetPeers
     ) where
 
 import Control.Concurrent (threadDelay)
@@ -125,86 +124,79 @@ setupSeedPeerConnection =
             (\y -> do
                  debug lg $ msg ("Peer.. " ++ show (addrAddress y))
                  LA.async $
-                     LA.withAsync
-                         (do blockedpr <- liftIO $ readTVarIO (blacklistedPeers bp2pEnv)
-                             allpr <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
+                     (do blockedpr <- liftIO $ readTVarIO (blacklistedPeers bp2pEnv)
+                         allpr <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
                              -- this can be optimized
-                             let connPeers =
-                                     L.foldl'
-                                         (\c x ->
-                                              if bpConnected (snd x) && not (M.member (fst x) blockedpr)
-                                                  then c + 1
-                                                  else c)
-                                         0
-                                         (M.toList allpr)
-                             if connPeers > 16
-                                 then liftIO $ threadDelay (10 * 1000000)
-                                 else do
-                                     let toConn =
-                                             case M.lookup (addrAddress y) allpr of
-                                                 Just pr ->
-                                                     if bpConnected pr
-                                                         then False
-                                                         else True
-                                                 Nothing -> True
-                                         isBlacklisted =
-                                             case M.lookup (addrAddress y) blockedpr of
-                                                 Just _ -> True
-                                                 Nothing -> False
-                                     if toConn == False
-                                         then do
-                                             debug lg $
-                                                 msg
-                                                     ("Seed peer already connected, ignoring.. " ++ show (addrAddress y))
-                                         else if isBlacklisted
-                                                  then do
-                                                      debug lg $
-                                                          msg
-                                                              ("Seed peer blacklisted, ignoring.. " ++
-                                                               show (addrAddress y))
-                                                  else do
-                                                      rl <- liftIO $ newMVar True
-                                                      wl <- liftIO $ newMVar True
-                                                      ss <- liftIO $ newTVarIO Nothing
-                                                      imc <- liftIO $ newTVarIO 0
-                                                      rc <- liftIO $ newTVarIO Nothing
-                                                      st <- liftIO $ newTVarIO Nothing
-                                                      fw <- liftIO $ newTVarIO 0
-                                                      res <- LE.try $ liftIO $ createSocket y
-                                                      ms <- liftIO $ MS.new 80
-                                                      case res of
-                                                          Right (sock) -> do
-                                                              case sock of
-                                                                  Just sx -> do
-                                                                      fl <- doVersionHandshake net sx $ addrAddress y
-                                                                      let bp =
-                                                                              BitcoinPeer
-                                                                                  (addrAddress y)
-                                                                                  sock
-                                                                                  rl
-                                                                                  wl
-                                                                                  fl
-                                                                                  Nothing
-                                                                                  99999
-                                                                                  Nothing
-                                                                                  ss
-                                                                                  imc
-                                                                                  rc
-                                                                                  st
-                                                                                  fw
-                                                                                  ms
-                                                                      liftIO $
-                                                                          atomically $
-                                                                          modifyTVar'
-                                                                              (bitcoinPeers bp2pEnv)
-                                                                              (M.insert (addrAddress y) bp)
-                                                                      handleIncomingMessages bp
-                                                                  Nothing -> return ()
-                                                          Left (SocketConnectException addr) ->
-                                                              err lg $ msg ("SocketConnectException: " ++ show addr))
-                         (\_ -> do
-                              liftIO $ readMVar $ fst $ peerReset bp2pEnv
-                              return ()))
+                         let connPeers =
+                                 L.foldl'
+                                     (\c x ->
+                                          if bpConnected (snd x) && not (M.member (fst x) blockedpr)
+                                              then c + 1
+                                              else c)
+                                     0
+                                     (M.toList allpr)
+                         if connPeers > 16
+                             then liftIO $ threadDelay (10 * 1000000)
+                             else do
+                                 let toConn =
+                                         case M.lookup (addrAddress y) allpr of
+                                             Just pr ->
+                                                 if bpConnected pr
+                                                     then False
+                                                     else True
+                                             Nothing -> True
+                                     isBlacklisted =
+                                         case M.lookup (addrAddress y) blockedpr of
+                                             Just _ -> True
+                                             Nothing -> False
+                                 if toConn == False
+                                     then do
+                                         debug lg $
+                                             msg ("Seed peer already connected, ignoring.. " ++ show (addrAddress y))
+                                     else if isBlacklisted
+                                              then do
+                                                  debug lg $
+                                                      msg ("Seed peer blacklisted, ignoring.. " ++ show (addrAddress y))
+                                              else do
+                                                  rl <- liftIO $ newMVar True
+                                                  wl <- liftIO $ newMVar True
+                                                  ss <- liftIO $ newTVarIO Nothing
+                                                  imc <- liftIO $ newTVarIO 0
+                                                  rc <- liftIO $ newTVarIO Nothing
+                                                  st <- liftIO $ newTVarIO Nothing
+                                                  fw <- liftIO $ newTVarIO 0
+                                                  res <- LE.try $ liftIO $ createSocket y
+                                                  ms <- liftIO $ MS.new 80
+                                                  case res of
+                                                      Right (sock) -> do
+                                                          case sock of
+                                                              Just sx -> do
+                                                                  fl <- doVersionHandshake net sx $ addrAddress y
+                                                                  let bp =
+                                                                          BitcoinPeer
+                                                                              (addrAddress y)
+                                                                              sock
+                                                                              rl
+                                                                              wl
+                                                                              fl
+                                                                              Nothing
+                                                                              99999
+                                                                              Nothing
+                                                                              ss
+                                                                              imc
+                                                                              rc
+                                                                              st
+                                                                              fw
+                                                                              ms
+                                                                  liftIO $
+                                                                      atomically $
+                                                                      modifyTVar'
+                                                                          (bitcoinPeers bp2pEnv)
+                                                                          (M.insert (addrAddress y) bp)
+                                                                  handleIncomingMessages bp
+                                                              Nothing -> return ()
+                                                      Left (SocketConnectException addr) ->
+                                                          err lg $ msg ("SocketConnectException: " ++ show addr)))
             (addrs)
         liftIO $ threadDelay (30 * 1000000)
 
@@ -231,24 +223,6 @@ terminateStalePeers =
                          debug lg $ msg ("Peer is active, remain connected. " ++ show pr))
             (M.toList allpr)
 
---
-resetPeers :: (HasXokenNodeEnv env m, MonadIO m) => m ()
-resetPeers = do
-    bp2pEnv <- getBitcoinP2P
-    lg <- getLogger
-    liftIO $ readMVar $ fst $ peerReset bp2pEnv -- will be blocked until 'n' GetData cache batches are complete
-    allpr <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
-    debug lg $ msg $ val (" ### Resetting peers ### ")
-    mapM_
-        (\(_, pr) -> do
-             debug lg $ msg ("Terminating peer connection " ++ show pr)
-             case bpSocket pr of
-                 Just sock -> liftIO $ Network.Socket.close $ sock
-                 Nothing -> return ()
-             liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr)))
-        (M.toList allpr)
-
---
 setupPeerConnection :: (HasXokenNodeEnv env m, MonadIO m) => SockAddr -> m (Maybe BitcoinPeer)
 setupPeerConnection saddr = do
     bp2pEnv <- getBitcoinP2P
@@ -727,13 +701,9 @@ messageHandler peer (mm, ingss) continue = do
                         (\(t, x) -> do
                              bp <- setupPeerConnection $ naAddress x
                              LA.async $
-                                 LA.withAsync
-                                     (case bp of
-                                          Just p -> handleIncomingMessages p
-                                          Nothing -> return ())
-                                     (\_ -> do
-                                          liftIO $ readMVar $ fst $ peerReset bp2pEnv
-                                          return ()))
+                                 (case bp of
+                                      Just p -> handleIncomingMessages p
+                                      Nothing -> return ()))
                         (addrList addrs)
                     return $ msgType msg
                 MConfTx tx -> do
@@ -866,44 +836,6 @@ readNextMessage' peer = do
             return (msg, ingressState)
         Nothing -> throw PeerSocketNotConnectedException
 
--- handleIncomingMessages :: (HasXokenNodeEnv env m, MonadIO m) => BitcoinPeer -> m ()
--- handleIncomingMessages pr = do
---     lg <- getLogger
---     debug lg $ msg $ "handling messages from: " ++ show (bpAddress pr)
---     continue <- liftIO $ newIORef True
---     whileM_ (liftIO $ readIORef continue) $ do
---         bp2pEnv <- getBitcoinP2P -- TODO: move it out?
---         res <- LE.try $ readNextMessage' pr
---         case res of
---             Right ((msg, state)) -> do
---                 let sema =
---                         case msgType $ fromJust msg of
---                             MCConfTx ->
---                                 case state of
---                                     Just st -> bpTxConcurrency pr !! ((binTxProcessed $ issBlockIngest st) `mod` 4)
---                                     Nothing -> bpTxConcurrency pr !! 0
---                             otherwise -> (bpTxConcurrency pr !! 0)
---                 debug lg $ LG.msg $ (val " before waitTSem.. ")
---                 liftIO $ atomically $ waitTSem sema
---                 debug lg $ LG.msg $ (val " thru waitTSem.. ")
---                 res <- LE.try $ messageHandler pr (msg, state)
---                 case res of
---                     Right (msgCmd) -> do
---                         liftIO $ atomically $ signalTSem sema
---                         debug lg $ LG.msg $ (val " releasing waitTSem.. 1")
---                         logMessage pr msgCmd
---                     Left (e :: SomeException) -> do
---                         err lg $ LG.msg $ (val "[ERROR] @ messageHandler ") +++ (show e)
---                         liftIO $ atomically $ signalTSem sema
---                         debug lg $ LG.msg $ (val " releasing waitTSem.. 2")
---             Left (e :: SomeException) -> do
---                 err lg $ LG.msg $ (val "[ERROR] Closing peer connection ") +++ (show e)
---                 case (bpSocket pr) of
---                     Just sock -> liftIO $ Network.Socket.close sock
---                     Nothing -> return ()
---                 liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
---                 liftIO $ writeIORef continue False
---
 handleIncomingMessages :: (HasXokenNodeEnv env m, MonadIO m) => BitcoinPeer -> m ()
 handleIncomingMessages pr = do
     bp2pEnv <- getBitcoinP2P
@@ -933,10 +865,10 @@ handleIncomingMessages pr = do
                 liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
                 liftIO $ writeIORef continue False
 
---
 logMessage :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BitcoinPeer -> MessageCommand -> m ()
-logMessage peer mg = do
-    lg <- getLogger
-    liftIO $ atomically $ modifyTVar' (bpIngressMsgCount peer) (\z -> z + 1)
-    debug lg $ LG.msg $ "processed: " ++ show mg
+logMessage peer mg
+    -- lg <- getLogger
+    -- liftIO $ atomically $ modifyTVar' (bpIngressMsgCount peer) (\z -> z + 1)
+    -- debug lg $ LG.msg $ "processed: " ++ show mg
+ = do
     return ()

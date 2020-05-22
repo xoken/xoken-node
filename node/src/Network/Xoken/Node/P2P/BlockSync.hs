@@ -141,7 +141,7 @@ runEgressBlockSync =
         allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
         blockedPeers <- liftIO $ readTVarIO (blacklistedPeers bp2pEnv)
         let connPeers = L.filter (\x -> bpConnected (snd x) && not (M.member (fst x) blockedPeers)) (M.toList allPeers)
-        -- debug lg $ LG.msg $ ("Connected peers: " ++ (show $ map (\x -> snd x) connPeers))
+        debug lg $ LG.msg $ ("Connected peers: " ++ (show $ map (\x -> snd x) connPeers))
         if L.null connPeers
             then liftIO $ threadDelay (5 * 1000000)
             else do
@@ -237,18 +237,18 @@ runPeerSync =
         if L.length connPeers < 16
             then do
                 liftIO $
-                  mapConcurrently_
-                    (\(_, pr) ->
-                         case (bpSocket pr) of
-                             Just s -> do
-                                 let em = runPut . putMessage net $ (MGetAddr)
-                                 debug lg $ LG.msg ("sending GetAddr to " ++ show pr)
-                                 res <- liftIO $ try $ sendEncMessage (bpWriteMsgLock pr) s (BSL.fromStrict em)
-                                 case res of
-                                     Right () -> liftIO $ threadDelay (120 * 1000000)
-                                     Left (e :: SomeException) -> err lg $ LG.msg ("[ERROR] runPeerSync " ++ show e)
-                             Nothing -> err lg $ LG.msg $ val "Error sending, no connections available")
-                    (connPeers)
+                    mapConcurrently_
+                        (\(_, pr) ->
+                             case (bpSocket pr) of
+                                 Just s -> do
+                                     let em = runPut . putMessage net $ (MGetAddr)
+                                     debug lg $ LG.msg ("sending GetAddr to " ++ show pr)
+                                     res <- liftIO $ try $ sendEncMessage (bpWriteMsgLock pr) s (BSL.fromStrict em)
+                                     case res of
+                                         Right () -> liftIO $ threadDelay (120 * 1000000)
+                                         Left (e :: SomeException) -> err lg $ LG.msg ("[ERROR] runPeerSync " ++ show e)
+                                 Nothing -> err lg $ LG.msg $ val "Error sending, no connections available")
+                        (connPeers)
             else liftIO $ threadDelay (120 * 1000000)
 
 markBestSyncedBlock :: (HasLogger m, MonadIO m) => Text -> Int32 -> Q.ClientState -> m ()
@@ -264,6 +264,13 @@ markBestSyncedBlock hash height conn = do
             err lg $
             LG.msg ("Error: Marking [Best-Synced] blockhash failed: " ++ show e) >> throw KeyValueDBInsertException
 
+getBatchSize n
+    | n < 200000 = [1 .. 400]
+    | n >= 200000 && n < 400000 = [1 .. 200]
+    | n >= 400000 && n < 500000 = [1 .. 100]
+    | n >= 500000 && n < 600000 = [1 .. 20]
+    | otherwise = [1, 2]
+
 getNextBlockToSync :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m (Maybe BlockInfo)
 getNextBlockToSync = do
     lg <- getLogger
@@ -275,20 +282,8 @@ getNextBlockToSync = do
     -- reload cache
     if M.size sy == 0
         then do
-            liftIO $ atomically $ modifyTVar' (snd $ peerReset bp2pEnv) (\x -> x + 1)
-            v <- liftIO $ readTVarIO $ snd $ peerReset bp2pEnv
-            when (v >= 10) $ do
-                liftIO $ atomically $ modifyTVar' (snd $ peerReset bp2pEnv) (\x -> 0)
-                liftIO $ putMVar (fst $ peerReset bp2pEnv) True -- will trigger peer reset
             (hash, ht) <- fetchBestSyncedBlock conn net
-            let cacheInd =
-                    if ht < 200000
-                        then [1 .. 400]
-                        else if ht < 500000
-                                 then [1 .. 200]
-                                 else if ht < 600000
-                                          then [1 .. 20]
-                                          else [1, 2]
+            let cacheInd = getBatchSize ht
             let !bks = map (\x -> ht + x) cacheInd -- cache size of 200
             let str = "SELECT block_height, block_hash from xoken.blocks_by_height where block_height in ?"
                 qstr = str :: Q.QueryString Q.R (Identity [Int32]) ((Int32, T.Text))
