@@ -910,9 +910,8 @@ handleIncomingMessages pr = do
     lg <- getLogger
     debug lg $ msg $ "reading from: " ++ show (bpAddress pr)
     continue <- liftIO $ newIORef True
-    -- liftIO $ MS.with (bpTxSem pr) (MS.wait $ bpTxSem pr)
     whileM_ (liftIO $ readIORef continue) $ do
-        liftIO $ MS.wait (bpTxSem pr)
+        liftIO $ MS.with (bpTxSem pr) (MS.wait $ bpTxSem pr)
         res <- LE.try $ (readNextMessage' pr)
         case res of
             Right (msg, iss) -> do
