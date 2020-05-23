@@ -23,8 +23,6 @@ import qualified Data.ByteString.Short as B.Short
 import Data.Default
 import Data.Foldable
 import Data.Functor.Identity
-import Data.HashMap.Strict (HashMap)
-import qualified Data.HashMap.Strict as M
 import Data.Hashable
 import Data.Int
 import qualified Data.IntMap as I

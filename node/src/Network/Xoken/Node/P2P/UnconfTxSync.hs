@@ -206,7 +206,7 @@ processUnconfTransaction tx = do
     debug lg $ LG.msg ("processing Unconfirmed Transaction: " ++ show (txHash tx))
     res <- liftIO $ try $ Q.runClient conn (Q.write (qstr) par)
     case res of
-        Right () -> liftIO $ H.insert (unconfirmedTxCache bp2pEnv) (getTxShortHash $ txHash tx) (False, txHash tx)
+        Right () -> liftIO $ H.insert (unconfirmedTxCache bp2pEnv) (getTxShortHash $ txHash tx) (True, txHash tx)
         Left (e :: SomeException) -> do
             liftIO $ err lg $ LG.msg ("Error: INSERTing into 'xoken.ep_transactions': " ++ show e)
             throw KeyValueDBInsertException

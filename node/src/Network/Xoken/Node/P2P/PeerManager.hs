@@ -692,7 +692,10 @@ messageHandler peer (mm, ingss) continue = do
                                      liftIO $ putMVar (bestBlockUpdated bp2pEnv) True -- will trigger a GetHeaders to peers
                                  else if (invType x == InvTx)
                                           then do
-                                              debug lg $ LG.msg ("INV - new Tx: " ++ (show $ invHash x)) -- processTxGetData peer $ invHash x
+                                              debug lg $ LG.msg ("INV - new Tx: " ++ (show $ invHash x))
+                                              if indexUnconfirmedTx bp2pEnv == True
+                                                  then processTxGetData peer $ invHash x
+                                                  else return ()
                                           else return ())
                         (invList inv)
                     return $ msgType msg
