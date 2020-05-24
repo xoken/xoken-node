@@ -17,6 +17,7 @@ module Network.Xoken.Node.P2P.UnconfTxSync
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (mapConcurrently, race_)
 import Control.Concurrent.Async.Lifted as LA (async)
+import Control.Concurrent.Event as EV
 import Control.Concurrent.MVar
 import Control.Concurrent.QSem
 import Control.Concurrent.STM.TVar
@@ -246,14 +247,7 @@ processUnconfTransaction tx = do
                                  res <-
                                      liftIO $
                                      try $
-                                     liftIO $
-                                     EX.retryBool
-                                         (\e ->
-                                              case e of
-                                                  TxIDNotFoundRetryException -> True
-                                                  otherwise -> False)
-                                         15
-                                         (sourceAddressFromOutpoint conn lg net $ prevOutput b)
+                                     (sourceAddressFromOutpoint conn (txSynchronizer bp2pEnv) lg net $ prevOutput b)
                                  case res of
                                      Right (ma) -> do
                                          case (ma) of
@@ -265,9 +259,9 @@ processUnconfTransaction tx = do
                                                  liftIO $
                                                      err lg $ LG.msg $ val "Error: OutpointAddressNotFoundException "
                                                  return Nothing
-                                             -- throw OutpointAddressNotFoundException
-                                     Left TxIDNotFoundRetryException -- ignore if ample time elapsed
+                                     Left TxIDNotFoundException -- report and ignore
                                       -> do
+                                         err lg $ LG.msg $ val "Error: TxIDNotFoundException"
                                          return Nothing)
             inAddrs
     mapM_
@@ -300,25 +294,31 @@ processUnconfTransaction tx = do
                           (fromIntegral $ outValue b))
                  outAddrs)
         (catMaybes lookupInAddrs)
-    return ()
+    --
+    txSyncMap <- liftIO $ readTVarIO (txSynchronizer bp2pEnv)
+    case (M.lookup (txHash tx) txSyncMap) of
+        Just ev -> liftIO $ EV.signal $ ev
+        Nothing -> return ()
 
 --
 --
-sourceAddressFromOutpoint :: Q.ClientState -> Logger -> Network -> OutPoint -> IO (Maybe Address)
-sourceAddressFromOutpoint conn lg net outPoint = do
-    res <- liftIO $ try $ getAddressFromOutpoint conn lg net outPoint
+sourceAddressFromOutpoint ::
+       Q.ClientState -> (TVar (M.Map TxHash EV.Event)) -> Logger -> Network -> OutPoint -> IO (Maybe Address)
+sourceAddressFromOutpoint conn txSync lg net outPoint = do
+    res <- liftIO $ try $ getAddressFromOutpoint conn txSync lg net outPoint
     case res of
         Right (addr) -> do
             case addr of
-                Nothing -> getEpochAddressFromOutpoint conn lg net outPoint
+                Nothing -> getEpochAddressFromOutpoint conn txSync lg net outPoint
                 Just a -> return addr
-        Left TxIDNotFoundRetryException -> do
-            getEpochAddressFromOutpoint conn lg net outPoint
+        Left TxIDNotFoundException -> do
+            getEpochAddressFromOutpoint conn txSync lg net outPoint
 
 --
 --
-getEpochAddressFromOutpoint :: Q.ClientState -> Logger -> Network -> OutPoint -> IO (Maybe Address)
-getEpochAddressFromOutpoint conn lg net outPoint = do
+getEpochAddressFromOutpoint ::
+       Q.ClientState -> (TVar (M.Map TxHash EV.Event)) -> Logger -> Network -> OutPoint -> IO (Maybe Address)
+getEpochAddressFromOutpoint conn txSync lg net outPoint = do
     let str = "SELECT tx_serialized from xoken.ep_transactions where tx_id = ?"
         qstr = str :: Q.QueryString Q.R (Identity Text) (Identity Blob)
         p = Q.defQueryParams Q.One $ Identity $ txHashToHex $ outPointHash outPoint
@@ -329,10 +329,15 @@ getEpochAddressFromOutpoint conn lg net outPoint = do
             throw e
         Right (iop) -> do
             if L.length iop == 0
-                        -- debug lg $ LG.msg ("(retry) TxID not found: " ++ (show $ txHashToHex $ outPointHash outPoint))
                 then do
-                    liftIO $ threadDelay (1000000 * 1)
-                    throw TxIDNotFoundRetryException
+                    debug lg $
+                        LG.msg ("TxID not found: (waiting for event) " ++ (show $ txHashToHex $ outPointHash outPoint))
+                    event <- EV.new
+                    liftIO $ atomically $ modifyTVar' (txSync) (M.insert (outPointHash outPoint) event)
+                    isTimeout <- waitTimeout event (1000000 * 300)
+                    if isTimeout
+                        then throw TxIDNotFoundException
+                        else getEpochAddressFromOutpoint conn txSync lg net outPoint -- if signalled, try querying DB again so it succeeds
                 else do
                     let txbyt = runIdentity $ iop !! 0
                     case runGetLazy (getConfirmedTx) (fromBlob txbyt) of

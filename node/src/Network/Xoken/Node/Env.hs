@@ -9,8 +9,8 @@ module Network.Xoken.Node.Env where
 
 import Arivi.P2P.P2PEnv as PE hiding (option)
 import Codec.Serialise
+import Control.Concurrent.Event
 import Control.Concurrent.MVar
-
 import Control.Concurrent.STM.TQueue
 import Control.Concurrent.STM.TVar
 import Control.Monad.Catch
@@ -71,6 +71,7 @@ data BitcoinP2P =
         , indexUnconfirmedTx :: !Bool
         , peerReset :: !(MVar Bool, TVar Int)
         , merkleQueueMap :: !(TVar (M.Map BlockHash (TQueue (TxHash, Bool))))
+        , txSynchronizer :: !(TVar (M.Map TxHash Event))
         }
 
 class HasBitcoinP2P m where

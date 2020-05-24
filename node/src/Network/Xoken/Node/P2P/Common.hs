@@ -82,8 +82,7 @@ data BlockSyncException
     | InvalidBlockInfoException
     | OutpointAddressNotFoundException
     | InvalidAddressException
-    | TxIDNotFoundFinalException
-    | TxIDNotFoundRetryException
+    | TxIDNotFoundException
     | InvalidOutpointException
     | DBTxParseException
     | MerkleTreeComputeException
