@@ -27,6 +27,7 @@ import Arivi.P2P.ServiceRegistry
 import Control.Arrow
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async.Lifted (async, wait, withAsync)
+import Control.Concurrent.Event as EV
 import Control.Concurrent.MVar
 import Control.Concurrent.QSem
 import Control.Concurrent.STM.TVar
@@ -153,6 +154,8 @@ data ConfigException
 
 instance Exception ConfigException
 
+type HashTable k v = H.BasicHashTable k v
+
 defaultConfig :: FilePath -> IO ()
 defaultConfig path = do
     (sk, _) <- ACUPS.generateKeyPair
@@ -248,7 +251,6 @@ main = do
     unless b (defaultConfig path)
     cnf <- Config.readConfig (path <> "/arivi-config.yaml")
     nodeCnf <- NC.readConfig (path <> "/node-config.yaml")
-    print (show nodeCnf)
     let nodeConfig =
             BitcoinNodeConfig
                 5 -- maximum connected peers allowed
@@ -267,5 +269,6 @@ main = do
     rpf <- newEmptyMVar
     rpc <- newTVarIO 0
     mq <- newTVarIO M.empty
-    let bp2p = BitcoinP2P nodeConfig g bp mv hl st ep tc (NC.indexUnconfirmedTx nodeCnf) (rpf, rpc) mq
+    ts <- newTVarIO M.empty
+    let bp2p = BitcoinP2P nodeConfig g bp mv hl st ep tc (NC.indexUnconfirmedTx nodeCnf) (rpf, rpc) mq ts
     runNode cnf nodeCnf conn bp2p

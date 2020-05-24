@@ -108,6 +108,7 @@ executable xoken-nexa
     , SafeSemaphore
     , yaml
     , secp256k1-haskell
+    , concurrent-extra
   default-language: Haskell2010
 
 test-suite xoken-node-test
