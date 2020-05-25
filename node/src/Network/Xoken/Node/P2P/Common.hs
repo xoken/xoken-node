@@ -160,3 +160,12 @@ getIntVal (_, i, _, _) = i
 
 getBigIntVal :: (Maybe Bool, Maybe Int32, Maybe Int64, Maybe T.Text) -> Maybe Int64
 getBigIntVal (_, _, ts, _) = ts
+
+divide :: Int -> Int -> Float
+divide x y = (a / b)
+  where
+    a = fromIntegral x :: Float
+    b = fromIntegral y :: Float
+
+toInt :: Float -> Int
+toInt x = round x

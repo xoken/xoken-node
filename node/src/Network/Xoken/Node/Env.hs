@@ -33,6 +33,7 @@ import Network.Xoken.Transaction
 import System.Logger
 import System.Random
 import Text.Read
+import Xoken.NodeConfig
 
 type HashTable k v = H.BasicHashTable k v
 
@@ -60,7 +61,7 @@ data AllegoryEnv =
 
 data BitcoinP2P =
     BitcoinP2P
-        { bitcoinNodeConfig :: !BitcoinNodeConfig
+        { nodeConfig :: !NodeConfig
         , bitcoinPeers :: !(TVar (M.Map SockAddr BitcoinPeer))
         , blacklistedPeers :: !(TVar (M.Map SockAddr BitcoinPeer))
         , bestBlockUpdated :: !(MVar Bool)
@@ -68,7 +69,6 @@ data BitcoinP2P =
         , blockSyncStatusMap :: !(TVar (M.Map BlockHash (BlockSyncStatus, BlockHeight)))
         , epochType :: !(TVar Bool)
         , unconfirmedTxCache :: !(HashTable TxShortHash (Bool, TxHash))
-        , indexUnconfirmedTx :: !Bool
         , peerReset :: !(MVar Bool, TVar Int)
         , merkleQueueMap :: !(TVar (M.Map BlockHash (TQueue (TxHash, Bool))))
         , txSynchronizer :: !(TVar (M.Map TxHash Event))

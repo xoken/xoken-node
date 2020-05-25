@@ -30,6 +30,12 @@ data NodeConfig =
         , logFileName :: T.Text
         , indexUnconfirmedTx :: Bool
         , allegoryVendorSecretKey :: SecKey
+        , maxTxProcThreadsSystem :: Int
+        , maxTxProcThreadsPerBlock :: Int
+        , maxBitcoinPeerCount :: Int
+        , unresponsivePeerConnTimeoutSecs :: Int
+        , acivatePeerDiscovery :: Bool
+        -- , staticPeerList: []
         }
     deriving (Show, Generic)
 

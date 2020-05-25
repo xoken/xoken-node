@@ -79,22 +79,21 @@ instance Show BitcoinPeer where
     show p = (show $ bpAddress p) ++ " : " ++ (show $ bpConnected p)
 
 -- | General node configuration.
-data BitcoinNodeConfig =
-    BitcoinNodeConfig
-        { bncMaxPeers :: !Int
-      -- ^ maximum number of connected peers allowed
-        , bncPeers :: ![HostPort]
-      -- ^ static list of peers to connect to
-        , bncDiscover :: !Bool
-      -- ^ activate peer discovery
-        , bncNetAddr :: !NetworkAddress
-      -- ^ network address for the local host
-        , bncNet :: !Network
-      -- ^ network constants
-        , bncTimeout :: !Int
-      -- ^ timeout in seconds
-        }
-
+-- data BitcoinNodeConfig =
+--     BitcoinNodeConfig
+--         { bncMaxPeers :: !Int
+--       -- ^ maximum number of connected peers allowed
+--         , bncPeers :: ![HostPort]
+--       -- ^ static list of peers to connect to
+--         , bncDiscover :: !Bool
+--       -- ^ activate peer discovery
+--         , bncNetAddr :: !NetworkAddress
+--       -- ^ network address for the local host
+--         , bncNet :: !Network
+--       -- ^ network constants
+--         , bncTimeout :: !Int
+--       -- ^ timeout in seconds
+--         }
 data BlockInfo =
     BlockInfo
         { biBlockHash :: !BlockHash

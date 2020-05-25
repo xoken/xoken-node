@@ -251,14 +251,14 @@ main = do
     unless b (defaultConfig path)
     cnf <- Config.readConfig (path <> "/arivi-config.yaml")
     nodeCnf <- NC.readConfig (path <> "/node-config.yaml")
-    let nodeConfig =
-            BitcoinNodeConfig
-                5 -- maximum connected peers allowed
-                [] -- static list of peers to connect to
-                False -- activate peer discovery
-                (NetworkAddress 0 (SockAddrInet 0 0)) -- local host n/w addr
-                (bitcoinNetwork nodeCnf) -- network constants
-                60 -- timeout in seconds
+    -- let nodeConfig =
+    --         BitcoinNodeConfig
+    --             5 -- maximum connected peers allowed
+    --             [] -- static list of peers to connect to
+    --             False -- activate peer discovery
+    --             (NetworkAddress 0 (SockAddrInet 0 0)) -- local host n/w addr
+    --             (bitcoinNetwork nodeCnf) -- network constants
+    --             60 -- timeout in seconds
     g <- newTVarIO M.empty
     bp <- newTVarIO M.empty
     mv <- newMVar True
@@ -270,5 +270,5 @@ main = do
     rpc <- newTVarIO 0
     mq <- newTVarIO M.empty
     ts <- newTVarIO M.empty
-    let bp2p = BitcoinP2P nodeConfig g bp mv hl st ep tc (NC.indexUnconfirmedTx nodeCnf) (rpf, rpc) mq ts
+    let bp2p = BitcoinP2P nodeCnf g bp mv hl st ep tc (rpf, rpc) mq ts
     runNode cnf nodeCnf conn bp2p

@@ -35,11 +35,12 @@ import Text.Printf
 import UnliftIO
 import UnliftIO.Resource
 import Xoken
+import Xoken.NodeConfig
 
 globalHandlerRpc :: (HasService env m) => RPCMessage -> m (Maybe RPCMessage)
 globalHandlerRpc msg = do
     bp2pEnv <- getBitcoinP2P
-    let net = bncNet $ bitcoinNodeConfig bp2pEnv
+    let net = bitcoinNetwork $ nodeConfig bp2pEnv
     liftIO $ printf "Decoded resp: %s\n" (show msg)
     st <- goGetResource msg net
     return (Just $ st)

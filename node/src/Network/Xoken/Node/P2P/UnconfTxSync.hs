@@ -80,15 +80,16 @@ import qualified Streamly.Prelude as S
 import System.Logger as LG
 import System.Logger.Message
 import System.Random
+import Xoken.NodeConfig
 
 processTxGetData :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BitcoinPeer -> Hash256 -> m ()
 processTxGetData pr txHash = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    if indexUnconfirmedTx bp2pEnv == False
+    if False == (indexUnconfirmedTx $ nodeConfig bp2pEnv)
         then return ()
         else do
-            let net = bncNet $ bitcoinNodeConfig bp2pEnv
+            let net = bitcoinNetwork $ nodeConfig bp2pEnv
             debug lg $ LG.msg $ val "processTxGetData - called."
             bp2pEnv <- getBitcoinP2P
             tuple <- liftIO $ H.lookup (unconfirmedTxCache bp2pEnv) (getTxShortHash $ TxHash txHash)
@@ -111,7 +112,7 @@ sendTxGetData :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BitcoinPeer 
 sendTxGetData pr txHash = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    let net = bncNet $ bitcoinNodeConfig bp2pEnv
+    let net = bitcoinNetwork $ nodeConfig bp2pEnv
     let gd = GetData $ [InvVector InvTx txHash]
         msg = MGetData gd
     debug lg $ LG.msg $ "sendTxGetData: " ++ show gd
@@ -196,7 +197,7 @@ processUnconfTransaction tx = do
     bp2pEnv <- getBitcoinP2P
     epoch <- liftIO $ readTVarIO $ epochType bp2pEnv
     lg <- getLogger
-    let net = bncNet $ bitcoinNodeConfig bp2pEnv
+    let net = bitcoinNetwork $ nodeConfig bp2pEnv
     let conn = keyValDB $ dbe'
         str = "insert INTO xoken.ep_transactions ( epoch, tx_id, tx_serialized ) values (?, ?, ?)"
         qstr = str :: Q.QueryString Q.W (Bool, Text, Blob) ()
