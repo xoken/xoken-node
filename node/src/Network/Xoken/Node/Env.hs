@@ -10,8 +10,9 @@ module Network.Xoken.Node.Env where
 import Arivi.P2P.P2PEnv as PE hiding (option)
 import Codec.Serialise
 import Control.Concurrent.Event
+import Control.Concurrent.MSem
 import Control.Concurrent.MVar
-import Control.Concurrent.STM.TQueue
+import Control.Concurrent.STM.TBQueue
 import Control.Concurrent.STM.TVar
 import Control.Monad.Catch
 import Control.Monad.Reader
@@ -70,8 +71,9 @@ data BitcoinP2P =
         , epochType :: !(TVar Bool)
         , unconfirmedTxCache :: !(HashTable TxShortHash (Bool, TxHash))
         , peerReset :: !(MVar Bool, TVar Int)
-        , merkleQueueMap :: !(TVar (M.Map BlockHash (TQueue (TxHash, Bool))))
+        , merkleQueueMap :: !(TVar (M.Map BlockHash (TBQueue (TxHash, Bool))))
         , txSynchronizer :: !(TVar (M.Map TxHash Event))
+        , maxTMTBuilderThreadLock :: !(MSem Int)
         }
 
 class HasBitcoinP2P m where

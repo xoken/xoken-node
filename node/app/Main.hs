@@ -28,6 +28,7 @@ import Control.Arrow
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async.Lifted (async, wait, withAsync)
 import Control.Concurrent.Event as EV
+import Control.Concurrent.MSem as MS
 import Control.Concurrent.MVar
 import Control.Concurrent.QSem
 import Control.Concurrent.STM.TVar
@@ -270,5 +271,6 @@ main = do
     rpc <- newTVarIO 0
     mq <- newTVarIO M.empty
     ts <- newTVarIO M.empty
-    let bp2p = BitcoinP2P nodeCnf g bp mv hl st ep tc (rpf, rpc) mq ts
+    tbt <- MS.new $ maxTMTBuilderThreads nodeCnf
+    let bp2p = BitcoinP2P nodeCnf g bp mv hl st ep tc (rpf, rpc) mq ts tbt
     runNode cnf nodeCnf conn bp2p

@@ -16,11 +16,11 @@ module Network.Xoken.Node.P2P.PeerManager
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (mapConcurrently)
-import Control.Concurrent.Async.Lifted as LA (async, race, wait, waitAnyCatch, waitAnyCatchCancel, withAsync)
+import Control.Concurrent.Async.Lifted as LA (async, cancel, race, wait, waitAnyCatch, withAsync)
 import qualified Control.Concurrent.MSem as MS
 import Control.Concurrent.MVar
 import Control.Concurrent.QSem
-import Control.Concurrent.STM.TQueue
+import Control.Concurrent.STM.TBQueue
 import Control.Concurrent.STM.TSem
 import Control.Concurrent.STM.TVar
 import Control.Exception
@@ -55,6 +55,7 @@ import Data.Time.Clock.POSIX
 import Data.Word
 import qualified Database.Bolt as BT
 import qualified Database.CQL.IO as Q
+import GHC.Natural
 import Network.Socket
 import qualified Network.Socket.ByteString as SB (recv)
 import qualified Network.Socket.ByteString.Lazy as LB (recv, sendAll)
@@ -465,7 +466,7 @@ resilientRead sock blin = do
 
 merkleTreeBuilder ::
        (HasBitcoinP2P m, HasLogger m, HasDatabaseHandles m, MonadBaseControl IO m, MonadIO m)
-    => TQueue (TxHash, Bool)
+    => TBQueue (TxHash, Bool)
     -> BlockHash
     -> Int8
     -> m ()
@@ -477,13 +478,14 @@ merkleTreeBuilder tque blockHash treeHt = do
     tv <- liftIO $ atomically $ newTVar (M.empty, [])
     whileM_ (liftIO $ readIORef continue) $ do
         hcstate <- liftIO $ readTVarIO tv
-        ores <- LA.race (liftIO $ threadDelay (1000000 * 60)) (liftIO $ atomically $ readTQueue tque)
+        ores <- LA.race (liftIO $ threadDelay (1000000 * 60)) (liftIO $ atomically $ readTBQueue tque)
         case ores of
             Left ()
                     -- likely the peer conn terminated, just end this thread
                     -- do NOT delete queue as another peer connection could have establised meanwhile
              -> do
                 liftIO $ writeIORef continue False
+                liftIO $ MS.signal (maxTMTBuilderThreadLock p2pEnv)
             Right (txh, isLast) -> do
                 res <-
                     liftIO $
@@ -497,6 +499,7 @@ merkleTreeBuilder tque blockHash treeHt = do
                                 ("[ERROR] Quitting Transpose Merkle Tree building for block. FATAL Bug! " ++
                                  show e ++ show (getTxHash txh) ++ " last:" ++ show isLast)
                         liftIO $ writeIORef continue False
+                        liftIO $ MS.signal (maxTMTBuilderThreadLock p2pEnv)
                         -- do NOT delete queue here, merely end this thread
                         throw e
                     Right (hcs) -> do
@@ -505,6 +508,7 @@ merkleTreeBuilder tque blockHash treeHt = do
                 when isLast $ do
                     liftIO $ writeIORef continue False
                     liftIO $ atomically $ modifyTVar' (merkleQueueMap p2pEnv) (M.delete blockHash)
+                    liftIO $ MS.signal (maxTMTBuilderThreadLock p2pEnv)
 
 readNextMessage ::
        (HasBitcoinP2P m, HasLogger m, HasDatabaseHandles m, MonadBaseControl IO m, MonadIO m)
@@ -528,7 +532,11 @@ readNextMessage net sock ingss = do
                             Just bf ->
                                 if (binTxProcessed blin == 0) -- very first Tx
                                     then do
-                                        qq <- liftIO $ atomically $ newTQueue
+                                        qq <-
+                                            liftIO $
+                                            atomically $ newTBQueue $ intToNatural (maxTMTQueueSize $ nodeConfig p2pEnv)
+                                        -- wait for TMT threads alloc
+                                        liftIO $ MS.wait (maxTMTBuilderThreadLock p2pEnv)
                                         liftIO $
                                             atomically $
                                             modifyTVar' (merkleQueueMap p2pEnv) (M.insert (biBlockHash $ bf) qq)
@@ -543,7 +551,7 @@ readNextMessage net sock ingss = do
                                              Nothing -> throw MerkleQueueNotFoundException
                             Nothing -> throw MessageParsingException
                     let isLast = ((binTxTotalCount blin) == (1 + binTxProcessed blin))
-                    liftIO $ atomically $ writeTQueue qe ((txHash t), isLast)
+                    liftIO $ atomically $ writeTBQueue qe ((txHash t), isLast)
                     let bio =
                             BlockIngestState
                                 { binUnspentBytes = unused
@@ -885,6 +893,7 @@ handleIncomingMessages pr = do
                         case (bpSocket pr) of
                             Just sock -> liftIO $ Network.Socket.close sock
                             Nothing -> return ()
+                        mapM_ (\tt -> LA.cancel tt) (L.delete as ts) -- cancel the others to avoid indefinite MVar lockup
             Left (e :: SomeException) -> do
                 err lg $
                     LG.msg $ (val "[ERROR] Unexpected error during waitAny - Closing peer connection ") +++ (show e)
@@ -893,6 +902,7 @@ handleIncomingMessages pr = do
                 case (bpSocket pr) of
                     Just sock -> liftIO $ Network.Socket.close sock
                     Nothing -> return ()
+                mapM_ (\tt -> LA.cancel tt) (ts) -- cancel all
         return ()
 
 logMessage :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BitcoinPeer -> MessageCommand -> m ()

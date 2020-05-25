@@ -36,6 +36,8 @@ data NodeConfig =
         , unresponsivePeerConnTimeoutSecs :: Int
         , acivatePeerDiscovery :: Bool
         -- , staticPeerList: []
+        , maxTMTBuilderThreads :: Int
+        , maxTMTQueueSize :: Int
         }
     deriving (Show, Generic)
 
