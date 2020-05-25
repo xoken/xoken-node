@@ -4,7 +4,8 @@
 
 module Network.Xoken.Node.P2P.Types where
 
-import Control.Concurrent.MSem
+import Control.Concurrent.MSem as MS
+import Control.Concurrent.MSemN as MSN
 import Control.Concurrent.MVar
 import Control.Concurrent.QSem
 import Control.Concurrent.STM
@@ -71,29 +72,13 @@ data BitcoinPeer =
       -- ^ block 'GetData' sent time
         , bpBlockFetchWindow :: !(TVar Int)
       -- number of outstanding blocks
-        , bpTxSem :: !(MSem Int)
+        , bpTxSem :: !(MSemN Int)
         -- number of outstanding transactions
         }
 
 instance Show BitcoinPeer where
     show p = (show $ bpAddress p) ++ " : " ++ (show $ bpConnected p)
 
--- | General node configuration.
--- data BitcoinNodeConfig =
---     BitcoinNodeConfig
---         { bncMaxPeers :: !Int
---       -- ^ maximum number of connected peers allowed
---         , bncPeers :: ![HostPort]
---       -- ^ static list of peers to connect to
---         , bncDiscover :: !Bool
---       -- ^ activate peer discovery
---         , bncNetAddr :: !NetworkAddress
---       -- ^ network address for the local host
---         , bncNet :: !Network
---       -- ^ network constants
---         , bncTimeout :: !Int
---       -- ^ timeout in seconds
---         }
 data BlockInfo =
     BlockInfo
         { biBlockHash :: !BlockHash
@@ -119,9 +104,6 @@ data IngressStreamState =
     IngressStreamState
         { issBlockIngest :: !BlockIngestState
         , issBlockInfo :: !(Maybe BlockInfo)
-        -- , merkleTreeHeight :: !Int8
-        -- , merkleTreeCurIndex :: !Int8
-        -- , merklePrevNodesMap :: !HashCompute
         }
     deriving (Show)
 
@@ -142,7 +124,6 @@ data BlockSyncStatus
     | RecentTxReceiveTime !(UTCTime, Int)
     deriving (Eq, Ord, Show)
 
--- import Type
 -- |A pool of connections to Neo4j server
 data ServerState =
     ServerState

@@ -18,6 +18,7 @@ import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (mapConcurrently)
 import Control.Concurrent.Async.Lifted as LA (async, cancel, race, wait, waitAnyCatch, withAsync)
 import qualified Control.Concurrent.MSem as MS
+import qualified Control.Concurrent.MSemN as MSN
 import Control.Concurrent.MVar
 import Control.Concurrent.QSem
 import Control.Concurrent.STM.TBQueue
@@ -168,7 +169,7 @@ setupSeedPeerConnection =
                                                   st <- liftIO $ newTVarIO Nothing
                                                   fw <- liftIO $ newTVarIO 0
                                                   res <- LE.try $ liftIO $ createSocket y
-                                                  ms <- liftIO $ MS.new 80
+                                                  ms <- liftIO $ MSN.new $ maxTxProcThreads $ nodeConfig bp2pEnv
                                                   case res of
                                                       Right (sock) -> do
                                                           case sock of
@@ -270,7 +271,7 @@ setupPeerConnection saddr = do
                                      rc <- liftIO $ newTVarIO Nothing
                                      st <- liftIO $ newTVarIO Nothing
                                      fw <- liftIO $ newTVarIO 0
-                                     ms <- liftIO $ MS.new 80
+                                     ms <- liftIO $ MSN.new $ maxTxProcThreads $ nodeConfig bp2pEnv
                                      case sock of
                                          Just sx -> do
                                              debug lg $ LG.msg ("Discovered Net-Address: " ++ (show $ saddr))
@@ -849,16 +850,25 @@ readNextMessage' peer = do
             return (msg, ingressState)
         Nothing -> throw PeerSocketNotConnectedException
 
-procTxStream :: (HasXokenNodeEnv env m, MonadIO m) => BitcoinPeer -> m (MessageCommand)
+procTxStream :: (HasXokenNodeEnv env m, MonadIO m) => BitcoinPeer -> m ()
 procTxStream pr = do
     lg <- getLogger
+    bp2pEnv <- getBitcoinP2P
     res <- LE.try $ (readNextMessage' pr)
     case res of
         Right (msg, iss) -> do
             messageHandler pr (msg, iss)
+            allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
+            blockedPeers <- liftIO $ readTVarIO (blacklistedPeers bp2pEnv)
+            let connPeers =
+                    L.filter (\x -> bpConnected (snd x) && not (M.member (fst x) blockedPeers)) (M.toList allPeers)
+            liftIO $ MSN.signal (bpTxSem pr) (L.length connPeers)
         Left (e :: SomeException) -> do
-            err lg $ msg $ (val "[ERROR] Closing peer connection ") +++ (show e)
-            throw UnexpectedDuringBlockProcException
+            err lg $ LG.msg $ (val "[ERROR] Closing peer connection ") +++ (show e)
+            liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
+            case (bpSocket pr) of
+                Just sock -> liftIO $ Network.Socket.close sock
+                Nothing -> return ()
 
 handleIncomingMessages :: (HasXokenNodeEnv env m, MonadIO m) => BitcoinPeer -> m ()
 handleIncomingMessages pr = do
@@ -869,46 +879,15 @@ handleIncomingMessages pr = do
     whileM_ (liftIO $ readIORef continue) $ do
         allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
         blockedPeers <- liftIO $ readTVarIO (blacklistedPeers bp2pEnv)
-        let maxtc = maxTxProcThreadsSystem $ nodeConfig bp2pEnv
-            connPeers = L.filter (\x -> bpConnected (snd x) && not (M.member (fst x) blockedPeers)) (M.toList allPeers)
-            ttc = toInt $ divide maxtc (L.length connPeers)
-            threadCount =
-                if ttc < (maxTxProcThreadsPerBlock $ nodeConfig bp2pEnv)
-                    then ttc
-                    else maxTxProcThreadsPerBlock $ nodeConfig bp2pEnv
-        debug lg $ msg $ (val "adjusted Tx threads per block ") +++ (show threadCount)
-        liftIO $ MS.wait (bpTxSem pr)
-        ts <- replicateM threadCount (LA.async $ procTxStream pr)
-        ares <- LE.try $ LA.waitAnyCatch ts
-        case ares of
-            Right (as, result) -> do
-                case result of
-                    Right (msgCmd) -> do
-                        liftIO $ MS.signal $ bpTxSem pr
-                        logMessage pr msgCmd
-                    Left (e :: SomeException) -> do
-                        err lg $ LG.msg $ (val "[ERROR] Closing peer connection ") +++ (show e)
-                        liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
-                        liftIO $ writeIORef continue False
-                        case (bpSocket pr) of
-                            Just sock -> liftIO $ Network.Socket.close sock
-                            Nothing -> return ()
-                        mapM_ (\tt -> LA.cancel tt) (L.delete as ts) -- cancel the others to avoid indefinite MVar lockup
-            Left (e :: SomeException) -> do
-                err lg $
-                    LG.msg $ (val "[ERROR] Unexpected error during waitAny - Closing peer connection ") +++ (show e)
-                liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
-                liftIO $ writeIORef continue False
-                case (bpSocket pr) of
-                    Just sock -> liftIO $ Network.Socket.close sock
-                    Nothing -> return ()
-                mapM_ (\tt -> LA.cancel tt) (ts) -- cancel all
-        return ()
-
-logMessage :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BitcoinPeer -> MessageCommand -> m ()
-logMessage peer mg
-    -- lg <- getLogger
-    -- liftIO $ atomically $ modifyTVar' (bpIngressMsgCount peer) (\z -> z + 1)
-    -- debug lg $ LG.msg $ "processed: " ++ show mg
- = do
-    return ()
+        let connPeers = L.filter (\x -> bpConnected (snd x) && not (M.member (fst x) blockedPeers)) (M.toList allPeers)
+        debug lg $
+            msg $
+            (val "adjusted Tx threads per block ") +++
+            (show $ divide (maxTxProcThreads $ nodeConfig bp2pEnv) (L.length connPeers))
+        -- the number of active tx threads per peer is proportionally reduced based on peer count
+        liftIO $ MSN.wait (bpTxSem pr) (L.length connPeers)
+        LA.async $ procTxStream pr
+        bps <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
+        case (M.lookup (bpAddress pr) bps) of
+            Just _ -> return ()
+            Nothing -> liftIO $ writeIORef continue False

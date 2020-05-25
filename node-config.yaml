@@ -10,9 +10,7 @@ endPointListenPort: 9090
 
 endPointListenIP: 127.0.0.1
  
-maxTxProcThreadsSystem: 24
-
-maxTxProcThreadsPerBlock: 8
+maxTxProcThreads: 32
 
 maxBitcoinPeerCount: 16
 

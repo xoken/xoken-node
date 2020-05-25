@@ -563,15 +563,17 @@ getAddressFromOutpoint conn txSync lg net outPoint = do
                 then do
                     debug lg $
                         LG.msg ("TxID not found: (waiting for event) " ++ (show $ txHashToHex $ outPointHash outPoint))
-                    -- event <- EV.new
-                    -- liftIO $ atomically $ modifyTVar' (txSync) (M.insert (outPointHash outPoint) event)
-                    -- tofl <- waitTimeout event (1000000 * 300)
-                    -- if tofl == False -- False indicates a timeout occurred.
-                    --     then do
-                    --         liftIO $ atomically $ modifyTVar' (txSync) (M.delete (outPointHash outPoint))
-                    --         debug lg $ LG.msg ("TxIDNotFoundException" ++ (show $ txHashToHex $ outPointHash outPoint))
-                    --         throw TxIDNotFoundException
-                    --     else getAddressFromOutpoint conn txSync lg net outPoint -- if being signalled, try again to success 
+                    --
+                    event <- EV.new
+                    liftIO $ atomically $ modifyTVar' (txSync) (M.insert (outPointHash outPoint) event)
+                    tofl <- waitTimeout event (1000000 * 120)
+                    if tofl == False -- False indicates a timeout occurred.
+                        then do
+                            liftIO $ atomically $ modifyTVar' (txSync) (M.delete (outPointHash outPoint))
+                            debug lg $ LG.msg ("TxIDNotFoundException" ++ (show $ txHashToHex $ outPointHash outPoint))
+                            throw TxIDNotFoundException
+                        else getAddressFromOutpoint conn txSync lg net outPoint -- if being signalled, try again to success 
+                    --
                     return Nothing
                 else do
                     let txbyt = runIdentity $ iop !! 0
