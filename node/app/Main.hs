@@ -173,7 +173,6 @@ defaultConfig path = do
                 [bootstrapPeer]
                 (generateNodeId sk)
                 "127.0.0.1"
-                (T.pack (path <> "/node.log"))
                 (T.pack (path <> "/arivi.log"))
                 20
                 5
