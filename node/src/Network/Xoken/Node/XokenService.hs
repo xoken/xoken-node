@@ -401,6 +401,7 @@ xRelayTx net rawTx = do
                           debug lg $ LG.msg $ val $ "transaction verified - broadcasting tx"
                           mapM_ (\(_, peer) -> do sendRequestMessages peer (MTx (fromJust $ fst res))) connPeers
                           return True
+
                         else do
                             debug lg $ LG.msg $ val $ "transaction invalid"
                             let op_return = head (txOut tx)
@@ -464,7 +465,8 @@ goGetResource msg net = do
                 Just (GetBlockByHeight ht) -> do
                     blk <- xGetBlockHeight net (fromIntegral ht)
                     case blk of
-                        Just b -> return $ RPCResponse 200 Nothing $ Just $ RespBlockByHash b
+                        Just b -> do
+                            return $ RPCResponse 200 Nothing $ Just $ RespBlockByHash b
                         Nothing -> return $ RPCResponse 404 (Just "Record Not found") Nothing
                 Nothing -> return $ RPCResponse 400 (Just "Error: Invalid Params") Nothing
         "[HEIGHT]->[BLOCK]" -> do
