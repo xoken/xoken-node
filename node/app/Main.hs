@@ -79,6 +79,7 @@ import Network.Xoken.Node.P2P.ChainSync
 import Network.Xoken.Node.P2P.PeerManager
 import Network.Xoken.Node.P2P.Types
 import Network.Xoken.Node.P2P.UnconfTxSync
+import Network.Xoken.Node.TLSServer
 import Options.Applicative
 import Paths_xoken_node as P
 import System.Directory (doesPathExist)
@@ -194,13 +195,15 @@ runThreads ::
     -> Q.ClientState
     -> LG.Logger
     -> (P2PEnv AppM ServiceResource ServiceTopic RPCMessage PubNotifyMessage)
+    -> [FilePath]
     -> IO ()
-runThreads config nodeConf bp2p conn lg p2pEnv = do
+runThreads config nodeConf bp2p conn lg p2pEnv certPaths = do
     gdbState <- makeGraphDBResPool
     let dbh = DatabaseHandles conn gdbState
     let allegoryEnv = AllegoryEnv $ allegoryVendorSecretKey nodeConf
     let xknEnv = XokenNodeEnv bp2p dbh lg allegoryEnv
     let serviceEnv = ServiceEnv xknEnv p2pEnv
+    epHandler <- newTLSEndpointServiceHandler
     runFileLoggingT (toS $ Config.logFile config) $
         runAppM
             serviceEnv
@@ -208,17 +211,22 @@ runThreads config nodeConf bp2p conn lg p2pEnv = do
                 bp2pEnv <- getBitcoinP2P
                 withAsync runEpochSwitcher $ \a -> do
                     withAsync setupSeedPeerConnection $ \b -> do
-                        withAsync runEgressChainSync $ \c -> do withAsync runEgressBlockSync $ \d -> do runPeerSync)
+                        withAsync runEgressChainSync $ \c -> do
+                            withAsync runEgressBlockSync $ \d -> do
+                                withAsync (handleNewConnectionRequest epHandler) $ \e -> do runPeerSync)
+    --
+    async $ startTLSEndpoint epHandler (endPointTLSListenIP nodeConf) (endPointTLSListenPort nodeConf) certPaths
+    return ()
 
-runNode :: Config.Config -> NC.NodeConfig -> Q.ClientState -> BitcoinP2P -> IO ()
-runNode config nodeConf conn bp2p = do
+runNode :: Config.Config -> NC.NodeConfig -> Q.ClientState -> BitcoinP2P -> [FilePath] -> IO ()
+runNode config nodeConf conn bp2p certPaths = do
     p2pEnv <- mkP2PEnv config globalHandlerRpc globalHandlerPubSub [AriviService] []
     lg <-
         LG.new
             (LG.setOutput
                  (LG.Path $ T.unpack $ NC.logFileName nodeConf)
                  (LG.setLogLevel (logLevel nodeConf) LG.defSettings))
-    runThreads config nodeConf bp2p conn lg p2pEnv
+    runThreads config nodeConf bp2p conn lg p2pEnv certPaths
 
 data Config =
     Config
@@ -252,14 +260,7 @@ main = do
     unless b (defaultConfig path)
     cnf <- Config.readConfig (path <> "/arivi-config.yaml")
     nodeCnf <- NC.readConfig (path <> "/node-config.yaml")
-    -- let nodeConfig =
-    --         BitcoinNodeConfig
-    --             5 -- maximum connected peers allowed
-    --             [] -- static list of peers to connect to
-    --             False -- activate peer discovery
-    --             (NetworkAddress 0 (SockAddrInet 0 0)) -- local host n/w addr
-    --             (bitcoinNetwork nodeCnf) -- network constants
-    --             60 -- timeout in seconds
+    -- BitcoinP2P construction --
     g <- newTVarIO M.empty
     bp <- newTVarIO M.empty
     mv <- newMVar True
@@ -273,4 +274,13 @@ main = do
     ts <- newTVarIO M.empty
     tbt <- MS.new $ maxTMTBuilderThreads nodeCnf
     let bp2p = BitcoinP2P nodeCnf g bp mv hl st ep tc (rpf, rpc) mq ts tbt
-    runNode cnf nodeCnf conn bp2p
+    -- TLS certs --
+    let certFP = path <> "/certificate.cert"
+        keyFP = path <> "/key.pem"
+        csrFP = path <> "/csr.csr"
+    cfp <- doesPathExist certFP
+    kfp <- doesPathExist keyFP
+    csfp <- doesPathExist csrFP
+    unless (cfp && kfp && csfp) $ error "Error: missing TLS file"
+    -- launch node --
+    runNode cnf nodeCnf conn bp2p [certFP, keyFP, csrFP]
