@@ -81,6 +81,7 @@ import qualified Streamly.Prelude as S
 import System.Logger as LG
 import System.Logger.Message
 import System.Random
+import Xoken.NodeConfig
 
 produceGetDataMessage :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m (Maybe Message)
 produceGetDataMessage = do
@@ -115,7 +116,7 @@ sendRequestMessages :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Bitcoi
 sendRequestMessages pr msg = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    let net = bncNet $ bitcoinNodeConfig bp2pEnv
+    let net = bitcoinNetwork $ nodeConfig bp2pEnv
     debug lg $ LG.msg $ val "sendRequestMessages - called."
     case msg of
         MGetData gd -> do
@@ -138,7 +139,7 @@ runEgressBlockSync =
     forever $ do
         lg <- getLogger
         bp2pEnv <- getBitcoinP2P
-        let net = bncNet $ bitcoinNodeConfig bp2pEnv
+        let net = bitcoinNetwork $ nodeConfig bp2pEnv
         allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
         blockedPeers <- liftIO $ readTVarIO (blacklistedPeers bp2pEnv)
         let connPeers = L.filter (\x -> bpConnected (snd x) && not (M.member (fst x) blockedPeers)) (M.toList allPeers)
@@ -152,9 +153,11 @@ runEgressBlockSync =
                          fw <- liftIO $ readTVarIO $ bpBlockFetchWindow peer
                          recvtm <- liftIO $ readTVarIO $ bpLastTxRecvTime peer
                          sendtm <- liftIO $ readTVarIO $ bpLastGetDataSent peer
+                         let staleTime =
+                                 fromInteger $ fromIntegral (unresponsivePeerConnTimeoutSecs $ nodeConfig bp2pEnv)
                          case recvtm of
                              Just rt -> do
-                                 if (fw == 0) && (diffUTCTime tm rt < 60)
+                                 if (fw == 0) && (diffUTCTime tm rt < staleTime)
                                      then do
                                          rnd <- liftIO $ randomRIO (1, L.length connPeers) -- dynamic peer shuffle logic
                                          if rnd /= 1
@@ -177,7 +180,7 @@ runEgressBlockSync =
                                                                  err lg $
                                                                  LG.msg ("[ERROR] runEgressBlockSync " ++ show e)
                                                      Nothing -> return ()
-                                     else if (diffUTCTime tm rt > 60)
+                                     else if (diffUTCTime tm rt > staleTime)
                                               then do
                                                   debug lg $ msg ("Removing unresponsive peer. (1)" ++ show peer)
                                                   case bpSocket peer of
@@ -191,7 +194,7 @@ runEgressBlockSync =
                               -> do
                                  case sendtm of
                                      Just st -> do
-                                         if (diffUTCTime tm st > 60)
+                                         if (diffUTCTime tm st > staleTime)
                                              then do
                                                  debug lg $ msg ("Removing unresponsive peer. (2)" ++ show peer)
                                                  case bpSocket peer of
@@ -231,11 +234,11 @@ runPeerSync =
         lg <- getLogger
         bp2pEnv <- getBitcoinP2P
         dbe' <- getDB
-        let net = bncNet $ bitcoinNodeConfig bp2pEnv
+        let net = bitcoinNetwork $ nodeConfig bp2pEnv
         allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
         blockedPeers <- liftIO $ readTVarIO (blacklistedPeers bp2pEnv)
         let connPeers = L.filter (\x -> bpConnected (snd x) && not (M.member (fst x) blockedPeers)) (M.toList allPeers)
-        if L.length connPeers < 16
+        if L.length connPeers < (maxBitcoinPeerCount $ nodeConfig bp2pEnv)
             then do
                 liftIO $
                     mapConcurrently_
@@ -267,17 +270,17 @@ markBestSyncedBlock hash height conn = do
 
 getBatchSize n
     | n < 200000 = [1 .. 400]
-    | n >= 200000 && n < 400000 = [1 .. 200]
-    | n >= 400000 && n < 500000 = [1 .. 100]
-    | n >= 500000 && n < 600000 = [1 .. 20]
-    | otherwise = [1, 2]
+    | n >= 200000 && n < 400000 = [1 .. 100]
+    | n >= 400000 && n < 500000 = [1 .. 50]
+    | n >= 500000 && n < 600000 = [1 .. 25]
+    | otherwise = [1, 12]
 
 getNextBlockToSync :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m (Maybe BlockInfo)
 getNextBlockToSync = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
     conn <- keyValDB <$> getDB
-    let net = bncNet $ bitcoinNodeConfig bp2pEnv
+    let net = bitcoinNetwork $ nodeConfig bp2pEnv
     sy <- liftIO $ readTVarIO $ blockSyncStatusMap bp2pEnv
     tm <- liftIO $ getCurrentTime
     -- reload cache
@@ -434,7 +437,7 @@ processConfTransaction tx bhash txind blkht = do
     dbe' <- getDB
     bp2pEnv <- getBitcoinP2P
     lg <- getLogger
-    let net = bncNet $ bitcoinNodeConfig bp2pEnv
+    let net = bitcoinNetwork $ nodeConfig bp2pEnv
     let conn = keyValDB $ dbe'
         str = "insert INTO xoken.transactions ( tx_id, block_info, tx_serialized ) values (?, ?, ?)"
         qstr = str :: Q.QueryString Q.W (Text, ((Text, Int32), Int32), Blob) ()
@@ -475,6 +478,7 @@ processConfTransaction tx bhash txind blkht = do
                      (txOut tx))
                 (txOut tx)
                 [0 :: Int32 ..]
+    --
     lookupInAddrs <-
         mapM
             (\(a, b, c) ->
@@ -486,7 +490,14 @@ processConfTransaction tx bhash txind blkht = do
                              else do
                                  res <-
                                      liftIO $
-                                     try $ getAddressFromOutpoint conn (txSynchronizer bp2pEnv) lg net $ prevOutput b
+                                     try $
+                                     getAddressFromOutpoint
+                                         conn
+                                         (txSynchronizer bp2pEnv)
+                                         lg
+                                         net
+                                         (prevOutput b)
+                                         (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
                                  case res of
                                      Right (ma) -> do
                                          case (ma) of
@@ -544,8 +555,8 @@ processConfTransaction tx bhash txind blkht = do
 --
 --
 getAddressFromOutpoint ::
-       Q.ClientState -> (TVar (M.Map TxHash EV.Event)) -> Logger -> Network -> OutPoint -> IO (Maybe Address)
-getAddressFromOutpoint conn txSync lg net outPoint = do
+       Q.ClientState -> (TVar (M.Map TxHash EV.Event)) -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Address)
+getAddressFromOutpoint conn txSync lg net outPoint waitSecs = do
     let str = "SELECT tx_serialized from xoken.transactions where tx_id = ?"
         qstr = str :: Q.QueryString Q.R (Identity Text) (Identity Blob)
         p = Q.defQueryParams Q.One $ Identity $ txHashToHex $ outPointHash outPoint
@@ -559,12 +570,18 @@ getAddressFromOutpoint conn txSync lg net outPoint = do
                 then do
                     debug lg $
                         LG.msg ("TxID not found: (waiting for event) " ++ (show $ txHashToHex $ outPointHash outPoint))
+                    --
                     event <- EV.new
                     liftIO $ atomically $ modifyTVar' (txSync) (M.insert (outPointHash outPoint) event)
-                    isTimeout <- waitTimeout event (1000000 * 300)
-                    if isTimeout
-                        then throw TxIDNotFoundException
-                        else getAddressFromOutpoint conn txSync lg net outPoint -- if signalled, try querying DB again so it succeeds
+                    tofl <- waitTimeout event (1000000 * (fromIntegral waitSecs))
+                    if tofl == False -- False indicates a timeout occurred.
+                        then do
+                            liftIO $ atomically $ modifyTVar' (txSync) (M.delete (outPointHash outPoint))
+                            debug lg $ LG.msg ("TxIDNotFoundException" ++ (show $ txHashToHex $ outPointHash outPoint))
+                            throw TxIDNotFoundException
+                        else getAddressFromOutpoint conn txSync lg net outPoint waitSecs -- if being signalled, try again to success 
+                    --
+                    return Nothing
                 else do
                     let txbyt = runIdentity $ iop !! 0
                     case runGetLazy (getConfirmedTx) (fromBlob txbyt) of

@@ -64,6 +64,7 @@ import qualified Streamly.Prelude as S
 import System.Logger as LG
 import System.Logger.Message
 import System.Random
+import Xoken.NodeConfig
 
 produceGetHeadersMessage :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m (Message)
 produceGetHeadersMessage = do
@@ -73,7 +74,7 @@ produceGetHeadersMessage = do
     -- be blocked until a new best-block is updated in DB, or a set timeout.
     LA.race (liftIO $ takeMVar (bestBlockUpdated bp2pEnv)) (liftIO $ threadDelay (15 * 1000000))
     conn <- keyValDB <$> getDB
-    let net = bncNet $ bitcoinNodeConfig bp2pEnv
+    let net = bitcoinNetwork $ nodeConfig bp2pEnv
     bl <- getBlockLocator conn net
     let gh =
             GetHeaders
@@ -91,13 +92,13 @@ sendRequestMessages msg = do
     bp2pEnv <- getBitcoinP2P
     dbe' <- getDB
     let conn = keyValDB $ dbe'
-    let net = bncNet $ bitcoinNodeConfig bp2pEnv
+    let net = bitcoinNetwork $ nodeConfig bp2pEnv
     case msg of
         MGetHeaders hdr -> do
             blockedPeers <- liftIO $ readTVarIO (blacklistedPeers bp2pEnv)
             allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
-            let connPeers = L.filter (\x -> bpConnected (snd x) && not (M.member (fst x) blockedPeers)) (M.toList allPeers)
-
+            let connPeers =
+                    L.filter (\x -> bpConnected (snd x) && not (M.member (fst x) blockedPeers)) (M.toList allPeers)
             let fbh = getHash256 $ getBlockHash $ (getHeadersBL hdr) !! 0
                 md = BSS.index fbh $ (BSS.length fbh) - 1
                 pds =
@@ -174,9 +175,7 @@ getBlockLocator conn net = do
         then return [headerHash $ getGenesisHeader net]
         else do
             debug lg $ LG.msg $ "Best-block from DB: " ++ (show $ last op)
-            return $
-                reverse $
-                    catMaybes $ map (hexToBlockHash . snd) op
+            return $ reverse $ catMaybes $ map (hexToBlockHash . snd) op
 
 fetchBestBlock :: (HasLogger m, MonadIO m) => Q.ClientState -> Network -> m ((BlockHash, Int32))
 fetchBestBlock conn net = do
@@ -214,7 +213,7 @@ processHeaders hdrs = do
         else debug lg $ LG.msg $ "Processing Headers with " ++ show (L.length $ headersList hdrs) ++ " entries."
     case validateChainedBlockHeaders hdrs of
         True -> do
-            let net = bncNet $ bitcoinNodeConfig bp2pEnv
+            let net = bitcoinNetwork $ nodeConfig bp2pEnv
                 genesisHash = blockHashToHex $ headerHash $ getGenesisHeader net
                 conn = keyValDB $ dbe'
                 headPrevHash = (blockHashToHex $ prevBlock $ fst $ head $ headersList hdrs)
@@ -263,29 +262,30 @@ processHeaders hdrs = do
                 str2 = "insert INTO xoken.blocks_by_height (block_height, block_hash, block_header) values (?, ? , ? )"
                 qstr2 = str2 :: Q.QueryString Q.W (Int32, Text, Text) ()
             debug lg $ LG.msg $ "indexed " ++ show (L.length indexed)
-            liftIO $ mapConcurrently_
-                (\y -> do
-                     let hdrHash = blockHashToHex $ headerHash $ fst $ snd y
-                         hdrJson = T.pack $ LC.unpack $ A.encode $ fst $ snd y
-                         par1 = Q.defQueryParams Q.One (hdrHash, hdrJson, fst y)
-                         par2 = Q.defQueryParams Q.One (fst y, hdrHash, hdrJson)
-                     res1 <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr1) par1)
-                     case res1 of
-                         Right () -> return ()
-                         Left (e :: SomeException) ->
-                             liftIO $ do
-                                 err lg $ LG.msg ("Error: INSERT into 'blocks_hash' failed: " ++ show e)
-                                 throw KeyValueDBInsertException
-                     res2 <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr2) par2)
-                     case res2 of
-                         Right () -> return ()
-                         Left (e :: SomeException) -> do
-                             err lg $ LG.msg ("Error: INSERT into 'blocks_by_height' failed: " ++ show e)
-                             throw KeyValueDBInsertException)
-                indexed
+            liftIO $
+                mapConcurrently_
+                    (\y -> do
+                         let hdrHash = blockHashToHex $ headerHash $ fst $ snd y
+                             hdrJson = T.pack $ LC.unpack $ A.encode $ fst $ snd y
+                             par1 = Q.defQueryParams Q.One (hdrHash, hdrJson, fst y)
+                             par2 = Q.defQueryParams Q.One (fst y, hdrHash, hdrJson)
+                         res1 <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr1) par1)
+                         case res1 of
+                             Right () -> return ()
+                             Left (e :: SomeException) ->
+                                 liftIO $ do
+                                     err lg $ LG.msg ("Error: INSERT into 'blocks_hash' failed: " ++ show e)
+                                     throw KeyValueDBInsertException
+                         res2 <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr2) par2)
+                         case res2 of
+                             Right () -> return ()
+                             Left (e :: SomeException) -> do
+                                 err lg $ LG.msg ("Error: INSERT into 'blocks_by_height' failed: " ++ show e)
+                                 throw KeyValueDBInsertException)
+                    indexed
             unless (L.null indexed) $ do
-                    markBestBlock (blockHashToHex $ headerHash $ fst $ snd $ last $ indexed) (fst $ last indexed) conn
-                    liftIO $ putMVar (bestBlockUpdated bp2pEnv) True
+                markBestBlock (blockHashToHex $ headerHash $ fst $ snd $ last $ indexed) (fst $ last indexed) conn
+                liftIO $ putMVar (bestBlockUpdated bp2pEnv) True
         False -> do
             err lg $ LG.msg $ val "Error: BlocksNotChainedException"
             throw BlocksNotChainedException

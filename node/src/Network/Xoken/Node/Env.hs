@@ -10,8 +10,9 @@ module Network.Xoken.Node.Env where
 import Arivi.P2P.P2PEnv as PE hiding (option)
 import Codec.Serialise
 import Control.Concurrent.Event
+import Control.Concurrent.MSem
 import Control.Concurrent.MVar
-import Control.Concurrent.STM.TQueue
+import Control.Concurrent.STM.TBQueue
 import Control.Concurrent.STM.TVar
 import Control.Monad.Catch
 import Control.Monad.Reader
@@ -33,6 +34,7 @@ import Network.Xoken.Transaction
 import System.Logger
 import System.Random
 import Text.Read
+import Xoken.NodeConfig
 
 type HashTable k v = H.BasicHashTable k v
 
@@ -60,7 +62,7 @@ data AllegoryEnv =
 
 data BitcoinP2P =
     BitcoinP2P
-        { bitcoinNodeConfig :: !BitcoinNodeConfig
+        { nodeConfig :: !NodeConfig
         , bitcoinPeers :: !(TVar (M.Map SockAddr BitcoinPeer))
         , blacklistedPeers :: !(TVar (M.Map SockAddr BitcoinPeer))
         , bestBlockUpdated :: !(MVar Bool)
@@ -68,10 +70,10 @@ data BitcoinP2P =
         , blockSyncStatusMap :: !(TVar (M.Map BlockHash (BlockSyncStatus, BlockHeight)))
         , epochType :: !(TVar Bool)
         , unconfirmedTxCache :: !(HashTable TxShortHash (Bool, TxHash))
-        , indexUnconfirmedTx :: !Bool
         , peerReset :: !(MVar Bool, TVar Int)
-        , merkleQueueMap :: !(TVar (M.Map BlockHash (TQueue (TxHash, Bool))))
+        , merkleQueueMap :: !(TVar (M.Map BlockHash (TBQueue (TxHash, Bool))))
         , txSynchronizer :: !(TVar (M.Map TxHash Event))
+        , maxTMTBuilderThreadLock :: !(MSem Int)
         }
 
 class HasBitcoinP2P m where
