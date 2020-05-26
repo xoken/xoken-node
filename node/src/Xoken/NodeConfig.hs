@@ -28,6 +28,10 @@ data NodeConfig =
         { bitcoinNetwork :: Network
         , logLevel :: Level
         , logFileName :: T.Text
+        , bitcoinNodeListenIP :: String
+        , bitcoinNodeListenPort :: PortNumber
+        , endPointTLSListenIP :: String
+        , endPointTLSListenPort :: PortNumber
         , indexUnconfirmedTx :: Bool
         , allegoryVendorSecretKey :: SecKey
         , maxTxProcThreads :: Int
@@ -37,6 +41,8 @@ data NodeConfig =
         -- , staticPeerList: []
         , maxTMTBuilderThreads :: Int
         , maxTMTQueueSize :: Int
+        , txProcInputDependenciesWait :: Int
+        , txProcTimeoutSecs :: Int
         }
     deriving (Show, Generic)
 

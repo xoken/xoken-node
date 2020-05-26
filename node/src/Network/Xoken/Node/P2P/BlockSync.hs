@@ -238,7 +238,7 @@ runPeerSync =
         allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
         blockedPeers <- liftIO $ readTVarIO (blacklistedPeers bp2pEnv)
         let connPeers = L.filter (\x -> bpConnected (snd x) && not (M.member (fst x) blockedPeers)) (M.toList allPeers)
-        if L.length connPeers < 16
+        if L.length connPeers < (maxBitcoinPeerCount $ nodeConfig bp2pEnv)
             then do
                 liftIO $
                     mapConcurrently_
@@ -490,7 +490,14 @@ processConfTransaction tx bhash txind blkht = do
                              else do
                                  res <-
                                      liftIO $
-                                     try $ getAddressFromOutpoint conn (txSynchronizer bp2pEnv) lg net $ prevOutput b
+                                     try $
+                                     getAddressFromOutpoint
+                                         conn
+                                         (txSynchronizer bp2pEnv)
+                                         lg
+                                         net
+                                         (prevOutput b)
+                                         (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
                                  case res of
                                      Right (ma) -> do
                                          case (ma) of
@@ -548,8 +555,8 @@ processConfTransaction tx bhash txind blkht = do
 --
 --
 getAddressFromOutpoint ::
-       Q.ClientState -> (TVar (M.Map TxHash EV.Event)) -> Logger -> Network -> OutPoint -> IO (Maybe Address)
-getAddressFromOutpoint conn txSync lg net outPoint = do
+       Q.ClientState -> (TVar (M.Map TxHash EV.Event)) -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Address)
+getAddressFromOutpoint conn txSync lg net outPoint waitSecs = do
     let str = "SELECT tx_serialized from xoken.transactions where tx_id = ?"
         qstr = str :: Q.QueryString Q.R (Identity Text) (Identity Blob)
         p = Q.defQueryParams Q.One $ Identity $ txHashToHex $ outPointHash outPoint
@@ -566,13 +573,13 @@ getAddressFromOutpoint conn txSync lg net outPoint = do
                     --
                     event <- EV.new
                     liftIO $ atomically $ modifyTVar' (txSync) (M.insert (outPointHash outPoint) event)
-                    tofl <- waitTimeout event (1000000 * 120)
+                    tofl <- waitTimeout event (1000000 * (fromIntegral waitSecs))
                     if tofl == False -- False indicates a timeout occurred.
                         then do
                             liftIO $ atomically $ modifyTVar' (txSync) (M.delete (outPointHash outPoint))
                             debug lg $ LG.msg ("TxIDNotFoundException" ++ (show $ txHashToHex $ outPointHash outPoint))
                             throw TxIDNotFoundException
-                        else getAddressFromOutpoint conn txSync lg net outPoint -- if being signalled, try again to success 
+                        else getAddressFromOutpoint conn txSync lg net outPoint waitSecs -- if being signalled, try again to success 
                     --
                     return Nothing
                 else do

@@ -6,15 +6,19 @@ logLevel: Debug
 
 logFileName: ./nexa.log
 
-endPointListenPort: 9090
+bitcoinNodeListenIP: 127.0.0.1
 
-endPointListenIP: 127.0.0.1
- 
-maxTxProcThreads: 32
+bitcoinNodeListenPort: 3000
 
-maxBitcoinPeerCount: 16
+endPointTLSListenIP: 127.0.0.1
 
-unresponsivePeerConnTimeoutSecs: 60
+endPointTLSListenPort: 9090
+
+maxTxProcThreads: 80
+
+maxBitcoinPeerCount: 10
+
+unresponsivePeerConnTimeoutSecs: 180
 
 acivatePeerDiscovery: True
 
@@ -22,6 +26,10 @@ staticPeerList: []
 
 allegoryVendorSecretKey: 1435cf8e437d789eac332c3c66b2a51876e58c21db4b4da15488c3decb1a8b57
 
-maxTMTBuilderThreads: 32
+maxTMTBuilderThreads: 20
 
-maxTMTQueueSize: 512
+maxTMTQueueSize: 1024
+
+txProcInputDependenciesWait: 240
+
+txProcTimeoutSecs : 250

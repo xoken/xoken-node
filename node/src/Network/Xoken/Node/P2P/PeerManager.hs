@@ -138,7 +138,7 @@ setupSeedPeerConnection =
                                               else c)
                                      0
                                      (M.toList allpr)
-                         if connPeers > 16
+                         if connPeers > (maxBitcoinPeerCount $ nodeConfig bp2pEnv)
                              then liftIO $ threadDelay (10 * 1000000)
                              else do
                                  let toConn =
@@ -241,7 +241,7 @@ setupPeerConnection saddr = do
                          else c)
                 0
                 (M.toList allpr)
-    if connPeers > 16
+    if connPeers > (maxBitcoinPeerCount $ nodeConfig bp2pEnv)
         then return Nothing
         else do
             let toConn =
@@ -596,9 +596,6 @@ readNextMessage net sock ingss = do
                                                         , binChecksum = cks
                                                         }
                                             return (Just $ MBlock b, Just $ IngressStreamState bi Nothing)
-                                                      -- (computeTreeHeight $ binTxTotalCount bi)
-                                                      -- 0
-                                                      -- (M.empty, []))
                                         Nothing -> throw DeflatedBlockParseException
                         else do
                             byts <-
@@ -624,20 +621,15 @@ doVersionHandshake net sock sa = do
     lg <- getLogger
     g <- liftIO $ getStdGen
     now <- round <$> liftIO getPOSIXTime
-    myaddr <-
-        liftIO $
-        head <$>
-        getAddrInfo
-            (Just defaultHints {addrSocketType = Stream})
-            (Just "51.89.40.95") -- "192.168.0.106")
-            (Just "3000")
+    let ip = bitcoinNodeListenIP $ nodeConfig p2pEnv
+        port = toInteger $ bitcoinNodeListenPort $ nodeConfig p2pEnv
+    myaddr <- liftIO $ head <$> getAddrInfo (Just defaultHints {addrSocketType = Stream}) (Just ip) (Just $ show port)
     let nonce = fst (random g :: (Word64, StdGen))
-        ad = NetworkAddress 0 $ addrAddress myaddr -- (SockAddrInet 0 0)
+        ad = NetworkAddress 0 $ addrAddress myaddr
         bb = 1 :: Word32 -- ### TODO: getBestBlock ###
         rmt = NetworkAddress 0 sa
         ver = buildVersion net nonce bb ad rmt now
         em = runPut . putMessage net $ (MVersion ver)
-    debug lg $ msg ("ADD: " ++ show ad)
     mv <- liftIO $ (newMVar True)
     liftIO $ sendEncMessage mv sock (BSL.fromStrict em)
     (hs1, _) <- readNextMessage net sock Nothing
@@ -857,7 +849,20 @@ procTxStream pr = do
     res <- LE.try $ (readNextMessage' pr)
     case res of
         Right (msg, iss) -> do
-            messageHandler pr (msg, iss)
+            let timeout = fromIntegral $ txProcTimeoutSecs $ nodeConfig bp2pEnv
+            ores <- LA.race (LE.try $ messageHandler pr (msg, iss)) (liftIO $ threadDelay (timeout * 1000000))
+            case ores of
+                Right () -> do
+                    err lg $ LG.msg $ (val "[ERROR] Closing peer connection due to Tx proc timeout")
+                    liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
+                    closeSocket (bpSocket pr)
+                Left res ->
+                    case res of
+                        Right (_) -> return ()
+                        Left (e :: SomeException) -> do
+                            err lg $ LG.msg $ (val "[ERROR] Closing peer connection ") +++ (show e)
+                            liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
+                            closeSocket (bpSocket pr)
             allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
             blockedPeers <- liftIO $ readTVarIO (blacklistedPeers bp2pEnv)
             let connPeers =
@@ -866,9 +871,12 @@ procTxStream pr = do
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ (val "[ERROR] Closing peer connection ") +++ (show e)
             liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
-            case (bpSocket pr) of
-                Just sock -> liftIO $ Network.Socket.close sock
-                Nothing -> return ()
+            closeSocket (bpSocket pr)
+  where
+    closeSocket sk =
+        case sk of
+            Just sock -> liftIO $ Network.Socket.close sock
+            Nothing -> return ()
 
 handleIncomingMessages :: (HasXokenNodeEnv env m, MonadIO m) => BitcoinPeer -> m ()
 handleIncomingMessages pr = do
@@ -880,14 +888,22 @@ handleIncomingMessages pr = do
         allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
         blockedPeers <- liftIO $ readTVarIO (blacklistedPeers bp2pEnv)
         let connPeers = L.filter (\x -> bpConnected (snd x) && not (M.member (fst x) blockedPeers)) (M.toList allPeers)
-        debug lg $
-            msg $
-            (val "adjusted Tx threads per block ") +++
-            (show $ divide (maxTxProcThreads $ nodeConfig bp2pEnv) (L.length connPeers))
         -- the number of active tx threads per peer is proportionally reduced based on peer count
-        liftIO $ MSN.wait (bpTxSem pr) (L.length connPeers)
+        -- race to prevent waiting forever
+        let timeout = fromIntegral $ txProcTimeoutSecs $ nodeConfig bp2pEnv
+        ores <- LA.race (liftIO $ MSN.wait (bpTxSem pr) (L.length connPeers)) (liftIO $ threadDelay (timeout * 1000000))
+        case ores of
+            Right () -> liftIO $ writeIORef continue False
+            Left res -> return ()
         LA.async $ procTxStream pr
+        -- check if the corresponding Tx stream processing thread is already closed
         bps <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
         case (M.lookup (bpAddress pr) bps) of
             Just _ -> return ()
             Nothing -> liftIO $ writeIORef continue False
+    -- catch all --
+    err lg $ LG.msg $ (val "[ERROR] Closing peer connection - cleanup")
+    liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
+    case (bpSocket pr) of
+        Just sock -> liftIO $ Network.Socket.close sock
+        Nothing -> return ()
