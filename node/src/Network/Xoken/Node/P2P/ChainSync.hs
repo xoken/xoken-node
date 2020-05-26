@@ -95,10 +95,9 @@ sendRequestMessages msg = do
     let net = bitcoinNetwork $ nodeConfig bp2pEnv
     case msg of
         MGetHeaders hdr -> do
-            blockedPeers <- liftIO $ readTVarIO (blacklistedPeers bp2pEnv)
             allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
             let connPeers =
-                    L.filter (\x -> bpConnected (snd x) && not (M.member (fst x) blockedPeers)) (M.toList allPeers)
+                    L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
             let fbh = getHash256 $ getBlockHash $ (getHeadersBL hdr) !! 0
                 md = BSS.index fbh $ (BSS.length fbh) - 1
                 pds =
