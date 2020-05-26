@@ -141,8 +141,7 @@ runEgressBlockSync =
         bp2pEnv <- getBitcoinP2P
         let net = bitcoinNetwork $ nodeConfig bp2pEnv
         allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
-        blockedPeers <- liftIO $ readTVarIO (blacklistedPeers bp2pEnv)
-        let connPeers = L.filter (\x -> bpConnected (snd x) && not (M.member (fst x) blockedPeers)) (M.toList allPeers)
+        let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
         debug lg $ LG.msg $ ("Connected peers: " ++ (show $ map (\x -> snd x) connPeers))
         if L.null connPeers
             then liftIO $ threadDelay (5 * 1000000)
@@ -236,8 +235,7 @@ runPeerSync =
         dbe' <- getDB
         let net = bitcoinNetwork $ nodeConfig bp2pEnv
         allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
-        blockedPeers <- liftIO $ readTVarIO (blacklistedPeers bp2pEnv)
-        let connPeers = L.filter (\x -> bpConnected (snd x) && not (M.member (fst x) blockedPeers)) (M.toList allPeers)
+        let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
         if L.length connPeers < (maxBitcoinPeerCount $ nodeConfig bp2pEnv)
             then do
                 liftIO $
@@ -579,7 +577,7 @@ getAddressFromOutpoint conn txSync lg net outPoint waitSecs = do
                             liftIO $ atomically $ modifyTVar' (txSync) (M.delete (outPointHash outPoint))
                             debug lg $ LG.msg ("TxIDNotFoundException" ++ (show $ txHashToHex $ outPointHash outPoint))
                             throw TxIDNotFoundException
-                        else getAddressFromOutpoint conn txSync lg net outPoint waitSecs -- if being signalled, try again to success 
+                        else getAddressFromOutpoint conn txSync lg net outPoint waitSecs -- if being signalled, try again to success
                     --
                     return Nothing
                 else do

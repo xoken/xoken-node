@@ -133,7 +133,7 @@ setupSeedPeerConnection =
                          let connPeers =
                                  L.foldl'
                                      (\c x ->
-                                          if bpConnected (snd x) && not (M.member (fst x) blockedpr)
+                                          if bpConnected (snd x)
                                               then c + 1
                                               else c)
                                      0
@@ -148,10 +148,7 @@ setupSeedPeerConnection =
                                                      then False
                                                      else True
                                              Nothing -> True
-                                     isBlacklisted =
-                                         case M.lookup (addrAddress y) blockedpr of
-                                             Just _ -> True
-                                             Nothing -> False
+                                     isBlacklisted = M.member (addrAddress y) blockedpr
                                  if toConn == False
                                      then do
                                          debug lg $
@@ -236,7 +233,7 @@ setupPeerConnection saddr = do
     let connPeers =
             L.foldl'
                 (\c x ->
-                     if bpConnected (snd x) && not (M.member (fst x) blockedpr)
+                     if bpConnected (snd x)
                          then c + 1
                          else c)
                 0
@@ -864,9 +861,7 @@ procTxStream pr = do
                             liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
                             closeSocket (bpSocket pr)
             allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
-            blockedPeers <- liftIO $ readTVarIO (blacklistedPeers bp2pEnv)
-            let connPeers =
-                    L.filter (\x -> bpConnected (snd x) && not (M.member (fst x) blockedPeers)) (M.toList allPeers)
+            let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
             liftIO $ MSN.signal (bpTxSem pr) (L.length connPeers)
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ (val "[ERROR] Closing peer connection ") +++ (show e)
@@ -886,8 +881,7 @@ handleIncomingMessages pr = do
     continue <- liftIO $ newIORef True
     whileM_ (liftIO $ readIORef continue) $ do
         allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
-        blockedPeers <- liftIO $ readTVarIO (blacklistedPeers bp2pEnv)
-        let connPeers = L.filter (\x -> bpConnected (snd x) && not (M.member (fst x) blockedPeers)) (M.toList allPeers)
+        let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
         -- the number of active tx threads per peer is proportionally reduced based on peer count
         -- race to prevent waiting forever
         let timeout = fromIntegral $ txProcTimeoutSecs $ nodeConfig bp2pEnv

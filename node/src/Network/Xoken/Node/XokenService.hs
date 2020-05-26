@@ -397,9 +397,7 @@ xRelayTx net rawTx = do
                     if verifyStdTx net tx $ catMaybes tr
                         then do
                           allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
-                          blockedPeers <- liftIO $ readTVarIO (blacklistedPeers bp2pEnv)
-                          -- connected and non-blacklisted peers
-                          let !connPeers = L.filter (\x -> bpConnected (snd x) && not (M.member (fst x) blockedPeers)) (M.toList allPeers)
+                          let !connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
                           debug lg $ LG.msg $ val $ "transaction verified - broadcasting tx"
                           mapM_ (\(_, peer) -> do sendRequestMessages peer (MTx (fromJust $ fst res))) connPeers
                           return True
