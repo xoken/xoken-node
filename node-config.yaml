@@ -33,3 +33,9 @@ maxTMTQueueSize: 1024
 txProcInputDependenciesWait: 240
 
 txProcTimeoutSecs : 250
+
+tlsCertificatePath : ./certificate.cert
+
+tlsKeyfilePath : ./server.key
+
+tlsCertificateStorePath : /opt/certstore

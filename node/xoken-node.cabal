@@ -41,6 +41,7 @@ executable xoken-nexa
       Network.Xoken.Node.XokenService
       Network.Xoken.Node.P2P.UnconfTxSync
       Network.Xoken.Node.Data.Allegory
+      Network.Xoken.Node.TLSServer
 
   ghc-options:  -fprof-auto -fprof-cafs -rtsopts -O2 -threaded
   hs-source-dirs:
@@ -109,6 +110,9 @@ executable xoken-nexa
     , yaml
     , secp256k1-haskell
     , concurrent-extra
+    , tls
+    , x509-store
+    , network-simple-tls
   default-language: Haskell2010
 
 test-suite xoken-node-test

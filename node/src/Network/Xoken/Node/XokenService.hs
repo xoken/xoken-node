@@ -396,13 +396,16 @@ xRelayTx net rawTx = do
                             (txIn tx)
                     if verifyStdTx net tx $ catMaybes tr
                         then do
-                          allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
-                          blockedPeers <- liftIO $ readTVarIO (blacklistedPeers bp2pEnv)
+                            allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
+                            blockedPeers <- liftIO $ readTVarIO (blacklistedPeers bp2pEnv)
                           -- connected and non-blacklisted peers
-                          let !connPeers = L.filter (\x -> bpConnected (snd x) && not (M.member (fst x) blockedPeers)) (M.toList allPeers)
-                          debug lg $ LG.msg $ val $ "transaction verified - broadcasting tx"
-                          mapM_ (\(_, peer) -> do sendRequestMessages peer (MTx (fromJust $ fst res))) connPeers
-                          return True
+                            let !connPeers =
+                                    L.filter
+                                        (\x -> bpConnected (snd x) && not (M.member (fst x) blockedPeers))
+                                        (M.toList allPeers)
+                            debug lg $ LG.msg $ val $ "transaction verified - broadcasting tx"
+                            mapM_ (\(_, peer) -> do sendRequestMessages peer (MTx (fromJust $ fst res))) connPeers
+                            return True
                         else do
                             debug lg $ LG.msg $ val $ "transaction invalid"
                             let op_return = head (txOut tx)
@@ -466,7 +469,8 @@ goGetResource msg net = do
                 Just (GetBlockByHeight ht) -> do
                     blk <- xGetBlockHeight net (fromIntegral ht)
                     case blk of
-                        Just b -> return $ RPCResponse 200 Nothing $ Just $ RespBlockByHash b
+                        Just b -> do
+                            return $ RPCResponse 200 Nothing $ Just $ RespBlockByHash b
                         Nothing -> return $ RPCResponse 404 (Just "Record Not found") Nothing
                 Nothing -> return $ RPCResponse 400 (Just "Error: Invalid Params") Nothing
         "[HEIGHT]->[BLOCK]" -> do

@@ -3,4 +3,6 @@ p2p/.stack-work
 core/.stack-work
 .stack-work/
 stack.yaml.lock
-node.log
+*.log
+*.pem
+*.csr

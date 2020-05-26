@@ -204,3 +204,22 @@ data PubNotifyMessage =
         { psBody :: ByteString
         }
     deriving (Show, Generic, Eq, Serialise)
+
+-- Internal message posting --
+data XDataReq
+    = XDataRPCReq
+          { reqId :: Int
+          , method :: String
+          , params :: Maybe RPCReqParams
+          }
+    | XCloseConnection
+    deriving (Show, Generic, Hashable, Eq, Serialise)
+
+data XDataResp =
+    XDataRPCResp
+        { matchId :: Int
+        , statusCode :: Int16
+        , statusMessage :: Maybe String
+        , respBody :: Maybe RPCResponseBody
+        }
+    deriving (Show, Generic, Hashable, Eq, Serialise) --
