@@ -55,21 +55,20 @@ newTLSEndpointServiceHandler = do
     conQ <- atomically $ newTQueue
     return $ TLSEndpointServiceHandler conQ
 
-newEndPointConnection :: IO EndPointConnection
-newEndPointConnection = do
+newEndPointConnection :: TLS.Context -> IO EndPointConnection
+newEndPointConnection context = do
     reqQueue <- atomically $ newTQueue
-    resLock <- newEmptyMVar
+    resLock <- newMVar context
     return $ EndPointConnection reqQueue resLock
 
 handleRPCReqResp :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => MVar TLS.Context -> Int -> RPCMessage -> m ()
 handleRPCReqResp sockMVar mid encReq = do
     bp2pEnv <- getBitcoinP2P
     let net = bitcoinNetwork $ nodeConfig bp2pEnv
-    liftIO $ printf "handleRPCReqResp(%d, %s)\n" mid (show encReq)
+    liftIO $ printf "handleRPCReqResp (%d, %s)\n" mid (show encReq)
     rpcResp <- goGetResource encReq net
     let body = serialise $ XDataRPCResp (mid) (rsStatusCode rpcResp) (rsStatusMessage rpcResp) (rsBody rpcResp)
     connSock <- liftIO $ takeMVar sockMVar
-    NTLS.sendData connSock $ DB.encode (Prelude.fromIntegral (LBS.length body) :: Int16)
     NTLS.sendData connSock body
     liftIO $ putMVar sockMVar connSock
 
@@ -128,7 +127,7 @@ startTLSEndpoint handler listenIP listenPort [certFilePath, keyFilePath, certSto
             let settings = TLS.makeServerSettings cred Nothing
             TLS.serve settings (TLS.Host listenIP) (show listenPort) $ \(context, sockAddr) -> do
                 putStrLn $ "client connection established : " ++ show sockAddr
-                epConn <- newEndPointConnection
+                epConn <- newEndPointConnection context
                 liftIO $ atomically $ writeTQueue (connQueue handler) epConn
                 handleConnection epConn context
         Left err -> do
