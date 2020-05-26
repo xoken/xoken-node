@@ -118,13 +118,14 @@ handleConnection epConn context = do
                 writeIORef continue False
 
 startTLSEndpoint :: TLSEndpointServiceHandler -> String -> PortNumber -> [FilePath] -> IO ()
-startTLSEndpoint handler listenIP listenPort [certFilePath, keyFilePath, mStoreFilePath] = do
-    putStrLn $ "Starting TLS Endopin"
-    cred <- NTLS.credentialLoadX509 certFilePath keyFilePath
-    case cred of
-        Right c -> do
-            cstore <- readCertificateStore mStoreFilePath
-            let settings = TLS.makeServerSettings c cstore
+startTLSEndpoint handler listenIP listenPort [certFilePath, keyFilePath, certStoreFilePath] = do
+    putStrLn $ "Starting TLS Endpoint"
+    credentials <- NTLS.credentialLoadX509 certFilePath keyFilePath
+    case credentials of
+        Right cred
+            -- cstore <- readCertificateStore mStoreFilePath
+         -> do
+            let settings = TLS.makeServerSettings cred Nothing
             TLS.serve settings (TLS.Host listenIP) (show listenPort) $ \(context, sockAddr) -> do
                 putStrLn $ "client connection established : " ++ show sockAddr
                 epConn <- newEndPointConnection

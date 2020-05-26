@@ -41,6 +41,7 @@ executable xoken-nexa
       Network.Xoken.Node.XokenService
       Network.Xoken.Node.P2P.UnconfTxSync
       Network.Xoken.Node.Data.Allegory
+      Network.Xoken.Node.TLSServer
 
   ghc-options:  -fprof-auto -fprof-cafs -rtsopts -O2 -threaded
   hs-source-dirs:

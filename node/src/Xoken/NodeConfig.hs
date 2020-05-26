@@ -43,6 +43,9 @@ data NodeConfig =
         , maxTMTQueueSize :: Int
         , txProcInputDependenciesWait :: Int
         , txProcTimeoutSecs :: Int
+        , tlsCertificatePath :: FilePath
+        , tlsKeyfilePath :: FilePath
+        , tlsCertificateStorePath :: FilePath
         }
     deriving (Show, Generic)
 
