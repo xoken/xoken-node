@@ -44,11 +44,13 @@ pipeline {
     stage('Release') {
       steps {
        echo 'Starting docker containers'
+       script {
        docker.image('xoken-nexa/ubuntu18.04').inside {
             cd '/opt/work/xoken-node'
             sh 'stack clean'
             sh 'stack install'
         }
+       }
       }
     }
     
