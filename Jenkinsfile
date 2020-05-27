@@ -46,7 +46,7 @@ pipeline {
        echo 'Starting docker containers'
        script {
        docker.image('xoken-nexa/ubuntu18.04').inside {
-            dir '/opt/work/xoken-node' {
+            dir('/opt/work/xoken-node'){
               sh 'stack clean'
               sh 'stack install'
             }
