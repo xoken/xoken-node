@@ -41,12 +41,16 @@ pipeline {
       }
     }
 
-    stage('Notify') {
+    stage('Release') {
       steps {
-       echo 'done..'
+       echo 'Starting docker containers'
+       docker.image('xoken-nexa/ubuntu18.04').inside {
+            cd '/opt/work/xoken-node'
+            sh 'stack clean'
+            sh 'stack install'
+        }
       }
     }
-    
     
   }
   
