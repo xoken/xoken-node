@@ -115,8 +115,8 @@ handleRequest epConn = do
             XCloseConnection -> do
                 liftIO $ writeIORef continue False
 
-enqueueRequest :: EndPointConnection -> LBS.ByteString -> IO ()
-enqueueRequest epConn req = do
+enqueueRequest :: EndPointConnection -> LBS.ByteString -> IORef Bool -> IO ()
+enqueueRequest epConn req continue = do
     format <- readIORef (encodingFormat epConn)
     xdReq <-
         case format of
@@ -124,14 +124,16 @@ enqueueRequest epConn req = do
                 case eitherDecode req of
                     Right x -> writeIORef (encodingFormat epConn) JSON $> x
                     Left err -> do
-                      print $ "decode failed" <> show err
-                      writeIORef (encodingFormat epConn) CBOR $> deserialise req
+                        print $ "decode failed" <> show err
+                        writeIORef (encodingFormat epConn) CBOR $> deserialise req
             JSON -> do
                 writeIORef (encodingFormat epConn) JSON
                 case eitherDecode req of
                     Right x -> pure x
                     Left err -> do
-                        print $ "decode failed" <> show err
+                        print $ "[Error] Decode failed: " <> show err
+                        print $ "Closing Connection"
+                        writeIORef continue False
                         return XCloseConnection
             CBOR -> writeIORef (encodingFormat epConn) CBOR $> deserialise req
     atomically $ writeTQueue (requestQueue epConn) xdReq
@@ -144,7 +146,7 @@ handleConnection epConn context = do
         case res of
             Right r ->
                 case r of
-                    Just l -> enqueueRequest epConn (LBS.fromStrict l)
+                    Just l -> enqueueRequest epConn (LBS.fromStrict l) continue
                     Nothing -> putStrLn "Payload read error"
             Left (e :: IOException) -> do
                 putStrLn "Connection closed."
