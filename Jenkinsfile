@@ -54,7 +54,7 @@ pipeline {
               sh 'rm -f /tmp/ubuntu1804.cid'
               sh 'zip xoken-nexa_"$(basename $(git symbolic-ref HEAD))".zip ./xoken-nexa '
             }
-            archiveArtifacts(artifacts: 'xoken-nexa*.zip', followSymlinks: true)
+            archiveArtifacts(artifacts: 'xoken-node/xoken-nexa*.zip', followSymlinks: true)
         }
        }  
   }
