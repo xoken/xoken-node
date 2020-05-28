@@ -54,7 +54,7 @@ pipeline {
               sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/ubuntu1804.cid) stack install  --local-bin-path  . '
               sh 'docker cp $(cat /tmp/ubuntu1804.cid):/opt/work/xoken-node/xoken-nexa  . '
               sh 'rm -f /tmp/ubuntu1804.cid'
-              sh 'sha256sum /opt/work/xoken-node/xoken-nexa > Checksum_SHA256'
+              sh 'sha256sum ./xoken-nexa > Checksum_SHA256'
               sh 'zip xoken-nexa_"$(basename $(git symbolic-ref HEAD))"_ubuntu1804.zip ./xoken-nexa ReleaseNotes README Checksum_SHA256 '
             }
        dir(path: 'xoken-node'){
@@ -67,7 +67,7 @@ pipeline {
               sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/ubuntu2004.cid) stack install  --local-bin-path  . '
               sh 'docker cp $(cat /tmp/ubuntu2004.cid):/opt/work/xoken-node/xoken-nexa  . '
               sh 'rm -f /tmp/ubuntu2004.cid'
-              sh 'sha256sum /opt/work/xoken-node/xoken-nexa > Checksum_SHA256'
+              sh 'sha256sum ./xoken-nexa > Checksum_SHA256'
               sh 'zip xoken-nexa_"$(basename $(git symbolic-ref HEAD))"_ubuntu2004.zip ./xoken-nexa ReleaseNotes README Checksum_SHA256 '
             }
             archiveArtifacts(artifacts: 'xoken-node/xoken-nexa*.zip', followSymlinks: true)
