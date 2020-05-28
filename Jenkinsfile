@@ -44,18 +44,19 @@ pipeline {
     stage('Release') {
       steps {
        echo 'Starting docker containers'
-       script {
-       docker.image('xoken-nexa/ubuntu18.04').inside {
-            dir('/opt/work/xoken-node'){
-              sh 'ls; pwd; whoami'
-              sh 'stack clean'
-              sh 'stack install'
+       dir(path: 'xoken-node'){
+              sh 'docker run -t -d --cidfile /tmp/cid -w  /opt/work/xoken-node  xoken-nexa/ubuntu18.04 sh'
+              sh 'export CID="$(cat /tmp/cid)"'
+              sh 'docker exec -w /opt/work/xoken-node $CID git pull'
+              sh 'docker exec -w /opt/work/xoken-node $CID stack clean'
+              sh 'docker exec -w /opt/work/xoken-node $CID stack install  --local-bin-path  . '
+              sh 'docker cp  $CID:/opt/work/xoken-node/xoken-nexa  . '
+              sh 'rm /tmp/cid'
+              sh 'zip xoken-nexa_"$(basename $(git symbolic-ref HEAD))".zip ./xoken-nexa '
             }
+            archiveArtifacts(artifacts: 'xoken-nexa*.zip', followSymlinks: true)
         }
-       }
-      }
-    }
-    
+       }  
   }
   
       post {
