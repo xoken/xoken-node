@@ -23,6 +23,7 @@ import Data.Aeson as A
 import Data.Binary as DB
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as LBS
+import Data.Functor (($>))
 import Data.IORef
 import Data.Int
 import qualified Data.Map.Strict as M
@@ -39,6 +40,11 @@ import Network.Xoken.Node.XokenService
 import Text.Printf
 import Xoken.NodeConfig
 
+data EncodingFormat
+    = CBOR
+    | JSON
+    | DEFAULT
+
 data TLSEndpointServiceHandler =
     TLSEndpointServiceHandler
         { connQueue :: TQueue EndPointConnection
@@ -48,6 +54,7 @@ data EndPointConnection =
     EndPointConnection
         { requestQueue :: TQueue XDataReq
         , respWriteLock :: MVar TLS.Context
+        , encodingFormat :: IORef EncodingFormat
         }
 
 newTLSEndpointServiceHandler :: IO TLSEndpointServiceHandler
@@ -59,15 +66,26 @@ newEndPointConnection :: TLS.Context -> IO EndPointConnection
 newEndPointConnection context = do
     reqQueue <- atomically $ newTQueue
     resLock <- newMVar context
-    return $ EndPointConnection reqQueue resLock
+    formatRef <- newIORef DEFAULT
+    return $ EndPointConnection reqQueue resLock formatRef
 
-handleRPCReqResp :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => MVar TLS.Context -> Int -> RPCMessage -> m ()
-handleRPCReqResp sockMVar mid encReq = do
+handleRPCReqResp ::
+       (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
+    => MVar TLS.Context
+    -> EncodingFormat
+    -> Int
+    -> RPCMessage
+    -> m ()
+handleRPCReqResp sockMVar format mid encReq = do
     bp2pEnv <- getBitcoinP2P
     let net = bitcoinNetwork $ nodeConfig bp2pEnv
     liftIO $ printf "handleRPCReqResp (%d, %s)\n" mid (show encReq)
     rpcResp <- goGetResource encReq net
-    let body = serialise $ XDataRPCResp (mid) (rsStatusCode rpcResp) (rsStatusMessage rpcResp) (rsBody rpcResp)
+    let resp = XDataRPCResp (mid) (rsStatusCode rpcResp) (rsStatusMessage rpcResp) (rsBody rpcResp)
+    let body =
+            case format of
+                CBOR -> serialise resp
+                JSON -> A.encode resp
     connSock <- liftIO $ takeMVar sockMVar
     NTLS.sendData connSock body
     liftIO $ putMVar sockMVar connSock
@@ -82,23 +100,40 @@ handleNewConnectionRequest handler = do
         return ()
 
 handleRequest :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => EndPointConnection -> m ()
-handleRequest handler = do
+handleRequest epConn = do
     continue <- liftIO $ newIORef True
     whileM_ (liftIO $ readIORef continue) $ do
         liftIO $ printf "handleRequest\n"
-        xdReq <- liftIO $ atomically $ readTQueue $ requestQueue handler
+        xdReq <- liftIO $ atomically $ readTQueue $ requestQueue epConn
         case xdReq of
             XDataRPCReq mid met par -> do
                 liftIO $ printf "Decoded (%s)\n" (show met)
                 let req = RPCRequest met par
-                async (handleRPCReqResp (respWriteLock handler) mid req)
+                format <- liftIO $ readIORef (encodingFormat epConn)
+                async (handleRPCReqResp (respWriteLock epConn) format mid req)
                 return ()
             XCloseConnection -> do
                 liftIO $ writeIORef continue False
 
 enqueueRequest :: EndPointConnection -> LBS.ByteString -> IO ()
 enqueueRequest epConn req = do
-    let xdReq = deserialise req :: XDataReq
+    format <- readIORef (encodingFormat epConn)
+    xdReq <-
+        case format of
+            DEFAULT -> do
+                case eitherDecode req of
+                    Right x -> writeIORef (encodingFormat epConn) JSON $> x
+                    Left err -> do
+                      print $ "decode failed" <> show err
+                      writeIORef (encodingFormat epConn) CBOR $> deserialise req
+            JSON -> do
+                writeIORef (encodingFormat epConn) JSON
+                case eitherDecode req of
+                    Right x -> pure x
+                    Left err -> do
+                        print $ "decode failed" <> show err
+                        return XCloseConnection
+            CBOR -> writeIORef (encodingFormat epConn) CBOR $> deserialise req
     atomically $ writeTQueue (requestQueue epConn) xdReq
 
 handleConnection :: EndPointConnection -> TLS.Context -> IO ()
