@@ -1,6 +1,63 @@
 pipeline {
   agent any
   stages {
+
+    if ((env.BRANCH_NAME).startsWith("release")) {   
+
+      stage('Release') {
+        steps {
+        echo '****** Starting Ubuntu18.04 container ******'
+        dir(path: 'xoken-node'){
+                sh 'rm -f /tmp/ubuntu1804.cid'
+                sh 'docker run -t -d --cidfile /tmp/ubuntu1804.cid -w  /opt/work/xoken-node  xoken-nexa/ubuntu18.04 sh'
+                sh 'docker exec -w /opt/work/arivi-core $(cat /tmp/ubuntu1804.cid) git pull'
+                sh 'docker exec -w /opt/work/xoken-core $(cat /tmp/ubuntu1804.cid) git pull'
+                sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/ubuntu1804.cid) git checkout $(basename $(git symbolic-ref HEAD))'
+                sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/ubuntu1804.cid) git pull'
+                sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/ubuntu1804.cid) stack clean'
+                sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/ubuntu1804.cid) stack install  --local-bin-path  . '
+                sh 'docker cp $(cat /tmp/ubuntu1804.cid):/opt/work/xoken-node/xoken-nexa  . '
+                sh 'rm -f /tmp/ubuntu1804.cid'
+                sh 'sha256sum ./xoken-nexa > Checksum_SHA256'
+                sh 'zip xoken-nexa_"$(basename $(git symbolic-ref HEAD))"_ubuntu1804.zip ./xoken-nexa ReleaseNotes README Checksum_SHA256 '
+              }
+        echo '****** Starting Ubuntu20.04 container ******'
+        dir(path: 'xoken-node'){
+                sh 'rm -f /tmp/ubuntu2004.cid'
+                sh 'docker run -t -d --cidfile /tmp/ubuntu2004.cid -w  /opt/work/xoken-node  xoken-nexa/ubuntu20.04 sh'
+                sh 'docker exec -w /opt/work/arivi-core $(cat /tmp/ubuntu2004.cid) git pull'
+                sh 'docker exec -w /opt/work/xoken-core $(cat /tmp/ubuntu2004.cid) git pull'
+                sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/ubuntu1804.cid) git checkout $(basename $(git symbolic-ref HEAD))'
+                sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/ubuntu2004.cid) git pull'
+                sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/ubuntu2004.cid) stack clean'
+                sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/ubuntu2004.cid) stack install  --local-bin-path  . '
+                sh 'docker cp $(cat /tmp/ubuntu2004.cid):/opt/work/xoken-node/xoken-nexa  . '
+                sh 'rm -f /tmp/ubuntu2004.cid'
+                sh 'sha256sum ./xoken-nexa > Checksum_SHA256'
+                sh 'zip xoken-nexa_"$(basename $(git symbolic-ref HEAD))"_ubuntu2004.zip ./xoken-nexa ReleaseNotes README Checksum_SHA256 '
+              }
+        echo '****** Starting Arch Linux container ******'
+        dir(path: 'xoken-node'){
+                sh 'rm -f /tmp/archlinux.cid'
+                sh 'docker run -t -d --cidfile /tmp/archlinux.cid -w  /opt/work/xoken-node  xoken-nexa/archlinux sh'
+                sh 'docker exec -w /opt/work/arivi-core $(cat /tmp/archlinux.cid) git pull'
+                sh 'docker exec -w /opt/work/xoken-core $(cat /tmp/archlinux.cid) git pull'
+                sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/ubuntu1804.cid) git checkout $(basename $(git symbolic-ref HEAD))'
+                sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/archlinux.cid) git pull'
+                sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/archlinux.cid) stack clean'
+                sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/archlinux.cid) stack install  --local-bin-path  . '
+                sh 'docker cp $(cat /tmp/archlinux.cid):/opt/work/xoken-node/xoken-nexa  . '
+                sh 'rm -f /tmp/archlinux.cid'
+                sh 'sha256sum ./xoken-nexa > Checksum_SHA256'
+                sh 'zip xoken-nexa_"$(basename $(git symbolic-ref HEAD))"_archlinux.zip ./xoken-nexa ReleaseNotes README Checksum_SHA256 '
+              }
+              archiveArtifacts(artifacts: 'xoken-node/xoken-nexa*.zip', followSymlinks: true)
+          }
+       } 
+
+    } 
+    else { 
+
     stage('Prepare') {
       steps {
         sh 'mkdir -p arivi-core'
@@ -40,55 +97,8 @@ pipeline {
         archiveArtifacts(artifacts: 'build/**/xoken-nexa', followSymlinks: true)
       }
     }
-
-    stage('Release') {
-      steps {
-       echo 'Starting docker containers'
-       dir(path: 'xoken-node'){
-              sh 'rm -f /tmp/ubuntu1804.cid'
-              sh 'docker run -t -d --cidfile /tmp/ubuntu1804.cid -w  /opt/work/xoken-node  xoken-nexa/ubuntu18.04 sh'
-              sh 'docker exec -w /opt/work/arivi-core $(cat /tmp/ubuntu1804.cid) git pull'
-              sh 'docker exec -w /opt/work/xoken-core $(cat /tmp/ubuntu1804.cid) git pull'
-              sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/ubuntu1804.cid) git checkout $(basename $(git symbolic-ref HEAD))'
-              sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/ubuntu1804.cid) git pull'
-              sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/ubuntu1804.cid) stack clean'
-              sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/ubuntu1804.cid) stack install  --local-bin-path  . '
-              sh 'docker cp $(cat /tmp/ubuntu1804.cid):/opt/work/xoken-node/xoken-nexa  . '
-              sh 'rm -f /tmp/ubuntu1804.cid'
-              sh 'sha256sum ./xoken-nexa > Checksum_SHA256'
-              sh 'zip xoken-nexa_"$(basename $(git symbolic-ref HEAD))"_ubuntu1804.zip ./xoken-nexa ReleaseNotes README Checksum_SHA256 '
-            }
-       dir(path: 'xoken-node'){
-              sh 'rm -f /tmp/ubuntu2004.cid'
-              sh 'docker run -t -d --cidfile /tmp/ubuntu2004.cid -w  /opt/work/xoken-node  xoken-nexa/ubuntu20.04 sh'
-              sh 'docker exec -w /opt/work/arivi-core $(cat /tmp/ubuntu2004.cid) git pull'
-              sh 'docker exec -w /opt/work/xoken-core $(cat /tmp/ubuntu2004.cid) git pull'
-              sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/ubuntu1804.cid) git checkout $(basename $(git symbolic-ref HEAD))'
-              sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/ubuntu2004.cid) git pull'
-              sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/ubuntu2004.cid) stack clean'
-              sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/ubuntu2004.cid) stack install  --local-bin-path  . '
-              sh 'docker cp $(cat /tmp/ubuntu2004.cid):/opt/work/xoken-node/xoken-nexa  . '
-              sh 'rm -f /tmp/ubuntu2004.cid'
-              sh 'sha256sum ./xoken-nexa > Checksum_SHA256'
-              sh 'zip xoken-nexa_"$(basename $(git symbolic-ref HEAD))"_ubuntu2004.zip ./xoken-nexa ReleaseNotes README Checksum_SHA256 '
-            }
-       dir(path: 'xoken-node'){
-              sh 'rm -f /tmp/archlinux.cid'
-              sh 'docker run -t -d --cidfile /tmp/archlinux.cid -w  /opt/work/xoken-node  xoken-nexa/archlinux sh'
-              sh 'docker exec -w /opt/work/arivi-core $(cat /tmp/archlinux.cid) git pull'
-              sh 'docker exec -w /opt/work/xoken-core $(cat /tmp/archlinux.cid) git pull'
-              sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/ubuntu1804.cid) git checkout $(basename $(git symbolic-ref HEAD))'
-              sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/archlinux.cid) git pull'
-              sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/archlinux.cid) stack clean'
-              sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/archlinux.cid) stack install  --local-bin-path  . '
-              sh 'docker cp $(cat /tmp/archlinux.cid):/opt/work/xoken-node/xoken-nexa  . '
-              sh 'rm -f /tmp/archlinux.cid'
-              sh 'sha256sum ./xoken-nexa > Checksum_SHA256'
-              sh 'zip xoken-nexa_"$(basename $(git symbolic-ref HEAD))"_archlinux.zip ./xoken-nexa ReleaseNotes README Checksum_SHA256 '
-            }
-            archiveArtifacts(artifacts: 'xoken-node/xoken-nexa*.zip', followSymlinks: true)
-        }
-       }  
+    }
+ 
   }
   
       post {
