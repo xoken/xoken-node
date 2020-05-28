@@ -7,6 +7,8 @@
 
 module Network.Xoken.Node.Data where
 
+import Debug.Trace
+import Codec.Compression.GZip as GZ
 import Codec.Serialise
 import Conduit
 import Control.Applicative
@@ -17,6 +19,8 @@ import Data.Aeson as A
 import qualified Data.Aeson.Encoding as A
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as B
+import Data.ByteString.Base64.Lazy as B64L
+import qualified Data.ByteString.Lazy as BL
 import qualified Data.ByteString.Lazy.Char8 as C
 import Data.ByteString.Short (ShortByteString)
 import qualified Data.ByteString.Short as B.Short
@@ -106,7 +110,23 @@ data RPCReqParams
           , gpsaOutputOwner :: (String, Int)
           , gpsaOutputChange :: (String, Int)
           }
-    deriving (Generic, Show, Hashable, Eq, Serialise)
+    deriving (Generic, Show, Hashable, Eq, Serialise, ToJSON)
+
+instance FromJSON RPCReqParams where
+    parseJSON (Object o) =
+        (GetBlockByHeight <$> o .: "gbHeight") <|> (GetBlocksByHeight <$> o .: "gbHeights") <|>
+        (GetBlockByHash <$> o .: "gbBlockHash") <|>
+        (GetBlocksByHashes <$> o .: "gbBlockHashes") <|>
+        (GetTransactionByTxID <$> o .: "gtTxHash") <|>
+        (GetTransactionsByTxIDs <$> o .: "gtTxHashes") <|>
+        (GetOutputsByAddress <$> o .: "gaAddrOutputs") <|>
+        (GetOutputsByAddresses <$> o .: "gasAddrOutputs") <|>
+        (GetMerkleBranchByTxID <$> o .: "gmbMerkleBranch") <|>
+        (GetAllegoryNameBranch <$> o .: "gaName" <*> o .: "gaIsProducer") <|>
+        (RelayTx . BL.toStrict . GZ.decompress . B64L.decodeLenient . BL.fromStrict . T.encodeUtf8 <$> o .: "rTx") <|>
+        (GetPartiallySignedAllegoryTx <$> o .: "gpsaPaymentInputs" <*> o .: "gpsaName" <*> o .: "gpsaIsProducer" <*>
+         o .: "gpsaOutputOwner" <*>
+         o .: "gpsaOutputChange")
 
 data RPCResponseBody
     = RespBlockByHeight
@@ -147,13 +167,27 @@ data RPCResponseBody
           }
     deriving (Generic, Show, Hashable, Eq, Serialise)
 
+instance ToJSON RPCResponseBody where
+  toJSON (RespBlockByHeight b) = object ["block" .= b]
+  toJSON (RespBlocksByHeight bs) = object ["blocks" .= bs]
+  toJSON (RespBlockByHash b) = object ["block" .= b]
+  toJSON (RespBlocksByHashes bs) = object ["blocks" .= bs]
+  toJSON (RespTransactionByTxID tx) = object ["tx" .= tx]
+  toJSON (RespTransactionsByTxIDs txs) = object ["txs" .= txs]
+  toJSON (RespOutputsByAddress sa) = object ["saddressOutputs" .= sa]
+  toJSON (RespOutputsByAddresses ma) = object ["maddressOutputs" .= ma]
+  toJSON (RespMerkleBranchByTxID mb) = object ["merkleBranch" .= mb]
+  toJSON (RespAllegoryNameBranch nb) = object ["nameBranch" .= nb]
+  toJSON (RespRelayTx rrTx) = object ["rrTx" .= rrTx]
+  toJSON (RespPartiallySignedAllegoryTx ps) = object ["psaTx" .= (T.decodeUtf8 . BL.toStrict . B64L.encode . GZ.compress . BL.fromStrict $ ps)]
+
 data BlockRecord =
     BlockRecord
         { rbHeight :: Int
         , rbHash :: String
         , rbHeader :: String
         }
-    deriving (Generic, Show, Hashable, Eq, Serialise)
+    deriving (Generic, Show, Hashable, Eq, Serialise, ToJSON)
 
 data TxRecord =
     TxRecord
@@ -162,6 +196,14 @@ data TxRecord =
         , txSerialized :: C.ByteString
         }
     deriving (Show, Generic, Hashable, Eq, Serialise)
+
+instance ToJSON TxRecord where
+    toJSON (TxRecord tId tBI tS) =
+        object
+            [ "txId" .= tId
+            , "txBlockInfo" .= tBI
+            , "txSerialized" .= (T.decodeUtf8 . BL.toStrict . B64L.encode . GZ.compress $ tS) -- decodeUtf8 won't because of B64 encode
+            ]
 
 data AddressOutputs =
     AddressOutputs
@@ -175,14 +217,14 @@ data AddressOutputs =
         , aoPrevOutpoint :: OutPoint'
         , aoValue :: Int64
         }
-    deriving (Show, Generic, Hashable, Eq, Serialise)
+    deriving (Show, Generic, Hashable, Eq, Serialise, ToJSON)
 
 data OutPoint' =
     OutPoint'
         { opTxHash :: String
         , opIndex :: Int
         }
-    deriving (Show, Generic, Hashable, Eq, Serialise)
+    deriving (Show, Generic, Hashable, Eq, Serialise, FromJSON, ToJSON)
 
 data BlockInfo' =
     BlockInfo'
@@ -190,14 +232,14 @@ data BlockInfo' =
         , binfTxIndex :: Int
         , binfBlockHeight :: Int
         }
-    deriving (Show, Generic, Hashable, Eq, Serialise)
+    deriving (Show, Generic, Hashable, Eq, Serialise, ToJSON)
 
 data MerkleBranchNode' =
     MerkleBranchNode'
         { nodeValue :: String
         , isLeftNode :: Bool
         }
-    deriving (Show, Generic, Hashable, Eq, Serialise)
+    deriving (Show, Generic, Hashable, Eq, Serialise, ToJSON)
 
 data PubNotifyMessage =
     PubNotifyMessage
@@ -215,6 +257,11 @@ data XDataReq
     | XCloseConnection
     deriving (Show, Generic, Hashable, Eq, Serialise)
 
+instance FromJSON XDataReq where
+  parseJSON (Object o) =
+    (XDataRPCReq <$> o .: "reqId" <*> o .: "method" <*> o .:? "params")
+    <|> (pure XCloseConnection)
+
 data XDataResp =
     XDataRPCResp
         { matchId :: Int
@@ -222,4 +269,4 @@ data XDataResp =
         , statusMessage :: Maybe String
         , respBody :: Maybe RPCResponseBody
         }
-    deriving (Show, Generic, Hashable, Eq, Serialise) --
+    deriving (Show, Generic, Hashable, Eq, Serialise, ToJSON)
