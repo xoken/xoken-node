@@ -23,11 +23,11 @@ import Arivi.P2P.RPC.Fetch
 import Arivi.P2P.Types hiding (msgType)
 import Codec.Compression.GZip as GZ
 import Codec.Serialise
-import Codec.Serialise
 import Conduit hiding (runResourceT)
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async.Lifted (async)
 import Control.Concurrent.STM.TVar
+import qualified Control.Error.Util as Extra
 import Control.Exception
 import Control.Exception
 import qualified Control.Exception.Lifted as LE (try)
@@ -52,6 +52,7 @@ import qualified Data.List as L
 import Data.Map.Strict as M
 import Data.Maybe
 import Data.Pool
+import qualified Data.Serialize as S
 import Data.Serialize
 import qualified Data.Text as DT
 import Data.Yaml
@@ -396,12 +397,11 @@ xRelayTx net rawTx = do
                             (txIn tx)
                     if verifyStdTx net tx $ catMaybes tr
                         then do
-                          allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
-                          let !connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
-                          debug lg $ LG.msg $ val $ "transaction verified - broadcasting tx"
-                          mapM_ (\(_, peer) -> do sendRequestMessages peer (MTx (fromJust $ fst res))) connPeers
-                          return True
-
+                            allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
+                            let !connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
+                            debug lg $ LG.msg $ val $ "transaction verified - broadcasting tx"
+                            mapM_ (\(_, peer) -> do sendRequestMessages peer (MTx (fromJust $ fst res))) connPeers
+                            return True
                         else do
                             debug lg $ LG.msg $ val $ "transaction invalid"
                             let op_return = head (txOut tx)
@@ -483,11 +483,36 @@ goGetResource msg net = do
                         Just t -> return $ RPCResponse 200 Nothing $ Just $ RespTransactionByTxID t
                         Nothing -> return $ RPCResponse 404 (Just "Record Not found") Nothing
                 Nothing -> return $ RPCResponse 400 (Just "Error: Invalid Params") Nothing
+        "TXID->RAWTX" -> do
+            liftIO $ print "inside TXID->RAWTX"
+            case rqParams msg of
+                Just (GetRawTransactionByTxID hs) -> do
+                    tx <- xGetTxHash net (hs)
+                    case tx of
+                        Just TxRecord {..} ->
+                            case S.decodeLazy txSerialized of
+                                Right rt ->
+                                    return $
+                                    RPCResponse 200 Nothing $
+                                    Just $ RespRawTransactionByTxID (RawTxRecord txId txBlockInfo rt)
+                                Left err -> return $ RPCResponse 400 (Just "Deserialize failed") Nothing
+                        Nothing -> return $ RPCResponse 404 (Just "Record Not found") Nothing
+                Nothing -> return $ RPCResponse 400 (Just "Error: Invalid Params") Nothing
         "[TXID]->[TX]" -> do
             case rqParams msg of
                 Just (GetTransactionsByTxIDs hashes) -> do
                     txs <- xGetTxHashes net hashes
                     return $ RPCResponse 200 Nothing $ Just $ RespTransactionsByTxIDs txs
+                Nothing -> return $ RPCResponse 400 (Just "Error: Invalid Params") Nothing
+        "[TXID]->[RAWTX]" -> do
+            case rqParams msg of
+                Just (GetRawTransactionsByTxIDs hashes) -> do
+                    txs <- xGetTxHashes net hashes
+                    let rawTxs =
+                            (\TxRecord {..} ->
+                                 (RawTxRecord txId txBlockInfo) <$> (Extra.hush $ S.decodeLazy txSerialized)) <$>
+                            txs
+                    return $ RPCResponse 200 Nothing $ Just $ RespRawTransactionsByTxIDs $ catMaybes rawTxs
                 Nothing -> return $ RPCResponse 400 (Just "Error: Invalid Params") Nothing
         "ADDR->[OUTPUT]" -> do
             case rqParams msg of
@@ -500,7 +525,7 @@ goGetResource msg net = do
                 Just (GetOutputsByAddresses addrs) -> do
                     ops <- xGetOutputsAddresses net addrs
                     return $ RPCResponse 200 Nothing $ Just $ RespOutputsByAddresses ops
-                Nothing -> return $ RPCResponse 400 (Just "Error: Invalid Params") Nothing
+                ____ -> return $ RPCResponse 400 (Just "Error: Invalid Params") Nothing
         "TXID->[MNODE]" -> do
             case rqParams msg of
                 Just (GetMerkleBranchByTxID txid) -> do
