@@ -1,0 +1,25 @@
+
+Xoken Nexa Node
+===============
+
+
+v1.0.0-beta     2020-05-26
+
+- Direct TLS API endpoint support, running Arch is no longer necessary for clients with mere TLS capabilities. Clients have a choice of accessing Nexa either via AriviP2P protocol or TLS/Cbor
+- Numerous performance improvements, syncs chain much faster.
+- Split configuration parameters into two exclusive files focusing on specialized areas.
+- Concurrent Tx processing, more efficient handling of out of sequence Tx processing i.e. until input dependencies are met.
+- Tx broadcast API added
+- Temporary blacklisting of nodes that aren't pointing to the canonical chain.
+- More efficient Transpose Merkle Tree builder.
+- Performance tuning parameters to tailor capabilities based on the system hardware resources.
+- Invalidation-less Unconfirmed-Tx caching, to avoid triggering GetData for Tx INV messages.
+- Bugfix to address stalled syncing on resource constrained hardware.
+- General bug fixes and code cleanup.
+
+v1.0.0-alpha    2020-02-05
+
+- First version, released on an unsuspecting world.
+
+
+
