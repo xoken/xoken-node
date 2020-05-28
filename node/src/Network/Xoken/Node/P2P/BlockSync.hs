@@ -594,8 +594,9 @@ getAddressFromOutpoint conn txSync lg net outPoint waitSecs = do
                                         else do
                                             let output = (txOut tx) !! (fromIntegral $ outPointIndex outPoint)
                                             case scriptToAddressBS $ scriptOutput output of
-                                                Left e -> do
-                                                    err lg $ LG.msg ("Error: failed decoding addr: " ++ show e)
+                                                Left e
+                                                    -- debug lg $ LG.msg ("unable to decode addr: " ++ show e)
+                                                 -> do
                                                     return Nothing
                                                 Right os -> return $ Just os
                                 Nothing -> return Nothing
