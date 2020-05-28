@@ -2,9 +2,51 @@ pipeline {
   agent any
   stages {
 
-    if ((env.BRANCH_NAME).startsWith("release")) {   
+    stage('Prepare') {
+      steps {
+        sh 'mkdir -p arivi-core'
+        dir(path: 'arivi-core') {
+          git(url: 'https://github.com/xoken/arivi-core/', branch: 'master')
+        }
+
+        sh 'mkdir -p xoken-core'
+        dir(path: 'xoken-core') {
+          git(url: 'https://github.com/xoken/xoken-core/', branch: 'master')
+        }
+
+        sh 'mkdir -p xoken-node'
+        dir(path: 'xoken-node') {
+          git(url: 'https://github.com/xoken/xoken-node/', branch: "${env.BRANCH_NAME}")
+        }
+
+      }
+    }
+
+    stage('Clean') {
+      steps {
+        dir(path: 'xoken-node') {
+          sh 'stack clean'
+        }
+
+      }
+    }
+
+    stage('Build') {
+      steps {
+        dir(path: 'xoken-node') {
+          sh 'stack install  --local-bin-path  ../build/reg/'
+          sh 'stack install  --executable-profiling  --local-bin-path  ../build/prof/'
+        }
+
+        archiveArtifacts(artifacts: 'build/**/xoken-nexa', followSymlinks: true)
+      }
+    }
+
+
 
       stage('Release') {
+        if ((env.BRANCH_NAME).startsWith("release")) {   
+
         steps {
         echo '****** Starting Ubuntu18.04 container ******'
         dir(path: 'xoken-node'){
@@ -53,52 +95,16 @@ pipeline {
               }
               archiveArtifacts(artifacts: 'xoken-node/xoken-nexa*.zip', followSymlinks: true)
           }
+        } 
+        else { 
+          echo 'skipping Docker release packaging..'
+        }
        } 
 
     } 
-    else { 
+    
 
-    stage('Prepare') {
-      steps {
-        sh 'mkdir -p arivi-core'
-        dir(path: 'arivi-core') {
-          git(url: 'https://github.com/xoken/arivi-core/', branch: 'master')
-        }
 
-        sh 'mkdir -p xoken-core'
-        dir(path: 'xoken-core') {
-          git(url: 'https://github.com/xoken/xoken-core/', branch: 'master')
-        }
-
-        sh 'mkdir -p xoken-node'
-        dir(path: 'xoken-node') {
-          git(url: 'https://github.com/xoken/xoken-node/', branch: "${env.BRANCH_NAME}")
-        }
-
-      }
-    }
-
-    stage('Clean') {
-      steps {
-        dir(path: 'xoken-node') {
-          sh 'stack clean'
-        }
-
-      }
-    }
-
-    stage('Build') {
-      steps {
-        dir(path: 'xoken-node') {
-          sh 'stack install  --local-bin-path  ../build/reg/'
-          sh 'stack install  --executable-profiling  --local-bin-path  ../build/prof/'
-        }
-
-        archiveArtifacts(artifacts: 'build/**/xoken-nexa', followSymlinks: true)
-      }
-    }
-    }
- 
   }
   
       post {
