@@ -206,24 +206,24 @@ data BlockRecord =
         }
     deriving (Generic, Show, Hashable, Eq, Serialise, ToJSON)
 
-data TxRecord =
-    TxRecord
+data RawTxRecord =
+    RawTxRecord
         { txId :: String
         , txBlockInfo :: BlockInfo'
         , txSerialized :: C.ByteString
         }
     deriving (Show, Generic, Hashable, Eq, Serialise)
 
-instance ToJSON TxRecord where
-    toJSON (TxRecord tId tBI tS) =
+instance ToJSON RawTxRecord where
+    toJSON (RawTxRecord tId tBI tS) =
         object
             [ "txId" .= tId
             , "txBlockInfo" .= tBI
             , "txSerialized" .= (T.decodeUtf8 . BL.toStrict . B64L.encode . GZ.compress $ tS) -- decodeUtf8 won't because of B64 encode
             ]
 
-data RawTxRecord =
-    RawTxRecord
+data TxRecord =
+    TxRecord
         { txId :: String
         , txBlockInfo :: BlockInfo'
         , tx :: Tx

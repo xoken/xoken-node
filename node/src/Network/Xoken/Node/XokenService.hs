@@ -136,7 +136,7 @@ xGetBlocksHeights net heights = do
             return $
                 Data.List.map (\(hs, ht, hdr) -> BlockRecord (fromIntegral ht) (DT.unpack hs) (DT.unpack hdr)) (iop)
 
-xGetTxHash :: (HasXokenNodeEnv env m, MonadIO m) => Network -> String -> m (Maybe TxRecord)
+xGetTxHash :: (HasXokenNodeEnv env m, MonadIO m) => Network -> String -> m (Maybe RawTxRecord)
 xGetTxHash net hash = do
     dbe <- getDB
     let conn = keyValDB (dbe)
@@ -150,12 +150,12 @@ xGetTxHash net hash = do
             let (txid, ((bhash, txind), blkht), sz) = iop !! 0
             return $
                 Just $
-                TxRecord
+                RawTxRecord
                     (DT.unpack txid)
                     (BlockInfo' (DT.unpack bhash) (fromIntegral txind) (fromIntegral blkht))
                     (fromBlob sz)
 
-xGetTxHashes :: (HasXokenNodeEnv env m, MonadIO m) => Network -> [String] -> m ([TxRecord])
+xGetTxHashes :: (HasXokenNodeEnv env m, MonadIO m) => Network -> [String] -> m ([RawTxRecord])
 xGetTxHashes net hashes = do
     dbe <- getDB
     let conn = keyValDB (dbe)
@@ -169,7 +169,7 @@ xGetTxHashes net hashes = do
             return $
                 Data.List.map
                     (\(txid, ((bhash, txind), blkht), sz) ->
-                         TxRecord
+                         RawTxRecord
                              (DT.unpack txid)
                              (BlockInfo' (DT.unpack bhash) (fromIntegral txind) (fromIntegral blkht))
                              (fromBlob sz))
@@ -475,44 +475,43 @@ goGetResource msg net = do
                     blks <- xGetBlocksHeights net $ Data.List.map (fromIntegral) hts
                     return $ RPCResponse 200 Nothing $ Just $ RespBlocksByHashes blks
                 _____ -> return $ RPCResponse 400 (Just "Error: Invalid Params") Nothing
+        "TXID->RAWTX" -> do
+            case rqParams msg of
+                Just (GetRawTransactionByTxID hs) -> do
+                    tx <- xGetTxHash net (hs)
+                    case tx of
+                        Just t -> return $ RPCResponse 200 Nothing $ Just $ RespRawTransactionByTxID t
+                        Nothing -> return $ RPCResponse 404 (Just "Record Not found") Nothing
+                _____ -> return $ RPCResponse 400 (Just "Error: Invalid Params") Nothing
         "TXID->TX" -> do
             case rqParams msg of
                 Just (GetTransactionByTxID hs) -> do
                     tx <- xGetTxHash net (hs)
                     case tx of
-                        Just t -> return $ RPCResponse 200 Nothing $ Just $ RespTransactionByTxID t
-                        Nothing -> return $ RPCResponse 404 (Just "Record Not found") Nothing
-                _____ -> return $ RPCResponse 400 (Just "Error: Invalid Params") Nothing
-        "TXID->RAWTX" -> do
-            liftIO $ print "inside TXID->RAWTX"
-            case rqParams msg of
-                Just (GetRawTransactionByTxID hs) -> do
-                    tx <- xGetTxHash net (hs)
-                    case tx of
-                        Just TxRecord {..} ->
+                        Just RawTxRecord {..} ->
                             case S.decodeLazy txSerialized of
                                 Right rt ->
                                     return $
                                     RPCResponse 200 Nothing $
-                                    Just $ RespRawTransactionByTxID (RawTxRecord txId txBlockInfo rt)
+                                    Just $ RespTransactionByTxID (TxRecord txId txBlockInfo rt)
                                 Left err -> return $ RPCResponse 400 (Just "Deserialize failed") Nothing
                         Nothing -> return $ RPCResponse 404 (Just "Record Not found") Nothing
-                _____ -> return $ RPCResponse 400 (Just "Error: Invalid Params") Nothing
-        "[TXID]->[TX]" -> do
-            case rqParams msg of
-                Just (GetTransactionsByTxIDs hashes) -> do
-                    txs <- xGetTxHashes net hashes
-                    return $ RPCResponse 200 Nothing $ Just $ RespTransactionsByTxIDs txs
                 _____ -> return $ RPCResponse 400 (Just "Error: Invalid Params") Nothing
         "[TXID]->[RAWTX]" -> do
             case rqParams msg of
                 Just (GetRawTransactionsByTxIDs hashes) -> do
                     txs <- xGetTxHashes net hashes
+                    return $ RPCResponse 200 Nothing $ Just $ RespRawTransactionsByTxIDs txs
+                _____ -> return $ RPCResponse 400 (Just "Error: Invalid Params") Nothing
+        "[TXID]->[TX]" -> do
+            case rqParams msg of
+                Just (GetTransactionsByTxIDs hashes) -> do
+                    txs <- xGetTxHashes net hashes
                     let rawTxs =
-                            (\TxRecord {..} ->
-                                 (RawTxRecord txId txBlockInfo) <$> (Extra.hush $ S.decodeLazy txSerialized)) <$>
+                            (\RawTxRecord {..} ->
+                                 (TxRecord txId txBlockInfo) <$> (Extra.hush $ S.decodeLazy txSerialized)) <$>
                             txs
-                    return $ RPCResponse 200 Nothing $ Just $ RespRawTransactionsByTxIDs $ catMaybes rawTxs
+                    return $ RPCResponse 200 Nothing $ Just $ RespTransactionsByTxIDs $ catMaybes rawTxs
                 _____ -> return $ RPCResponse 400 (Just "Error: Invalid Params") Nothing
         "ADDR->[OUTPUT]" -> do
             case rqParams msg of
