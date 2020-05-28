@@ -47,6 +47,8 @@ pipeline {
        dir(path: 'xoken-node'){
               sh 'rm -f /tmp/ubuntu1804.cid'
               sh 'docker run -t -d --cidfile /tmp/ubuntu1804.cid -w  /opt/work/xoken-node  xoken-nexa/ubuntu18.04 sh'
+              sh 'docker exec -w /opt/work/arivi-core $(cat /tmp/ubuntu1804.cid) git pull'
+              sh 'docker exec -w /opt/work/xoken-core $(cat /tmp/ubuntu1804.cid) git pull'
               sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/ubuntu1804.cid) git pull'
               sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/ubuntu1804.cid) stack clean'
               sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/ubuntu1804.cid) stack install  --local-bin-path  . '
@@ -58,6 +60,8 @@ pipeline {
        dir(path: 'xoken-node'){
               sh 'rm -f /tmp/ubuntu2004.cid'
               sh 'docker run -t -d --cidfile /tmp/ubuntu2004.cid -w  /opt/work/xoken-node  xoken-nexa/ubuntu18.04 sh'
+              sh 'docker exec -w /opt/work/arivi-core $(cat /tmp/ubuntu2004.cid) git pull'
+              sh 'docker exec -w /opt/work/xoken-core $(cat /tmp/ubuntu2004.cid) git pull'
               sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/ubuntu2004.cid) git pull'
               sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/ubuntu2004.cid) stack clean'
               sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/ubuntu2004.cid) stack install  --local-bin-path  . '
