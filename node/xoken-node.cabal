@@ -55,6 +55,7 @@ executable xoken-nexa
     , conduit
     , containers
     , data-default
+    , errors
     , filepath
     , hashable
     , http-types

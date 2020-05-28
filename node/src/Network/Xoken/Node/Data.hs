@@ -4,6 +4,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 
 module Network.Xoken.Node.Data where
 
@@ -87,6 +88,12 @@ data RPCReqParams
     | GetTransactionsByTxIDs
           { gtTxHashes :: [String]
           }
+    | GetRawTransactionByTxID
+          { gtRTxHash :: String
+          }
+    | GetRawTransactionsByTxIDs
+          { gtRTxHashes :: [String]
+          }
     | GetOutputsByAddress
           { gaAddrOutputs :: String
           }
@@ -119,6 +126,8 @@ instance FromJSON RPCReqParams where
         (GetBlocksByHashes <$> o .: "gbBlockHashes") <|>
         (GetTransactionByTxID <$> o .: "gtTxHash") <|>
         (GetTransactionsByTxIDs <$> o .: "gtTxHashes") <|>
+        (GetRawTransactionByTxID <$> o .: "gtRTxHash") <|>
+        (GetRawTransactionsByTxIDs <$> o .: "gtRTxHashes") <|>
         (GetOutputsByAddress <$> o .: "gaAddrOutputs") <|>
         (GetOutputsByAddresses <$> o .: "gasAddrOutputs") <|>
         (GetMerkleBranchByTxID <$> o .: "gmbMerkleBranch") <|>
@@ -147,6 +156,12 @@ data RPCResponseBody
     | RespTransactionsByTxIDs
           { txs :: [TxRecord]
           }
+    | RespRawTransactionByTxID
+          { rawTx :: RawTxRecord
+          }
+    | RespRawTransactionsByTxIDs
+          { rawTxs :: [RawTxRecord]
+          }
     | RespOutputsByAddress
           { saddressOutputs :: [AddressOutputs]
           }
@@ -174,6 +189,8 @@ instance ToJSON RPCResponseBody where
   toJSON (RespBlocksByHashes bs) = object ["blocks" .= bs]
   toJSON (RespTransactionByTxID tx) = object ["tx" .= tx]
   toJSON (RespTransactionsByTxIDs txs) = object ["txs" .= txs]
+  toJSON (RespRawTransactionByTxID tx) = object ["rawTx" .= tx]
+  toJSON (RespRawTransactionsByTxIDs txs) = object ["rawTxs" .= txs]
   toJSON (RespOutputsByAddress sa) = object ["saddressOutputs" .= sa]
   toJSON (RespOutputsByAddresses ma) = object ["maddressOutputs" .= ma]
   toJSON (RespMerkleBranchByTxID mb) = object ["merkleBranch" .= mb]
@@ -189,21 +206,29 @@ data BlockRecord =
         }
     deriving (Generic, Show, Hashable, Eq, Serialise, ToJSON)
 
-data TxRecord =
-    TxRecord
+data RawTxRecord =
+    RawTxRecord
         { txId :: String
         , txBlockInfo :: BlockInfo'
         , txSerialized :: C.ByteString
         }
     deriving (Show, Generic, Hashable, Eq, Serialise)
 
-instance ToJSON TxRecord where
-    toJSON (TxRecord tId tBI tS) =
+instance ToJSON RawTxRecord where
+    toJSON (RawTxRecord tId tBI tS) =
         object
             [ "txId" .= tId
             , "txBlockInfo" .= tBI
             , "txSerialized" .= (T.decodeUtf8 . BL.toStrict . B64L.encode . GZ.compress $ tS) -- decodeUtf8 won't because of B64 encode
             ]
+
+data TxRecord =
+    TxRecord
+        { txId :: String
+        , txBlockInfo :: BlockInfo'
+        , tx :: Tx
+        }
+    deriving (Show, Generic, Hashable, Eq, Serialise, ToJSON)
 
 data AddressOutputs =
     AddressOutputs
