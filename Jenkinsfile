@@ -45,13 +45,14 @@ pipeline {
       steps {
        echo 'Starting docker containers'
        dir(path: 'xoken-node'){
-              sh 'docker run -t -d --cidfile /tmp/cid -w  /opt/work/xoken-node  xoken-nexa/ubuntu18.04 sh'
-              sh 'export CID="$(cat /tmp/cid)"'
+              sh 'rm /tmp/ubuntu1804.cid'
+              sh 'docker run -t -d --cidfile /tmp/ubuntu1804.cid -w  /opt/work/xoken-node  xoken-nexa/ubuntu18.04 sh'
+              sh 'export CID="$(cat /tmp/ubuntu1804.cid)"'
               sh 'docker exec -w /opt/work/xoken-node $CID git pull'
               sh 'docker exec -w /opt/work/xoken-node $CID stack clean'
               sh 'docker exec -w /opt/work/xoken-node $CID stack install  --local-bin-path  . '
               sh 'docker cp  $CID:/opt/work/xoken-node/xoken-nexa  . '
-              sh 'rm /tmp/cid'
+              sh 'rm /tmp/ubuntu1804.cid'
               sh 'zip xoken-nexa_"$(basename $(git symbolic-ref HEAD))".zip ./xoken-nexa '
             }
             archiveArtifacts(artifacts: 'xoken-nexa*.zip', followSymlinks: true)
