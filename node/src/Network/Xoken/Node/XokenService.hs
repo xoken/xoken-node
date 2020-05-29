@@ -37,6 +37,7 @@ import Control.Monad.IO.Class
 import Control.Monad.Logger
 import Control.Monad.Loops
 import Control.Monad.Reader
+import Data.Aeson
 import qualified Data.ByteString.Base16 as B16 (decode, encode)
 import Data.ByteString.Base64 as B64
 import Data.ByteString.Base64.Lazy as B64L
@@ -55,6 +56,7 @@ import Data.Pool
 import qualified Data.Serialize as S
 import Data.Serialize
 import qualified Data.Text as DT
+import qualified Data.Text.Encoding as DTE
 import Data.Yaml
 import qualified Database.Bolt as BT
 import qualified Database.CQL.IO as Q
@@ -92,7 +94,11 @@ xGetBlockHash net hash = do
         then return Nothing
         else do
             let (hs, ht, hdr) = iop !! 0
-            return $ Just $ BlockRecord (fromIntegral ht) (DT.unpack hs) (DT.unpack hdr)
+            case eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 hdr of
+                Right bh -> return $ Just $ BlockRecord (fromIntegral ht) (DT.unpack hs) bh
+                Left err -> do
+                    liftIO $ print $ "Decode failed with error: " <> show err
+                    return Nothing
 
 xGetBlocksHashes :: (HasXokenNodeEnv env m, MonadIO m) => Network -> [String] -> m ([BlockRecord])
 xGetBlocksHashes net hashes = do
@@ -105,8 +111,14 @@ xGetBlocksHashes net hashes = do
     if length iop == 0
         then return []
         else do
-            return $
-                Data.List.map (\(hs, ht, hdr) -> BlockRecord (fromIntegral ht) (DT.unpack hs) (DT.unpack hdr)) (iop)
+            case traverse
+                     (\(hs, ht, hdr) ->
+                          BlockRecord (fromIntegral ht) (DT.unpack hs) <$> (eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 hdr))
+                     (iop) of
+                Right x -> return x
+                Left err -> do
+                    liftIO $ print $ "decode failed for blockrecord: " <> show err
+                    return []
 
 xGetBlockHeight :: (HasXokenNodeEnv env m, MonadIO m) => Network -> Int32 -> m (Maybe BlockRecord)
 xGetBlockHeight net height = do
@@ -120,7 +132,11 @@ xGetBlockHeight net height = do
         then return Nothing
         else do
             let (hs, ht, hdr) = iop !! 0
-            return $ Just $ BlockRecord (fromIntegral ht) (DT.unpack hs) (DT.unpack hdr)
+            case eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 hdr of
+                Right bh -> return $ Just $ BlockRecord (fromIntegral ht) (DT.unpack hs) bh
+                Left err -> do
+                    liftIO $ print $ "Decode failed with error: " <> show err
+                    return Nothing
 
 xGetBlocksHeights :: (HasXokenNodeEnv env m, MonadIO m) => Network -> [Int32] -> m ([BlockRecord])
 xGetBlocksHeights net heights = do
@@ -133,8 +149,14 @@ xGetBlocksHeights net heights = do
     if length iop == 0
         then return []
         else do
-            return $
-                Data.List.map (\(hs, ht, hdr) -> BlockRecord (fromIntegral ht) (DT.unpack hs) (DT.unpack hdr)) (iop)
+            case traverse
+                     (\(hs, ht, hdr) ->
+                          BlockRecord (fromIntegral ht) (DT.unpack hs) <$> (eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 hdr))
+                     (iop) of
+                Right x -> return x
+                Left err -> do
+                    liftIO $ print $ "decode failed for blockrecord: " <> show err
+                    return []
 
 xGetTxHash :: (HasXokenNodeEnv env m, MonadIO m) => Network -> String -> m (Maybe RawTxRecord)
 xGetTxHash net hash = do

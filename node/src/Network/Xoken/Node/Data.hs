@@ -8,7 +8,6 @@
 
 module Network.Xoken.Node.Data where
 
-import Debug.Trace
 import Codec.Compression.GZip as GZ
 import Codec.Serialise
 import Conduit
@@ -202,7 +201,7 @@ data BlockRecord =
     BlockRecord
         { rbHeight :: Int
         , rbHash :: String
-        , rbHeader :: String
+        , rbHeader :: BlockHeader
         }
     deriving (Generic, Show, Hashable, Eq, Serialise, ToJSON)
 
