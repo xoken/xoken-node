@@ -857,14 +857,15 @@ procTxStream pr = do
                     case res of
                         Right (_) -> return ()
                         Left (e :: SomeException) -> do
-                            err lg $ LG.msg $ (val "[ERROR] Closing peer connection ") +++ (show e)
+                            err lg $ LG.msg $ (val "[ERROR] Closing peer connection (1) ") +++ (show e)
                             liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
                             closeSocket (bpSocket pr)
             allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
             let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
             liftIO $ MSN.signal (bpTxSem pr) (L.length connPeers)
-        Left (e :: SomeException) -> do
-            err lg $ LG.msg $ (val "[ERROR] Closing peer connection ") +++ (show e)
+        Left (e :: SomeException)
+            -- likely peer already closed, and peer's read threads are locked on MVar
+         -> do
             liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
             closeSocket (bpSocket pr)
   where
