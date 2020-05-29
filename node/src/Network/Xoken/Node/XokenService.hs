@@ -417,48 +417,48 @@ xRelayTx net rawTx = do
                                                                  err lg $ LG.msg $ "error decoding rawTx :" ++ show e
                                                                  return Nothing)
                             (txIn tx)
-                    if verifyStdTx net tx $ catMaybes tr
-                        then do
-                            allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
-                            let !connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
-                            debug lg $ LG.msg $ val $ "transaction verified - broadcasting tx"
-                            mapM_ (\(_, peer) -> do sendRequestMessages peer (MTx (fromJust $ fst res))) connPeers
-                            return True
-                        else do
-                            debug lg $ LG.msg $ val $ "transaction invalid"
-                            let op_return = head (txOut tx)
-                            let hexstr = B16.encode (scriptOutput op_return)
-                            if "006a0f416c6c65676f72792f416c6c506179" `isPrefixOf` (BC.unpack hexstr)
-                                then do
-                                    liftIO $ print (hexstr)
-                                    case decodeOutputScript $ scriptOutput op_return of
-                                        Right (script) -> do
-                                            liftIO $ print (script)
-                                            case last $ scriptOps script of
-                                                (OP_PUSHDATA payload _) -> do
-                                                    case (deserialiseOrFail $ C.fromStrict payload) of
-                                                        Right (allegory) -> do
-                                                            liftIO $ print (allegory)
-                                                            ores <-
-                                                                liftIO $
-                                                                try $
-                                                                withResource
-                                                                    (pool $ graphDB dbe)
-                                                                    (`BT.run` updateAllegoryStateTrees tx allegory)
-                                                            case ores of
-                                                                Right () -> return True
-                                                                Left (SomeException e) -> return $ False
-                                                        Left (e :: DeserialiseFailure) -> do
-                                                            err lg $
-                                                                LG.msg $
-                                                                "error deserialising OP_RETURN CBOR data" ++ show e
-                                                            return False
-                                        Left (e) -> do
-                                            err lg $ LG.msg $ "error decoding op_return data:" ++ show e
-                                            return False
-                                else do
-                                    err lg $ LG.msg $ val $ "error: OP_RETURN prefix mismatch"
-                                    return False
+                    -- if verifyStdTx net tx $ catMaybes tr
+                    --     then do
+                    allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
+                    let !connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
+                    debug lg $ LG.msg $ val $ "transaction verified - broadcasting tx"
+                    mapM_ (\(_, peer) -> do sendRequestMessages peer (MTx (fromJust $ fst res))) connPeers
+                    return True
+                        -- else do
+                        --     debug lg $ LG.msg $ val $ "transaction invalid"
+                        --     let op_return = head (txOut tx)
+                        --     let hexstr = B16.encode (scriptOutput op_return)
+                        --     if "006a0f416c6c65676f72792f416c6c506179" `isPrefixOf` (BC.unpack hexstr)
+                        --         then do
+                        --             liftIO $ print (hexstr)
+                        --             case decodeOutputScript $ scriptOutput op_return of
+                        --                 Right (script) -> do
+                        --                     liftIO $ print (script)
+                        --                     case last $ scriptOps script of
+                        --                         (OP_PUSHDATA payload _) -> do
+                        --                             case (deserialiseOrFail $ C.fromStrict payload) of
+                        --                                 Right (allegory) -> do
+                        --                                     liftIO $ print (allegory)
+                        --                                     ores <-
+                        --                                         liftIO $
+                        --                                         try $
+                        --                                         withResource
+                        --                                             (pool $ graphDB dbe)
+                        --                                             (`BT.run` updateAllegoryStateTrees tx allegory)
+                        --                                     case ores of
+                        --                                         Right () -> return True
+                        --                                         Left (SomeException e) -> return $ False
+                        --                                 Left (e :: DeserialiseFailure) -> do
+                        --                                     err lg $
+                        --                                         LG.msg $
+                        --                                         "error deserialising OP_RETURN CBOR data" ++ show e
+                        --                                     return False
+                        --                 Left (e) -> do
+                        --                     err lg $ LG.msg $ "error decoding op_return data:" ++ show e
+                        --                     return False
+                        --         else do
+                        --             err lg $ LG.msg $ val $ "error: OP_RETURN prefix mismatch"
+                        --             return False
                 Nothing -> do
                     err lg $ LG.msg $ val $ "error decoding rawTx (2)"
                     return $ False
