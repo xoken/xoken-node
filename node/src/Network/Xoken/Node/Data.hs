@@ -270,7 +270,7 @@ instance ToJSON RawTxRecord where
         object
             [ "txId" .= tId
             , "txBlockInfo" .= tBI
-            , "txSerialized" .= (T.decodeUtf8 . BL.toStrict . B64L.encode . GZ.compress $ tS) -- decodeUtf8 won't because of B64 encode
+            , "txSerialized" .= (T.decodeUtf8 . BL.toStrict . B64L.encode . GZ.compress $ tS)
             ]
 
 data TxRecord =
@@ -331,6 +331,7 @@ data XDataReq
           , params :: Maybe RPCReqParams
           , version :: Maybe String
           }
+    | XDataRPCBadRequest
     | XCloseConnection
     deriving (Show, Generic, Hashable, Eq, Serialise)
 
