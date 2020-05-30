@@ -9,7 +9,6 @@ module Network.Xoken.Node.TLSServer
     ( module Network.Xoken.Node.TLSServer
     ) where
 
-import Prelude as P
 import Arivi.P2P.P2PEnv
 import Arivi.P2P.RPC.Fetch
 import Arivi.P2P.Types
@@ -40,6 +39,7 @@ import qualified Network.TLS as NTLS
 import Network.Xoken.Node.Data
 import Network.Xoken.Node.Env as NEnv
 import Network.Xoken.Node.XokenService
+import Prelude as P
 import Text.Printf
 import Xoken.NodeConfig
 
@@ -56,7 +56,7 @@ data TLSEndpointServiceHandler =
 data EndPointConnection =
     EndPointConnection
         { requestQueue :: TQueue XDataReq
-        , respWriteLock :: MVar TLS.Context
+        , context :: MVar TLS.Context
         , encodingFormat :: IORef EncodingFormat
         }
 
@@ -88,12 +88,16 @@ handleRPCReqResp sockMVar format mid version encReq = do
     let body =
             case format of
                 CBOR ->
-                    serialise $ CBORRPCResponse (mid) (rsStatusCode rpcResp) (show <$> rsStatusMessage rpcResp) (rsBody rpcResp)
+                    serialise $
+                    CBORRPCResponse (mid) (rsStatusCode rpcResp) (show <$> rsStatusMessage rpcResp) (rsBody rpcResp)
                 JSON ->
                     case rsStatusMessage rpcResp of
                         Just err ->
                             A.encode
-                                (JSONRPCErrorResponse mid (ErrorResponse (getJsonRPCErrorCode err) (show err) Nothing) (fromJust version))
+                                (JSONRPCErrorResponse
+                                     mid
+                                     (ErrorResponse (getJsonRPCErrorCode err) (show err) Nothing)
+                                     (fromJust version))
                         Nothing -> A.encode (JSONRPCSuccessResponse (fromJust version) (rsBody rpcResp) mid)
     connSock <- liftIO $ takeMVar sockMVar
     NTLS.sendData connSock body
@@ -119,13 +123,27 @@ handleRequest epConn = do
                 liftIO $ printf "Decoded (%s)\n" (show met)
                 let req = RPCRequest met par
                 format <- liftIO $ readIORef (encodingFormat epConn)
-                async (handleRPCReqResp (respWriteLock epConn) format mid version req)
+                async (handleRPCReqResp (context epConn) format mid version req)
                 return ()
+            XDataRPCBadRequest -> do
+                format <- liftIO $ readIORef (encodingFormat epConn)
+                let body =
+                        case format of
+                            CBOR -> serialise $ CBORRPCResponse (-1) 400 (Just "Invalid request") Nothing
+                            _ ->
+                                A.encode $
+                                JSONRPCErrorResponse
+                                    (-1)
+                                    (ErrorResponse (getJsonRPCErrorCode INVALID_REQUEST) (show INVALID_REQUEST) Nothing)
+                                    "2.0"
+                connSock <- liftIO $ takeMVar (context epConn)
+                NTLS.sendData connSock body
+                liftIO $ putMVar (context epConn) connSock
             XCloseConnection -> do
                 liftIO $ writeIORef continue False
 
-enqueueRequest :: EndPointConnection -> LBS.ByteString -> IORef Bool -> IO ()
-enqueueRequest epConn req continue = do
+enqueueRequest :: EndPointConnection -> LBS.ByteString -> IO ()
+enqueueRequest epConn req = do
     format <- readIORef (encodingFormat epConn)
     xdReq <-
         case format of
@@ -134,31 +152,25 @@ enqueueRequest epConn req continue = do
                     Right JSONRPCRequest {..} ->
                         writeIORef (encodingFormat epConn) JSON $> XDataRPCReq id method params (Just jsonrpc)
                     Left err -> do
-                        print $ "decode failed" <> show err
-                        writeIORef (encodingFormat epConn) CBOR
+                        print $ "[Error] Decode failed: " <> show err
                         case deserialiseOrFail req of
-                            Right CBORRPCRequest {..} -> return $ XDataRPCReq reqId method params Nothing
+                            Right CBORRPCRequest {..} ->
+                                writeIORef (encodingFormat epConn) CBOR $> XDataRPCReq reqId method params Nothing
                             Left err -> do
-                                print $ "deserialize failed" <> show err
-                                print $ "Closing Connection"
-                                writeIORef continue False
-                                return XCloseConnection
+                                print $ "[Error] Deserialize failed: " <> show err
+                                return XDataRPCBadRequest
             JSON -> do
                 case eitherDecode req of
                     Right JSONRPCRequest {..} -> return $ XDataRPCReq id method params (Just jsonrpc)
                     Left err -> do
                         print $ "[Error] Decode failed: " <> show err
-                        print $ "Closing Connection"
-                        writeIORef continue False
-                        return XCloseConnection
+                        return XDataRPCBadRequest
             CBOR -> do
                 case deserialiseOrFail req of
                     Right CBORRPCRequest {..} -> return $ XDataRPCReq reqId method params Nothing
                     Left err -> do
-                        print $ "deserialize failed" <> show err
-                        print $ "Closing Connection"
-                        writeIORef continue False
-                        return XCloseConnection
+                        print $ "[Error] Deserialize failed: " <> show err
+                        return XDataRPCBadRequest
     atomically $ writeTQueue (requestQueue epConn) xdReq
 
 handleConnection :: EndPointConnection -> TLS.Context -> IO ()
@@ -169,7 +181,7 @@ handleConnection epConn context = do
         case res of
             Right r ->
                 case r of
-                    Just l -> enqueueRequest epConn (LBS.fromStrict l) continue
+                    Just l -> enqueueRequest epConn (LBS.fromStrict l)
                     Nothing -> putStrLn "Payload read error"
             Left (e :: IOException) -> do
                 putStrLn "Connection closed."
