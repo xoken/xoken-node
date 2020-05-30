@@ -8,6 +8,7 @@
 
 module Network.Xoken.Node.Data where
 
+import Prelude as P
 import Codec.Compression.GZip as GZ
 import Codec.Serialise
 import Conduit
@@ -53,7 +54,7 @@ encodeShort = B.Short.toShort . S.encode
 decodeShort :: Serialize a => ShortByteString -> a
 decodeShort bs =
     case S.decode (B.Short.fromShort bs) of
-        Left e -> error e
+        Left e -> P.error e
         Right a -> a
 
 data RPCMessage
@@ -67,6 +68,57 @@ data RPCMessage
           , rsBody :: Maybe RPCResponseBody
           }
     deriving (Show, Generic, Hashable, Eq, Serialise)
+
+data XRPCRequest
+    = CBORRPCRequest
+          { reqId :: Int
+          , method :: String
+          , params :: Maybe RPCReqParams
+          }
+    | JSONRPCRequest
+          { method :: String
+          , params :: Maybe RPCReqParams
+          , jsonrpc :: String
+          , id :: Int
+          }
+    deriving (Show, Generic, Hashable, Eq, Serialise)
+
+instance FromJSON XRPCRequest where
+    parseJSON = genericParseJSON (defaultOptions {sumEncoding = UntaggedValue})
+
+data XRPCResponse
+    = CBORRPCResponse
+          { matchId :: Int
+          , statusCode :: Int16
+          , statusMessage :: Maybe String
+          , respBody :: Maybe RPCResponseBody
+          }
+    | JSONRPCSuccessResponse
+          { jsonrpc :: String
+          , result :: Maybe RPCResponseBody
+          , id :: Int
+          }
+    | JSONRPCErrorResponse
+          { id :: Int
+          , error :: ErrorResponse
+          , jsonrpc :: String
+          }
+    deriving (Show, Generic, Hashable, Eq, Serialise)
+
+instance ToJSON XRPCResponse where
+    toJSON = genericToJSON (defaultOptions {sumEncoding = UntaggedValue})
+
+data ErrorResponse =
+    ErrorResponse
+        { code :: Int
+        , message :: String
+        , _data :: Maybe String
+        }
+    deriving (Show, Generic, Hashable, Eq, Serialise)
+
+instance ToJSON ErrorResponse where
+  toJSON (ErrorResponse c m d) =
+    object ["code" .= c, "message" .= m, "data" .= d]
 
 data RPCReqParams
     = GetBlockByHeight
@@ -182,20 +234,21 @@ data RPCResponseBody
     deriving (Generic, Show, Hashable, Eq, Serialise)
 
 instance ToJSON RPCResponseBody where
-  toJSON (RespBlockByHeight b) = object ["block" .= b]
-  toJSON (RespBlocksByHeight bs) = object ["blocks" .= bs]
-  toJSON (RespBlockByHash b) = object ["block" .= b]
-  toJSON (RespBlocksByHashes bs) = object ["blocks" .= bs]
-  toJSON (RespTransactionByTxID tx) = object ["tx" .= tx]
-  toJSON (RespTransactionsByTxIDs txs) = object ["txs" .= txs]
-  toJSON (RespRawTransactionByTxID tx) = object ["rawTx" .= tx]
-  toJSON (RespRawTransactionsByTxIDs txs) = object ["rawTxs" .= txs]
-  toJSON (RespOutputsByAddress sa) = object ["saddressOutputs" .= sa]
-  toJSON (RespOutputsByAddresses ma) = object ["maddressOutputs" .= ma]
-  toJSON (RespMerkleBranchByTxID mb) = object ["merkleBranch" .= mb]
-  toJSON (RespAllegoryNameBranch nb) = object ["nameBranch" .= nb]
-  toJSON (RespRelayTx rrTx) = object ["rrTx" .= rrTx]
-  toJSON (RespPartiallySignedAllegoryTx ps) = object ["psaTx" .= (T.decodeUtf8 . BL.toStrict . B64L.encode . GZ.compress . BL.fromStrict $ ps)]
+    toJSON (RespBlockByHeight b) = object ["block" .= b]
+    toJSON (RespBlocksByHeight bs) = object ["blocks" .= bs]
+    toJSON (RespBlockByHash b) = object ["block" .= b]
+    toJSON (RespBlocksByHashes bs) = object ["blocks" .= bs]
+    toJSON (RespTransactionByTxID tx) = object ["tx" .= tx]
+    toJSON (RespTransactionsByTxIDs txs) = object ["txs" .= txs]
+    toJSON (RespRawTransactionByTxID tx) = object ["rawTx" .= tx]
+    toJSON (RespRawTransactionsByTxIDs txs) = object ["rawTxs" .= txs]
+    toJSON (RespOutputsByAddress sa) = object ["saddressOutputs" .= sa]
+    toJSON (RespOutputsByAddresses ma) = object ["maddressOutputs" .= ma]
+    toJSON (RespMerkleBranchByTxID mb) = object ["merkleBranch" .= mb]
+    toJSON (RespAllegoryNameBranch nb) = object ["nameBranch" .= nb]
+    toJSON (RespRelayTx rrTx) = object ["rrTx" .= rrTx]
+    toJSON (RespPartiallySignedAllegoryTx ps) =
+        object ["psaTx" .= (T.decodeUtf8 . BL.toStrict . B64L.encode . GZ.compress . BL.fromStrict $ ps)]
 
 data BlockRecord =
     BlockRecord
@@ -277,14 +330,10 @@ data XDataReq
           { reqId :: Int
           , method :: String
           , params :: Maybe RPCReqParams
+          , version :: Maybe String
           }
     | XCloseConnection
     deriving (Show, Generic, Hashable, Eq, Serialise)
-
-instance FromJSON XDataReq where
-  parseJSON (Object o) =
-    (XDataRPCReq <$> o .: "reqId" <*> o .: "method" <*> o .:? "params")
-    <|> (pure XCloseConnection)
 
 data XDataResp =
     XDataRPCResp
