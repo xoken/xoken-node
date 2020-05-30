@@ -8,7 +8,6 @@
 
 module Network.Xoken.Node.Data where
 
-import Prelude as P
 import Codec.Compression.GZip as GZ
 import Codec.Serialise
 import Conduit
@@ -43,6 +42,7 @@ import qualified Database.CQL.IO as Q
 import GHC.Generics
 import Network.Socket (SockAddr(SockAddrUnix))
 import Paths_xoken_node as P
+import Prelude as P
 import UnliftIO
 import UnliftIO.Exception
 import qualified Web.Scotty.Trans as Scotty
@@ -64,7 +64,7 @@ data RPCMessage
           }
     | RPCResponse
           { rsStatusCode :: Int16
-          , rsStatusMessage :: Maybe String
+          , rsStatusMessage :: Maybe RPCErrors
           , rsBody :: Maybe RPCResponseBody
           }
     deriving (Show, Generic, Hashable, Eq, Serialise)
@@ -117,8 +117,7 @@ data ErrorResponse =
     deriving (Show, Generic, Hashable, Eq, Serialise)
 
 instance ToJSON ErrorResponse where
-  toJSON (ErrorResponse c m d) =
-    object ["code" .= c, "message" .= m, "data" .= d]
+    toJSON (ErrorResponse c m d) = object ["code" .= c, "message" .= m, "data" .= d]
 
 data RPCReqParams
     = GetBlockByHeight
@@ -343,3 +342,33 @@ data XDataResp =
         , respBody :: Maybe RPCResponseBody
         }
     deriving (Show, Generic, Hashable, Eq, Serialise, ToJSON)
+
+data RPCErrors
+    = INVALID_METHOD
+    | PARSE_ERROR
+    | INVALID_PARAMS
+    | INTERNAL_ERROR
+    | SERVER_ERROR
+    | INVALID_REQUEST
+    deriving (Generic, Hashable, Eq, Serialise)
+
+instance Show RPCErrors where
+    show e =
+        case e of
+            INVALID_METHOD -> "Error: Invalid method"
+            PARSE_ERROR -> "Error: Parse error"
+            INVALID_PARAMS -> "Error: Invalid params"
+            INTERNAL_ERROR -> "Error: RPC error occurred"
+            SERVER_ERROR -> "Error: Something went wrong"
+            INVALID_REQUEST -> "Error: Invalid request"
+
+-- can be replaced with Enum instance but in future other RPC methods might be handled then we might have to give different codes
+getJsonRPCErrorCode :: RPCErrors -> Int
+getJsonRPCErrorCode err =
+    case err of
+        SERVER_ERROR -> -32000
+        INVALID_REQUEST -> -32600
+        INVALID_METHOD -> -32601
+        INVALID_PARAMS -> -32602
+        INTERNAL_ERROR -> -32603
+        PARSE_ERROR -> -32700

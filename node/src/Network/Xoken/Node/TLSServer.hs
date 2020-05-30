@@ -88,12 +88,12 @@ handleRPCReqResp sockMVar format mid version encReq = do
     let body =
             case format of
                 CBOR ->
-                    serialise $ CBORRPCResponse (mid) (rsStatusCode rpcResp) (rsStatusMessage rpcResp) (rsBody rpcResp)
+                    serialise $ CBORRPCResponse (mid) (rsStatusCode rpcResp) (show <$> rsStatusMessage rpcResp) (rsBody rpcResp)
                 JSON ->
                     case rsStatusMessage rpcResp of
-                        Just "INVALID_METHOD" ->
+                        Just err ->
                             A.encode
-                                (JSONRPCErrorResponse mid (ErrorResponse (-32601) "INVALID_METHOD" Nothing) (fromJust version))
+                                (JSONRPCErrorResponse mid (ErrorResponse (getJsonRPCErrorCode err) (show err) Nothing) (fromJust version))
                         Nothing -> A.encode (JSONRPCSuccessResponse (fromJust version) (rsBody rpcResp) mid)
     connSock <- liftIO $ takeMVar sockMVar
     NTLS.sendData connSock body
