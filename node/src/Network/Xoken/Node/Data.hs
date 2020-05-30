@@ -42,6 +42,7 @@ import qualified Database.CQL.IO as Q
 import GHC.Generics
 import Network.Socket (SockAddr(SockAddrUnix))
 import Paths_xoken_node as P
+import Prelude as P
 import UnliftIO
 import UnliftIO.Exception
 import qualified Web.Scotty.Trans as Scotty
@@ -53,7 +54,7 @@ encodeShort = B.Short.toShort . S.encode
 decodeShort :: Serialize a => ShortByteString -> a
 decodeShort bs =
     case S.decode (B.Short.fromShort bs) of
-        Left e -> error e
+        Left e -> P.error e
         Right a -> a
 
 data RPCMessage
@@ -63,10 +64,60 @@ data RPCMessage
           }
     | RPCResponse
           { rsStatusCode :: Int16
-          , rsStatusMessage :: Maybe String
+          , rsStatusMessage :: Maybe RPCErrors
           , rsBody :: Maybe RPCResponseBody
           }
     deriving (Show, Generic, Hashable, Eq, Serialise)
+
+data XRPCRequest
+    = CBORRPCRequest
+          { reqId :: Int
+          , method :: String
+          , params :: Maybe RPCReqParams
+          }
+    | JSONRPCRequest
+          { method :: String
+          , params :: Maybe RPCReqParams
+          , jsonrpc :: String
+          , id :: Int
+          }
+    deriving (Show, Generic, Hashable, Eq, Serialise)
+
+instance FromJSON XRPCRequest where
+    parseJSON = genericParseJSON (defaultOptions {sumEncoding = UntaggedValue})
+
+data XRPCResponse
+    = CBORRPCResponse
+          { matchId :: Int
+          , statusCode :: Int16
+          , statusMessage :: Maybe String
+          , respBody :: Maybe RPCResponseBody
+          }
+    | JSONRPCSuccessResponse
+          { jsonrpc :: String
+          , result :: Maybe RPCResponseBody
+          , id :: Int
+          }
+    | JSONRPCErrorResponse
+          { id :: Int
+          , error :: ErrorResponse
+          , jsonrpc :: String
+          }
+    deriving (Show, Generic, Hashable, Eq, Serialise)
+
+instance ToJSON XRPCResponse where
+    toJSON = genericToJSON (defaultOptions {sumEncoding = UntaggedValue})
+
+data ErrorResponse =
+    ErrorResponse
+        { code :: Int
+        , message :: String
+        , _data :: Maybe String
+        }
+    deriving (Show, Generic, Hashable, Eq, Serialise)
+
+instance ToJSON ErrorResponse where
+    toJSON (ErrorResponse c m d) = object ["code" .= c, "message" .= m, "data" .= d]
 
 data RPCReqParams
     = GetBlockByHeight
@@ -182,20 +233,21 @@ data RPCResponseBody
     deriving (Generic, Show, Hashable, Eq, Serialise)
 
 instance ToJSON RPCResponseBody where
-  toJSON (RespBlockByHeight b) = object ["block" .= b]
-  toJSON (RespBlocksByHeight bs) = object ["blocks" .= bs]
-  toJSON (RespBlockByHash b) = object ["block" .= b]
-  toJSON (RespBlocksByHashes bs) = object ["blocks" .= bs]
-  toJSON (RespTransactionByTxID tx) = object ["tx" .= tx]
-  toJSON (RespTransactionsByTxIDs txs) = object ["txs" .= txs]
-  toJSON (RespRawTransactionByTxID tx) = object ["rawTx" .= tx]
-  toJSON (RespRawTransactionsByTxIDs txs) = object ["rawTxs" .= txs]
-  toJSON (RespOutputsByAddress sa) = object ["saddressOutputs" .= sa]
-  toJSON (RespOutputsByAddresses ma) = object ["maddressOutputs" .= ma]
-  toJSON (RespMerkleBranchByTxID mb) = object ["merkleBranch" .= mb]
-  toJSON (RespAllegoryNameBranch nb) = object ["nameBranch" .= nb]
-  toJSON (RespRelayTx rrTx) = object ["rrTx" .= rrTx]
-  toJSON (RespPartiallySignedAllegoryTx ps) = object ["psaTx" .= (T.decodeUtf8 . BL.toStrict . B64L.encode . GZ.compress . BL.fromStrict $ ps)]
+    toJSON (RespBlockByHeight b) = object ["block" .= b]
+    toJSON (RespBlocksByHeight bs) = object ["blocks" .= bs]
+    toJSON (RespBlockByHash b) = object ["block" .= b]
+    toJSON (RespBlocksByHashes bs) = object ["blocks" .= bs]
+    toJSON (RespTransactionByTxID tx) = object ["tx" .= tx]
+    toJSON (RespTransactionsByTxIDs txs) = object ["txs" .= txs]
+    toJSON (RespRawTransactionByTxID tx) = object ["rawTx" .= tx]
+    toJSON (RespRawTransactionsByTxIDs txs) = object ["rawTxs" .= txs]
+    toJSON (RespOutputsByAddress sa) = object ["saddressOutputs" .= sa]
+    toJSON (RespOutputsByAddresses ma) = object ["maddressOutputs" .= ma]
+    toJSON (RespMerkleBranchByTxID mb) = object ["merkleBranch" .= mb]
+    toJSON (RespAllegoryNameBranch nb) = object ["nameBranch" .= nb]
+    toJSON (RespRelayTx rrTx) = object ["rrTx" .= rrTx]
+    toJSON (RespPartiallySignedAllegoryTx ps) =
+        object ["psaTx" .= (T.decodeUtf8 . BL.toStrict . B64L.encode . GZ.compress . BL.fromStrict $ ps)]
 
 data BlockRecord =
     BlockRecord
@@ -277,14 +329,10 @@ data XDataReq
           { reqId :: Int
           , method :: String
           , params :: Maybe RPCReqParams
+          , version :: Maybe String
           }
     | XCloseConnection
     deriving (Show, Generic, Hashable, Eq, Serialise)
-
-instance FromJSON XDataReq where
-  parseJSON (Object o) =
-    (XDataRPCReq <$> o .: "reqId" <*> o .: "method" <*> o .:? "params")
-    <|> (pure XCloseConnection)
 
 data XDataResp =
     XDataRPCResp
@@ -294,3 +342,33 @@ data XDataResp =
         , respBody :: Maybe RPCResponseBody
         }
     deriving (Show, Generic, Hashable, Eq, Serialise, ToJSON)
+
+data RPCErrors
+    = INVALID_METHOD
+    | PARSE_ERROR
+    | INVALID_PARAMS
+    | INTERNAL_ERROR
+    | SERVER_ERROR
+    | INVALID_REQUEST
+    deriving (Generic, Hashable, Eq, Serialise)
+
+instance Show RPCErrors where
+    show e =
+        case e of
+            INVALID_METHOD -> "Error: Invalid method"
+            PARSE_ERROR -> "Error: Parse error"
+            INVALID_PARAMS -> "Error: Invalid params"
+            INTERNAL_ERROR -> "Error: RPC error occurred"
+            SERVER_ERROR -> "Error: Something went wrong"
+            INVALID_REQUEST -> "Error: Invalid request"
+
+-- can be replaced with Enum instance but in future other RPC methods might be handled then we might have to give different codes
+getJsonRPCErrorCode :: RPCErrors -> Int
+getJsonRPCErrorCode err =
+    case err of
+        SERVER_ERROR -> -32000
+        INVALID_REQUEST -> -32600
+        INVALID_METHOD -> -32601
+        INVALID_PARAMS -> -32602
+        INTERNAL_ERROR -> -32603
+        PARSE_ERROR -> -32700

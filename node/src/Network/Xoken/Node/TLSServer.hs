@@ -3,11 +3,13 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE RecordWildCards #-}
 
 module Network.Xoken.Node.TLSServer
     ( module Network.Xoken.Node.TLSServer
     ) where
 
+import Prelude as P
 import Arivi.P2P.P2PEnv
 import Arivi.P2P.RPC.Fetch
 import Arivi.P2P.Types
@@ -27,6 +29,7 @@ import Data.Functor (($>))
 import Data.IORef
 import Data.Int
 import qualified Data.Map.Strict as M
+import Data.Maybe
 import Data.Serialize
 import Data.Text as T
 import Data.X509.CertificateStore
@@ -74,18 +77,24 @@ handleRPCReqResp ::
     => MVar TLS.Context
     -> EncodingFormat
     -> Int
+    -> Maybe String
     -> RPCMessage
     -> m ()
-handleRPCReqResp sockMVar format mid encReq = do
+handleRPCReqResp sockMVar format mid version encReq = do
     bp2pEnv <- getBitcoinP2P
     let net = bitcoinNetwork $ nodeConfig bp2pEnv
     liftIO $ printf "handleRPCReqResp (%d, %s)\n" mid (show encReq)
     rpcResp <- goGetResource encReq net
-    let resp = XDataRPCResp (mid) (rsStatusCode rpcResp) (rsStatusMessage rpcResp) (rsBody rpcResp)
     let body =
             case format of
-                CBOR -> serialise resp
-                JSON -> A.encode resp
+                CBOR ->
+                    serialise $ CBORRPCResponse (mid) (rsStatusCode rpcResp) (show <$> rsStatusMessage rpcResp) (rsBody rpcResp)
+                JSON ->
+                    case rsStatusMessage rpcResp of
+                        Just err ->
+                            A.encode
+                                (JSONRPCErrorResponse mid (ErrorResponse (getJsonRPCErrorCode err) (show err) Nothing) (fromJust version))
+                        Nothing -> A.encode (JSONRPCSuccessResponse (fromJust version) (rsBody rpcResp) mid)
     connSock <- liftIO $ takeMVar sockMVar
     NTLS.sendData connSock body
     liftIO $ putMVar sockMVar connSock
@@ -106,11 +115,11 @@ handleRequest epConn = do
         liftIO $ printf "handleRequest\n"
         xdReq <- liftIO $ atomically $ readTQueue $ requestQueue epConn
         case xdReq of
-            XDataRPCReq mid met par -> do
+            XDataRPCReq mid met par version -> do
                 liftIO $ printf "Decoded (%s)\n" (show met)
                 let req = RPCRequest met par
                 format <- liftIO $ readIORef (encodingFormat epConn)
-                async (handleRPCReqResp (respWriteLock epConn) format mid req)
+                async (handleRPCReqResp (respWriteLock epConn) format mid version req)
                 return ()
             XCloseConnection -> do
                 liftIO $ writeIORef continue False
@@ -122,20 +131,34 @@ enqueueRequest epConn req continue = do
         case format of
             DEFAULT -> do
                 case eitherDecode req of
-                    Right x -> writeIORef (encodingFormat epConn) JSON $> x
+                    Right JSONRPCRequest {..} ->
+                        writeIORef (encodingFormat epConn) JSON $> XDataRPCReq id method params (Just jsonrpc)
                     Left err -> do
                         print $ "decode failed" <> show err
-                        writeIORef (encodingFormat epConn) CBOR $> deserialise req
+                        writeIORef (encodingFormat epConn) CBOR
+                        case deserialiseOrFail req of
+                            Right CBORRPCRequest {..} -> return $ XDataRPCReq reqId method params Nothing
+                            Left err -> do
+                                print $ "deserialize failed" <> show err
+                                print $ "Closing Connection"
+                                writeIORef continue False
+                                return XCloseConnection
             JSON -> do
-                writeIORef (encodingFormat epConn) JSON
                 case eitherDecode req of
-                    Right x -> pure x
+                    Right JSONRPCRequest {..} -> return $ XDataRPCReq id method params (Just jsonrpc)
                     Left err -> do
                         print $ "[Error] Decode failed: " <> show err
                         print $ "Closing Connection"
                         writeIORef continue False
                         return XCloseConnection
-            CBOR -> writeIORef (encodingFormat epConn) CBOR $> deserialise req
+            CBOR -> do
+                case deserialiseOrFail req of
+                    Right CBORRPCRequest {..} -> return $ XDataRPCReq reqId method params Nothing
+                    Left err -> do
+                        print $ "deserialize failed" <> show err
+                        print $ "Closing Connection"
+                        writeIORef continue False
+                        return XCloseConnection
     atomically $ writeTQueue (requestQueue epConn) xdReq
 
 handleConnection :: EndPointConnection -> TLS.Context -> IO ()
@@ -169,4 +192,4 @@ startTLSEndpoint handler listenIP listenPort [certFilePath, keyFilePath, certSto
                 handleConnection epConn context
         Left err -> do
             putStrLn $ "Unable to read credentials from file"
-            error "BadCredentialFile"
+            P.error "BadCredentialFile"

@@ -12,6 +12,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 
+import Prelude as P
 import Arivi.Crypto.Utils.PublicKey.Signature as ACUPS
 import Arivi.Crypto.Utils.PublicKey.Utils
 import Arivi.Crypto.Utils.Random
@@ -284,6 +285,6 @@ main = do
     cfp <- doesPathExist certFP
     kfp <- doesPathExist keyFP
     csfp <- doesPathExist csrFP
-    unless (cfp && kfp && csfp) $ error "Error: missing TLS certificate or keyfile"
+    unless (cfp && kfp && csfp) $ P.error "Error: missing TLS certificate or keyfile"
     -- launch node --
     runNode cnf nodeCnf conn bp2p [certFP, keyFP, csrFP]
