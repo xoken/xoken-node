@@ -46,6 +46,8 @@ data NodeConfig =
         , tlsCertificatePath :: FilePath
         , tlsKeyfilePath :: FilePath
         , tlsCertificateStorePath :: FilePath
+        , neo4jUsername :: T.Text
+        , neo4jPassword :: T.Text
         }
     deriving (Show, Generic)
 

@@ -181,9 +181,9 @@ defaultConfig path = do
                 3
     Config.makeConfig config (path <> "/arivi-config.yaml")
 
-makeGraphDBResPool :: IO (ServerState)
-makeGraphDBResPool = do
-    let gdbConfig = def {BT.user = "neo4j", BT.password = "admin123"}
+makeGraphDBResPool :: T.Text -> T.Text -> IO (ServerState)
+makeGraphDBResPool uname pwd = do
+    let gdbConfig = def {BT.user = uname, BT.password = pwd}
     gdbState <- constructState gdbConfig
     a <- withResource (pool gdbState) (`BT.run` queryGraphDBVersion)
     putStrLn $ "Connected to Neo4j database, version " ++ show (a !! 0)
@@ -199,7 +199,7 @@ runThreads ::
     -> [FilePath]
     -> IO ()
 runThreads config nodeConf bp2p conn lg p2pEnv certPaths = do
-    gdbState <- makeGraphDBResPool
+    gdbState <- makeGraphDBResPool (neo4jUsername nodeConf) (neo4jPassword nodeConf)
     let dbh = DatabaseHandles conn gdbState
     let allegoryEnv = AllegoryEnv $ allegoryVendorSecretKey nodeConf
     let xknEnv = XokenNodeEnv bp2p dbh lg allegoryEnv
