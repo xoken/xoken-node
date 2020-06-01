@@ -87,6 +87,7 @@ data BlockSyncException
     | DBTxParseException
     | MerkleTreeComputeException
     | InvalidCreateListException
+    | MerkleSubTreeAlreadyExistsException
     | MerkleSubTreeDBInsertException
     | ResourcePoolFetchException
     | DBInsertTimeOutException
