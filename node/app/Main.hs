@@ -281,11 +281,9 @@ main = do
     let certFP = tlsCertificatePath nodeCnf
         keyFP = tlsKeyfilePath nodeCnf
         csrFP = tlsCertificateStorePath nodeCnf
-    print $ "\nCertFP: " <> certFP <> "\nKeyFP: " <> keyFP <> "\ncsrFP: " <> csrFP
     cfp <- doesFileExist certFP
     kfp <- doesFileExist keyFP
     csfp <- doesDirectoryExist csrFP
-    print $ "\nCFP: " <> show cfp <> "\nKFP: " <> show kfp <> "\nCSFP: " <> show csfp
     unless (cfp && kfp && csfp) $ P.error "Error: missing TLS certificate or keyfile"
     -- launch node --
     runNode cnf nodeCnf conn bp2p [certFP, keyFP, csrFP]
