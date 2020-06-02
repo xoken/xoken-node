@@ -507,10 +507,8 @@ processConfTransaction tx bhash txind blkht = do
                                                  liftIO $
                                                      err lg $ LG.msg $ val "Error: OutpointAddressNotFoundException "
                                                  return Nothing
-                                     Left TxIDNotFoundException -- report and ignore
-                                      -> do
-                                         err lg $ LG.msg $ val "Error: TxIDNotFoundException"
-                                         return Nothing)
+                                     Left TxIDNotFoundException -> do
+                                         throw TxIDNotFoundException)
             inAddrs
     mapM_
         (\(x, a, i) ->
@@ -575,7 +573,7 @@ getAddressFromOutpoint conn txSync lg net outPoint waitSecs = do
                     if tofl == False -- False indicates a timeout occurred.
                         then do
                             liftIO $ atomically $ modifyTVar' (txSync) (M.delete (outPointHash outPoint))
-                            debug lg $ LG.msg ("TxIDNotFoundException" ++ (show $ txHashToHex $ outPointHash outPoint))
+                            err lg $ LG.msg ("TxIDNotFoundException" ++ (show $ txHashToHex $ outPointHash outPoint))
                             throw TxIDNotFoundException
                         else getAddressFromOutpoint conn txSync lg net outPoint waitSecs -- if being signalled, try again to success
                     --
