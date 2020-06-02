@@ -39,3 +39,7 @@ tlsCertificatePath : ./certificate.cert
 tlsKeyfilePath : ./server.key
 
 tlsCertificateStorePath : /opt/certstore
+
+neo4jUsername : neo4j
+
+neo4jPassword : neo4j
