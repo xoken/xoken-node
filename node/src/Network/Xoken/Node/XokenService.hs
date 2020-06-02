@@ -568,14 +568,14 @@ goGetResource msg net = do
         "SCRIPTHASH->[OUTPUT]" -> do
             case rqParams msg of
                 Just (GetOutputsByScriptHash sh) -> do
-                    ops <- xGetOutputsAddress net (sh)
-                    return $ RPCResponse 200 Nothing $ Just $ RespOutputsByAddress ops
+                    ops <- L.map addressToScriptOutputs <$> xGetOutputsAddress net (sh)
+                    return $ RPCResponse 200 Nothing $ Just $ RespOutputsByScriptHash ops
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "[SCRIPTHASH]->[OUTPUT]" -> do
             case rqParams msg of
                 Just (GetOutputsByScriptHashes shs) -> do
-                    ops <- xGetOutputsAddresses net shs
-                    return $ RPCResponse 200 Nothing $ Just $ RespOutputsByAddresses ops
+                    ops <- L.map addressToScriptOutputs <$> xGetOutputsAddresses net shs
+                    return $ RPCResponse 200 Nothing $ Just $ RespOutputsByScriptHashes ops
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "TXID->[MNODE]" -> do
             case rqParams msg of
