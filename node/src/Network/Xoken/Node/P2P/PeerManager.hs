@@ -414,15 +414,25 @@ updateMerkleSubTrees dbe hashComp newhash left right ht ind final = do
                                                 Just r -> do
                                                     return (state, [])
                                                 Nothing -> do
-                                                    liftIO $ threadDelay (1000000 * 2) -- time to recover
+                                                    liftIO $ threadDelay (1000000 * 5) -- time to recover
                                                     throw ResourcePoolFetchException
                                         Left (e :: SomeException) -> do
                                             if T.isInfixOf (T.pack "ConstraintValidationFailed") (T.pack $ show e)
-                                                        -- not considered an error, could be a previously aborted block being reprocessed.
+                                            -- could be a previously aborted block being reprocessed
+                                            -- or a chain-reorg with repeat Txs, so handle TMT subtree accordingly.
                                                 then do
-                                                    return (state, [])
+                                                    pres <-
+                                                        liftIO $
+                                                        try $
+                                                        tryWithResource
+                                                            (pool $ graphDB dbe)
+                                                            (`BT.run` deleteMerkleSubTree (create ++ finMatch))
+                                                    case pres of
+                                                        Right rt -> throw MerkleSubTreeAlreadyExistsException -- attempt new insert
+                                                        Left (e :: SomeException) ->
+                                                            throw MerkleSubTreeDBInsertException
                                                 else do
-                                                    liftIO $ threadDelay (1000000 * 2) -- time to recover
+                                                    liftIO $ threadDelay (1000000 * 5) -- time to recover
                                                     throw MerkleSubTreeDBInsertException
                 else return (state, res)
                     -- else block --
@@ -479,30 +489,49 @@ merkleTreeBuilder tque blockHash treeHt = do
         ores <- LA.race (liftIO $ threadDelay (1000000 * 60)) (liftIO $ atomically $ readTBQueue tque)
         case ores of
             Left ()
-                    -- likely the peer conn terminated, just end this thread
-                    -- do NOT delete queue as another peer connection could have establised meanwhile
+                -- likely the peer conn terminated, just end this thread
+                -- do NOT delete queue as another peer connection could have establised meanwhile
              -> do
                 liftIO $ writeIORef continue False
                 liftIO $ MS.signal (maxTMTBuilderThreadLock p2pEnv)
             Right (txh, isLast) -> do
                 res <-
+                    LE.try $
                     liftIO $
-                    try $
-                    liftIO $
-                    EX.retry 5 $ updateMerkleSubTrees dbe hcstate (getTxHash txh) Nothing Nothing treeHt 0 isLast
+                    EX.retry 3 $ updateMerkleSubTrees dbe hcstate (getTxHash txh) Nothing Nothing treeHt 0 isLast
                 case res of
-                    Left (e :: SomeException) -> do
+                    Right (hcs) -> do
+                        liftIO $ atomically $ writeTVar tv hcs
+                    Left MerkleSubTreeAlreadyExistsException
+                        -- second attempt, after deleting stale TMT nodes
+                     -> do
+                        pres <-
+                            LE.try $
+                            liftIO $
+                            EX.retry 3 $
+                            updateMerkleSubTrees dbe hcstate (getTxHash txh) Nothing Nothing treeHt 0 isLast
+                        case pres of
+                            Left (SomeException e) -> do
+                                err lg $
+                                    LG.msg
+                                        ("[ERROR] Quit building TMT. FATAL Bug! (2)" ++
+                                         show e ++ " | " ++ show (getTxHash txh))
+                                liftIO $ writeIORef continue False
+                                liftIO $ MS.signal (maxTMTBuilderThreadLock p2pEnv)
+                                -- do NOT delete queue here, merely end this thread
+                                throw e
+                            Right (hcs) -> do
+                                liftIO $ atomically $ writeTVar tv hcs
+                                return ()
+                    Left ee -> do
                         err lg $
                             LG.msg
-                                ("[ERROR] Quitting Transpose Merkle Tree building for block. FATAL Bug! " ++
-                                 show e ++ show (getTxHash txh) ++ " last:" ++ show isLast)
+                                ("[ERROR] Quit building TMT. FATAL Bug! (1) " ++
+                                 show ee ++ " | " ++ show (getTxHash txh))
                         liftIO $ writeIORef continue False
                         liftIO $ MS.signal (maxTMTBuilderThreadLock p2pEnv)
                         -- do NOT delete queue here, merely end this thread
-                        throw e
-                    Right (hcs) -> do
-                        liftIO $ atomically $ writeTVar tv hcs
-                        --debug lg $ msg ("updateMerkleSubTrees returned " ++ (show $ txh) ++ show)
+                        throw ee
                 when isLast $ do
                     liftIO $ writeIORef continue False
                     liftIO $ atomically $ modifyTVar' (merkleQueueMap p2pEnv) (M.delete blockHash)

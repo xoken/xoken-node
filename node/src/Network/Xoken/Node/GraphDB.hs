@@ -117,9 +117,7 @@ queryAllegoryNameBranch name isProducer = do
   where
     cypher =
         " MATCH p=(pointer:namestate {name: {namestr}})-[:REVISION]-()-[:INPUT*]->(start:nutxo) " <>
-        " WHERE NOT (start)-[:INPUT]->() " <>
-        " UNWIND tail(nodes(p)) AS elem " <>
-        " RETURN elem.outpoint as outpoint "
+        " WHERE NOT (start)-[:INPUT]->() " <> " UNWIND tail(nodes(p)) AS elem " <> " RETURN elem.outpoint as outpoint "
     params =
         if isProducer
             then fromList [("namestr", T (name <> pack "|producer"))]
@@ -134,9 +132,7 @@ queryAllegoryNameBranchScriptOp name isProducer = do
   where
     cypher =
         " MATCH p=(pointer:namestate {name: {namestr}})-[:REVISION]-()-[:INPUT*]->(start:nutxo) " <>
-        " WHERE NOT (start)-[:INPUT]->() " <>
-        " UNWIND tail(nodes(p)) AS elem " <>
-        " RETURN elem.outpoint as outpoint "
+        " WHERE NOT (start)-[:INPUT]->() " <> " UNWIND tail(nodes(p)) AS elem " <> " RETURN elem.outpoint as outpoint "
     params =
         if isProducer
             then fromList [("namestr", T (name <> pack "|producer"))]
@@ -456,4 +452,24 @@ insertMerkleSubTree leaves inodes = do
         if cond
             then Data.Text.pack " TRUE "
             else Data.Text.pack " FALSE "
---
+
+deleteMerkleSubTree :: [MerkleNode] -> BoltActionT IO ()
+deleteMerkleSubTree inodes = do
+    res <- LE.try $ query cypher
+    case res of
+        Left (e :: SomeException)
+            -- liftIO $ print ("[ERROR] deleteMerkleSubTree " ++ show e)
+            -- liftIO $ print (show inodes)
+            -- liftIO $ print (show cypher)
+         -> do
+            throw e
+        Right (records) -> return ()
+  where
+    nodes = Prelude.map (node) inodes
+    matchTemplate = " MATCH (re:mnode)-[:PARENT*0..8]->(:mnode)<-[:PARENT*0..]-(st:mnode) WHERE re.v IN [ "
+    deleteTemplate = " ] DETACH DELETE st"
+    inMatch =
+        Data.Text.intercalate (" , ") $
+        Prelude.map (\repl -> replace ("<h>") (repl) (pack " \'<h>\' ")) (Prelude.map (\z -> txtTx z) nodes)
+    cypher = (pack matchTemplate) <> inMatch <> (pack deleteTemplate)
+    txtTx i = txHashToHex $ TxHash $ fromJust i
