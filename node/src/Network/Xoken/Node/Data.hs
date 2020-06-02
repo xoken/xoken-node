@@ -150,6 +150,12 @@ data RPCReqParams
     | GetOutputsByAddresses
           { gasAddrOutputs :: [String]
           }
+    | GetOutputsByScriptHash
+          { gaScriptHashOutputs :: String
+          }
+    | GetOutputsByScriptHashes
+          { gasScriptHashOutputs :: [String]
+          }
     | GetMerkleBranchByTxID
           { gmbMerkleBranch :: String
           }
@@ -180,6 +186,8 @@ instance FromJSON RPCReqParams where
         (GetRawTransactionsByTxIDs <$> o .: "gtRTxHashes") <|>
         (GetOutputsByAddress <$> o .: "gaAddrOutputs") <|>
         (GetOutputsByAddresses <$> o .: "gasAddrOutputs") <|>
+        (GetOutputsByScriptHash <$> o .: "gaScriptHashOutputs") <|>
+        (GetOutputsByScriptHashes <$> o .: "gasScriptHashOutputs") <|>
         (GetMerkleBranchByTxID <$> o .: "gmbMerkleBranch") <|>
         (GetAllegoryNameBranch <$> o .: "gaName" <*> o .: "gaIsProducer") <|>
         (RelayTx . BL.toStrict . GZ.decompress . B64L.decodeLenient . BL.fromStrict . T.encodeUtf8 <$> o .: "rTx") <|>
@@ -218,6 +226,12 @@ data RPCResponseBody
     | RespOutputsByAddresses
           { maddressOutputs :: [AddressOutputs]
           }
+    | RespOutputsByScriptHash
+          { saddressOutputs :: [AddressOutputs]
+          }
+    | RespOutputsByScriptHashes
+          { maddressOutputs :: [AddressOutputs]
+          }
     | RespMerkleBranchByTxID
           { merkleBranch :: [MerkleBranchNode']
           }
@@ -243,6 +257,8 @@ instance ToJSON RPCResponseBody where
     toJSON (RespRawTransactionsByTxIDs txs) = object ["rawTxs" .= txs]
     toJSON (RespOutputsByAddress sa) = object ["saddressOutputs" .= sa]
     toJSON (RespOutputsByAddresses ma) = object ["maddressOutputs" .= ma]
+    toJSON (RespOutputsByScriptHash sa) = object ["saddressOutputs" .= sa]
+    toJSON (RespOutputsByScriptHashes ma) = object ["maddressOutputs" .= ma]
     toJSON (RespMerkleBranchByTxID mb) = object ["merkleBranch" .= mb]
     toJSON (RespAllegoryNameBranch nb) = object ["nameBranch" .= nb]
     toJSON (RespRelayTx rrTx) = object ["rrTx" .= rrTx]

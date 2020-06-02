@@ -113,7 +113,8 @@ xGetBlocksHashes net hashes = do
         else do
             case traverse
                      (\(hs, ht, hdr) ->
-                          BlockRecord (fromIntegral ht) (DT.unpack hs) <$> (eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 hdr))
+                          BlockRecord (fromIntegral ht) (DT.unpack hs) <$>
+                          (eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 hdr))
                      (iop) of
                 Right x -> return x
                 Left err -> do
@@ -151,7 +152,8 @@ xGetBlocksHeights net heights = do
         else do
             case traverse
                      (\(hs, ht, hdr) ->
-                          BlockRecord (fromIntegral ht) (DT.unpack hs) <$> (eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 hdr))
+                          BlockRecord (fromIntegral ht) (DT.unpack hs) <$>
+                          (eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 hdr))
                      (iop) of
                 Right x -> return x
                 Left err -> do
@@ -538,13 +540,28 @@ goGetResource msg net = do
         "ADDR->[OUTPUT]" -> do
             case rqParams msg of
                 Just (GetOutputsByAddress addr) -> do
-                    ops <- xGetOutputsAddress net (addr)
+                    ops <-
+                        case convertToScriptHash net addr of
+                            Just o -> xGetOutputsAddress net o
+                            Nothing -> return []
                     return $ RPCResponse 200 Nothing $ Just $ RespOutputsByAddress ops
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "[ADDR]->[OUTPUT]" -> do
             case rqParams msg of
                 Just (GetOutputsByAddresses addrs) -> do
-                    ops <- xGetOutputsAddresses net addrs
+                    ops <- xGetOutputsAddresses net (catMaybes $ convertToScriptHash net <$> addrs)
+                    return $ RPCResponse 200 Nothing $ Just $ RespOutputsByAddresses ops
+                _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
+        "SCRIPTHASH->[OUTPUT]" -> do
+            case rqParams msg of
+                Just (GetOutputsByScriptHash sh) -> do
+                    ops <- xGetOutputsAddress net (sh)
+                    return $ RPCResponse 200 Nothing $ Just $ RespOutputsByAddress ops
+                _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
+        "[SCRIPTHASH]->[OUTPUT]" -> do
+            case rqParams msg of
+                Just (GetOutputsByScriptHashes shs) -> do
+                    ops <- xGetOutputsAddresses net shs
                     return $ RPCResponse 200 Nothing $ Just $ RespOutputsByAddresses ops
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "TXID->[MNODE]" -> do
@@ -571,5 +588,9 @@ goGetResource msg net = do
                     ops <- xGetPartiallySignedAllegoryTx net payips name isProducer owner change
                     return $ RPCResponse 200 Nothing $ Just $ RespPartiallySignedAllegoryTx ops
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
-        _____ ->
-            return $ RPCResponse 400 (Just INVALID_METHOD) Nothing
+        _____ -> return $ RPCResponse 400 (Just INVALID_METHOD) Nothing
+
+convertToScriptHash :: Network -> String -> Maybe String
+convertToScriptHash net s = do
+    let addr = stringToAddr net (DT.pack s)
+    (DT.unpack . txHashToHex . TxHash . sha256 . addressToScriptBS) <$> addr
