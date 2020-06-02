@@ -83,7 +83,7 @@ import Network.Xoken.Node.P2P.UnconfTxSync
 import Network.Xoken.Node.TLSServer
 import Options.Applicative
 import Paths_xoken_node as P
-import System.Directory (doesPathExist)
+import System.Directory (doesFileExist, doesDirectoryExist)
 import System.Environment (getArgs)
 import System.Exit
 import System.FilePath
@@ -159,8 +159,8 @@ instance Exception ConfigException
 
 type HashTable k v = H.BasicHashTable k v
 
-defaultConfig :: FilePath -> IO ()
-defaultConfig path = do
+defaultConfig :: IO ()
+defaultConfig = do
     (sk, _) <- ACUPS.generateKeyPair
     let bootstrapPeer =
             Peer
@@ -175,11 +175,11 @@ defaultConfig path = do
                 [bootstrapPeer]
                 (generateNodeId sk)
                 "127.0.0.1"
-                (T.pack (path <> "/arivi.log"))
+                (T.pack "./arivi.log")
                 20
                 5
                 3
-    Config.makeConfig config (path <> "/arivi-config.yaml")
+    Config.makeConfig config "./arivi-config.yaml"
 
 makeGraphDBResPool :: T.Text -> T.Text -> IO (ServerState)
 makeGraphDBResPool uname pwd = do
@@ -259,11 +259,10 @@ main = do
     conn <- Q.init stng2
     op <- Q.runClient conn (Q.query qstr p)
     putStrLn $ "Connected to Cassandra database, version " ++ show (runIdentity (op !! 0))
-    let path = "./"
-    b <- System.Directory.doesPathExist (path <> "arivi-config.yaml")
-    unless b (defaultConfig path)
-    cnf <- Config.readConfig (path <> "arivi-config.yaml")
-    nodeCnf <- NC.readConfig (path <> "node-config.yaml")
+    b <- doesFileExist "arivi-config.yaml"
+    unless b defaultConfig
+    cnf <- Config.readConfig "arivi-config.yaml"
+    nodeCnf <- NC.readConfig "node-config.yaml"
     -- BitcoinP2P construction --
     g <- newTVarIO M.empty
     bp <- newTVarIO M.empty
@@ -279,12 +278,14 @@ main = do
     tbt <- MS.new $ maxTMTBuilderThreads nodeCnf
     let bp2p = BitcoinP2P nodeCnf g bp mv hl st ep tc (rpf, rpc) mq ts tbt
     -- TLS certs --
-    let certFP = path <> (tlsCertificatePath nodeCnf)
-        keyFP = path <> (tlsKeyfilePath nodeCnf)
-        csrFP = path <> (tlsCertificateStorePath nodeCnf)
-    cfp <- doesPathExist certFP
-    kfp <- doesPathExist keyFP
-    csfp <- doesPathExist csrFP
+    let certFP = tlsCertificatePath nodeCnf
+        keyFP = tlsKeyfilePath nodeCnf
+        csrFP = tlsCertificateStorePath nodeCnf
+    print $ "\nCertFP: " <> certFP <> "\nKeyFP: " <> keyFP <> "\ncsrFP: " <> csrFP
+    cfp <- doesFileExist certFP
+    kfp <- doesFileExist keyFP
+    csfp <- doesDirectoryExist csrFP
+    print $ "\nCFP: " <> show cfp <> "\nKFP: " <> show kfp <> "\nCSFP: " <> show csfp
     unless (cfp && kfp && csfp) $ P.error "Error: missing TLS certificate or keyfile"
     -- launch node --
     runNode cnf nodeCnf conn bp2p [certFP, keyFP, csrFP]
