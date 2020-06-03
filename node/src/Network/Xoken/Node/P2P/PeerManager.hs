@@ -705,8 +705,11 @@ messageHandler peer (mm, ingss) = do
                                     modifyTVar' (blacklistedPeers bp2pEnv) (M.insert (bpAddress peer) peer)
                             -- liftIO $ writeIORef continue False
                             throw InvalidBlocksException
+                        Left TxIDNotFoundException -> do
+                            throw TxIDNotFoundException
                         Left KeyValueDBInsertException -> do
                             err lg $ LG.msg $ LG.val ("[ERROR] Insert failed. KeyValueDBInsertException")
+                            throw KeyValueDBInsertException
                         Left e -> do
                             err lg $ LG.msg ("[ERROR] Unhandled exception!" ++ show e)
                             throw e
