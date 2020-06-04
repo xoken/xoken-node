@@ -12,7 +12,6 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-import Prelude as P
 import Arivi.Crypto.Utils.PublicKey.Signature as ACUPS
 import Arivi.Crypto.Utils.PublicKey.Utils
 import Arivi.Crypto.Utils.Random
@@ -83,7 +82,8 @@ import Network.Xoken.Node.P2P.UnconfTxSync
 import Network.Xoken.Node.TLSServer
 import Options.Applicative
 import Paths_xoken_node as P
-import System.Directory (doesFileExist, doesDirectoryExist)
+import Prelude as P
+import System.Directory (doesDirectoryExist, doesFileExist)
 import System.Environment (getArgs)
 import System.Exit
 import System.FilePath
@@ -168,17 +168,7 @@ defaultConfig = do
                      "a07b8847dc19d77f8ef966ba5a954dac2270779fb028b77829f8ba551fd2f7ab0c73441456b402792c731d8d39c116cb1b4eb3a18a98f4b099a5f9bdffee965c")
                 (NodeEndPoint "51.89.40.95" 5678 5678)
     let config =
-            Config.Config
-                5678
-                5678
-                sk
-                [bootstrapPeer]
-                (generateNodeId sk)
-                "127.0.0.1"
-                (T.pack "./arivi.log")
-                20
-                5
-                3
+            Config.Config 5678 5678 sk [bootstrapPeer] (generateNodeId sk) "127.0.0.1" (T.pack "./arivi.log") 20 5 3
     Config.makeConfig config "./arivi-config.yaml"
 
 makeGraphDBResPool :: T.Text -> T.Text -> IO (ServerState)
