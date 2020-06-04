@@ -707,6 +707,7 @@ messageHandler peer (mm, ingss) = do
                             throw InvalidBlocksException
                         Left KeyValueDBInsertException -> do
                             err lg $ LG.msg $ LG.val ("[ERROR] Insert failed. KeyValueDBInsertException")
+                            throw KeyValueDBInsertException
                         Left e -> do
                             err lg $ LG.msg ("[ERROR] Unhandled exception!" ++ show e)
                             throw e
@@ -755,9 +756,21 @@ messageHandler peer (mm, ingss) = do
                                             (binTxProcessed bi)
                                             (fromIntegral $ biBlockHeight bf)
                                     case res of
-                                        Right () -> return ()
+                                        Right () -> do
+                                            if binTxTotalCount bi == binTxProcessed bi
+                                                    -- mark block received
+                                                then do
+                                                    liftIO $
+                                                        atomically $
+                                                        modifyTVar'
+                                                            (blockSyncStatusMap bp2pEnv)
+                                                            (M.insert (biBlockHash bf) $
+                                                             (BlockReceiveComplete, biBlockHeight bf))
+                                                else return ()
                                         Left BlockHashNotFoundException -> return ()
                                         Left EmptyHeadersMessageException -> return ()
+                                        Left TxIDNotFoundException -> do
+                                            throw TxIDNotFoundException
                                         Left KeyValueDBInsertException -> do
                                             err lg $ LG.msg $ val "[ERROR] KeyValueDBInsertException"
                                             throw KeyValueDBInsertException
@@ -843,14 +856,7 @@ readNextMessage' peer = do
                                     if binTxTotalCount ingst == binTxProcessed ingst
                                             -- debug lg $ LG.msg $ ("DEBUG Block receive complete - " ++ show " ")
                                         then do
-                                            liftIO $
-                                                atomically $ do
-                                                    writeTVar (bpIngressState peer) $ Nothing -- reset state
-                                                    modifyTVar'
-                                                        (blockSyncStatusMap bp2pEnv)
-                                                        (M.insert (biBlockHash bi) $
-                                                         (BlockReceiveComplete, biBlockHeight bi) -- mark block received
-                                                         )
+                                            liftIO $ atomically $ writeTVar (bpIngressState peer) $ Nothing
                                         else do
                                             liftIO $
                                                 atomically $ do
@@ -886,12 +892,14 @@ procTxStream pr = do
                     case res of
                         Right (_) -> return ()
                         Left (e :: SomeException) -> do
-                            err lg $ LG.msg $ (val "[ERROR] Closing peer connection (1) ") +++ (show e)
+                            err lg $
+                                LG.msg $
+                                (val "[ERROR] Closing peer connection (1) ") +++ (show e) +++ (show $ bpAddress pr)
                             liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
                             closeSocket (bpSocket pr)
             allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
             let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
-            liftIO $ MSN.signal (bpTxSem pr) (L.length connPeers)
+            liftIO $ MSN.signal (bpTxSem pr) 1
         Left (e :: SomeException)
             -- likely peer already closed, and peer's read threads are locked on MVar
          -> do
@@ -915,11 +923,12 @@ handleIncomingMessages pr = do
         -- the number of active tx threads per peer is proportionally reduced based on peer count
         -- race to prevent waiting forever
         let timeout = fromIntegral $ txProcTimeoutSecs $ nodeConfig bp2pEnv
-        ores <- LA.race (liftIO $ MSN.wait (bpTxSem pr) (L.length connPeers)) (liftIO $ threadDelay (timeout * 1000000))
+        ores <- LA.race (liftIO $ MSN.wait (bpTxSem pr) 1) (liftIO $ threadDelay (timeout * 1000000))
         case ores of
             Right () -> liftIO $ writeIORef continue False
-            Left res -> return ()
-        LA.async $ procTxStream pr
+            Left res -> do
+                x <- LA.async $ procTxStream pr
+                return ()
         -- check if the corresponding Tx stream processing thread is already closed
         bps <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
         case (M.lookup (bpAddress pr) bps) of

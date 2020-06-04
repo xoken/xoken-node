@@ -2,6 +2,11 @@
 Xoken Nexa Node
 ===============
 
+v1.0.0-beta.1     2020-06-04
+
+- Fix for chain sync slowdown
+- Config file updates (files paths & DB credentials)
+
 
 v1.0.0-beta     2020-05-26
 
