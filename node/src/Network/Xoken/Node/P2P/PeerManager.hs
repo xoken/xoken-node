@@ -552,7 +552,10 @@ readNextMessage net sock ingss = do
             ((tx, unused), txbytLen) <- resilientRead sock blin
             case tx of
                 Just t -> do
-                    debug lg $ msg ("Confirmed-Tx: " ++ (show $ txHash t) ++ " unused: " ++ show (B.length unused))
+                    debug lg $
+                        msg
+                            ("Confirmed-Tx: " ++
+                             (show $ txHashToHex $ txHash t) ++ " unused: " ++ show (B.length unused))
                     mqm <- liftIO $ readTVarIO $ merkleQueueMap p2pEnv
                     qe <-
                         case (issBlockInfo iss) of
