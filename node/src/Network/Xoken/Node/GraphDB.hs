@@ -12,6 +12,7 @@
 
 module Network.Xoken.Node.GraphDB where
 
+import Control.Monad
 import Arivi.P2P.P2PEnv as PE hiding (option)
 import Codec.Serialise
 import Control.Concurrent (threadDelay)
@@ -80,9 +81,19 @@ toMerkleBranchNode r = do
 -- | Convert record to Name & ScriptOp
 toNameScriptOp :: Monad m => Record -> m ((Text, Text))
 toNameScriptOp r = do
-    outpoint :: Text <- (r `at` "outpoint") >>= exact
-    script :: Text <- (r `at` "script") >>= exact
+    outpoint :: Text <- (r `at` "elem.outpoint") >>= exact
+    script :: Text <- (r `at` "elem.script") >>= exact
     return ((outpoint, script))
+
+-- | Filter Null
+filterNull :: Monad m => [Record] -> m [Record]
+filterNull =
+    Control.Monad.filterM
+        (\x -> do
+             d <- x `at` "elem.outpoint"
+             case d of
+                 N _ -> pure False
+                 _ -> pure True)
 
 -- Fetch the Merkle branch/proof
 queryMerkleBranch :: Text -> BoltActionT IO [MerkleBranchNode]
@@ -126,13 +137,13 @@ queryAllegoryNameBranch name isProducer = do
 -- Fetch the Allegory Name branch with scriptOutput
 queryAllegoryNameBranchScriptOp :: Text -> Bool -> BoltActionT IO [(Text, Text)]
 queryAllegoryNameBranchScriptOp name isProducer = do
-    records <- queryP cypher params
+    records <- queryP cypher params >>= filterNull
     x <- traverse toNameScriptOp records
     return x
   where
     cypher =
         " MATCH p=(pointer:namestate {name: {namestr}})-[:REVISION]-()-[:INPUT*]->(start:nutxo) " <>
-        " WHERE NOT (start)-[:INPUT]->() " <> " UNWIND tail(nodes(p)) AS elem " <> " RETURN elem.outpoint as outpoint "
+        " WHERE NOT (start)-[:INPUT]->() " <> " UNWIND tail(nodes(p)) AS elem " <> " RETURN elem.outpoint, elem.script "
     params =
         if isProducer
             then fromList [("namestr", T (name <> pack "|producer"))]
@@ -145,7 +156,13 @@ initAllegoryBranch tx = do
     let cypher = " CREATE (b:nutxo { outpoint: {out_op}, name:{name}, script: {scr} }) "
     let cypher2 = " CREATE (b:namestate { name:{name}, type: {type} }) "
     --let cypher3 = "MATCH (a:nutxo),(b:namestate) WHERE a.name = b.name CREATE (a)-[r:REVISION]->(b) RETURN type(r)"
-    let params = fromList [("out_op", T $ oops), ("scr", T $ pack $ C.unpack $ B16.encode scr), ("name", T "|producer"), ("type", T "producer")]
+    let params =
+            fromList
+                [ ("out_op", T $ oops)
+                , ("scr", T $ pack $ C.unpack $ B16.encode scr)
+                , ("name", T "|producer")
+                , ("type", T "producer")
+                ]
     res <- LE.try $ queryP cypher params
     case res of
         Left (e :: SomeException) -> do

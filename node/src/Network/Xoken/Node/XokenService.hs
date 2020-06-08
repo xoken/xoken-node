@@ -359,7 +359,7 @@ xGetPartiallySignedAllegoryTx net payips name isProducer owner change = do
     lg <- getLogger
     alg <- getAllegory
     let conn = keyValDB (dbe)
-    res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameBranch (DT.pack name) isProducer)
+    res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameBranchScriptOp (DT.pack name) isProducer)
     nameip <-
         case res of
             Left (e :: SomeException) -> do
@@ -369,16 +369,18 @@ xGetPartiallySignedAllegoryTx net payips name isProducer owner change = do
                 err lg $ LG.msg $ "no data found for allegory name: " <> name
                 throw KeyValueDBLookupException
             Right nb -> do
-                let sp = DT.split (== ':') (last nb)
+                liftIO $ print $ "nb" <> show nb
+                let sp = DT.split (== ':') $ fst (last nb)
                 let txid = DT.unpack $ sp !! 0
                 let index = readMaybe (DT.unpack $ sp !! 1) :: Maybe Int
                 case index of
-                    Just i -> return $ OutPoint' txid i
+                    Just i -> return $ (OutPoint' txid i, (snd $ last nb))
                     Nothing -> throw KeyValueDBLookupException
     let ins =
             L.map
-                (\x -> TxIn (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x)) BC.empty 0)
-                (payips ++ [nameip])
+                (\(x, s) ->
+                     TxIn (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x)) (fromJust $ decodeHex s) 0)
+                [nameip]
     let !outs =
             L.map
                 (\x -> do
