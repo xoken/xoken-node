@@ -138,6 +138,31 @@ queryAllegoryNameBranchScriptOp name isProducer = do
             then fromList [("namestr", T (name <> pack "|producer"))]
             else fromList [("namestr", T (name <> pack "|owner"))]
 
+initAllegoryBranch :: Tx -> BoltActionT IO ()
+initAllegoryBranch tx = do
+    let oops = append (txHashToHex $ txHash tx) $ pack (":" ++ show 0)
+    let scr = scriptOutput ((txOut tx) !! 0)
+    let cypher = " CREATE (b:nutxo { outpoint: {out_op}, name:{name}, script: {scr} }) "
+    let cypher2 = " CREATE (b:namestate { name:{name}, type: {type} }) "
+    --let cypher3 = "MATCH (a:nutxo),(b:namestate) WHERE a.name = b.name CREATE (a)-[r:REVISION]->(b) RETURN type(r)"
+    let params = fromList [("out_op", T $ oops), ("scr", T $ pack $ C.unpack $ B16.encode scr), ("name", T "|producer"), ("type", T "producer")]
+    res <- LE.try $ queryP cypher params
+    case res of
+        Left (e :: SomeException) -> do
+            liftIO $ print ("[ERROR] initAllegoryBranch (Prod) " ++ show e)
+            throw e
+        Right (records) -> do
+            liftIO $ print records
+            return ()
+    res' <- LE.try $ queryP cypher2 params
+    case res' of
+        Left (e :: SomeException) -> do
+            liftIO $ print ("[ERROR] initAllegoryBranch (Prod) " ++ show e)
+            throw e
+        Right (records) -> do
+            liftIO $ print records
+            return ()
+
 updateAllegoryStateTrees :: Tx -> Allegory -> BoltActionT IO ()
 updateAllegoryStateTrees tx allegory = do
     case action allegory of
@@ -148,7 +173,7 @@ updateAllegoryStateTrees tx allegory = do
             let scr = scriptOutput ((txOut tx) !! (index $ owner oout))
             let cypher =
                     " MATCH (x:namestate)-[r:REVISION]->(a:nutxo) WHERE a.outpoint = {in_op} AND x.name = {nn_str} " <>
-                    (if length proxy == 0
+                    (if Prelude.null proxy
                          then case oVendorEndpoint oout of
                                   Just e ->
                                       " CREATE (b:nutxo { outpoint: {out_op}, name:{name}, script: {scr} , vendor:{endpoint} }) "

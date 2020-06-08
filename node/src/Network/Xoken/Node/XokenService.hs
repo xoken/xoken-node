@@ -12,6 +12,9 @@
 
 module Network.Xoken.Node.XokenService where
 
+import Data.String (IsString, fromString)
+import qualified Data.ByteString.Short as BSS
+import Network.Xoken.Crypto.Hash
 import Arivi.P2P.MessageHandler.HandlerTypes (HasNetworkConfig, networkConfig)
 import Arivi.P2P.P2PEnv
 import Arivi.P2P.PubSub.Class
@@ -42,6 +45,7 @@ import qualified Data.ByteString.Base16 as B16 (decode, encode)
 import Data.ByteString.Base64 as B64
 import Data.ByteString.Base64.Lazy as B64L
 import qualified Data.ByteString.Char8 as BC
+import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Lazy.Char8 as C
 import qualified Data.ByteString.UTF8 as BSU (toString)
@@ -342,6 +346,9 @@ xGetPartiallySignedAllegoryTx net payips name isProducer owner change = do
             Left (e :: SomeException) -> do
                 err lg $ LG.msg $ "error fetching allegory name input :" ++ show e
                 throw e
+            Right [] -> do
+                err lg $ LG.msg $ "no data found for allegory name: " <> name
+                throw KeyValueDBLookupException
             Right nb -> do
                 let sp = DT.split (== ':') (last nb)
                 let txid = DT.unpack $ sp !! 0
@@ -350,8 +357,8 @@ xGetPartiallySignedAllegoryTx net payips name isProducer owner change = do
                     Just i -> return $ OutPoint' txid i
                     Nothing -> throw KeyValueDBLookupException
     let ins =
-            L.map (\x -> TxIn (OutPoint (read $ opTxHash x) (fromIntegral $ opIndex x)) BC.empty 0) (payips ++ [nameip])
-    let outs =
+            L.map (\x -> TxIn (OutPoint ( fromString $ opTxHash x) (fromIntegral $ opIndex x)) BC.empty 0) (payips ++ [nameip])
+    let !outs =
             L.map
                 (\x -> do
                      let addr =
@@ -361,8 +368,25 @@ xGetPartiallySignedAllegoryTx net payips name isProducer owner change = do
                      let script = addressToScriptBS addr
                      TxOut (fromIntegral $ snd x) script)
                 [owner, change]
+    let !sigInputs =
+            L.map
+                (\x -> do
+                     let addr =
+                             case stringToAddr net (DT.pack $ fst x) of
+                                 Just a -> a
+                                 Nothing -> throw InvalidOutputAddressException
+                     let scriptOutput = addressToOutput addr
+                     SigInput scriptOutput (fromIntegral $ snd x) (prevOutput $ head ins) sigHashNone Nothing)
+                [owner, change]
     let psatx = Tx version ins outs locktime
-    return $ BC.empty
+    case signTx net psatx sigInputs [allegorySecretKey alg] of
+        Right tx -> do
+          liftIO $ print tx
+          liftIO $ print $ encodeHex $ BSL.toStrict $ serialise tx
+          return $ DTE.encodeUtf8 $ encodeHex $ BSL.toStrict $ serialise tx
+        Left err -> do
+            liftIO $ print $ "error occurred while signing the Tx: " <> show err
+            return $ BC.empty
   where
     version = 1
     locktime = 0
@@ -598,8 +622,12 @@ goGetResource msg net = do
         "PS_ALLEGORY_TX" -> do
             case rqParams msg of
                 Just (GetPartiallySignedAllegoryTx payips name isProducer owner change) -> do
-                    ops <- xGetPartiallySignedAllegoryTx net payips name isProducer owner change
-                    return $ RPCResponse 200 Nothing $ Just $ RespPartiallySignedAllegoryTx ops
+                    opsE <- LE.try $ xGetPartiallySignedAllegoryTx net payips name isProducer owner change
+                    case opsE of
+                        Right ops -> pure $ RPCResponse 200 Nothing $ Just $ RespPartiallySignedAllegoryTx ops
+                        Left (e :: SomeException) -> do
+                            liftIO $ print e
+                            pure $ RPCResponse 400 (Just INTERNAL_ERROR) Nothing
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         _____ -> return $ RPCResponse 400 (Just INVALID_METHOD) Nothing
 
