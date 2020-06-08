@@ -237,7 +237,7 @@ data RPCResponseBody
           { merkleBranch :: [MerkleBranchNode']
           }
     | RespAllegoryNameBranch
-          { nameBranch :: [OutPoint']
+          { nameBranch :: [(OutPoint', [MerkleBranchNode'])]
           }
     | RespRelayTx
           { rrTx :: Bool

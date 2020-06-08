@@ -12,9 +12,6 @@
 
 module Network.Xoken.Node.XokenService where
 
-import Data.String (IsString, fromString)
-import qualified Data.ByteString.Short as BSS
-import Network.Xoken.Crypto.Hash
 import Arivi.P2P.MessageHandler.HandlerTypes (HasNetworkConfig, networkConfig)
 import Arivi.P2P.P2PEnv
 import Arivi.P2P.PubSub.Class
@@ -28,7 +25,8 @@ import Codec.Compression.GZip as GZ
 import Codec.Serialise
 import Conduit hiding (runResourceT)
 import Control.Concurrent (threadDelay)
-import Control.Concurrent.Async.Lifted (async)
+import Control.Concurrent.Async (AsyncCancelled, mapConcurrently, mapConcurrently_, race_)
+import Control.Concurrent.Async.Lifted (async, wait)
 import Control.Concurrent.STM.TVar
 import qualified Control.Error.Util as Extra
 import Control.Exception
@@ -41,13 +39,14 @@ import Control.Monad.Logger
 import Control.Monad.Loops
 import Control.Monad.Reader
 import Data.Aeson
+import qualified Data.ByteString as B
 import qualified Data.ByteString.Base16 as B16 (decode, encode)
 import Data.ByteString.Base64 as B64
 import Data.ByteString.Base64.Lazy as B64L
 import qualified Data.ByteString.Char8 as BC
-import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Lazy.Char8 as C
+import qualified Data.ByteString.Short as BSS
 import qualified Data.ByteString.UTF8 as BSU (toString)
 import Data.Default
 import Data.Hashable
@@ -59,12 +58,14 @@ import Data.Maybe
 import Data.Pool
 import qualified Data.Serialize as S
 import Data.Serialize
+import Data.String (IsString, fromString)
 import qualified Data.Text as DT
 import qualified Data.Text.Encoding as DTE
 import Data.Yaml
 import qualified Database.Bolt as BT
 import qualified Database.CQL.IO as Q
 import Database.CQL.Protocol
+import Network.Xoken.Crypto.Hash
 import Network.Xoken.Node.Data
 import Network.Xoken.Node.Data.Allegory
 import Network.Xoken.Node.Data.Allegory
@@ -76,6 +77,7 @@ import Network.Xoken.Node.P2P.Types
 import System.Logger as LG
 import System.Logger.Message
 import Text.Read
+
 import Xoken
 
 data AriviServiceException
@@ -304,21 +306,38 @@ xGetMerkleBranch net txid = do
             throw KeyValueDBLookupException
 
 xGetAllegoryNameBranch ::
-       (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> String -> Bool -> m ([OutPoint'])
+       (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
+    => Network
+    -> String
+    -> Bool
+    -> m ([(OutPoint', [MerkleBranchNode'])])
 xGetAllegoryNameBranch net name isProducer = do
     dbe <- getDB
     lg <- getLogger
     res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameBranch (DT.pack name) isProducer)
     case res of
         Right nb -> do
-            return $
-                Data.List.map
+            liftIO $
+                mapConcurrently
                     (\x -> do
                          let sp = DT.split (== ':') x
                          let txid = DT.unpack $ sp !! 0
                          let index = readMaybe (DT.unpack $ sp !! 1) :: Maybe Int
                          case index of
-                             Just i -> OutPoint' txid i
+                             Just i -> do
+                                 rs <-
+                                     liftIO $
+                                     try $ withResource (pool $ graphDB dbe) (`BT.run` queryMerkleBranch (DT.pack txid))
+                                 case rs of
+                                     Right mb -> do
+                                         let mnodes =
+                                                 Data.List.map
+                                                     (\y -> MerkleBranchNode' (DT.unpack $ _nodeValue y) (_isLeftNode y))
+                                                     mb
+                                         return $ (OutPoint' txid i, mnodes)
+                                     Left (e :: SomeException) -> do
+                                         err lg $ LG.msg $ "Error: xGetMerkleBranch: " ++ show e
+                                         throw KeyValueDBLookupException
                              Nothing -> throw KeyValueDBLookupException)
                     (nb)
         Left (e :: SomeException) -> do
@@ -357,7 +376,9 @@ xGetPartiallySignedAllegoryTx net payips name isProducer owner change = do
                     Just i -> return $ OutPoint' txid i
                     Nothing -> throw KeyValueDBLookupException
     let ins =
-            L.map (\x -> TxIn (OutPoint ( fromString $ opTxHash x) (fromIntegral $ opIndex x)) BC.empty 0) (payips ++ [nameip])
+            L.map
+                (\x -> TxIn (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x)) BC.empty 0)
+                (payips ++ [nameip])
     let !outs =
             L.map
                 (\x -> do
@@ -381,9 +402,9 @@ xGetPartiallySignedAllegoryTx net payips name isProducer owner change = do
     let psatx = Tx version ins outs locktime
     case signTx net psatx sigInputs [allegorySecretKey alg] of
         Right tx -> do
-          liftIO $ print tx
-          liftIO $ print $ encodeHex $ BSL.toStrict $ serialise tx
-          return $ DTE.encodeUtf8 $ encodeHex $ BSL.toStrict $ serialise tx
+            liftIO $ print tx
+            liftIO $ print $ encodeHex $ BSL.toStrict $ serialise tx
+            return $ DTE.encodeUtf8 $ encodeHex $ BSL.toStrict $ serialise tx
         Left err -> do
             liftIO $ print $ "error occurred while signing the Tx: " <> show err
             return $ BC.empty
