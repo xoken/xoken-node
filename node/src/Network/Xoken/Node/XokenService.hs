@@ -359,7 +359,9 @@ xGetPartiallySignedAllegoryTx net payips name isProducer owner change = do
     lg <- getLogger
     alg <- getAllegory
     let conn = keyValDB (dbe)
-    res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameBranchScriptOp (DT.pack name) isProducer)
+    res <-
+        liftIO $
+        try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameBranchScriptOp (DT.pack name) isProducer)
     nameip <-
         case res of
             Left (e :: SomeException) -> do
@@ -376,11 +378,19 @@ xGetPartiallySignedAllegoryTx net payips name isProducer owner change = do
                 case index of
                     Just i -> return $ (OutPoint' txid i, (snd $ last nb))
                     Nothing -> throw KeyValueDBLookupException
+    inputHash <-
+        liftIO $
+        traverse
+            (\w -> do
+                 let op = OutPoint (fromString $ opTxHash w) (fromIntegral $ opIndex w)
+                 sh <- getScriptHashFromOutpoint conn (txSynchronizer bp2pEnv) lg net op 0
+                 return $ (w, ) <$> sh)
+            payips
     let ins =
             L.map
                 (\(x, s) ->
                      TxIn (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x)) (fromJust $ decodeHex s) 0)
-                [nameip]
+                (catMaybes inputHash ++ [nameip])
     let !outs =
             L.map
                 (\x -> do

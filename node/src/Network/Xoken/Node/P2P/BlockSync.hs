@@ -605,7 +605,7 @@ getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs = do
     res <- liftIO $ try $ Q.runClient conn (Q.query qstr p)
     case res of
         Left (e :: SomeException) -> do
-            err lg $ LG.msg ("Error: getAddressFromOutpoint: " ++ show e)
+            err lg $ LG.msg ("Error: getScriptHashFromOutpoint: " ++ show e)
             throw e
         Right (iop) -> do
             if L.length iop == 0
@@ -621,7 +621,7 @@ getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs = do
                             liftIO $ atomically $ modifyTVar' (txSync) (M.delete (outPointHash outPoint))
                             debug lg $ LG.msg ("TxIDNotFoundException" ++ (show $ txHashToHex $ outPointHash outPoint))
                             throw TxIDNotFoundException
-                        else getAddressFromOutpoint conn txSync lg net outPoint waitSecs -- if being signalled, try again to success
+                        else getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs -- if being signalled, try again to success
                     --
                     return Nothing
                 else do
