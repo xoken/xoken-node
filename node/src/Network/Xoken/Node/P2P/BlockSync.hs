@@ -15,6 +15,7 @@ module Network.Xoken.Node.P2P.BlockSync
     , runEgressBlockSync
     , runPeerSync
     , getAddressFromOutpoint
+    , getScriptHashFromOutpoint
     , sendRequestMessages
     ) where
 
@@ -473,46 +474,39 @@ processConfTransaction tx bhash txind blkht = do
     lookupInAddrs <-
         mapM
             (\(a, b, c) ->
-                 case a of
-                     Just a -> return $ Just (a, b, c)
-                     Nothing -> do
-                         if (outPointHash nullOutPoint) == (outPointHash $ prevOutput b)
-                             then return Nothing
-                             else do
-                                 res <-
-                                     liftIO $
-                                     try $
-                                     getAddressFromOutpoint
-                                         conn
-                                         (txSynchronizer bp2pEnv)
-                                         lg
-                                         net
-                                         (prevOutput b)
-                                         (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
-                                 case res of
-                                     Right (ma) -> do
-                                         case (ma) of
-                                             Just x ->
-                                                 case addrToString net x of
-                                                     Just as -> return $ Just (as, b, c)
-                                                     Nothing -> throw InvalidAddressException
-                                             Nothing -> do
-                                                 liftIO $
-                                                     err lg $ LG.msg $ val "Error: OutpointAddressNotFoundException "
-                                                 return Nothing
-                                     Left TxIDNotFoundException -> do
-                                         throw TxIDNotFoundException
-                                     Left (e) -> do
-                                         err lg $ LG.msg ("Error: unable to resolve outpoint: " ++ show e)
-                                         return Nothing)
+                 if (outPointHash nullOutPoint) == (outPointHash $ prevOutput b)
+                     then return Nothing
+                     else do
+                         res <-
+                             liftIO $
+                             try $
+                             getScriptHashFromOutpoint
+                                 conn
+                                 (txSynchronizer bp2pEnv)
+                                 lg
+                                 net
+                                 (prevOutput b)
+                                 (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
+                         case res of
+                             Right (ma) -> do
+                                 case (ma) of
+                                     Just x -> return $ Just (x, b, c)
+                                     Nothing -> do
+                                         liftIO $ err lg $ LG.msg $ val "Error: ScriptHashNotFoundException "
+                                         return Nothing
+                             Left TxIDNotFoundException -- report and ignore
+                              -> do
+                                 err lg $ LG.msg $ val "Error: TxIDNotFoundException"
+                                 return Nothing)
             inAddrs
     mapM_
         (\(x, a, i) ->
              mapM_
-                 (\(y, b, j) ->
+                 (\(y, b, j) -> do
+                      let sh = txHashToHex $ TxHash $ sha256 (scriptOutput a)
                       commitAddressOutputs
                           conn
-                          x
+                          sh
                           True
                           y
                           (txHashToHex $ txHash tx, i)
@@ -524,7 +518,7 @@ processConfTransaction tx bhash txind blkht = do
     mapM_
         (\(x, a, i) ->
              mapM_
-                 (\(y, b, j) ->
+                 (\(y, b, j) -> do
                       commitAddressOutputs
                           conn
                           x
@@ -593,6 +587,50 @@ getAddressFromOutpoint conn txSync lg net outPoint waitSecs = do
                                                  -> do
                                                     return Nothing
                                                 Right os -> return $ Just os
+                                Nothing -> return Nothing
+
+getScriptHashFromOutpoint ::
+       Q.ClientState -> (TVar (M.Map TxHash EV.Event)) -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Text)
+getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs = do
+    let str = "SELECT tx_serialized from xoken.transactions where tx_id = ?"
+        qstr = str :: Q.QueryString Q.R (Identity Text) (Identity Blob)
+        p = Q.defQueryParams Q.One $ Identity $ txHashToHex $ outPointHash outPoint
+    res <- liftIO $ try $ Q.runClient conn (Q.query qstr p)
+    case res of
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg ("Error: getAddressFromOutpoint: " ++ show e)
+            throw e
+        Right (iop) -> do
+            if L.length iop == 0
+                then do
+                    debug lg $
+                        LG.msg ("TxID not found: (waiting for event) " ++ (show $ txHashToHex $ outPointHash outPoint))
+                    --
+                    event <- EV.new
+                    liftIO $ atomically $ modifyTVar' (txSync) (M.insert (outPointHash outPoint) event)
+                    tofl <- waitTimeout event (1000000 * (fromIntegral waitSecs))
+                    if tofl == False -- False indicates a timeout occurred.
+                        then do
+                            liftIO $ atomically $ modifyTVar' (txSync) (M.delete (outPointHash outPoint))
+                            debug lg $ LG.msg ("TxIDNotFoundException" ++ (show $ txHashToHex $ outPointHash outPoint))
+                            throw TxIDNotFoundException
+                        else getAddressFromOutpoint conn txSync lg net outPoint waitSecs -- if being signalled, try again to success
+                    --
+                    return Nothing
+                else do
+                    let txbyt = runIdentity $ iop !! 0
+                    case runGetLazy (getConfirmedTx) (fromBlob txbyt) of
+                        Left e -> do
+                            debug lg $ LG.msg (encodeHex $ BSL.toStrict $ fromBlob txbyt)
+                            throw DBTxParseException
+                        Right (txd) -> do
+                            case txd of
+                                Just tx ->
+                                    if (fromIntegral $ outPointIndex outPoint) > (L.length $ txOut tx)
+                                        then throw InvalidOutpointException
+                                        else do
+                                            let output = (txOut tx) !! (fromIntegral $ outPointIndex outPoint)
+                                            return $ Just $ txHashToHex $ TxHash $ sha256 (scriptOutput output)
                                 Nothing -> return Nothing
 
 processBlock :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => DefBlock -> m ()

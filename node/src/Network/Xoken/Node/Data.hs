@@ -5,6 +5,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE RecordWildCards #-}
 
 module Network.Xoken.Node.Data where
 
@@ -150,6 +151,12 @@ data RPCReqParams
     | GetOutputsByAddresses
           { gasAddrOutputs :: [String]
           }
+    | GetOutputsByScriptHash
+          { gaScriptHashOutputs :: String
+          }
+    | GetOutputsByScriptHashes
+          { gasScriptHashOutputs :: [String]
+          }
     | GetMerkleBranchByTxID
           { gmbMerkleBranch :: String
           }
@@ -180,6 +187,8 @@ instance FromJSON RPCReqParams where
         (GetRawTransactionsByTxIDs <$> o .: "gtRTxHashes") <|>
         (GetOutputsByAddress <$> o .: "gaAddrOutputs") <|>
         (GetOutputsByAddresses <$> o .: "gasAddrOutputs") <|>
+        (GetOutputsByScriptHash <$> o .: "gaScriptHashOutputs") <|>
+        (GetOutputsByScriptHashes <$> o .: "gasScriptHashOutputs") <|>
         (GetMerkleBranchByTxID <$> o .: "gmbMerkleBranch") <|>
         (GetAllegoryNameBranch <$> o .: "gaName" <*> o .: "gaIsProducer") <|>
         (RelayTx . BL.toStrict . GZ.decompress . B64L.decodeLenient . BL.fromStrict . T.encodeUtf8 <$> o .: "rTx") <|>
@@ -218,6 +227,12 @@ data RPCResponseBody
     | RespOutputsByAddresses
           { maddressOutputs :: [AddressOutputs]
           }
+    | RespOutputsByScriptHash
+          { sscriptOutputs :: [ScriptOutputs]
+          }
+    | RespOutputsByScriptHashes
+          { mscriptOutputs :: [ScriptOutputs]
+          }
     | RespMerkleBranchByTxID
           { merkleBranch :: [MerkleBranchNode']
           }
@@ -243,6 +258,8 @@ instance ToJSON RPCResponseBody where
     toJSON (RespRawTransactionsByTxIDs txs) = object ["rawTxs" .= txs]
     toJSON (RespOutputsByAddress sa) = object ["saddressOutputs" .= sa]
     toJSON (RespOutputsByAddresses ma) = object ["maddressOutputs" .= ma]
+    toJSON (RespOutputsByScriptHash sa) = object ["sscriptOutputs" .= sa]
+    toJSON (RespOutputsByScriptHashes ma) = object ["mscriptOutputs" .= ma]
     toJSON (RespMerkleBranchByTxID mb) = object ["merkleBranch" .= mb]
     toJSON (RespAllegoryNameBranch nb) = object ["nameBranch" .= nb]
     toJSON (RespRelayTx rrTx) = object ["rrTx" .= rrTx]
@@ -293,7 +310,27 @@ data AddressOutputs =
         , aoPrevOutpoint :: OutPoint'
         , aoValue :: Int64
         }
-    deriving (Show, Generic, Hashable, Eq, Serialise, ToJSON)
+    deriving (Show, Generic, Hashable, Eq, Serialise)
+
+instance ToJSON AddressOutputs where
+    toJSON = genericToJSON (defaultOptions {fieldLabelModifier = drop 2})
+
+data ScriptOutputs =
+    ScriptOutputs
+        { scScriptHash :: String
+        , scOutput :: OutPoint'
+        , scBlockInfo :: BlockInfo'
+        , scIsBlockConfirmed :: Bool
+        , scIsOutputSpent :: Bool
+        , scIsTypeReceive :: Bool
+        , scOtherAddress :: String
+        , scPrevOutpoint :: OutPoint'
+        , scValue :: Int64
+        }
+    deriving (Show, Generic, Hashable, Eq, Serialise)
+
+instance ToJSON ScriptOutputs where
+    toJSON = genericToJSON (defaultOptions {fieldLabelModifier = drop 2})
 
 data OutPoint' =
     OutPoint'
@@ -373,3 +410,17 @@ getJsonRPCErrorCode err =
         INVALID_PARAMS -> -32602
         INTERNAL_ERROR -> -32603
         PARSE_ERROR -> -32700
+
+addressToScriptOutputs :: AddressOutputs -> ScriptOutputs
+addressToScriptOutputs AddressOutputs {..} =
+    ScriptOutputs
+        { scScriptHash = aoAddress
+        , scOutput = aoOutput
+        , scBlockInfo = aoBlockInfo
+        , scIsBlockConfirmed = aoIsBlockConfirmed
+        , scIsOutputSpent = aoIsOutputSpent
+        , scIsTypeReceive = aoIsTypeReceive
+        , scOtherAddress = aoOtherAddress
+        , scPrevOutpoint = aoPrevOutpoint
+        , scValue = aoValue
+        }
