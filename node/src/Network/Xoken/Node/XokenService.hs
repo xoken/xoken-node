@@ -414,9 +414,7 @@ xGetPartiallySignedAllegoryTx net payips name isProducer owner change = do
     let psatx = Tx version ins outs locktime
     case signTx net psatx sigInputs [allegorySecretKey alg] of
         Right tx -> do
-            liftIO $ print tx
-            liftIO $ print $ encodeHex $ BSL.toStrict $ serialise tx
-            return $ DTE.encodeUtf8 $ encodeHex $ BSL.toStrict $ serialise tx
+            return $ BSL.toStrict $ Data.Aeson.encode $ tx
         Left err -> do
             liftIO $ print $ "error occurred while signing the Tx: " <> show err
             return $ BC.empty
