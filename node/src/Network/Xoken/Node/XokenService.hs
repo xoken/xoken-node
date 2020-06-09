@@ -48,6 +48,7 @@ import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Lazy.Char8 as C
 import qualified Data.ByteString.Short as BSS
 import qualified Data.ByteString.UTF8 as BSU (toString)
+import Data.Char
 import Data.Default
 import Data.Hashable
 import Data.Int
@@ -348,20 +349,18 @@ xGetPartiallySignedAllegoryTx ::
        (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
     => Network
     -> [OutPoint']
-    -> String
-    -> Bool
+    -> ([Int], Bool)
     -> (String, Int)
     -> (String, Int)
     -> m (BC.ByteString)
-xGetPartiallySignedAllegoryTx net payips name isProducer owner change = do
+xGetPartiallySignedAllegoryTx net payips (nameArr, isProducer) owner change = do
     dbe <- getDB
     bp2pEnv <- getBitcoinP2P
     lg <- getLogger
     alg <- getAllegory
     let conn = keyValDB (dbe)
-    res <-
-        liftIO $
-        try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameBranchScriptOp (DT.pack name) isProducer)
+    let name = DT.pack $ L.map (\x -> chr x) nameArr
+    res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameScriptOp (name) isProducer)
     nameip <-
         case res of
             Left (e :: SomeException) -> do
@@ -372,11 +371,11 @@ xGetPartiallySignedAllegoryTx net payips name isProducer owner change = do
                 throw KeyValueDBLookupException
             Right nb -> do
                 liftIO $ print $ "nb" <> show nb
-                let sp = DT.split (== ':') $ fst (last nb)
+                let sp = DT.split (== ':') $ fst (head nb)
                 let txid = DT.unpack $ sp !! 0
                 let index = readMaybe (DT.unpack $ sp !! 1) :: Maybe Int
                 case index of
-                    Just i -> return $ (OutPoint' txid i, (snd $ last nb))
+                    Just i -> return $ (OutPoint' txid i, (snd $ head nb))
                     Nothing -> throw KeyValueDBLookupException
     inputHash <-
         liftIO $
@@ -391,6 +390,14 @@ xGetPartiallySignedAllegoryTx net payips name isProducer owner change = do
                 (\(x, s) ->
                      TxIn (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x)) (fromJust $ decodeHex s) 0)
                 (catMaybes inputHash ++ [nameip])
+    -- construct OP_RETURN
+    let al =
+            Allegory
+                1
+                nameArr
+                (ProducerAction (Index 0) (ProducerOutput (Index 0) Nothing) (Just $ OwnerOutput (Index 0) Nothing) [])
+    let opRetScript = B16.encode $ frameOpReturn $ C.toStrict $ serialise al
+    --
     let !outs =
             L.map
                 (\x -> do
@@ -652,8 +659,8 @@ goGetResource msg net = do
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "PS_ALLEGORY_TX" -> do
             case rqParams msg of
-                Just (GetPartiallySignedAllegoryTx payips name isProducer owner change) -> do
-                    opsE <- LE.try $ xGetPartiallySignedAllegoryTx net payips name isProducer owner change
+                Just (GetPartiallySignedAllegoryTx payips (name, isProducer) owner change) -> do
+                    opsE <- LE.try $ xGetPartiallySignedAllegoryTx net payips (name, isProducer) owner change
                     case opsE of
                         Right ops -> pure $ RPCResponse 200 Nothing $ Just $ RespPartiallySignedAllegoryTx ops
                         Left (e :: SomeException) -> do

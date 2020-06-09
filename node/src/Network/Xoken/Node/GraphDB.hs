@@ -134,16 +134,15 @@ queryAllegoryNameBranch name isProducer = do
             then fromList [("namestr", T (name <> pack "|producer"))]
             else fromList [("namestr", T (name <> pack "|owner"))]
 
--- Fetch the Allegory Name branch with scriptOutput
-queryAllegoryNameBranchScriptOp :: Text -> Bool -> BoltActionT IO [(Text, Text)]
-queryAllegoryNameBranchScriptOp name isProducer = do
+-- Fetch the outpoint & script associated with Allegory name
+queryAllegoryNameScriptOp :: Text -> Bool -> BoltActionT IO [(Text, Text)]
+queryAllegoryNameScriptOp name isProducer = do
     records <- queryP cypher params >>= filterNull
     x <- traverse toNameScriptOp records
     return x
   where
     cypher =
-        " MATCH p=(pointer:namestate {name: {namestr}})-[:REVISION]-()-[:INPUT*]->(start:nutxo) " <>
-        " WHERE NOT (start)-[:INPUT]->() " <> " UNWIND tail(nodes(p)) AS elem " <> " RETURN elem.outpoint, elem.script "
+        " MATCH p=(pointer:namestate {name: {namestr}})-[:REVISION]-(elem:nutxo)  RETURN elem.outpoint , elem.script "
     params =
         if isProducer
             then fromList [("namestr", T (name <> pack "|producer"))]

@@ -22,6 +22,7 @@ import Control.Monad.STM
 import Control.Monad.State.Strict
 import qualified Data.Aeson as A (decode, encode)
 import qualified Data.ByteString as B
+import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Char8 as C
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Lazy.Char8 as LC
@@ -58,6 +59,7 @@ import Streamly
 import Streamly.Prelude ((|:), nil)
 import qualified Streamly.Prelude as S
 import System.Random
+import Text.Format
 
 data ChainSyncException
     = BlocksNotChainedException
@@ -170,3 +172,20 @@ divide x y = (a / b)
 
 toInt :: Float -> Int
 toInt x = round x
+
+-- OP_RETURN Allegory/AllPay
+frameOpReturn :: C.ByteString -> C.ByteString
+frameOpReturn opReturn = do
+    let prefix = (fst . B16.decode) "006a0f416c6c65676f72792f416c6c506179"
+    let lens = format fmtStr (C.length opReturn) :: String
+    let lenb = (C.pack lens)
+    C.append (C.append prefix lenb) opReturn
+  where
+    fmtStr =
+        if (C.length opReturn) <= 75
+            then "%02x" -- 0x4b
+            else if (C.length opReturn) < 255
+                     then "4c%02x" -- 0x4c
+                     else if (C.length opReturn) < 65535
+                              then "4d%04x" -- 0x4d
+                              else "4e%08x" -- 0x4e

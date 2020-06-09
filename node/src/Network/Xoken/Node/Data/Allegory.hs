@@ -98,10 +98,7 @@ data Registration =
         }
     deriving (Show, Generic, Eq, Serialise)
 
--- instance ToJSON Allegory
---
--- instance ToJSON Action
-instance ToJSON ProxyProvider --
+instance ToJSON ProxyProvider
 
 instance ToJSON Registration
 

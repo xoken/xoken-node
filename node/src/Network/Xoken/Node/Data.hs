@@ -169,8 +169,7 @@ data RPCReqParams
           }
     | GetPartiallySignedAllegoryTx
           { gpsaPaymentInputs :: [OutPoint']
-          , gpsaName :: String
-          , gpsaIsProducer :: Bool
+          , gpsaName :: ([Int], Bool) -- name & isProducer 
           , gpsaOutputOwner :: (String, Int)
           , gpsaOutputChange :: (String, Int)
           }
@@ -192,8 +191,7 @@ instance FromJSON RPCReqParams where
         (GetMerkleBranchByTxID <$> o .: "gmbMerkleBranch") <|>
         (GetAllegoryNameBranch <$> o .: "gaName" <*> o .: "gaIsProducer") <|>
         (RelayTx . BL.toStrict . GZ.decompress . B64L.decodeLenient . BL.fromStrict . T.encodeUtf8 <$> o .: "rTx") <|>
-        (GetPartiallySignedAllegoryTx <$> o .: "gpsaPaymentInputs" <*> o .: "gpsaName" <*> o .: "gpsaIsProducer" <*>
-         o .: "gpsaOutputOwner" <*>
+        (GetPartiallySignedAllegoryTx <$> o .: "gpsaPaymentInputs" <*> o .: "gpsaName" <*> o .: "gpsaOutputOwner" <*>
          o .: "gpsaOutputChange")
 
 data RPCResponseBody
