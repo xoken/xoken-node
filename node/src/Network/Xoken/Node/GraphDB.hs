@@ -12,7 +12,6 @@
 
 module Network.Xoken.Node.GraphDB where
 
-import Control.Monad
 import Arivi.P2P.P2PEnv as PE hiding (option)
 import Codec.Serialise
 import Control.Concurrent (threadDelay)
@@ -20,6 +19,7 @@ import Control.Concurrent.MVar
 import Control.Concurrent.STM.TVar
 import Control.Exception
 import qualified Control.Exception.Lifted as LE (try)
+import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.Trans (liftIO)
 import Control.Monad.Trans.Reader (ReaderT(..))
@@ -149,36 +149,24 @@ queryAllegoryNameBranchScriptOp name isProducer = do
             then fromList [("namestr", T (name <> pack "|producer"))]
             else fromList [("namestr", T (name <> pack "|owner"))]
 
-initAllegoryBranch :: Tx -> BoltActionT IO ()
-initAllegoryBranch tx = do
-    let oops = append (txHashToHex $ txHash tx) $ pack (":" ++ show 0)
-    let scr = scriptOutput ((txOut tx) !! 0)
-    let cypher = " CREATE (b:nutxo { outpoint: {out_op}, name:{name}, script: {scr} }) "
-    let cypher2 = " CREATE (b:namestate { name:{name}, type: {type} }) "
-    --let cypher3 = "MATCH (a:nutxo),(b:namestate) WHERE a.name = b.name CREATE (a)-[r:REVISION]->(b) RETURN type(r)"
-    let params =
-            fromList
-                [ ("out_op", T $ oops)
-                , ("scr", T $ pack $ C.unpack $ B16.encode scr)
-                , ("name", T "|producer")
-                , ("type", T "producer")
-                ]
-    res <- LE.try $ queryP cypher params
-    case res of
-        Left (e :: SomeException) -> do
-            liftIO $ print ("[ERROR] initAllegoryBranch (Prod) " ++ show e)
-            throw e
-        Right (records) -> do
-            liftIO $ print records
-            return ()
-    res' <- LE.try $ queryP cypher2 params
-    case res' of
-        Left (e :: SomeException) -> do
-            liftIO $ print ("[ERROR] initAllegoryBranch (Prod) " ++ show e)
-            throw e
-        Right (records) -> do
-            liftIO $ print records
-            return ()
+initAllegoryRoot :: Tx -> BoltActionT IO ()
+initAllegoryRoot tx = do
+    let oops = pack $ "8c347368661ed9da465d3b925f80c2154d16bac7d658f3a63fd9df40a386d7a0" ++ ":" ++ show 0
+    let scr =
+            "4104fd8074c838cd146b1c3f55f39c7bdbdd625cf3934307aac4471f26708c637982791c0e2cc7a91d473d3bdaa6caec21b83670945e61cbe91413084cdc6b18ec5fac"
+    let cy1 = " MERGE (b:nutxo { outpoint: {out_op}, name:{name}, script: {scr} }) "
+    let cy2 = " MERGE (b:namestate { name:{name}, type: {type} }) "
+    let par1 = fromList [("out_op", T $ oops), ("scr", T $ pack $ C.unpack $ B16.encode scr), ("name", T "|producer")]
+    let par2 = fromList [("name", T "|producer"), ("type", T "producer")]
+    Prelude.mapM_
+        (\(cypher, params) -> do
+             res <- LE.try $ queryP cypher params
+             case res of
+                 Left (e :: SomeException) -> do
+                     liftIO $ print ("[ERROR] initAllegoryRoot  " ++ show e)
+                     throw e
+                 Right (records) -> return ())
+        [(cy1, par1), (cy2, par2)]
 
 updateAllegoryStateTrees :: Tx -> Allegory -> BoltActionT IO ()
 updateAllegoryStateTrees tx allegory = do
