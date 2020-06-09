@@ -378,12 +378,19 @@ xGetPartiallySignedAllegoryTx net payips name isProducer owner change = do
                 case index of
                     Just i -> return $ (OutPoint' txid i, (snd $ last nb))
                     Nothing -> throw KeyValueDBLookupException
-    let zippedIps = L.map (\x -> (x, DT.pack "")) payips
+    inputHash <-
+        liftIO $
+        traverse
+            (\w -> do
+                 let op = OutPoint (fromString $ opTxHash w) (fromIntegral $ opIndex w)
+                 sh <- getScriptHashFromOutpoint conn (txSynchronizer bp2pEnv) lg net op 0
+                 return $ (w, ) <$> sh)
+            payips
     let ins =
             L.map
                 (\(x, s) ->
                      TxIn (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x)) (fromJust $ decodeHex s) 0)
-                (zippedIps ++ [nameip])
+                (catMaybes inputHash ++ [nameip])
     let !outs =
             L.map
                 (\x -> do
@@ -407,9 +414,7 @@ xGetPartiallySignedAllegoryTx net payips name isProducer owner change = do
     let psatx = Tx version ins outs locktime
     case signTx net psatx sigInputs [allegorySecretKey alg] of
         Right tx -> do
-            liftIO $ print tx
-            liftIO $ print $ encodeHex $ BSL.toStrict $ serialise tx
-            return $ DTE.encodeUtf8 $ encodeHex $ BSL.toStrict $ serialise tx
+            return $ BSL.toStrict $ Data.Aeson.encode $ tx
         Left err -> do
             liftIO $ print $ "error occurred while signing the Tx: " <> show err
             return $ BC.empty
