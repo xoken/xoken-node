@@ -147,6 +147,9 @@ data RPCReqParams
           }
     | GetOutputsByAddress
           { gaAddrOutputs :: String
+          , gaPageSize :: Maybe Int32
+          , gaLastBlockHeight :: Maybe Int
+          , gaLastTxInd :: Maybe Int
           }
     | GetOutputsByAddresses
           { gasAddrOutputs :: [String]
@@ -185,7 +188,8 @@ instance FromJSON RPCReqParams where
         (GetTransactionsByTxIDs <$> o .: "gtTxHashes") <|>
         (GetRawTransactionByTxID <$> o .: "gtRTxHash") <|>
         (GetRawTransactionsByTxIDs <$> o .: "gtRTxHashes") <|>
-        (GetOutputsByAddress <$> o .: "gaAddrOutputs") <|>
+        (GetOutputsByAddress <$> o .: "gaAddrOutputs" <*> o .:? "gaPageSize" <*> o .:? "gaLastBlockHeight" <*>
+        o .:? "gaLastTxIndex") <|>
         (GetOutputsByAddresses <$> o .: "gasAddrOutputs") <|>
         (GetOutputsByScriptHash <$> o .: "gaScriptHashOutputs") <|>
         (GetOutputsByScriptHashes <$> o .: "gasScriptHashOutputs") <|>

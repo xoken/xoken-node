@@ -199,17 +199,25 @@ xGetTxHashes net hashes = do
                              (fromBlob sz))
                     iop
 
-xGetOutputsAddress :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> String -> m ([AddressOutputs])
-xGetOutputsAddress net address = do
+xGetOutputsAddress :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
+                   => Network
+                   -> String
+                   -> Maybe Int32
+                   -> Maybe Int
+                   -> Maybe Int
+                   -> m ([AddressOutputs])
+xGetOutputsAddress net address pgSize blkHeight txInd = do
     dbe <- getDB
     lg <- getLogger
     let conn = keyValDB (dbe)
         str =
-            "SELECT address,output,block_info,is_block_confirmed,is_output_spent,is_type_receive,other_address,prev_outpoint,value from xoken.address_outputs where address = ?"
+            "SELECT address,output,blockhash,block_height,txindex,is_block_confirmed,is_output_spent,is_type_receive,other_address,prev_outpoint,value from xoken.address_outputs where address = ?"
         qstr =
             str :: Q.QueryString Q.R (Identity DT.Text) ( DT.Text
                                                         , (DT.Text, Int32)
-                                                        , ((DT.Text, Int32), Int32)
+                                                        , DT.Text
+                                                        , Int32
+                                                        , Int32
                                                         , Bool
                                                         , Bool
                                                         , Bool
@@ -217,7 +225,7 @@ xGetOutputsAddress net address = do
                                                         , (DT.Text, Int32)
                                                         , Int64)
         p = Q.defQueryParams Q.One $ Identity $ DT.pack address
-    res <- LE.try $ Q.runClient conn (Q.query qstr p)
+    res <- LE.try $ Q.runClient conn (Q.query qstr (p {pageSize = pgSize}))
     case res of
         Right iop -> do
             if length iop == 0
@@ -225,7 +233,7 @@ xGetOutputsAddress net address = do
                 else do
                     return $
                         Data.List.map
-                            (\(addr, (txhs, ind), ((bhash, txind), blkht), fconf, fospent, freceive, oaddr, (ptxhs, pind), val) ->
+                            (\(addr, (txhs, ind), bhash, blkht, txind, fconf, fospent, freceive, oaddr, (ptxhs, pind), val) ->
                                  AddressOutputs
                                      (DT.unpack addr)
                                      (OutPoint' (DT.unpack txhs) (fromIntegral ind))
@@ -539,10 +547,10 @@ goGetResource msg net = do
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "ADDR->[OUTPUT]" -> do
             case rqParams msg of
-                Just (GetOutputsByAddress addr) -> do
+                Just (GetOutputsByAddress addr psize blkHeight txInd) -> do
                     ops <-
                         case convertToScriptHash net addr of
-                            Just o -> xGetOutputsAddress net o
+                            Just o -> xGetOutputsAddress net o psize blkHeight txInd
                             Nothing -> return []
                     return $
                         RPCResponse 200 Nothing $ Just $ RespOutputsByAddress $ (\ao -> ao {aoAddress = addr}) <$> ops
@@ -568,7 +576,7 @@ goGetResource msg net = do
         "SCRIPTHASH->[OUTPUT]" -> do
             case rqParams msg of
                 Just (GetOutputsByScriptHash sh) -> do
-                    ops <- L.map addressToScriptOutputs <$> xGetOutputsAddress net (sh)
+                    ops <- L.map addressToScriptOutputs <$> xGetOutputsAddress net (sh) Nothing Nothing Nothing
                     return $ RPCResponse 200 Nothing $ Just $ RespOutputsByScriptHash ops
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "[SCRIPTHASH]->[OUTPUT]" -> do
