@@ -154,14 +154,17 @@ initAllegoryRoot tx = do
     let scr =
             "4104fd8074c838cd146b1c3f55f39c7bdbdd625cf3934307aac4471f26708c637982791c0e2cc7a91d473d3bdaa6caec21b83670945e61cbe91413084cdc6b18ec5fac"
     let cypher =
-            " MERGE (nu:nutxo { outpoint: {out_op}, name:{name}, script: {scr} })  " <>
-            " MERGE (ns:namestate { name:{name}, type: {type} })  MERGE (ns)-[r:REVISION]->(nu) "
+            " MERGE (rr:namestate {name:{dummyroot} })  MERGE (nu:nutxo { outpoint: {out_op}, name:{name}, producer:{isProducer} ,script: {scr} })  " <>
+            " MERGE (ns:namestate { name:{nsname}, type: {type} })  MERGE (ns)-[r:REVISION]->(nu) "
     let params =
             fromList
                 [ ("out_op", T $ oops)
                 , ("scr", T $ pack $ C.unpack $ B16.encode scr)
-                , ("name", T "|producer")
+                , ("name", T "")
+                , ("nsname", T "|producer")
                 , ("type", T "producer")
+                , ("dummyroot", T "")
+                , ("isProducer", B True)
                 ]
     res <- LE.try $ queryP cypher params
     case res of

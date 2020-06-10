@@ -389,7 +389,7 @@ xGetPartiallySignedAllegoryTx net payips (nameArr, isProducer) owner change = do
             L.map
                 (\(x, s) ->
                      TxIn (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x)) (fromJust $ decodeHex s) 0)
-                (catMaybes inputHash ++ [nameip])
+                ([nameip] ++ (catMaybes inputHash))
     -- construct OP_RETURN
     let al =
             Allegory
@@ -400,8 +400,8 @@ xGetPartiallySignedAllegoryTx net payips (nameArr, isProducer) owner change = do
                      (ProducerOutput (Index 1) (Just $ Endpoint "XokenP2P" "someuri1"))
                      (Just $ OwnerOutput (Index 2) (Just $ Endpoint "XokenP2P" "someuri2"))
                      [ OwnerExtension
-                           (OwnerOutput (Index 2) (Just $ Endpoint "XokenP2P" "someuri333333333333333333333"))
-                           98
+                           (OwnerOutput (Index 3) (Just $ Endpoint "XokenP2P" "someuri333333333333333333333"))
+                           (last nameArr)
                      ])
     let opRetScript = frameOpReturn $ C.toStrict $ serialise al
     -- derive producer's Address
