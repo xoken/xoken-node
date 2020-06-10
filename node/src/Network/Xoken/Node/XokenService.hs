@@ -359,7 +359,7 @@ xGetPartiallySignedAllegoryTx net payips (nameArr, isProducer) owner change = do
     lg <- getLogger
     alg <- getAllegory
     let conn = keyValDB (dbe)
-    let name = DT.pack $ L.map (\x -> chr x) nameArr
+    let name = DT.pack $ L.map (\x -> chr x) (init nameArr)
     res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameScriptOp (name) isProducer)
     nameip <-
         case res of
@@ -394,20 +394,32 @@ xGetPartiallySignedAllegoryTx net payips (nameArr, isProducer) owner change = do
     let al =
             Allegory
                 1
-                nameArr
-                (ProducerAction (Index 0) (ProducerOutput (Index 0) Nothing) (Just $ OwnerOutput (Index 0) Nothing) [])
-    let opRetScript = B16.encode $ frameOpReturn $ C.toStrict $ serialise al
+                (init nameArr)
+                (ProducerAction
+                     (Index 0)
+                     (ProducerOutput (Index 1) (Just $ Endpoint "XokenP2P" "someuri1"))
+                     (Just $ OwnerOutput (Index 2) (Just $ Endpoint "XokenP2P" "someuri2"))
+                     [ OwnerExtension
+                           (OwnerOutput (Index 2) (Just $ Endpoint "XokenP2P" "someuri333333333333333333333"))
+                           98
+                     ])
+    let opRetScript = frameOpReturn $ C.toStrict $ serialise al
+    -- derive producer's Address
+    let prAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
+    let prScript = addressToScriptBS prAddr
     --
     let !outs =
-            L.map
-                (\x -> do
-                     let addr =
-                             case stringToAddr net (DT.pack $ fst x) of
-                                 Just a -> a
-                                 Nothing -> throw InvalidOutputAddressException
-                     let script = addressToScriptBS addr
-                     TxOut (fromIntegral $ snd x) script)
-                [owner, change]
+            [TxOut 0 opRetScript] ++
+            [TxOut 5555 prScript] ++
+            (L.map
+                 (\x -> do
+                      let addr =
+                              case stringToAddr net (DT.pack $ fst x) of
+                                  Just a -> a
+                                  Nothing -> throw InvalidOutputAddressException
+                      let script = addressToScriptBS addr
+                      TxOut (fromIntegral $ snd x) script)
+                 [owner, change])
     let !sigInputs =
             L.map
                 (\x -> do
@@ -421,6 +433,7 @@ xGetPartiallySignedAllegoryTx net payips (nameArr, isProducer) owner change = do
     let psatx = Tx version ins outs locktime
     case signTx net psatx sigInputs [allegorySecretKey alg] of
         Right tx -> do
+            liftIO $ print (Data.Aeson.encode $ tx)
             return $ BSL.toStrict $ Data.Aeson.encode $ tx
         Left err -> do
             liftIO $ print $ "error occurred while signing the Tx: " <> show err
@@ -488,41 +501,40 @@ xRelayTx net rawTx = do
                     debug lg $ LG.msg $ val $ "transaction verified - broadcasting tx"
                     mapM_ (\(_, peer) -> do sendRequestMessages peer (MTx (fromJust $ fst res))) connPeers
                     return True
-                        -- else do
-                        --     debug lg $ LG.msg $ val $ "transaction invalid"
-                        --     let op_return = head (txOut tx)
-                        --     let hexstr = B16.encode (scriptOutput op_return)
-                        --     if "006a0f416c6c65676f72792f416c6c506179" `isPrefixOf` (BC.unpack hexstr)
-                        --         then do
-                        --             liftIO $ print (hexstr)
-                        --             case decodeOutputScript $ scriptOutput op_return of
-                        --                 Right (script) -> do
-                        --                     liftIO $ print (script)
-                        --                     case last $ scriptOps script of
-                        --                         (OP_PUSHDATA payload _) -> do
-                        --                             case (deserialiseOrFail $ C.fromStrict payload) of
-                        --                                 Right (allegory) -> do
-                        --                                     liftIO $ print (allegory)
-                        --                                     ores <-
-                        --                                         liftIO $
-                        --                                         try $
-                        --                                         withResource
-                        --                                             (pool $ graphDB dbe)
-                        --                                             (`BT.run` updateAllegoryStateTrees tx allegory)
-                        --                                     case ores of
-                        --                                         Right () -> return True
-                        --                                         Left (SomeException e) -> return $ False
-                        --                                 Left (e :: DeserialiseFailure) -> do
-                        --                                     err lg $
-                        --                                         LG.msg $
-                        --                                         "error deserialising OP_RETURN CBOR data" ++ show e
-                        --                                     return False
-                        --                 Left (e) -> do
-                        --                     err lg $ LG.msg $ "error decoding op_return data:" ++ show e
-                        --                     return False
-                        --         else do
-                        --             err lg $ LG.msg $ val $ "error: OP_RETURN prefix mismatch"
-                        --             return False
+                    -- else do
+                    debug lg $ LG.msg $ val $ "Checking for Allegory OP_RETURN"
+                    let op_return = head (txOut tx)
+                    let hexstr = B16.encode (scriptOutput op_return)
+                    if "006a0f416c6c65676f72792f416c6c506179" `isPrefixOf` (BC.unpack hexstr)
+                        then do
+                            liftIO $ print (hexstr)
+                            case decodeOutputScript $ scriptOutput op_return of
+                                Right (script) -> do
+                                    liftIO $ print (script)
+                                    case last $ scriptOps script of
+                                        (OP_PUSHDATA payload _) -> do
+                                            case (deserialiseOrFail $ C.fromStrict payload) of
+                                                Right (allegory) -> do
+                                                    liftIO $ print (allegory)
+                                                    ores <-
+                                                        liftIO $
+                                                        try $
+                                                        withResource
+                                                            (pool $ graphDB dbe)
+                                                            (`BT.run` updateAllegoryStateTrees tx allegory)
+                                                    case ores of
+                                                        Right () -> return True
+                                                        Left (SomeException e) -> return $ False
+                                                Left (e :: DeserialiseFailure) -> do
+                                                    err lg $
+                                                        LG.msg $ "error deserialising OP_RETURN CBOR data" ++ show e
+                                                    return False
+                                Left (e) -> do
+                                    err lg $ LG.msg $ "error decoding op_return data:" ++ show e
+                                    return False
+                        else do
+                            err lg $ LG.msg $ val $ "error: OP_RETURN prefix mismatch"
+                            return False
                 Nothing -> do
                     err lg $ LG.msg $ val $ "error decoding rawTx (2)"
                     return $ False
@@ -662,10 +674,10 @@ goGetResource msg net = do
                 Just (GetPartiallySignedAllegoryTx payips (name, isProducer) owner change) -> do
                     opsE <- LE.try $ xGetPartiallySignedAllegoryTx net payips (name, isProducer) owner change
                     case opsE of
-                        Right ops -> pure $ RPCResponse 200 Nothing $ Just $ RespPartiallySignedAllegoryTx ops
+                        Right ops -> return $ RPCResponse 200 Nothing $ Just $ RespPartiallySignedAllegoryTx ops
                         Left (e :: SomeException) -> do
                             liftIO $ print e
-                            pure $ RPCResponse 400 (Just INTERNAL_ERROR) Nothing
+                            return $ RPCResponse 400 (Just INTERNAL_ERROR) Nothing
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         _____ -> return $ RPCResponse 400 (Just INVALID_METHOD) Nothing
 

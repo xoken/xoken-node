@@ -100,7 +100,8 @@ handleRPCReqResp sockMVar format mid version encReq = do
                                      (fromJust version))
                         Nothing -> A.encode (JSONRPCSuccessResponse (fromJust version) (rsBody rpcResp) mid)
     connSock <- liftIO $ takeMVar sockMVar
-    NTLS.sendData connSock body
+    let prefixbody = LBS.append (DB.encode (fromIntegral (LBS.length body) :: Int32)) body
+    NTLS.sendData connSock prefixbody
     liftIO $ putMVar sockMVar connSock
 
 handleNewConnectionRequest :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => TLSEndpointServiceHandler -> m ()
@@ -137,7 +138,8 @@ handleRequest epConn = do
                                     (ErrorResponse (getJsonRPCErrorCode INVALID_REQUEST) (show INVALID_REQUEST) Nothing)
                                     "2.0"
                 connSock <- liftIO $ takeMVar (context epConn)
-                NTLS.sendData connSock body
+                let prefixbody = LBS.append (DB.encode (fromIntegral (LBS.length body) :: Int32)) body
+                NTLS.sendData connSock prefixbody
                 liftIO $ putMVar (context epConn) connSock
             XCloseConnection -> do
                 liftIO $ writeIORef continue False

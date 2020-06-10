@@ -23,6 +23,7 @@ import Control.Monad.State.Strict
 import qualified Data.Aeson as A (decode, encode)
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Base16 as B16
+import Data.ByteString.Builder
 import qualified Data.ByteString.Char8 as C
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Lazy.Char8 as LC
@@ -177,15 +178,16 @@ toInt x = round x
 frameOpReturn :: C.ByteString -> C.ByteString
 frameOpReturn opReturn = do
     let prefix = (fst . B16.decode) "006a0f416c6c65676f72792f416c6c506179"
-    let lens = format fmtStr (C.length opReturn) :: String
-    let lenb = (C.pack lens)
-    C.append (C.append prefix lenb) opReturn
-  where
-    fmtStr =
-        if (C.length opReturn) <= 75
-            then "%02x" -- 0x4b
-            else if (C.length opReturn) < 255
-                     then "4c%02x" -- 0x4c
-                     else if (C.length opReturn) < 65535
-                              then "4d%04x" -- 0x4d
-                              else "4e%08x" -- 0x4e
+    let len = B.length opReturn
+    let xx =
+            if (len <= 0x4b)
+                then word8 $ fromIntegral len
+                else if (len <= 0xff)
+                         then mappend (word8 0x4c) (word8 $ fromIntegral len)
+                         else if (len <= 0xffff)
+                                  then mappend (word8 0x4d) (word16LE $ fromIntegral len)
+                                  else if (len <= 0x7fffffff)
+                                           then mappend (word8 0x4e) (word32LE $ fromIntegral len)
+                                           else word8 0x99 -- error scenario!!
+    let bs = LC.toStrict $ toLazyByteString xx
+    C.append (C.append prefix bs) opReturn
