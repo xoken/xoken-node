@@ -324,7 +324,7 @@ getNextBlockToSync tm = do
                                  otherwise -> False)
                         sy
             let recvTimedOut =
-                    M.filter (\((RecentTxReceiveTime (t, c)), _) -> (diffUTCTime tm t > 30)) receiveInProgress
+                    M.filter (\((RecentTxReceiveTime (t, c)), _) -> (diffUTCTime tm t > 60)) receiveInProgress
             -- all blocks received, empty the cache, cache-miss gracefully
             debug lg $ LG.msg $ ("recv in progress, awaiting: " ++ show receiveInProgress)
             if M.size sent == 0 && M.size unsent == 0 && M.size receiveInProgress == 0
@@ -471,7 +471,8 @@ processConfTransaction tx bhash txind blkht = do
                 [0 :: Int32 ..]
     --
     lookupInAddrs <-
-        mapM
+        liftIO $
+        mapConcurrently
             (\(a, b, c) ->
                  case a of
                      Just a -> return $ Just (a, b, c)
@@ -480,7 +481,6 @@ processConfTransaction tx bhash txind blkht = do
                              then return Nothing
                              else do
                                  res <-
-                                     liftIO $
                                      try $
                                      getAddressFromOutpoint
                                          conn
@@ -497,8 +497,7 @@ processConfTransaction tx bhash txind blkht = do
                                                      Just as -> return $ Just (as, b, c)
                                                      Nothing -> throw InvalidAddressException
                                              Nothing -> do
-                                                 liftIO $
-                                                     err lg $ LG.msg $ val "Error: OutpointAddressNotFoundException "
+                                                 err lg $ LG.msg $ val "Error: OutpointAddressNotFoundException "
                                                  return Nothing
                                      Left TxIDNotFoundException -> do
                                          throw TxIDNotFoundException
