@@ -404,22 +404,23 @@ commitAddressOutputs ::
     -> m ()
 commitAddressOutputs conn addr typeRecv otherAddr output blockInfo prevOutpoint value = do
     lg <- getLogger
-    let str =
-            "insert INTO xoken.address_outputs ( address, is_type_receive,other_address, output, blockhash, block_height, txindex, prev_outpoint, value, is_block_confirmed, is_output_spent ) values (?, ?, ?, ?, ?, ? ,? ,? ,?, ?, ?)"
-        ((blockHash, blockHeight), txIndex) = blockInfo
+    let blkHeight = fromIntegral $ snd . fst $ blockInfo
+        txIndex = fromIntegral $ snd blockInfo
+        nominalTxIndex = blkHeight * 1000000000 + txIndex
+        str =
+            "insert INTO xoken.address_outputs ( address, is_type_receive,other_address, output, block_info, nominal_tx_index, prev_outpoint, value, is_block_confirmed, is_output_spent ) values (?, ?, ?, ?, ?, ? ,? ,? ,?, ?)"
         qstr =
             str :: Q.QueryString Q.W ( Text
                                      , Bool
                                      , Maybe Text
                                      , (Text, Int32)
-                                     , Text
-                                     , Int32
-                                     , Int32
+                                     , ((Text,Int32), Int32)
+                                     , Int64
                                      , (Text, Int32)
                                      , Int64
                                      , Bool
                                      , Bool) ()
-        par = Q.defQueryParams Q.One (addr, typeRecv, otherAddr, output, blockHash, blockHeight, txIndex, prevOutpoint, value, False, False)
+        par = Q.defQueryParams Q.One (addr, typeRecv, otherAddr, output, blockInfo, nominalTxIndex, prevOutpoint, value, False, False)
     res1 <- liftIO $ try $ Q.runClient conn (Q.write (qstr) par)
     case res1 of
         Right () -> return ()

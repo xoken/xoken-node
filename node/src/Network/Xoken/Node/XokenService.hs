@@ -203,21 +203,19 @@ xGetOutputsAddress :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
                    => Network
                    -> String
                    -> Maybe Int32
-                   -> Maybe Int
-                   -> Maybe Int
+                   -> Maybe Int64
                    -> m ([AddressOutputs])
-xGetOutputsAddress net address pgSize blkHeight txInd = do
+xGetOutputsAddress net address pgSize nominalTxIndex = do
     dbe <- getDB
     lg <- getLogger
     let conn = keyValDB (dbe)
-        str =
-            "SELECT address,output,blockhash,block_height,txindex,is_block_confirmed,is_output_spent,is_type_receive,other_address,prev_outpoint,value from xoken.address_outputs where address = ?"
+        str = case isJust nominalTxIndex of
+            _ -> "SELECT address,output,block_info,nominal_tx_index,is_block_confirmed,is_output_spent,is_type_receive,other_address,prev_outpoint,value from xoken.address_outputs where address = ? where nominal_tx_index < 100000000000"
         qstr =
             str :: Q.QueryString Q.R (Identity DT.Text) ( DT.Text
                                                         , (DT.Text, Int32)
-                                                        , DT.Text
-                                                        , Int32
-                                                        , Int32
+                                                        , ((DT.Text, Int32),Int32)
+                                                        , Int64
                                                         , Bool
                                                         , Bool
                                                         , Bool
@@ -233,11 +231,12 @@ xGetOutputsAddress net address pgSize blkHeight txInd = do
                 else do
                     return $
                         Data.List.map
-                            (\(addr, (txhs, ind), bhash, blkht, txind, fconf, fospent, freceive, oaddr, (ptxhs, pind), val) ->
+                            (\(addr, (txhs, ind), ((bhash, blkht), txind), nomTxInd, fconf, fospent, freceive, oaddr, (ptxhs, pind), val) ->
                                  AddressOutputs
                                      (DT.unpack addr)
                                      (OutPoint' (DT.unpack txhs) (fromIntegral ind))
                                      (BlockInfo' (DT.unpack bhash) (fromIntegral txind) (fromIntegral blkht))
+                                     nomTxInd
                                      fconf
                                      fospent
                                      freceive
@@ -257,11 +256,12 @@ xGetOutputsAddresses net addresses = do
     lg <- getLogger
     let conn = keyValDB (dbe)
         str =
-            "SELECT address,output,block_info,is_block_confirmed,is_output_spent,is_type_receive,other_address,prev_outpoint,value from xoken.address_outputs where address in ?"
+            "SELECT address,output,block_info,nominal_tx_index,is_block_confirmed,is_output_spent,is_type_receive,other_address,prev_outpoint,value from xoken.address_outputs where address in ?"
         qstr =
             str :: Q.QueryString Q.R (Identity [DT.Text]) ( DT.Text
                                                           , (DT.Text, Int32)
                                                           , ((DT.Text, Int32), Int32)
+                                                          , Int64
                                                           , Bool
                                                           , Bool
                                                           , Bool
@@ -277,11 +277,12 @@ xGetOutputsAddresses net addresses = do
                 else do
                     return $
                         Data.List.map
-                            (\(addr, (txhs, ind), ((bhash, txind), blkht), fconf, fospent, freceive, oaddr, (ptxhs, pind), val) ->
+                            (\(addr, (txhs, ind), ((bhash, blkht), txind), nomTxInd, fconf, fospent, freceive, oaddr, (ptxhs, pind), val) ->
                                  AddressOutputs
                                      (DT.unpack addr)
                                      (OutPoint' (DT.unpack txhs) (fromIntegral ind))
                                      (BlockInfo' (DT.unpack bhash) (fromIntegral txind) (fromIntegral blkht))
+                                     nomTxInd
                                      fconf
                                      fospent
                                      freceive
@@ -320,7 +321,7 @@ xGetAllegoryNameBranch net name isProducer = do
                     (\x -> do
                          let sp = DT.split (== ':') x
                          let txid = DT.unpack $ sp !! 0
-                         let index = readMaybe (DT.unpack $ sp !! 1) :: Maybe Int
+                         let index = readMaybe (DT.unpack $ sp !! 1) :: Maybe Int32
                          case index of
                              Just i -> OutPoint' txid i
                              Nothing -> throw KeyValueDBLookupException)
@@ -353,7 +354,7 @@ xGetPartiallySignedAllegoryTx net payips name isProducer owner change = do
             Right nb -> do
                 let sp = DT.split (== ':') (last nb)
                 let txid = DT.unpack $ sp !! 0
-                let index = readMaybe (DT.unpack $ sp !! 1) :: Maybe Int
+                let index = readMaybe (DT.unpack $ sp !! 1) :: Maybe Int32
                 case index of
                     Just i -> return $ OutPoint' txid i
                     Nothing -> throw KeyValueDBLookupException
@@ -547,10 +548,10 @@ goGetResource msg net = do
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "ADDR->[OUTPUT]" -> do
             case rqParams msg of
-                Just (GetOutputsByAddress addr psize blkHeight txInd) -> do
+                Just (GetOutputsByAddress addr psize nominalTxIndex) -> do
                     ops <-
                         case convertToScriptHash net addr of
-                            Just o -> xGetOutputsAddress net o psize blkHeight txInd
+                            Just o -> xGetOutputsAddress net o psize nominalTxIndex
                             Nothing -> return []
                     return $
                         RPCResponse 200 Nothing $ Just $ RespOutputsByAddress $ (\ao -> ao {aoAddress = addr}) <$> ops
@@ -576,7 +577,7 @@ goGetResource msg net = do
         "SCRIPTHASH->[OUTPUT]" -> do
             case rqParams msg of
                 Just (GetOutputsByScriptHash sh) -> do
-                    ops <- L.map addressToScriptOutputs <$> xGetOutputsAddress net (sh) Nothing Nothing Nothing
+                    ops <- L.map addressToScriptOutputs <$> xGetOutputsAddress net (sh) Nothing Nothing
                     return $ RPCResponse 200 Nothing $ Just $ RespOutputsByScriptHash ops
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "[SCRIPTHASH]->[OUTPUT]" -> do
