@@ -279,7 +279,7 @@ xGetOutputsAddresses net addresses pgSize mbNomTxInd = do
                                                           , (DT.Text, Int32)
                                                           , Int64)
         p = Q.defQueryParams Q.One (Data.List.map (DT.pack) addresses, nominalTxIndex)
-    res <- LE.try $ Q.runClient conn (Q.query qstr p)
+    res <- LE.try $ Q.runClient conn (Q.query qstr (p {pageSize = pgSize}))
     case res of
         Right iop -> do
             if length iop == 0
