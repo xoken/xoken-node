@@ -287,7 +287,9 @@ updateAllegoryStateTrees tx allegory = do
                                            ("<previous>")
                                            (pack $
                                             if (ind == 1)
-                                                then "owner_exists"
+                                                then case oout of
+                                                         Nothing -> "rootname"
+                                                         Just poo -> "owner_exists"
                                                 else "owner_extn_exists_" ++ (show $ ind - 1))
                                            (replace
                                                 ("<i>")

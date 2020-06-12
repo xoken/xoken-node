@@ -345,6 +345,94 @@ xGetAllegoryNameBranch net name isProducer = do
             err lg $ LG.msg $ "Error: xGetAllegoryNameBranch: " ++ show e
             throw KeyValueDBLookupException
 
+getOrMakeProducer ::
+       (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> [Int] -> m (((OutPoint', DT.Text), Bool))
+getOrMakeProducer net nameArr = do
+    dbe <- getDB
+    bp2pEnv <- getBitcoinP2P
+    lg <- getLogger
+    alg <- getAllegory
+    let name = DT.pack $ L.map (\x -> chr x) (nameArr)
+    res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameScriptOp (name) True)
+    case res of
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "error fetching allegory name input :" ++ show e
+            throw e
+        Right [] -> do
+            debug lg $ LG.msg $ "allegory name not found, create recursively (1): " <> name
+            createCommitImplictTx net (nameArr)
+            inres <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameScriptOp (name) True)
+            case inres of
+                Left (e :: SomeException) -> do
+                    err lg $ LG.msg $ "error fetching allegory name input :" ++ show e
+                    throw e
+                Right [] -> do
+                    err lg $ LG.msg $ "allegory name still not found, recursive create must've failed (1): " <> name
+                    throw KeyValueDBLookupException
+                Right nb -> do
+                    liftIO $ print $ "nb2~" <> show nb
+                    let sp = DT.split (== ':') $ fst (head nb)
+                    let txid = DT.unpack $ sp !! 0
+                    let index = readMaybe (DT.unpack $ sp !! 1) :: Maybe Int
+                    case index of
+                        Just i -> return $ ((OutPoint' txid i, (snd $ head nb)), False)
+                        Nothing -> throw KeyValueDBLookupException
+        Right nb -> do
+            debug lg $ LG.msg $ "allegory name found! (1): " <> name
+            let sp = DT.split (== ':') $ fst (head nb)
+            let txid = DT.unpack $ sp !! 0
+            let index = readMaybe (DT.unpack $ sp !! 1) :: Maybe Int
+            case index of
+                Just i -> return $ ((OutPoint' txid i, (snd $ head nb)), True)
+                Nothing -> throw KeyValueDBLookupException
+
+createCommitImplictTx :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> [Int] -> m ()
+createCommitImplictTx net nameArr = do
+    dbe <- getDB
+    bp2pEnv <- getBitcoinP2P
+    lg <- getLogger
+    alg <- getAllegory
+    (nameip, existed) <- getOrMakeProducer net (init nameArr)
+    let ins =
+            L.map
+                (\(x, s) ->
+                     TxIn (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x)) (fromJust $ decodeHex s) 0)
+                ([nameip])
+        -- construct OP_RETURN
+    let al =
+            Allegory
+                1
+                (init nameArr)
+                (ProducerAction
+                     (Index 0)
+                     (ProducerOutput (Index 1) (Just $ Endpoint "XokenP2P" "someuri-1"))
+                     Nothing
+                     [ (ProducerExtension
+                            (ProducerOutput (Index 2) (Just $ Endpoint "XokenP2P" "someuri-2"))
+                            (last nameArr))
+                     , (OwnerExtension (OwnerOutput (Index 3) (Just $ Endpoint "XokenP2P" "someuri-3")) (last nameArr))
+                     ])
+    let opRetScript = frameOpReturn $ C.toStrict $ serialise al
+        -- derive producer's Address
+    let prAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
+    let prScript = addressToScriptBS prAddr
+    let !outs = [TxOut 0 opRetScript] ++ L.map (\_ -> TxOut 5555 prScript) [1, 2, 3]
+    let !sigInputs =
+            L.map
+                (\x -> do SigInput (addressToOutput x) (5555) (prevOutput $ head ins) sigHashNone Nothing)
+                [prAddr, prAddr]
+    let psatx = Tx version ins outs locktime
+    case signTx net psatx sigInputs [allegorySecretKey alg] of
+        Right tx -> do
+            xRelayTx net $ Data.Serialize.encode $ tx
+            return ()
+        Left err -> do
+            liftIO $ print $ "error occurred while signing the Tx: " <> show err
+            throw KeyValueDBLookupException
+  where
+    version = 1
+    locktime = 0
+
 xGetPartiallySignedAllegoryTx ::
        (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
     => Network
@@ -359,85 +447,91 @@ xGetPartiallySignedAllegoryTx net payips (nameArr, isProducer) owner change = do
     lg <- getLogger
     alg <- getAllegory
     let conn = keyValDB (dbe)
-    let name = DT.pack $ L.map (\x -> chr x) (init nameArr)
+    -- check if name (of given type) exists
+    let name = DT.pack $ L.map (\x -> chr x) (nameArr)
     res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameScriptOp (name) isProducer)
-    nameip <-
+    (nameip, existed) <-
         case res of
             Left (e :: SomeException) -> do
                 err lg $ LG.msg $ "error fetching allegory name input :" ++ show e
                 throw e
             Right [] -> do
-                err lg $ LG.msg $ "no data found for allegory name: " <> name
-                throw KeyValueDBLookupException
+                debug lg $ LG.msg $ "allegory name not found, get or make interim producers recursively : " <> name
+                getOrMakeProducer net (init nameArr)
             Right nb -> do
-                liftIO $ print $ "nb" <> show nb
+                debug lg $ LG.msg $ "allegory name found! : " <> name
                 let sp = DT.split (== ':') $ fst (head nb)
                 let txid = DT.unpack $ sp !! 0
                 let index = readMaybe (DT.unpack $ sp !! 1) :: Maybe Int
                 case index of
-                    Just i -> return $ (OutPoint' txid i, (snd $ head nb))
+                    Just i -> return $ ((OutPoint' txid i, (snd $ head nb)), True)
                     Nothing -> throw KeyValueDBLookupException
-    inputHash <-
-        liftIO $
-        traverse
-            (\w -> do
-                 let op = OutPoint (fromString $ opTxHash w) (fromIntegral $ opIndex w)
-                 sh <- getScriptHashFromOutpoint conn (txSynchronizer bp2pEnv) lg net op 0
-                 return $ (w, ) <$> sh)
-            payips
-    let ins =
-            L.map
-                (\(x, s) ->
-                     TxIn (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x)) (fromJust $ decodeHex s) 0)
-                ([nameip] ++ (catMaybes inputHash))
-    -- construct OP_RETURN
-    let al =
-            Allegory
-                1
-                (init nameArr)
-                (ProducerAction
-                     (Index 0)
-                     (ProducerOutput (Index 1) (Just $ Endpoint "XokenP2P" "someuri1"))
-                     (Just $ OwnerOutput (Index 2) (Just $ Endpoint "XokenP2P" "someuri2"))
-                     [ OwnerExtension
-                           (OwnerOutput (Index 3) (Just $ Endpoint "XokenP2P" "someuri333333333333333333333"))
-                           (last nameArr)
-                     ])
-    let opRetScript = frameOpReturn $ C.toStrict $ serialise al
-    -- derive producer's Address
-    let prAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
-    let prScript = addressToScriptBS prAddr
     --
-    let !outs =
-            [TxOut 0 opRetScript] ++
-            [TxOut 5555 prScript] ++
-            (L.map
-                 (\x -> do
-                      let addr =
-                              case stringToAddr net (DT.pack $ fst x) of
-                                  Just a -> a
-                                  Nothing -> throw InvalidOutputAddressException
-                      let script = addressToScriptBS addr
-                      TxOut (fromIntegral $ snd x) script)
-                 [owner, change])
-    let !sigInputs =
-            L.map
-                (\x -> do
-                     let addr =
-                             case stringToAddr net (DT.pack $ fst x) of
-                                 Just a -> a
-                                 Nothing -> throw InvalidOutputAddressException
-                     let scriptOutput = addressToOutput addr
-                     SigInput scriptOutput (fromIntegral $ snd x) (prevOutput $ head ins) sigHashNone Nothing)
-                [owner, change]
-    let psatx = Tx version ins outs locktime
-    case signTx net psatx sigInputs [allegorySecretKey alg] of
-        Right tx -> do
-            liftIO $ print (Data.Aeson.encode $ tx)
-            return $ BSL.toStrict $ Data.Aeson.encode $ tx
-        Left err -> do
-            liftIO $ print $ "error occurred while signing the Tx: " <> show err
-            return $ BC.empty
+    if existed
+        then return $ BC.empty -- here do the OwnerAction transfer of name 
+        else do
+            inputHash <-
+                liftIO $
+                traverse
+                    (\w -> do
+                         let op = OutPoint (fromString $ opTxHash w) (fromIntegral $ opIndex w)
+                         sh <- getScriptHashFromOutpoint conn (txSynchronizer bp2pEnv) lg net op 0
+                         return $ (w, ) <$> sh)
+                    payips
+            let ins =
+                    L.map
+                        (\(x, s) ->
+                             TxIn
+                                 (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x))
+                                 (fromJust $ decodeHex s)
+                                 0)
+                        ([nameip] ++ (catMaybes inputHash))
+            -- construct OP_RETURN
+            let al =
+                    Allegory
+                        1
+                        (init nameArr)
+                        (ProducerAction
+                             (Index 0)
+                             (ProducerOutput (Index 1) (Just $ Endpoint "XokenP2P" "someuri_1"))
+                             Nothing
+                             [ OwnerExtension
+                                   (OwnerOutput (Index 3) (Just $ Endpoint "XokenP2P" "someuri_3"))
+                                   (last nameArr)
+                             ])
+            let opRetScript = frameOpReturn $ C.toStrict $ serialise al
+            -- derive producer's Address
+            let prAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
+            let prScript = addressToScriptBS prAddr
+            let !outs =
+                    [TxOut 0 opRetScript] ++
+                    [TxOut 5555 prScript] ++
+                    (L.map
+                         (\x -> do
+                              let addr =
+                                      case stringToAddr net (DT.pack $ fst x) of
+                                          Just a -> a
+                                          Nothing -> throw InvalidOutputAddressException
+                              let script = addressToScriptBS addr
+                              TxOut (fromIntegral $ snd x) script)
+                         [owner, change])
+            let !sigInputs =
+                    L.map
+                        (\x -> do
+                             let addr =
+                                     case stringToAddr net (DT.pack $ fst x) of
+                                         Just a -> a
+                                         Nothing -> throw InvalidOutputAddressException
+                             let scriptOutput = addressToOutput addr
+                             SigInput scriptOutput (fromIntegral $ snd x) (prevOutput $ head ins) sigHashNone Nothing)
+                        [owner, change]
+            let psatx = Tx version ins outs locktime
+            case signTx net psatx sigInputs [allegorySecretKey alg] of
+                Right tx -> do
+                    return $ BSL.toStrict $ Data.Aeson.encode $ tx
+                Left err -> do
+                    liftIO $ print $ "error occurred while signing the Tx: " <> show err
+                    return $ BC.empty
   where
     version = 1
     locktime = 0
