@@ -25,6 +25,7 @@ import Codec.Compression.GZip as GZ
 import Codec.Serialise
 import Conduit hiding (runResourceT)
 import Control.Concurrent (threadDelay)
+import Control.Concurrent.Async (mapConcurrently)
 import Control.Concurrent.Async.Lifted (async)
 import Control.Concurrent.STM.TVar
 import qualified Control.Error.Util as Extra
@@ -252,6 +253,25 @@ xGetOutputsAddress net address pgSize mbNomTxInd = do
             err lg $ LG.msg $ "Error: xGetOutputsAddress: " ++ show e
             throw KeyValueDBLookupException
 
+
+xGetOutputsAddresses :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
+                     => Network
+                     -> [String]
+                     -> Maybe Int32
+                     -> Maybe Int64
+                     -> m ([AddressOutputs])
+xGetOutputsAddresses net addresses pgSize mbNomTxInd = do
+    listOfAddresses <- mapM (\a -> xGetOutputsAddress net a pgSize mbNomTxInd) addresses
+    let pageSize = fromIntegral $ if isJust pgSize then fromJust pgSize else maxBound
+        sortAddressOutputs :: AddressOutputs -> AddressOutputs -> Ordering
+        sortAddressOutputs ao1 ao2 | ao1n < ao2n = GT
+                                   | ao1n > ao2n = LT
+                                   | otherwise = EQ
+                                   where ao1n = aoNominalTxIndex ao1
+                                         ao2n = aoNominalTxIndex ao2
+    return $ (L.take pageSize . concatMap (sortBy sortAddressOutputs) $ listOfAddresses) -- listOfAddress
+
+{-
 xGetOutputsAddresses :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
                      => Network
                      -> [String]
@@ -305,6 +325,8 @@ xGetOutputsAddresses net addresses pgSize mbNomTxInd = do
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetOutputsAddresses: " ++ show e
             throw KeyValueDBLookupException
+
+-}
 
 xGetMerkleBranch :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> String -> m ([MerkleBranchNode'])
 xGetMerkleBranch net txid = do
