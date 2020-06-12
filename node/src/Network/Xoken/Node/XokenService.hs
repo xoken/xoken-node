@@ -25,8 +25,7 @@ import Codec.Compression.GZip as GZ
 import Codec.Serialise
 import Conduit hiding (runResourceT)
 import Control.Concurrent (threadDelay)
-import Control.Concurrent.Async (mapConcurrently)
-import Control.Concurrent.Async.Lifted (async)
+import Control.Concurrent.Async.Lifted (async, mapConcurrently)
 import Control.Concurrent.STM.TVar
 import qualified Control.Error.Util as Extra
 import Control.Exception
@@ -213,7 +212,7 @@ xGetOutputsAddress net address pgSize mbNomTxInd = do
         nominalTxIndex = case mbNomTxInd of
                              (Just n) -> n
                              Nothing -> maxBound
-        str = "SELECT address,output,block_info,nominal_tx_index,is_block_confirmed,is_output_spent,is_type_receive,other_address,prev_outpoint,value from xoken.address_outputs where address = ? where nominal_tx_index < ?"
+        str = "SELECT address,output,block_info,nominal_tx_index,is_block_confirmed,is_output_spent,is_type_receive,other_address,prev_outpoint,value from xoken.address_outputs where address = ? and nominal_tx_index < ?"
         qstr =
             str :: Q.QueryString Q.R (DT.Text, Int64) ( DT.Text
                                                         , (DT.Text, Int32)
@@ -261,7 +260,7 @@ xGetOutputsAddresses :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
                      -> Maybe Int64
                      -> m ([AddressOutputs])
 xGetOutputsAddresses net addresses pgSize mbNomTxInd = do
-    listOfAddresses <- mapM (\a -> xGetOutputsAddress net a pgSize mbNomTxInd) addresses
+    listOfAddresses <- mapConcurrently (\a -> xGetOutputsAddress net a pgSize mbNomTxInd) addresses
     let pageSize = fromIntegral $ if isJust pgSize then fromJust pgSize else maxBound
         sortAddressOutputs :: AddressOutputs -> AddressOutputs -> Ordering
         sortAddressOutputs ao1 ao2 | ao1n < ao2n = GT
@@ -269,7 +268,7 @@ xGetOutputsAddresses net addresses pgSize mbNomTxInd = do
                                    | otherwise = EQ
                                    where ao1n = aoNominalTxIndex ao1
                                          ao2n = aoNominalTxIndex ao2
-    return $ (L.take pageSize . concatMap (sortBy sortAddressOutputs) $ listOfAddresses) -- listOfAddress
+    return $ (L.take pageSize . sortBy sortAddressOutputs . concat $ listOfAddresses)
 
 {-
 xGetOutputsAddresses :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
