@@ -270,62 +270,6 @@ xGetOutputsAddresses net addresses pgSize mbNomTxInd = do
                                          ao2n = aoNominalTxIndex ao2
     return $ (L.take pageSize . sortBy sortAddressOutputs . concat $ listOfAddresses)
 
-{-
-xGetOutputsAddresses :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
-                     => Network
-                     -> [String]
-                     -> Maybe Int32
-                     -> Maybe Int64
-                     -> m ([AddressOutputs])
-xGetOutputsAddresses net addresses pgSize mbNomTxInd = do
-    dbe <- getDB
-    lg <- getLogger
-    let conn = keyValDB (dbe)
-        nominalTxIndex = case mbNomTxInd of
-            (Just n) -> n
-            Nothing -> maxBound
-        str =
-            "SELECT address,output,block_info,nominal_tx_index,is_block_confirmed,is_output_spent,is_type_receive,other_address,prev_outpoint,value from xoken.address_outputs where address in ? and nominal_tx_index < ?"
-        qstr =
-            str :: Q.QueryString Q.R ([DT.Text], Int64) ( DT.Text
-                                                          , (DT.Text, Int32)
-                                                          , ((DT.Text, Int32), Int32)
-                                                          , Int64
-                                                          , Bool
-                                                          , Bool
-                                                          , Bool
-                                                          , Maybe DT.Text
-                                                          , (DT.Text, Int32)
-                                                          , Int64)
-        p = Q.defQueryParams Q.One (Data.List.map (DT.pack) addresses, nominalTxIndex)
-    res <- LE.try $ Q.runClient conn (Q.query qstr (p {pageSize = pgSize}))
-    case res of
-        Right iop -> do
-            if length iop == 0
-                then return []
-                else do
-                    return $
-                        Data.List.map
-                            (\(addr, (txhs, ind), ((bhash, blkht), txind), nomTxInd, fconf, fospent, freceive, oaddr, (ptxhs, pind), val) ->
-                                 AddressOutputs
-                                     (DT.unpack addr)
-                                     (OutPoint' (DT.unpack txhs) (fromIntegral ind))
-                                     (BlockInfo' (DT.unpack bhash) (fromIntegral txind) (fromIntegral blkht))
-                                     nomTxInd
-                                     fconf
-                                     fospent
-                                     freceive
-                                     (if isJust oaddr
-                                          then DT.unpack $ fromJust oaddr
-                                          else "")
-                                     (OutPoint' (DT.unpack ptxhs) (fromIntegral pind))
-                                     val)
-                            iop
-        Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: xGetOutputsAddresses: " ++ show e
-            throw KeyValueDBLookupException
-
--}
 
 xGetMerkleBranch :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> String -> m ([MerkleBranchNode'])
 xGetMerkleBranch net txid = do
