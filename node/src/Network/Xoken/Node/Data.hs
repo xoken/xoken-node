@@ -147,15 +147,23 @@ data RPCReqParams
           }
     | GetOutputsByAddress
           { gaAddrOutputs :: String
+          , gaPageSize :: Maybe Int32
+          , gaNominalTxIndex :: Maybe Int64
           }
     | GetOutputsByAddresses
           { gasAddrOutputs :: [String]
+          , gasPageSize :: Maybe Int32
+          , gasNominalTxIndex :: Maybe Int64
           }
     | GetOutputsByScriptHash
           { gaScriptHashOutputs :: String
+          , gaScriptHashPageSize :: Maybe Int32
+          , gaScriptHashNominalTxIndex :: Maybe Int64
           }
     | GetOutputsByScriptHashes
           { gasScriptHashOutputs :: [String]
+          , gasScriptHashPageSize :: Maybe Int32
+          , gasScriptHashNominalTxIndex :: Maybe Int64
           }
     | GetMerkleBranchByTxID
           { gmbMerkleBranch :: String
@@ -185,10 +193,10 @@ instance FromJSON RPCReqParams where
         (GetTransactionsByTxIDs <$> o .: "gtTxHashes") <|>
         (GetRawTransactionByTxID <$> o .: "gtRTxHash") <|>
         (GetRawTransactionsByTxIDs <$> o .: "gtRTxHashes") <|>
-        (GetOutputsByAddress <$> o .: "gaAddrOutputs") <|>
-        (GetOutputsByAddresses <$> o .: "gasAddrOutputs") <|>
-        (GetOutputsByScriptHash <$> o .: "gaScriptHashOutputs") <|>
-        (GetOutputsByScriptHashes <$> o .: "gasScriptHashOutputs") <|>
+        (GetOutputsByAddress <$> o .: "gaAddrOutputs" <*> o .:? "gaPageSize" <*> o .:? "gaNominalTxIndex")  <|>
+        (GetOutputsByAddresses <$> o .: "gasAddrOutputs" <*> o .:? "gasPageSize" <*> o .:? "gasNominalTxIndex") <|>
+        (GetOutputsByScriptHash <$> o .: "gaScriptHashOutputs" <*> o .:? "gaScriptHashPageSize" <*> o .:? "gaScriptHashNominalTxIndex") <|>
+        (GetOutputsByScriptHashes <$> o .: "gasScriptHashOutputs" <*> o .:? "gasScriptHashPageSize" <*> o .:? "gasScriptHashNominalTxIndex") <|>
         (GetMerkleBranchByTxID <$> o .: "gmbMerkleBranch") <|>
         (GetAllegoryNameBranch <$> o .: "gaName" <*> o .: "gaIsProducer") <|>
         (RelayTx . BL.toStrict . GZ.decompress . B64L.decodeLenient . BL.fromStrict . T.encodeUtf8 <$> o .: "rTx") <|>
@@ -303,6 +311,7 @@ data AddressOutputs =
         { aoAddress :: String
         , aoOutput :: OutPoint'
         , aoBlockInfo :: BlockInfo'
+        , aoNominalTxIndex :: Int64
         , aoIsBlockConfirmed :: Bool
         , aoIsOutputSpent :: Bool
         , aoIsTypeReceive :: Bool
@@ -320,6 +329,7 @@ data ScriptOutputs =
         { scScriptHash :: String
         , scOutput :: OutPoint'
         , scBlockInfo :: BlockInfo'
+        , scNominalTxIndex :: Int64
         , scIsBlockConfirmed :: Bool
         , scIsOutputSpent :: Bool
         , scIsTypeReceive :: Bool
@@ -335,15 +345,15 @@ instance ToJSON ScriptOutputs where
 data OutPoint' =
     OutPoint'
         { opTxHash :: String
-        , opIndex :: Int
+        , opIndex :: Int32
         }
     deriving (Show, Generic, Hashable, Eq, Serialise, FromJSON, ToJSON)
 
 data BlockInfo' =
     BlockInfo'
         { binfBlockHash :: String
-        , binfTxIndex :: Int
-        , binfBlockHeight :: Int
+        , binfTxIndex :: Int32
+        , binfBlockHeight :: Int32
         }
     deriving (Show, Generic, Hashable, Eq, Serialise, ToJSON)
 
@@ -417,6 +427,7 @@ addressToScriptOutputs AddressOutputs {..} =
         { scScriptHash = aoAddress
         , scOutput = aoOutput
         , scBlockInfo = aoBlockInfo
+        , scNominalTxIndex = aoNominalTxIndex
         , scIsBlockConfirmed = aoIsBlockConfirmed
         , scIsOutputSpent = aoIsOutputSpent
         , scIsTypeReceive = aoIsTypeReceive
