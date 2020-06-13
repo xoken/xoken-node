@@ -34,7 +34,7 @@ import Data.Map.Strict as M (fromList)
 import Data.Maybe (fromJust)
 import Data.Monoid ((<>))
 import Data.Pool (Pool, createPool)
-import Data.Text (Text, append, concat, filter, intercalate, map, null, pack, replace, take, takeWhileEnd, unpack)
+import Data.Text (Text, append, concat, filter, intercalate, isInfixOf, map, null, pack, replace, take, unpack)
 import Data.Time.Clock
 import Data.Word
 import Database.Bolt as BT
@@ -159,7 +159,7 @@ initAllegoryRoot tx = do
     let params =
             fromList
                 [ ("out_op", T $ oops)
-                , ("scr", T $ pack $ C.unpack $ B16.encode scr)
+                , ("scr", T $ pack scr)
                 , ("name", T "")
                 , ("nsname", T "|producer")
                 , ("type", T "producer")
@@ -170,8 +170,12 @@ initAllegoryRoot tx = do
     res <- LE.try $ queryP cypher params
     case res of
         Left (e :: SomeException) -> do
-            liftIO $ print ("[ERROR] initAllegoryRoot  " ++ show e)
-            throw e
+            if isInfixOf (pack "ConstraintValidationFailed") (pack $ show e)
+                then do
+                    liftIO $ print (" Allegory root previously initialized ")
+                else do
+                    liftIO $ print (" [error] initAllegoryRoot " ++ show e)
+                    throw e
         Right (records) -> return ()
 
 updateAllegoryStateTrees :: Tx -> Allegory -> BoltActionT IO ()
