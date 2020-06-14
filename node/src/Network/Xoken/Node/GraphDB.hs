@@ -209,6 +209,8 @@ updateAllegoryStateTrees tx allegory = do
                         , ("endpoint", T $ pack $ BL.unpack $ Data.Aeson.encode $ oVendorEndpoint oout)
                         , ("nn_str", T $ pack $ Prelude.map (\x -> chr x) (name allegory) ++ "|owner")
                         ]
+            liftIO $ print (cypher)
+            liftIO $ print (params)
             res <- LE.try $ queryP cypher params
             case res of
                 Left (e :: SomeException) -> do

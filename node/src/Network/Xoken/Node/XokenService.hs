@@ -505,7 +505,7 @@ xGetPartiallySignedAllegoryTx net payips (nameArr, isProducer) owner change = do
                     let al =
                             Allegory
                                 1
-                                (init nameArr)
+                                (nameArr)
                                 (OwnerAction
                                      (Index 0)
                                      (OwnerOutput (Index 1) (Just $ Endpoint "XokenP2P" "someuri_1"))
