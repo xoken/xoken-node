@@ -14,7 +14,12 @@ CREATE TABLE xoken.transactions (
 CREATE TABLE xoken.blocks_by_hash (
     block_hash text PRIMARY KEY,
     block_header text,
-    block_height int
+    block_height int,
+    block_size int,
+    tx_count int,
+    miner_info text,
+    conf_count int,
+    coinbase_tx blob
 ); 
 
 CREATE TABLE xoken.ep_address_outputs (
@@ -52,7 +57,12 @@ CREATE TABLE xoken.txidmap (
 CREATE TABLE xoken.blocks_by_height (
     block_height int PRIMARY KEY,
     block_hash text,
-    block_header text
+    block_header text,
+    block_size int,
+    tx_count int,
+    miner_info text,
+    conf_count int,
+    coinbase_tx blob
 ); 
 
 CREATE TABLE xoken.ep_transactions (

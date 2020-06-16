@@ -86,8 +86,15 @@ xGetBlockHash :: (HasXokenNodeEnv env m, MonadIO m) => Network -> String -> m (M
 xGetBlockHash net hash = do
     dbe <- getDB
     let conn = keyValDB (dbe)
-        str = "SELECT block_hash, block_height, block_header from xoken.blocks_by_hash where block_hash = ?"
-        qstr = str :: Q.QueryString Q.R (Identity DT.Text) (DT.Text, Int32, DT.Text)
+        str = "SELECT block_hash,block_height,block_header,block_size,tx_count,miner_info,conf_count,coinbase_tx from xoken.blocks_by_hash where block_hash = ?"
+        qstr = str :: Q.QueryString Q.R (Identity DT.Text) ( DT.Text
+                                                           , Int32
+                                                           , DT.Text
+                                                           , Int32
+                                                           , Int32
+                                                           , DT.Text
+                                                           , Int32
+                                                           , Blob)
         p = Q.defQueryParams Q.One $ Identity $ DT.pack hash
     iop <- Q.runClient conn (Q.query qstr p)
     if length iop == 0
@@ -104,8 +111,15 @@ xGetBlocksHashes :: (HasXokenNodeEnv env m, MonadIO m) => Network -> [String] ->
 xGetBlocksHashes net hashes = do
     dbe <- getDB
     let conn = keyValDB (dbe)
-        str = "SELECT block_hash, block_height, block_header from xoken.blocks_by_hash where block_hash in ?"
-        qstr = str :: Q.QueryString Q.R (Identity [DT.Text]) (DT.Text, Int32, DT.Text)
+        str = "SELECT block_hash,block_height,block_header,block_size,tx_count,miner_info,conf_count,coinbase_tx from xoken.blocks_by_hash where block_hash in ?"
+        qstr = str :: Q.QueryString Q.R (Identity [DT.Text]) ( DT.Text
+                                                             , Int32
+                                                             , DT.Text
+                                                             , Int32
+                                                             , Int32
+                                                             , DT.Text
+                                                             , Int32
+                                                             , Blob)
         p = Q.defQueryParams Q.One $ Identity $ Data.List.map (DT.pack) hashes
     iop <- Q.runClient conn (Q.query qstr p)
     if length iop == 0
@@ -125,8 +139,15 @@ xGetBlockHeight :: (HasXokenNodeEnv env m, MonadIO m) => Network -> Int32 -> m (
 xGetBlockHeight net height = do
     dbe <- getDB
     let conn = keyValDB (dbe)
-        str = "SELECT block_hash, block_height, block_header from xoken.blocks_by_height where block_height = ?"
-        qstr = str :: Q.QueryString Q.R (Identity Int32) (DT.Text, Int32, DT.Text)
+        str = "SELECT block_hash,block_height,block_header,block_size,tx_count,miner_info,conf_count,coinbase_tx from xoken.blocks_by_height where block_height = ?"
+        qstr = str :: Q.QueryString Q.R (Identity Int32) ( DT.Text
+                                                         , Int32
+                                                         , DT.Text
+                                                         , Int32
+                                                         , Int32
+                                                         , DT.Text
+                                                         , Int32
+                                                         , Blob)
         p = Q.defQueryParams Q.One $ Identity height
     iop <- Q.runClient conn (Q.query qstr p)
     if length iop == 0
@@ -143,8 +164,15 @@ xGetBlocksHeights :: (HasXokenNodeEnv env m, MonadIO m) => Network -> [Int32] ->
 xGetBlocksHeights net heights = do
     dbe <- getDB
     let conn = keyValDB (dbe)
-        str = "SELECT block_hash, block_height, block_header from xoken.blocks_by_height where block_height in ?"
-        qstr = str :: Q.QueryString Q.R (Identity [Int32]) (DT.Text, Int32, DT.Text)
+        str = "SELECT block_hash,block_height,block_header,block_size,tx_count,miner_info,conf_count,coinbase_tx from xoken.blocks_by_height where block_height in ?"
+        qstr = str :: Q.QueryString Q.R (Identity [Int32]) ( DT.Text
+                                                           , Int32
+                                                           , DT.Text
+                                                           , Int32
+                                                           , Int32
+                                                           , DT.Text
+                                                           , Int32
+                                                           , Blob)
         p = Q.defQueryParams Q.One $ Identity heights
     iop <- Q.runClient conn (Q.query qstr p)
     if length iop == 0
