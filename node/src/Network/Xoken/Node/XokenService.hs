@@ -80,6 +80,7 @@ import System.Logger as LG
 import System.Logger.Message
 import Text.Read
 import Xoken
+import qualified Xoken.NodeConfig as NC (allegoryNameUtxoSatoshis)
 
 data AriviServiceException
     = KeyValueDBLookupException
@@ -353,6 +354,7 @@ getOrMakeProducer net nameArr = do
     lg <- getLogger
     alg <- getAllegory
     let name = DT.pack $ L.map (\x -> chr x) (nameArr)
+    let anutxos = NC.allegoryNameUtxoSatoshis $ nodeConfig $ bp2pEnv
     res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameScriptOp (name) True)
     case res of
         Left (e :: SomeException) -> do
@@ -360,7 +362,7 @@ getOrMakeProducer net nameArr = do
             throw e
         Right [] -> do
             debug lg $ LG.msg $ "allegory name not found, create recursively (1): " <> name
-            createCommitImplictTx net (nameArr)
+            createCommitImplictTx net (nameArr) 
             inres <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameScriptOp (name) True)
             case inres of
                 Left (e :: SomeException) -> do
@@ -393,6 +395,7 @@ createCommitImplictTx net nameArr = do
     lg <- getLogger
     alg <- getAllegory
     (nameip, existed) <- getOrMakeProducer net (init nameArr)
+    let anutxos = NC.allegoryNameUtxoSatoshis $ nodeConfig $ bp2pEnv
     let ins =
             L.map
                 (\(x, s) ->
@@ -416,10 +419,10 @@ createCommitImplictTx net nameArr = do
         -- derive producer's Address
     let prAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
     let prScript = addressToScriptBS prAddr
-    let !outs = [TxOut 0 opRetScript] ++ L.map (\_ -> TxOut 5555 prScript) [1, 2, 3]
+    let !outs = [TxOut 0 opRetScript] ++ L.map (\_ -> TxOut (fromIntegral anutxos) prScript) [1, 2, 3]
     let !sigInputs =
             L.map
-                (\x -> do SigInput (addressToOutput x) (5555) (prevOutput $ head ins) sigHashAll Nothing)
+                (\x -> do SigInput (addressToOutput x) (fromIntegral anutxos) (prevOutput $ head ins) sigHashAll Nothing)
                 [prAddr, prAddr]
     let psatx = Tx version ins outs locktime
     case signTx net psatx sigInputs [allegorySecretKey alg] of
@@ -449,6 +452,8 @@ xGetPartiallySignedAllegoryTx net payips (nameArr, isProducer) owner change = do
     let conn = keyValDB (dbe)
     -- check if name (of given type) exists
     let name = DT.pack $ L.map (\x -> chr x) (nameArr)
+    -- read from config file
+    let anutxos = NC.allegoryNameUtxoSatoshis $ nodeConfig $ bp2pEnv
     res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameScriptOp (name) isProducer)
     (nameip, existed) <-
         case res of
@@ -493,7 +498,7 @@ xGetPartiallySignedAllegoryTx net payips (nameArr, isProducer) owner change = do
                          return $
                              SigInput
                                  scr
-                                 (fromIntegral $ 5555)
+                                 (fromIntegral $ anutxos)
                                  (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x))
                                  sigHashAll
                                  Nothing)
@@ -528,7 +533,7 @@ xGetPartiallySignedAllegoryTx net payips (nameArr, isProducer) owner change = do
                                   let script = addressToScriptBS addr
                                   TxOut (fromIntegral $ snd x) script)
                              [owner, change]) ++
-                        [TxOut 6666 payScript] -- the charge for the name transfer
+                        [TxOut (fromIntegral anutxos) payScript] -- the charge for the name transfer
                 else do
                     let al =
                             Allegory
@@ -547,7 +552,7 @@ xGetPartiallySignedAllegoryTx net payips (nameArr, isProducer) owner change = do
                     let prAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
                     let prScript = addressToScriptBS prAddr
                     [TxOut 0 opRetScript] ++
-                        [TxOut 5555 prScript] ++
+                        [TxOut (fromIntegral anutxos) prScript] ++
                         (L.map
                              (\x -> do
                                   let addr =

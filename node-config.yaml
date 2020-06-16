@@ -43,3 +43,5 @@ tlsCertificateStorePath : /opt/certstore
 neo4jUsername : neo4j
 
 neo4jPassword : neo4j
+
+allegoryNameUtxoSatoshis: 5555

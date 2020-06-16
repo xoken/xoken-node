@@ -124,7 +124,7 @@ handleRequest epConn = do
                 liftIO $ printf "Decoded (%s)\n" (show met)
                 let req = RPCRequest met par
                 format <- liftIO $ readIORef (encodingFormat epConn)
-                async (handleRPCReqResp (context epConn) format mid version req)
+                async (handleRPCReqResp (context epConn) format mid version req) 
                 return ()
             XDataRPCBadRequest -> do
                 format <- liftIO $ readIORef (encodingFormat epConn)
