@@ -18,7 +18,6 @@ CREATE TABLE xoken.blocks_by_hash (
     block_size int,
     tx_count int,
     miner_info text,
-    conf_count int,
     coinbase_tx blob
 ); 
 
@@ -61,7 +60,6 @@ CREATE TABLE xoken.blocks_by_height (
     block_size int,
     tx_count int,
     miner_info text,
-    conf_count int,
     coinbase_tx blob
 ); 
 

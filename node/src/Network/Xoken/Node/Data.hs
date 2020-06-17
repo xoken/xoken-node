@@ -281,21 +281,19 @@ data BlockRecord =
         , rbHeader :: BlockHeader
         , rbSize :: Int
         , rbTxCount :: Int
-        , rbConfCount :: Int
         , rbMinerInfo :: String
         , rbCoinbaseTx :: C.ByteString
         }
-    deriving (Generic, Show, Hashable, Eq, Serialise, ToJSON)
+    deriving (Generic, Show, Hashable, Eq, Serialise)
 
 instance ToJSON BlockRecord where
-    toJSON (BlockRecord height, hash, header, size, txCount, confCount, miner, coinbase) =
+    toJSON (BlockRecord height hash header size txCount miner coinbase) =
         object
             [ "rbHeight" .= height
             , "rbHash" .= hash
             , "rbHeader" .= header
             , "rbSize" .= size
             , "rbTxCount" .= txCount
-            , "rbConfCount" .= confCount
             , "rbMinerInfo" .= miner
             , "rbCoinbaseTx" .= (T.decodeUtf8 . BL.toStrict . B64L.encode . GZ.compress $ coinbase)
             ]

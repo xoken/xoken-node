@@ -93,16 +93,21 @@ xGetBlockHash net hash = do
                                                            , Int32
                                                            , Int32
                                                            , DT.Text
-                                                           , Int32
                                                            , Blob)
         p = Q.defQueryParams Q.One $ Identity $ DT.pack hash
     iop <- Q.runClient conn (Q.query qstr p)
     if length iop == 0
         then return Nothing
         else do
-            let (hs, ht, hdr) = iop !! 0
+            let (hs,ht,hdr,size,txc,miner,cbase) = iop !! 0
             case eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 hdr of
-                Right bh -> return $ Just $ BlockRecord (fromIntegral ht) (DT.unpack hs) bh
+                Right bh -> return $ Just $ BlockRecord (fromIntegral ht)
+                                                        (DT.unpack hs)
+                                                        bh
+                                                        (fromIntegral size)
+                                                        (fromIntegral txc)
+                                                        (DT.unpack miner)
+                                                        (fromBlob cbase)
                 Left err -> do
                     liftIO $ print $ "Decode failed with error: " <> show err
                     return Nothing
@@ -118,7 +123,6 @@ xGetBlocksHashes net hashes = do
                                                              , Int32
                                                              , Int32
                                                              , DT.Text
-                                                             , Int32
                                                              , Blob)
         p = Q.defQueryParams Q.One $ Identity $ Data.List.map (DT.pack) hashes
     iop <- Q.runClient conn (Q.query qstr p)
@@ -126,9 +130,17 @@ xGetBlocksHashes net hashes = do
         then return []
         else do
             case traverse
-                     (\(hs, ht, hdr) ->
-                          BlockRecord (fromIntegral ht) (DT.unpack hs) <$>
-                          (eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 hdr))
+                     (\(hs,ht,hdr,size,txc,miner,cbase) ->
+                            case (eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 hdr) of
+                                (Right bh) -> Right $ BlockRecord (fromIntegral ht)
+                                                                 (DT.unpack hs)
+                                                                 bh
+                                                                 (fromIntegral size)
+                                                                 (fromIntegral txc)
+                                                                 (DT.unpack miner)
+                                                                 (fromBlob cbase)
+                                Left err -> Left err
+                                )
                      (iop) of
                 Right x -> return x
                 Left err -> do
@@ -146,16 +158,21 @@ xGetBlockHeight net height = do
                                                          , Int32
                                                          , Int32
                                                          , DT.Text
-                                                         , Int32
                                                          , Blob)
         p = Q.defQueryParams Q.One $ Identity height
     iop <- Q.runClient conn (Q.query qstr p)
     if length iop == 0
         then return Nothing
         else do
-            let (hs, ht, hdr) = iop !! 0
+            let (hs,ht,hdr,size,txc,miner,cbase) = iop !! 0
             case eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 hdr of
-                Right bh -> return $ Just $ BlockRecord (fromIntegral ht) (DT.unpack hs) bh
+                Right bh -> return $ Just $ BlockRecord (fromIntegral ht)
+                                                        (DT.unpack hs)
+                                                        bh
+                                                        (fromIntegral size)
+                                                        (fromIntegral txc)
+                                                        (DT.unpack miner)
+                                                        (fromBlob cbase)
                 Left err -> do
                     liftIO $ print $ "Decode failed with error: " <> show err
                     return Nothing
@@ -171,7 +188,6 @@ xGetBlocksHeights net heights = do
                                                            , Int32
                                                            , Int32
                                                            , DT.Text
-                                                           , Int32
                                                            , Blob)
         p = Q.defQueryParams Q.One $ Identity heights
     iop <- Q.runClient conn (Q.query qstr p)
@@ -179,9 +195,17 @@ xGetBlocksHeights net heights = do
         then return []
         else do
             case traverse
-                     (\(hs, ht, hdr) ->
-                          BlockRecord (fromIntegral ht) (DT.unpack hs) <$>
-                          (eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 hdr))
+                     (\(hs,ht,hdr,size,txc,miner,cbase) ->
+                            case (eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 hdr) of
+                                (Right bh) -> Right $ BlockRecord (fromIntegral ht)
+                                                                 (DT.unpack hs)
+                                                                 bh
+                                                                 (fromIntegral size)
+                                                                 (fromIntegral txc)
+                                                                 (DT.unpack miner)
+                                                                 (fromBlob cbase)
+                                Left err -> Left err
+                                )
                      (iop) of
                 Right x -> return x
                 Left err -> do
