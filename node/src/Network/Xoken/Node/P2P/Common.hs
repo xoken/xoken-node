@@ -62,7 +62,7 @@ import qualified Streamly.Prelude as S
 import System.Random
 import Text.Format
 
-data ChainSyncException
+data BlockSyncException
     = BlocksNotChainedException
     | MessageParsingException
     | KeyValueDBInsertException
@@ -71,12 +71,7 @@ data ChainSyncException
     | InvalidMessageTypeException
     | InvalidBlocksException
     | EmptyHeadersMessageException
-    deriving (Show)
-
-instance Exception ChainSyncException
-
-data BlockSyncException
-    = InvalidStreamStateException
+    | InvalidStreamStateException
     | InvalidBlockIngestStateException
     | InvalidMetaDataException
     | InvalidBlockHashException

@@ -208,25 +208,33 @@ xGetTxHashes net hashes = do
                              (fromBlob sz))
                     iop
 
-xGetOutputsAddress :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> String -> m ([AddressOutputs])
-xGetOutputsAddress net address = do
+xGetOutputsAddress :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
+                   => Network
+                   -> String
+                   -> Maybe Int32
+                   -> Maybe Int64
+                   -> m ([AddressOutputs])
+xGetOutputsAddress net address pgSize mbNomTxInd = do
     dbe <- getDB
     lg <- getLogger
     let conn = keyValDB (dbe)
-        str =
-            "SELECT address,output,block_info,is_block_confirmed,is_output_spent,is_type_receive,other_address,prev_outpoint,value from xoken.address_outputs where address = ?"
+        nominalTxIndex = case mbNomTxInd of
+                             (Just n) -> n
+                             Nothing -> maxBound
+        str = "SELECT address,output,block_info,nominal_tx_index,is_block_confirmed,is_output_spent,is_type_receive,other_address,prev_outpoint,value from xoken.address_outputs where address = ? and nominal_tx_index < ?"
         qstr =
-            str :: Q.QueryString Q.R (Identity DT.Text) ( DT.Text
+            str :: Q.QueryString Q.R (DT.Text, Int64) ( DT.Text
                                                         , (DT.Text, Int32)
-                                                        , ((DT.Text, Int32), Int32)
+                                                        , ((DT.Text, Int32),Int32)
+                                                        , Int64
                                                         , Bool
                                                         , Bool
                                                         , Bool
                                                         , Maybe DT.Text
                                                         , (DT.Text, Int32)
                                                         , Int64)
-        p = Q.defQueryParams Q.One $ Identity $ DT.pack address
-    res <- LE.try $ Q.runClient conn (Q.query qstr p)
+        p = Q.defQueryParams Q.One (DT.pack address, nominalTxIndex)
+    res <- LE.try $ Q.runClient conn (Q.query qstr (p {pageSize = pgSize}))
     case res of
         Right iop -> do
             if length iop == 0
@@ -234,11 +242,12 @@ xGetOutputsAddress net address = do
                 else do
                     return $
                         Data.List.map
-                            (\(addr, (txhs, ind), ((bhash, txind), blkht), fconf, fospent, freceive, oaddr, (ptxhs, pind), val) ->
+                            (\(addr, (txhs, ind), ((bhash, blkht), txind), nomTxInd, fconf, fospent, freceive, oaddr, (ptxhs, pind), val) ->
                                  AddressOutputs
                                      (DT.unpack addr)
                                      (OutPoint' (DT.unpack txhs) (fromIntegral ind))
                                      (BlockInfo' (DT.unpack bhash) (fromIntegral txind) (fromIntegral blkht))
+                                     nomTxInd
                                      fconf
                                      fospent
                                      freceive
@@ -252,49 +261,24 @@ xGetOutputsAddress net address = do
             err lg $ LG.msg $ "Error: xGetOutputsAddress: " ++ show e
             throw KeyValueDBLookupException
 
-xGetOutputsAddresses :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> [String] -> m ([AddressOutputs])
-xGetOutputsAddresses net addresses = do
-    dbe <- getDB
-    lg <- getLogger
-    let conn = keyValDB (dbe)
-        str =
-            "SELECT address,output,block_info,is_block_confirmed,is_output_spent,is_type_receive,other_address,prev_outpoint,value from xoken.address_outputs where address in ?"
-        qstr =
-            str :: Q.QueryString Q.R (Identity [DT.Text]) ( DT.Text
-                                                          , (DT.Text, Int32)
-                                                          , ((DT.Text, Int32), Int32)
-                                                          , Bool
-                                                          , Bool
-                                                          , Bool
-                                                          , Maybe DT.Text
-                                                          , (DT.Text, Int32)
-                                                          , Int64)
-        p = Q.defQueryParams Q.One $ Identity $ Data.List.map (DT.pack) addresses
-    res <- LE.try $ Q.runClient conn (Q.query qstr p)
-    case res of
-        Right iop -> do
-            if length iop == 0
-                then return []
-                else do
-                    return $
-                        Data.List.map
-                            (\(addr, (txhs, ind), ((bhash, txind), blkht), fconf, fospent, freceive, oaddr, (ptxhs, pind), val) ->
-                                 AddressOutputs
-                                     (DT.unpack addr)
-                                     (OutPoint' (DT.unpack txhs) (fromIntegral ind))
-                                     (BlockInfo' (DT.unpack bhash) (fromIntegral txind) (fromIntegral blkht))
-                                     fconf
-                                     fospent
-                                     freceive
-                                     (if isJust oaddr
-                                          then DT.unpack $ fromJust oaddr
-                                          else "")
-                                     (OutPoint' (DT.unpack ptxhs) (fromIntegral pind))
-                                     val)
-                            iop
-        Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: xGetOutputsAddresses: " ++ show e
-            throw KeyValueDBLookupException
+
+xGetOutputsAddresses :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
+                     => Network
+                     -> [String]
+                     -> Maybe Int32
+                     -> Maybe Int64
+                     -> m ([AddressOutputs])
+xGetOutputsAddresses net addresses pgSize mbNomTxInd = do
+    listOfAddresses <- mapConcurrently (\a -> xGetOutputsAddress net a pgSize mbNomTxInd) addresses
+    let pageSize = fromIntegral $ if isJust pgSize then fromJust pgSize else maxBound
+        sortAddressOutputs :: AddressOutputs -> AddressOutputs -> Ordering
+        sortAddressOutputs ao1 ao2 | ao1n < ao2n = GT
+                                   | ao1n > ao2n = LT
+                                   | otherwise = EQ
+                                   where ao1n = aoNominalTxIndex ao1
+                                         ao2n = aoNominalTxIndex ao2
+    return $ (L.take pageSize . sortBy sortAddressOutputs . concat $ listOfAddresses)
+
 
 xGetMerkleBranch :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> String -> m ([MerkleBranchNode'])
 xGetMerkleBranch net txid = do
@@ -325,7 +309,7 @@ xGetAllegoryNameBranch net name isProducer = do
                     (\x -> do
                          let sp = DT.split (== ':') x
                          let txid = DT.unpack $ sp !! 0
-                         let index = readMaybe (DT.unpack $ sp !! 1) :: Maybe Int
+                         let index = readMaybe (DT.unpack $ sp !! 1) :: Maybe Int32
                          case index of
                              Just i -> do
                                  rs <-
@@ -468,7 +452,7 @@ xGetPartiallySignedAllegoryTx net payips (nameArr, isProducer) owner change = do
                 debug lg $ LG.msg $ "allegory name found! : " <> name
                 let sp = DT.split (== ':') $ fst (head nb)
                 let txid = DT.unpack $ sp !! 0
-                let index = readMaybe (DT.unpack $ sp !! 1) :: Maybe Int
+                let index = readMaybe (DT.unpack $ sp !! 1) :: Maybe Int32
                 case index of
                     Just i -> return $ ((OutPoint' txid i, (snd $ head nb)), True)
                     Nothing -> throw KeyValueDBLookupException
@@ -752,17 +736,17 @@ goGetResource msg net = do
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "ADDR->[OUTPUT]" -> do
             case rqParams msg of
-                Just (GetOutputsByAddress addr) -> do
+                Just (GetOutputsByAddress addr psize nominalTxIndex) -> do
                     ops <-
                         case convertToScriptHash net addr of
-                            Just o -> xGetOutputsAddress net o
+                            Just o -> xGetOutputsAddress net o psize nominalTxIndex
                             Nothing -> return []
                     return $
                         RPCResponse 200 Nothing $ Just $ RespOutputsByAddress $ (\ao -> ao {aoAddress = addr}) <$> ops
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "[ADDR]->[OUTPUT]" -> do
             case rqParams msg of
-                Just (GetOutputsByAddresses addrs) -> do
+                Just (GetOutputsByAddresses addrs pgSize nomTxInd) -> do
                     let (shs, shMap) =
                             L.foldl'
                                 (\(arr, m) x ->
@@ -771,7 +755,7 @@ goGetResource msg net = do
                                          Nothing -> (arr, m))
                                 ([], M.empty)
                                 addrs
-                    ops <- xGetOutputsAddresses net shs
+                    ops <- xGetOutputsAddresses net shs pgSize nomTxInd
                     return $
                         RPCResponse 200 Nothing $
                         Just $
@@ -780,14 +764,14 @@ goGetResource msg net = do
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "SCRIPTHASH->[OUTPUT]" -> do
             case rqParams msg of
-                Just (GetOutputsByScriptHash sh) -> do
-                    ops <- L.map addressToScriptOutputs <$> xGetOutputsAddress net (sh)
+                Just (GetOutputsByScriptHash sh pgSize nomTxInd) -> do
+                    ops <- L.map addressToScriptOutputs <$> xGetOutputsAddress net (sh) pgSize nomTxInd
                     return $ RPCResponse 200 Nothing $ Just $ RespOutputsByScriptHash ops
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "[SCRIPTHASH]->[OUTPUT]" -> do
             case rqParams msg of
-                Just (GetOutputsByScriptHashes shs) -> do
-                    ops <- L.map addressToScriptOutputs <$> xGetOutputsAddresses net shs
+                Just (GetOutputsByScriptHashes shs pgSize nomTxInd) -> do
+                    ops <- L.map addressToScriptOutputs <$> xGetOutputsAddresses net shs pgSize nomTxInd
                     return $ RPCResponse 200 Nothing $ Just $ RespOutputsByScriptHashes ops
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "TXID->[MNODE]" -> do
