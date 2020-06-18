@@ -523,7 +523,7 @@ goGetResource msg net = do
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "ADDR->[OUTPUT]" -> do
             case rqParams msg of
-                Just (GetOutputsByAddress addr psize nominalTxIndex) -> do
+                Just (GetOutputsByAddress addr psize@(Just psize') nominalTxIndex@(Just nominalTxIndex')) -> do
                     ops <-
                         case convertToScriptHash net addr of
                             Just o -> xGetOutputsAddress net o psize nominalTxIndex
@@ -533,7 +533,7 @@ goGetResource msg net = do
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "[ADDR]->[OUTPUT]" -> do
             case rqParams msg of
-                Just (GetOutputsByAddresses addrs pgSize nomTxInd) -> do
+                Just (GetOutputsByAddresses addrs pgSize@(Just pgSize') nomTxInd@(Just nomTxInd')) -> do
                     let (shs, shMap) =
                             L.foldl'
                                 (\(arr, m) x ->
