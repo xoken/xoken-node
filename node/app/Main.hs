@@ -197,7 +197,7 @@ runThreads config nodeConf bp2p conn lg p2pEnv certPaths = do
     epHandler <- newTLSEndpointServiceHandler
     -- start TLS endpoint
     async $ startTLSEndpoint epHandler (endPointTLSListenIP nodeConf) (endPointTLSListenPort nodeConf) certPaths
-    putStrLn $ "===="
+    withResource (pool $ graphDB dbh) (`BT.run` initAllegoryRoot genesisTx)
     -- run main workers
     runFileLoggingT (toS $ Config.logFile config) $
         runAppM

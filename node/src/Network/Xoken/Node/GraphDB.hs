@@ -19,6 +19,7 @@ import Control.Concurrent.MVar
 import Control.Concurrent.STM.TVar
 import Control.Exception
 import qualified Control.Exception.Lifted as LE (try)
+import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.Trans (liftIO)
 import Control.Monad.Trans.Reader (ReaderT(..))
@@ -33,7 +34,7 @@ import Data.Map.Strict as M (fromList)
 import Data.Maybe (fromJust)
 import Data.Monoid ((<>))
 import Data.Pool (Pool, createPool)
-import Data.Text (Text, append, concat, filter, intercalate, map, null, pack, replace, take, takeWhileEnd, unpack)
+import Data.Text (Text, append, concat, filter, intercalate, isInfixOf, map, null, pack, replace, take, unpack)
 import Data.Time.Clock
 import Data.Word
 import Database.Bolt as BT
@@ -80,9 +81,19 @@ toMerkleBranchNode r = do
 -- | Convert record to Name & ScriptOp
 toNameScriptOp :: Monad m => Record -> m ((Text, Text))
 toNameScriptOp r = do
-    outpoint :: Text <- (r `at` "outpoint") >>= exact
-    script :: Text <- (r `at` "script") >>= exact
+    outpoint :: Text <- (r `at` "elem.outpoint") >>= exact
+    script :: Text <- (r `at` "elem.script") >>= exact
     return ((outpoint, script))
+
+-- | Filter Null
+filterNull :: Monad m => [Record] -> m [Record]
+filterNull =
+    Control.Monad.filterM
+        (\x -> do
+             d <- x `at` "elem.outpoint"
+             case d of
+                 N _ -> pure False
+                 _ -> pure True)
 
 -- Fetch the Merkle branch/proof
 queryMerkleBranch :: Text -> BoltActionT IO [MerkleBranchNode]
@@ -123,20 +134,49 @@ queryAllegoryNameBranch name isProducer = do
             then fromList [("namestr", T (name <> pack "|producer"))]
             else fromList [("namestr", T (name <> pack "|owner"))]
 
--- Fetch the Allegory Name branch with scriptOutput
-queryAllegoryNameBranchScriptOp :: Text -> Bool -> BoltActionT IO [(Text, Text)]
-queryAllegoryNameBranchScriptOp name isProducer = do
-    records <- queryP cypher params
+-- Fetch the outpoint & script associated with Allegory name
+queryAllegoryNameScriptOp :: Text -> Bool -> BoltActionT IO [(Text, Text)]
+queryAllegoryNameScriptOp name isProducer = do
+    records <- queryP cypher params >>= filterNull
     x <- traverse toNameScriptOp records
     return x
   where
     cypher =
-        " MATCH p=(pointer:namestate {name: {namestr}})-[:REVISION]-()-[:INPUT*]->(start:nutxo) " <>
-        " WHERE NOT (start)-[:INPUT]->() " <> " UNWIND tail(nodes(p)) AS elem " <> " RETURN elem.outpoint as outpoint "
+        " MATCH p=(pointer:namestate {name: {namestr}})-[:REVISION]-(elem:nutxo)  RETURN elem.outpoint , elem.script "
     params =
         if isProducer
             then fromList [("namestr", T (name <> pack "|producer"))]
             else fromList [("namestr", T (name <> pack "|owner"))]
+
+initAllegoryRoot :: Tx -> BoltActionT IO ()
+initAllegoryRoot tx = do
+    let oops = pack $ "8c347368661ed9da465d3b925f80c2154d16bac7d658f3a63fd9df40a386d7a0" ++ ":" ++ show 0
+    let scr =
+            "4104fd8074c838cd146b1c3f55f39c7bdbdd625cf3934307aac4471f26708c637982791c0e2cc7a91d473d3bdaa6caec21b83670945e61cbe91413084cdc6b18ec5fac"
+    let cypher =
+            " MERGE (rr:namestate {name:{dummyroot} })  " <>
+            " MERGE (ns:namestate { name:{nsname}, type: {type} })-[r:REVISION]->(nu:nutxo { outpoint: {out_op}, name:{name}, producer:{isProducer} ,script: {scr} , root:{isInit}}) "
+    let params =
+            fromList
+                [ ("out_op", T $ oops)
+                , ("scr", T $ pack scr)
+                , ("name", T "")
+                , ("nsname", T "|producer")
+                , ("type", T "producer")
+                , ("dummyroot", T "")
+                , ("isProducer", B True)
+                , ("isInit", B True)
+                ]
+    res <- LE.try $ queryP cypher params
+    case res of
+        Left (e :: SomeException) -> do
+            if isInfixOf (pack "ConstraintValidationFailed") (pack $ show e)
+                then do
+                    liftIO $ print (" Allegory root previously initialized ")
+                else do
+                    liftIO $ print (" [error] initAllegoryRoot " ++ show e)
+                    throw e
+        Right (records) -> return ()
 
 updateAllegoryStateTrees :: Tx -> Allegory -> BoltActionT IO ()
 updateAllegoryStateTrees tx allegory = do
@@ -148,7 +188,7 @@ updateAllegoryStateTrees tx allegory = do
             let scr = scriptOutput ((txOut tx) !! (index $ owner oout))
             let cypher =
                     " MATCH (x:namestate)-[r:REVISION]->(a:nutxo) WHERE a.outpoint = {in_op} AND x.name = {nn_str} " <>
-                    (if length proxy == 0
+                    (if Prelude.null proxy
                          then case oVendorEndpoint oout of
                                   Just e ->
                                       " CREATE (b:nutxo { outpoint: {out_op}, name:{name}, script: {scr} , vendor:{endpoint} }) "
@@ -169,6 +209,8 @@ updateAllegoryStateTrees tx allegory = do
                         , ("endpoint", T $ pack $ BL.unpack $ Data.Aeson.encode $ oVendorEndpoint oout)
                         , ("nn_str", T $ pack $ Prelude.map (\x -> chr x) (name allegory) ++ "|owner")
                         ]
+            liftIO $ print (cypher)
+            liftIO $ print (params)
             res <- LE.try $ queryP cypher params
             case res of
                 Left (e :: SomeException) -> do
@@ -252,7 +294,9 @@ updateAllegoryStateTrees tx allegory = do
                                            ("<previous>")
                                            (pack $
                                             if (ind == 1)
-                                                then "owner_exists"
+                                                then case oout of
+                                                         Nothing -> "rootname"
+                                                         Just poo -> "owner_exists"
                                                 else "owner_extn_exists_" ++ (show $ ind - 1))
                                            (replace
                                                 ("<i>")

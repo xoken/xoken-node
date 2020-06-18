@@ -48,6 +48,7 @@ data NodeConfig =
         , tlsCertificateStorePath :: FilePath
         , neo4jUsername :: T.Text
         , neo4jPassword :: T.Text
+        , allegoryNameUtxoSatoshis :: Int
         }
     deriving (Show, Generic)
 
