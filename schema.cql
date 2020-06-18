@@ -43,12 +43,6 @@ CREATE TABLE xoken.address_outputs (
     PRIMARY KEY (address, nominal_tx_index, output)
 ) WITH CLUSTERING ORDER BY (nominal_tx_index DESC); 
 
-CREATE TABLE xoken.txidmap (
-    txid text PRIMARY KEY,
-    blockhash text,
-    txindex int
-); 
-
 CREATE TABLE xoken.blocks_by_height (
     block_height int PRIMARY KEY,
     block_hash text,
