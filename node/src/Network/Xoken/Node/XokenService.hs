@@ -63,6 +63,7 @@ import Data.String (IsString, fromString)
 import qualified Data.Text as DT
 import qualified Data.Text.Encoding as DTE
 import qualified Data.Text.Encoding as E
+import Data.Word
 import Data.Yaml
 import qualified Database.Bolt as BT
 import qualified Database.CQL.IO as Q
@@ -362,7 +363,7 @@ getOrMakeProducer net nameArr = do
             throw e
         Right [] -> do
             debug lg $ LG.msg $ "allegory name not found, create recursively (1): " <> name
-            createCommitImplictTx net (nameArr) 
+            createCommitImplictTx net (nameArr)
             inres <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameScriptOp (name) True)
             case inres of
                 Left (e :: SomeException) -> do
@@ -439,10 +440,10 @@ createCommitImplictTx net nameArr = do
 xGetPartiallySignedAllegoryTx ::
        (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
     => Network
-    -> [OutPoint']
+    -> [(OutPoint', Int)]
     -> ([Int], Bool)
-    -> (String, Int)
-    -> (String, Int)
+    -> (String)
+    -> (String)
     -> m (BC.ByteString)
 xGetPartiallySignedAllegoryTx net payips (nameArr, isProducer) owner change = do
     dbe <- getDB
@@ -474,11 +475,12 @@ xGetPartiallySignedAllegoryTx net payips (nameArr, isProducer) owner change = do
     inputHash <-
         liftIO $
         traverse
-            (\w -> do
+            (\(w, _) -> do
                  let op = OutPoint (fromString $ opTxHash w) (fromIntegral $ opIndex w)
                  sh <- getScriptHashFromOutpoint conn (txSynchronizer bp2pEnv) lg net op 0
                  return $ (w, ) <$> sh)
             payips
+    let totalEffectiveInputSats = sum $ snd $ unzip payips
     let ins =
             L.map
                 (\(x, s) ->
@@ -532,7 +534,7 @@ xGetPartiallySignedAllegoryTx net payips (nameArr, isProducer) owner change = do
                                               Nothing -> throw InvalidOutputAddressException
                                   let script = addressToScriptBS addr
                                   TxOut (fromIntegral $ snd x) script)
-                             [owner, change]) ++
+                             [(owner, (fromIntegral $ anutxos)), (change, 5555)]) ++
                         [TxOut (fromIntegral anutxos) payScript] -- the charge for the name transfer
                 else do
                     let al =
@@ -544,13 +546,17 @@ xGetPartiallySignedAllegoryTx net payips (nameArr, isProducer) owner change = do
                                      (ProducerOutput (Index 1) (Just $ Endpoint "XokenP2P" "someuri_1"))
                                      Nothing
                                      [ OwnerExtension
-                                           (OwnerOutput (Index 3) (Just $ Endpoint "XokenP2P" "someuri_3"))
+                                           (OwnerOutput (Index 2) (Just $ Endpoint "XokenP2P" "someuri_3"))
                                            (last nameArr)
                                      ])
                     let opRetScript = frameOpReturn $ C.toStrict $ serialise al
                     -- derive producer's Address
                     let prAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
                     let prScript = addressToScriptBS prAddr
+                    let payAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
+                    let payScript = addressToScriptBS payAddr
+                    let paySats = 1000000
+                    let changeSats = totalEffectiveInputSats - ((fromIntegral $ anutxos) + paySats)
                     [TxOut 0 opRetScript] ++
                         [TxOut (fromIntegral anutxos) prScript] ++
                         (L.map
@@ -561,7 +567,8 @@ xGetPartiallySignedAllegoryTx net payips (nameArr, isProducer) owner change = do
                                               Nothing -> throw InvalidOutputAddressException
                                   let script = addressToScriptBS addr
                                   TxOut (fromIntegral $ snd x) script)
-                             [owner, change])
+                             [(owner, (fromIntegral $ anutxos)), (change, changeSats)]) ++
+                        [TxOut ((fromIntegral paySats) :: Word64) payScript] -- the charge for the name transfer
     --
     let psatx = Tx version ins outs locktime
     case signTx net psatx sigInputs [allegorySecretKey alg] of

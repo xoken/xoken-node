@@ -168,10 +168,10 @@ data RPCReqParams
           { rTx :: ByteString
           }
     | GetPartiallySignedAllegoryTx
-          { gpsaPaymentInputs :: [OutPoint']
+          { gpsaPaymentInputs :: [(OutPoint', Int)]
           , gpsaName :: ([Int], Bool) -- name & isProducer 
-          , gpsaOutputOwner :: (String, Int)
-          , gpsaOutputChange :: (String, Int)
+          , gpsaOutputOwner :: String
+          , gpsaOutputChange :: String
           }
     deriving (Generic, Show, Hashable, Eq, Serialise, ToJSON)
 
