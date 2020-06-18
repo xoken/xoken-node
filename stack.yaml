@@ -36,4 +36,5 @@ extra-deps:
     - cql-4.0.2
     - hashtables-1.2.3.4
     - yaml-0.11.1.2
+    - vformat-0.14.1.0
     

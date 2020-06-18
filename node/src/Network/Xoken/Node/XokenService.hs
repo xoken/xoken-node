@@ -25,7 +25,8 @@ import Codec.Compression.GZip as GZ
 import Codec.Serialise
 import Conduit hiding (runResourceT)
 import Control.Concurrent (threadDelay)
-import Control.Concurrent.Async.Lifted (async, mapConcurrently)
+import Control.Concurrent.Async (AsyncCancelled, mapConcurrently, mapConcurrently_, race_)
+import Control.Concurrent.Async.Lifted (async, wait)
 import Control.Concurrent.STM.TVar
 import qualified Control.Error.Util as Extra
 import Control.Exception
@@ -37,14 +38,17 @@ import Control.Monad.IO.Class
 import Control.Monad.Logger
 import Control.Monad.Loops
 import Control.Monad.Reader
-import Data.Aeson
+import Data.Aeson as A
+import qualified Data.ByteString as B
 import qualified Data.ByteString.Base16 as B16 (decode, encode)
 import Data.ByteString.Base64 as B64
 import Data.ByteString.Base64.Lazy as B64L
 import qualified Data.ByteString.Char8 as BC
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Lazy.Char8 as C
+import qualified Data.ByteString.Short as BSS
 import qualified Data.ByteString.UTF8 as BSU (toString)
+import Data.Char
 import Data.Default
 import Data.Hashable
 import Data.Int
@@ -55,12 +59,16 @@ import Data.Maybe
 import Data.Pool
 import qualified Data.Serialize as S
 import Data.Serialize
+import Data.String (IsString, fromString)
 import qualified Data.Text as DT
 import qualified Data.Text.Encoding as DTE
+import qualified Data.Text.Encoding as E
+import Data.Word
 import Data.Yaml
 import qualified Database.Bolt as BT
 import qualified Database.CQL.IO as Q
 import Database.CQL.Protocol
+import Network.Xoken.Crypto.Hash
 import Network.Xoken.Node.Data
 import Network.Xoken.Node.Data.Allegory
 import Network.Xoken.Node.Data.Allegory
@@ -73,6 +81,7 @@ import System.Logger as LG
 import System.Logger.Message
 import Text.Read
 import Xoken
+import qualified Xoken.NodeConfig as NC (allegoryNameUtxoSatoshis)
 
 data AriviServiceException
     = KeyValueDBLookupException
@@ -284,69 +293,274 @@ xGetMerkleBranch net txid = do
             throw KeyValueDBLookupException
 
 xGetAllegoryNameBranch ::
-       (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> String -> Bool -> m ([OutPoint'])
+       (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
+    => Network
+    -> String
+    -> Bool
+    -> m ([(OutPoint', [MerkleBranchNode'])])
 xGetAllegoryNameBranch net name isProducer = do
     dbe <- getDB
     lg <- getLogger
     res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameBranch (DT.pack name) isProducer)
     case res of
         Right nb -> do
-            return $
-                Data.List.map
+            liftIO $
+                mapConcurrently
                     (\x -> do
                          let sp = DT.split (== ':') x
                          let txid = DT.unpack $ sp !! 0
                          let index = readMaybe (DT.unpack $ sp !! 1) :: Maybe Int32
                          case index of
-                             Just i -> OutPoint' txid i
+                             Just i -> do
+                                 rs <-
+                                     liftIO $
+                                     try $ withResource (pool $ graphDB dbe) (`BT.run` queryMerkleBranch (DT.pack txid))
+                                 case rs of
+                                     Right mb -> do
+                                         let mnodes =
+                                                 Data.List.map
+                                                     (\y -> MerkleBranchNode' (DT.unpack $ _nodeValue y) (_isLeftNode y))
+                                                     mb
+                                         return $ (OutPoint' txid i, mnodes)
+                                     Left (e :: SomeException) -> do
+                                         err lg $ LG.msg $ "Error: xGetMerkleBranch: " ++ show e
+                                         throw KeyValueDBLookupException
                              Nothing -> throw KeyValueDBLookupException)
                     (nb)
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetAllegoryNameBranch: " ++ show e
             throw KeyValueDBLookupException
 
+getOrMakeProducer ::
+       (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> [Int] -> m (((OutPoint', DT.Text), Bool))
+getOrMakeProducer net nameArr = do
+    dbe <- getDB
+    bp2pEnv <- getBitcoinP2P
+    lg <- getLogger
+    alg <- getAllegory
+    let name = DT.pack $ L.map (\x -> chr x) (nameArr)
+    let anutxos = NC.allegoryNameUtxoSatoshis $ nodeConfig $ bp2pEnv
+    res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameScriptOp (name) True)
+    case res of
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "error fetching allegory name input :" ++ show e
+            throw e
+        Right [] -> do
+            debug lg $ LG.msg $ "allegory name not found, create recursively (1): " <> name
+            createCommitImplictTx net (nameArr)
+            inres <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameScriptOp (name) True)
+            case inres of
+                Left (e :: SomeException) -> do
+                    err lg $ LG.msg $ "error fetching allegory name input :" ++ show e
+                    throw e
+                Right [] -> do
+                    err lg $ LG.msg $ "allegory name still not found, recursive create must've failed (1): " <> name
+                    throw KeyValueDBLookupException
+                Right nb -> do
+                    liftIO $ print $ "nb2~" <> show nb
+                    let sp = DT.split (== ':') $ fst (head nb)
+                    let txid = DT.unpack $ sp !! 0
+                    let index = readMaybe (DT.unpack $ sp !! 1) :: Maybe Int
+                    case index of
+                        Just i -> return $ ((OutPoint' txid i, (snd $ head nb)), False)
+                        Nothing -> throw KeyValueDBLookupException
+        Right nb -> do
+            debug lg $ LG.msg $ "allegory name found! (1): " <> name
+            let sp = DT.split (== ':') $ fst (head nb)
+            let txid = DT.unpack $ sp !! 0
+            let index = readMaybe (DT.unpack $ sp !! 1) :: Maybe Int
+            case index of
+                Just i -> return $ ((OutPoint' txid i, (snd $ head nb)), True)
+                Nothing -> throw KeyValueDBLookupException
+
+createCommitImplictTx :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> [Int] -> m ()
+createCommitImplictTx net nameArr = do
+    dbe <- getDB
+    bp2pEnv <- getBitcoinP2P
+    lg <- getLogger
+    alg <- getAllegory
+    (nameip, existed) <- getOrMakeProducer net (init nameArr)
+    let anutxos = NC.allegoryNameUtxoSatoshis $ nodeConfig $ bp2pEnv
+    let ins =
+            L.map
+                (\(x, s) ->
+                     TxIn (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x)) (fromJust $ decodeHex s) 0)
+                ([nameip])
+        -- construct OP_RETURN
+    let al =
+            Allegory
+                1
+                (init nameArr)
+                (ProducerAction
+                     (Index 0)
+                     (ProducerOutput (Index 1) (Just $ Endpoint "XokenP2P" "someuri-1"))
+                     Nothing
+                     [ (ProducerExtension
+                            (ProducerOutput (Index 2) (Just $ Endpoint "XokenP2P" "someuri-2"))
+                            (last nameArr))
+                     , (OwnerExtension (OwnerOutput (Index 3) (Just $ Endpoint "XokenP2P" "someuri-3")) (last nameArr))
+                     ])
+    let opRetScript = frameOpReturn $ C.toStrict $ serialise al
+        -- derive producer's Address
+    let prAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
+    let prScript = addressToScriptBS prAddr
+    let !outs = [TxOut 0 opRetScript] ++ L.map (\_ -> TxOut (fromIntegral anutxos) prScript) [1, 2, 3]
+    let !sigInputs =
+            L.map
+                (\x -> do SigInput (addressToOutput x) (fromIntegral anutxos) (prevOutput $ head ins) sigHashAll Nothing)
+                [prAddr, prAddr]
+    let psatx = Tx version ins outs locktime
+    case signTx net psatx sigInputs [allegorySecretKey alg] of
+        Right tx -> do
+            xRelayTx net $ Data.Serialize.encode $ tx
+            return ()
+        Left err -> do
+            liftIO $ print $ "error occurred while signing the Tx: " <> show err
+            throw KeyValueDBLookupException
+  where
+    version = 1
+    locktime = 0
+
 xGetPartiallySignedAllegoryTx ::
        (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
     => Network
-    -> [OutPoint']
-    -> String
-    -> Bool
-    -> (String, Int)
-    -> (String, Int)
+    -> [(OutPoint', Int)]
+    -> ([Int], Bool)
+    -> (String)
+    -> (String)
     -> m (BC.ByteString)
-xGetPartiallySignedAllegoryTx net payips name isProducer owner change = do
+xGetPartiallySignedAllegoryTx net payips (nameArr, isProducer) owner change = do
     dbe <- getDB
     bp2pEnv <- getBitcoinP2P
     lg <- getLogger
     alg <- getAllegory
     let conn = keyValDB (dbe)
-    res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameBranch (DT.pack name) isProducer)
-    nameip <-
+    -- check if name (of given type) exists
+    let name = DT.pack $ L.map (\x -> chr x) (nameArr)
+    -- read from config file
+    let anutxos = NC.allegoryNameUtxoSatoshis $ nodeConfig $ bp2pEnv
+    res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameScriptOp (name) isProducer)
+    (nameip, existed) <-
         case res of
             Left (e :: SomeException) -> do
                 err lg $ LG.msg $ "error fetching allegory name input :" ++ show e
                 throw e
+            Right [] -> do
+                debug lg $ LG.msg $ "allegory name not found, get or make interim producers recursively : " <> name
+                getOrMakeProducer net (init nameArr)
             Right nb -> do
-                let sp = DT.split (== ':') (last nb)
+                debug lg $ LG.msg $ "allegory name found! : " <> name
+                let sp = DT.split (== ':') $ fst (head nb)
                 let txid = DT.unpack $ sp !! 0
                 let index = readMaybe (DT.unpack $ sp !! 1) :: Maybe Int32
                 case index of
-                    Just i -> return $ OutPoint' txid i
+                    Just i -> return $ ((OutPoint' txid i, (snd $ head nb)), True)
                     Nothing -> throw KeyValueDBLookupException
+    inputHash <-
+        liftIO $
+        traverse
+            (\(w, _) -> do
+                 let op = OutPoint (fromString $ opTxHash w) (fromIntegral $ opIndex w)
+                 sh <- getScriptHashFromOutpoint conn (txSynchronizer bp2pEnv) lg net op 0
+                 return $ (w, ) <$> sh)
+            payips
+    let totalEffectiveInputSats = sum $ snd $ unzip payips
     let ins =
-            L.map (\x -> TxIn (OutPoint (read $ opTxHash x) (fromIntegral $ opIndex x)) BC.empty 0) (payips ++ [nameip])
-    let outs =
             L.map
-                (\x -> do
-                     let addr =
-                             case stringToAddr net (DT.pack $ fst x) of
-                                 Just a -> a
-                                 Nothing -> throw InvalidOutputAddressException
-                     let script = addressToScriptBS addr
-                     TxOut (fromIntegral $ snd x) script)
-                [owner, change]
+                (\(x, s) ->
+                     TxIn (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x)) (fromJust $ decodeHex s) 0)
+                ([nameip] ++ (catMaybes inputHash))
+    sigInputs <-
+        mapM
+            (\(x, s) -> do
+                 case (decodeOutputBS ((fst . B16.decode) (E.encodeUtf8 s))) of
+                     Left e -> do
+                         liftIO $
+                             print
+                                 ("error (allegory) unable to decode scriptOutput! | " ++
+                                  show name ++ " " ++ show (x, s) ++ " | " ++ show ((fst . B16.decode) (E.encodeUtf8 s)))
+                         throw KeyValueDBLookupException
+                     Right scr -> do
+                         return $
+                             SigInput
+                                 scr
+                                 (fromIntegral $ anutxos)
+                                 (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x))
+                                 sigHashAll
+                                 Nothing)
+            [nameip]
+    --
+    let outs =
+            if existed
+                then do
+                    let al =
+                            Allegory
+                                1
+                                (nameArr)
+                                (OwnerAction
+                                     (Index 0)
+                                     (OwnerOutput (Index 1) (Just $ Endpoint "XokenP2P" "someuri_1"))
+                                     [ ProxyProvider
+                                           "AllPay"
+                                           "Public"
+                                           (Endpoint "XokenP2P" "someuri_2")
+                                           (Registration "addrCommit" "utxoCommit" "signature" 876543)
+                                     ])
+                    let opRetScript = frameOpReturn $ C.toStrict $ serialise al
+                    let payAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
+                    let payScript = addressToScriptBS payAddr
+                    [TxOut 0 opRetScript] ++
+                        (L.map
+                             (\x -> do
+                                  let addr =
+                                          case stringToAddr net (DT.pack $ fst x) of
+                                              Just a -> a
+                                              Nothing -> throw InvalidOutputAddressException
+                                  let script = addressToScriptBS addr
+                                  TxOut (fromIntegral $ snd x) script)
+                             [(owner, (fromIntegral $ anutxos)), (change, 5555)]) ++
+                        [TxOut (fromIntegral anutxos) payScript] -- the charge for the name transfer
+                else do
+                    let al =
+                            Allegory
+                                1
+                                (init nameArr)
+                                (ProducerAction
+                                     (Index 0)
+                                     (ProducerOutput (Index 1) (Just $ Endpoint "XokenP2P" "someuri_1"))
+                                     Nothing
+                                     [ OwnerExtension
+                                           (OwnerOutput (Index 2) (Just $ Endpoint "XokenP2P" "someuri_3"))
+                                           (last nameArr)
+                                     ])
+                    let opRetScript = frameOpReturn $ C.toStrict $ serialise al
+                    -- derive producer's Address
+                    let prAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
+                    let prScript = addressToScriptBS prAddr
+                    let payAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
+                    let payScript = addressToScriptBS payAddr
+                    let paySats = 1000000
+                    let changeSats = totalEffectiveInputSats - ((fromIntegral $ anutxos) + paySats)
+                    [TxOut 0 opRetScript] ++
+                        [TxOut (fromIntegral anutxos) prScript] ++
+                        (L.map
+                             (\x -> do
+                                  let addr =
+                                          case stringToAddr net (DT.pack $ fst x) of
+                                              Just a -> a
+                                              Nothing -> throw InvalidOutputAddressException
+                                  let script = addressToScriptBS addr
+                                  TxOut (fromIntegral $ snd x) script)
+                             [(owner, (fromIntegral $ anutxos)), (change, changeSats)]) ++
+                        [TxOut ((fromIntegral paySats) :: Word64) payScript] -- the charge for the name transfer
+    --
     let psatx = Tx version ins outs locktime
-    return $ BC.empty
+    case signTx net psatx sigInputs [allegorySecretKey alg] of
+        Right tx -> do
+            return $ BSL.toStrict $ A.encode $ tx
+        Left err -> do
+            liftIO $ print $ "error occurred while signing the Tx: " <> show err
+            return $ BC.empty
   where
     version = 1
     locktime = 0
@@ -410,41 +624,40 @@ xRelayTx net rawTx = do
                     debug lg $ LG.msg $ val $ "transaction verified - broadcasting tx"
                     mapM_ (\(_, peer) -> do sendRequestMessages peer (MTx (fromJust $ fst res))) connPeers
                     return True
-                        -- else do
-                        --     debug lg $ LG.msg $ val $ "transaction invalid"
-                        --     let op_return = head (txOut tx)
-                        --     let hexstr = B16.encode (scriptOutput op_return)
-                        --     if "006a0f416c6c65676f72792f416c6c506179" `isPrefixOf` (BC.unpack hexstr)
-                        --         then do
-                        --             liftIO $ print (hexstr)
-                        --             case decodeOutputScript $ scriptOutput op_return of
-                        --                 Right (script) -> do
-                        --                     liftIO $ print (script)
-                        --                     case last $ scriptOps script of
-                        --                         (OP_PUSHDATA payload _) -> do
-                        --                             case (deserialiseOrFail $ C.fromStrict payload) of
-                        --                                 Right (allegory) -> do
-                        --                                     liftIO $ print (allegory)
-                        --                                     ores <-
-                        --                                         liftIO $
-                        --                                         try $
-                        --                                         withResource
-                        --                                             (pool $ graphDB dbe)
-                        --                                             (`BT.run` updateAllegoryStateTrees tx allegory)
-                        --                                     case ores of
-                        --                                         Right () -> return True
-                        --                                         Left (SomeException e) -> return $ False
-                        --                                 Left (e :: DeserialiseFailure) -> do
-                        --                                     err lg $
-                        --                                         LG.msg $
-                        --                                         "error deserialising OP_RETURN CBOR data" ++ show e
-                        --                                     return False
-                        --                 Left (e) -> do
-                        --                     err lg $ LG.msg $ "error decoding op_return data:" ++ show e
-                        --                     return False
-                        --         else do
-                        --             err lg $ LG.msg $ val $ "error: OP_RETURN prefix mismatch"
-                        --             return False
+                    -- else do
+                    debug lg $ LG.msg $ val $ "Checking for Allegory OP_RETURN"
+                    let op_return = head (txOut tx)
+                    let hexstr = B16.encode (scriptOutput op_return)
+                    if "006a0f416c6c65676f72792f416c6c506179" `isPrefixOf` (BC.unpack hexstr)
+                        then do
+                            liftIO $ print (hexstr)
+                            case decodeOutputScript $ scriptOutput op_return of
+                                Right (script) -> do
+                                    liftIO $ print (script)
+                                    case last $ scriptOps script of
+                                        (OP_PUSHDATA payload _) -> do
+                                            case (deserialiseOrFail $ C.fromStrict payload) of
+                                                Right (allegory) -> do
+                                                    liftIO $ print (allegory)
+                                                    ores <-
+                                                        liftIO $
+                                                        try $
+                                                        withResource
+                                                            (pool $ graphDB dbe)
+                                                            (`BT.run` updateAllegoryStateTrees tx allegory)
+                                                    case ores of
+                                                        Right () -> return True
+                                                        Left (SomeException e) -> return $ False
+                                                Left (e :: DeserialiseFailure) -> do
+                                                    err lg $
+                                                        LG.msg $ "error deserialising OP_RETURN CBOR data" ++ show e
+                                                    return False
+                                Left (e) -> do
+                                    err lg $ LG.msg $ "error decoding op_return data:" ++ show e
+                                    return False
+                        else do
+                            err lg $ LG.msg $ val $ "error: OP_RETURN prefix mismatch"
+                            return False
                 Nothing -> do
                     err lg $ LG.msg $ val $ "error decoding rawTx (2)"
                     return $ False
@@ -581,9 +794,13 @@ goGetResource msg net = do
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "PS_ALLEGORY_TX" -> do
             case rqParams msg of
-                Just (GetPartiallySignedAllegoryTx payips name isProducer owner change) -> do
-                    ops <- xGetPartiallySignedAllegoryTx net payips name isProducer owner change
-                    return $ RPCResponse 200 Nothing $ Just $ RespPartiallySignedAllegoryTx ops
+                Just (GetPartiallySignedAllegoryTx payips (name, isProducer) owner change) -> do
+                    opsE <- LE.try $ xGetPartiallySignedAllegoryTx net payips (name, isProducer) owner change
+                    case opsE of
+                        Right ops -> return $ RPCResponse 200 Nothing $ Just $ RespPartiallySignedAllegoryTx ops
+                        Left (e :: SomeException) -> do
+                            liftIO $ print e
+                            return $ RPCResponse 400 (Just INTERNAL_ERROR) Nothing
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         _____ -> return $ RPCResponse 400 (Just INVALID_METHOD) Nothing
 
