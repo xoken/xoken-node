@@ -26,7 +26,7 @@ import Codec.Serialise
 import Conduit hiding (runResourceT)
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (AsyncCancelled, mapConcurrently, mapConcurrently_, race_)
-import Control.Concurrent.Async.Lifted (async, wait)
+import qualified Control.Concurrent.Async.Lifted as LA (async, mapConcurrently, wait)
 import Control.Concurrent.STM.TVar
 import qualified Control.Error.Util as Extra
 import Control.Exception
@@ -208,31 +208,34 @@ xGetTxHashes net hashes = do
                              (fromBlob sz))
                     iop
 
-xGetOutputsAddress :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
-                   => Network
-                   -> String
-                   -> Maybe Int32
-                   -> Maybe Int64
-                   -> m ([AddressOutputs])
+xGetOutputsAddress ::
+       (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
+    => Network
+    -> String
+    -> Maybe Int32
+    -> Maybe Int64
+    -> m ([AddressOutputs])
 xGetOutputsAddress net address pgSize mbNomTxInd = do
     dbe <- getDB
     lg <- getLogger
     let conn = keyValDB (dbe)
-        nominalTxIndex = case mbNomTxInd of
-                             (Just n) -> n
-                             Nothing -> maxBound
-        str = "SELECT address,output,block_info,nominal_tx_index,is_block_confirmed,is_output_spent,is_type_receive,other_address,prev_outpoint,value from xoken.address_outputs where address = ? and nominal_tx_index < ?"
+        nominalTxIndex =
+            case mbNomTxInd of
+                (Just n) -> n
+                Nothing -> maxBound
+        str =
+            "SELECT address,output,block_info,nominal_tx_index,is_block_confirmed,is_output_spent,is_type_receive,other_address,prev_outpoint,value from xoken.address_outputs where address = ? and nominal_tx_index < ?"
         qstr =
             str :: Q.QueryString Q.R (DT.Text, Int64) ( DT.Text
-                                                        , (DT.Text, Int32)
-                                                        , ((DT.Text, Int32),Int32)
-                                                        , Int64
-                                                        , Bool
-                                                        , Bool
-                                                        , Bool
-                                                        , Maybe DT.Text
-                                                        , (DT.Text, Int32)
-                                                        , Int64)
+                                                      , (DT.Text, Int32)
+                                                      , ((DT.Text, Int32), Int32)
+                                                      , Int64
+                                                      , Bool
+                                                      , Bool
+                                                      , Bool
+                                                      , Maybe DT.Text
+                                                      , (DT.Text, Int32)
+                                                      , Int64)
         p = Q.defQueryParams Q.One (DT.pack address, nominalTxIndex)
     res <- LE.try $ Q.runClient conn (Q.query qstr (p {pageSize = pgSize}))
     case res of
@@ -261,24 +264,29 @@ xGetOutputsAddress net address pgSize mbNomTxInd = do
             err lg $ LG.msg $ "Error: xGetOutputsAddress: " ++ show e
             throw KeyValueDBLookupException
 
-
-xGetOutputsAddresses :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
-                     => Network
-                     -> [String]
-                     -> Maybe Int32
-                     -> Maybe Int64
-                     -> m ([AddressOutputs])
+xGetOutputsAddresses ::
+       (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
+    => Network
+    -> [String]
+    -> Maybe Int32
+    -> Maybe Int64
+    -> m ([AddressOutputs])
 xGetOutputsAddresses net addresses pgSize mbNomTxInd = do
-    listOfAddresses <- mapConcurrently (\a -> xGetOutputsAddress net a pgSize mbNomTxInd) addresses
-    let pageSize = fromIntegral $ if isJust pgSize then fromJust pgSize else maxBound
+    listOfAddresses <- LA.mapConcurrently (\a -> xGetOutputsAddress net a pgSize mbNomTxInd) addresses
+    let pageSize =
+            fromIntegral $
+            if isJust pgSize
+                then fromJust pgSize
+                else maxBound
         sortAddressOutputs :: AddressOutputs -> AddressOutputs -> Ordering
-        sortAddressOutputs ao1 ao2 | ao1n < ao2n = GT
-                                   | ao1n > ao2n = LT
-                                   | otherwise = EQ
-                                   where ao1n = aoNominalTxIndex ao1
-                                         ao2n = aoNominalTxIndex ao2
+        sortAddressOutputs ao1 ao2
+            | ao1n < ao2n = GT
+            | ao1n > ao2n = LT
+            | otherwise = EQ
+          where
+            ao1n = aoNominalTxIndex ao1
+            ao2n = aoNominalTxIndex ao2
     return $ (L.take pageSize . sortBy sortAddressOutputs . concat $ listOfAddresses)
-
 
 xGetMerkleBranch :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> String -> m ([MerkleBranchNode'])
 xGetMerkleBranch net txid = do
@@ -362,7 +370,7 @@ getOrMakeProducer net nameArr = do
                     let txid = DT.unpack $ sp !! 0
                     let index = readMaybe (DT.unpack $ sp !! 1) :: Maybe Int
                     case index of
-                        Just i -> return $ ((OutPoint' txid i, (snd $ head nb)), False)
+                        Just i -> return $ ((OutPoint' txid (fromIntegral i), (snd $ head nb)), False)
                         Nothing -> throw KeyValueDBLookupException
         Right nb -> do
             debug lg $ LG.msg $ "allegory name found! (1): " <> name
@@ -370,7 +378,7 @@ getOrMakeProducer net nameArr = do
             let txid = DT.unpack $ sp !! 0
             let index = readMaybe (DT.unpack $ sp !! 1) :: Maybe Int
             case index of
-                Just i -> return $ ((OutPoint' txid i, (snd $ head nb)), True)
+                Just i -> return $ ((OutPoint' txid (fromIntegral i), (snd $ head nb)), True)
                 Nothing -> throw KeyValueDBLookupException
 
 createCommitImplictTx :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> [Int] -> m ()
