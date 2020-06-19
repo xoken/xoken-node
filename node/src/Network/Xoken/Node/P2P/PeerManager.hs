@@ -56,6 +56,7 @@ import Data.Time.Clock.POSIX
 import Data.Word
 import qualified Database.Bolt as BT
 import qualified Database.CQL.IO as Q
+import Database.CQL.Protocol
 import GHC.Natural
 import Network.Socket
 import qualified Network.Socket.ByteString as SB (recv)
@@ -537,6 +538,44 @@ merkleTreeBuilder tque blockHash treeHt = do
                     liftIO $ atomically $ modifyTVar' (merkleQueueMap p2pEnv) (M.delete blockHash)
                     liftIO $ MS.signal (maxTMTBuilderThreadLock p2pEnv)
 
+updateBlocks :: (HasLogger m, HasDatabaseHandles m, MonadIO m)
+    => BlockHash
+    -> BlockHeight
+    -> Int
+    -> Int
+    -> Tx
+    -> m ()
+updateBlocks bhash blkht bsize txcount cbase = do
+    lg <- getLogger
+    dbe' <- getDB
+    let conn = keyValDB $ dbe'
+    let str1 = "INSERT INTO xoken.blocks_by_hash (block_hash,block_size,tx_count,coinbase_tx) VALUES (?, ?, ?, ?)"
+        str2 = "INSERT INTO xoken.blocks_by_height (block_height,block_size,tx_count,coinbase_tx) VALUES (?, ?, ?, ?)"
+        qstr1 = str1 :: Q.QueryString Q.W (T.Text, Int32, Int32, Blob) ()
+        qstr2 = str2 :: Q.QueryString Q.W (Int32, Int32, Int32, Blob) ()
+        par1 =
+            Q.defQueryParams
+                Q.One
+                ( blockHashToHex bhash
+                , fromIntegral bsize
+                , fromIntegral txcount
+                , Blob $ runPutLazy $ putLazyByteString $ encodeLazy $ cbase)
+        par2 =
+            Q.defQueryParams
+                Q.One
+                ( fromIntegral blkht
+                , fromIntegral bsize
+                , fromIntegral txcount
+                , Blob $ runPutLazy $ putLazyByteString $ encodeLazy $ cbase)
+    res1 <- liftIO $ try $ Q.runClient conn (Q.write (qstr1) par1)
+    case res1 of
+        Right () -> return ()
+        Left (e :: SomeException) -> throw KeyValueDBInsertException
+    res2 <- liftIO $ try $ Q.runClient conn (Q.write (qstr2) par2)  
+    case res2 of
+        Right () -> return ()
+        Left (e :: SomeException) -> throw KeyValueDBInsertException     
+
 readNextMessage ::
        (HasBitcoinP2P m, HasLogger m, HasDatabaseHandles m, MonadBaseControl IO m, MonadIO m)
     => Network
@@ -546,6 +585,7 @@ readNextMessage ::
 readNextMessage net sock ingss = do
     p2pEnv <- getBitcoinP2P
     lg <- getLogger
+    dbe' <- getDB
     case ingss of
         Just iss -> do
             let blin = issBlockIngest iss
@@ -575,6 +615,12 @@ readNextMessage net sock ingss = do
                                                 qq
                                                 (biBlockHash $ bf)
                                                 (computeTreeHeight $ binTxTotalCount blin)
+                                        updateBlocks
+                                            (biBlockHash bf)
+                                            (biBlockHeight bf)
+                                            (1)
+                                            (binTxTotalCount blin)
+                                            (t)
                                         return qq
                                     else case M.lookup (biBlockHash $ bf) mqm of
                                              Just q -> return q
