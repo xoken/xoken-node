@@ -96,13 +96,12 @@ xGetBlockHash net hash = do
     dbe <- getDB
     lg <- getLogger
     let conn = keyValDB (dbe)
-        str = "SELECT block_hash,block_height,block_header,block_size,tx_count,miner_info,coinbase_tx from xoken.blocks_by_hash where block_hash = ?"
+        str = "SELECT block_hash,block_height,block_header,block_size,tx_count,coinbase_tx from xoken.blocks_by_hash where block_hash = ?"
         qstr = str :: Q.QueryString Q.R (Identity DT.Text) ( DT.Text
                                                            , Int32
                                                            , DT.Text
                                                            , Maybe Int32
                                                            , Maybe Int32
-                                                           , Maybe DT.Text
                                                            , Maybe Blob)
         p = Q.defQueryParams Q.One $ Identity $ DT.pack hash
     res <- LE.try $ Q.runClient conn (Q.query qstr p)
@@ -111,14 +110,13 @@ xGetBlockHash net hash = do
             if length iop == 0
                 then return Nothing
                 else do
-                    let (hs,ht,hdr,size,txc,miner,cbase) = iop !! 0
+                    let (hs,ht,hdr,size,txc,cbase) = iop !! 0
                     case eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 hdr of
                         Right bh -> return $ Just $ BlockRecord (fromIntegral ht)
                                                                 (DT.unpack hs)
                                                                 bh
-                                                                (maybe 0 fromIntegral size)
-                                                                (maybe 0 fromIntegral txc)
-                                                                (maybe "" DT.unpack miner)
+                                                                (maybe (-1) fromIntegral size)
+                                                                (maybe (-1) fromIntegral txc)
                                                                 (maybe C.empty fromBlob cbase)
                         Left err -> do
                             liftIO $ print $ "Decode failed with error: " <> show err
@@ -132,13 +130,12 @@ xGetBlocksHashes net hashes = do
     dbe <- getDB
     lg <- getLogger
     let conn = keyValDB (dbe)
-        str = "SELECT block_hash,block_height,block_header,block_size,tx_count,miner_info,coinbase_tx from xoken.blocks_by_hash where block_hash in ?"
+        str = "SELECT block_hash,block_height,block_header,block_size,tx_count,coinbase_tx from xoken.blocks_by_hash where block_hash in ?"
         qstr = str :: Q.QueryString Q.R (Identity [DT.Text]) ( DT.Text
                                                              , Int32
                                                              , DT.Text
                                                              , Maybe Int32
                                                              , Maybe Int32
-                                                             , Maybe DT.Text
                                                              , Maybe Blob)
         p = Q.defQueryParams Q.One $ Identity $ Data.List.map (DT.pack) hashes
     res <- LE.try $ Q.runClient conn (Q.query qstr p)
@@ -148,14 +145,13 @@ xGetBlocksHashes net hashes = do
                 then return []
                 else do
                     case traverse
-                             (\(hs,ht,hdr,size,txc,miner,cbase) ->
+                             (\(hs,ht,hdr,size,txc,cbase) ->
                                  case (eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 hdr) of
                                      (Right bh) -> Right $ BlockRecord (fromIntegral ht)
                                                                        (DT.unpack hs)
                                                                        bh
-                                                                       (maybe 0 fromIntegral size)
-                                                                       (maybe 0 fromIntegral txc)
-                                                                       (maybe "" DT.unpack miner)
+                                                                       (maybe (-1) fromIntegral size)
+                                                                       (maybe (-1) fromIntegral txc)
                                                                        (maybe C.empty fromBlob cbase)
                                      Left err -> Left err
                                      )
@@ -173,13 +169,12 @@ xGetBlockHeight net height = do
     dbe <- getDB
     lg <- getLogger
     let conn = keyValDB (dbe)
-        str = "SELECT block_hash,block_height,block_header,block_size,tx_count,miner_info,coinbase_tx from xoken.blocks_by_height where block_height = ?"
+        str = "SELECT block_hash,block_height,block_header,block_size,tx_count,coinbase_tx from xoken.blocks_by_height where block_height = ?"
         qstr = str :: Q.QueryString Q.R (Identity Int32) ( DT.Text
                                                          , Int32
                                                          , DT.Text
                                                          , Maybe Int32
                                                          , Maybe Int32
-                                                         , Maybe DT.Text
                                                          , Maybe Blob)
         p = Q.defQueryParams Q.One $ Identity height
     res <- LE.try $ Q.runClient conn (Q.query qstr p)
@@ -188,14 +183,13 @@ xGetBlockHeight net height = do
             if length iop == 0
                 then return Nothing
                 else do
-                    let (hs,ht,hdr,size,txc,miner,cbase) = iop !! 0
+                    let (hs,ht,hdr,size,txc,cbase) = iop !! 0
                     case eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 hdr of
                         Right bh -> return $ Just $ BlockRecord (fromIntegral ht)
                                                                 (DT.unpack hs)
                                                                 bh
-                                                                (maybe 0 fromIntegral size)
-                                                                (maybe 0 fromIntegral txc)
-                                                                (maybe "" DT.unpack miner)
+                                                                (maybe (-1) fromIntegral size)
+                                                                (maybe (-1) fromIntegral txc)
                                                                 (maybe C.empty fromBlob cbase)
                         Left err -> do
                             liftIO $ print $ "Decode failed with error: " <> show err
@@ -209,13 +203,12 @@ xGetBlocksHeights net heights = do
     dbe <- getDB
     lg <- getLogger
     let conn = keyValDB (dbe)
-        str = "SELECT block_hash,block_height,block_header,block_size,tx_count,miner_info,coinbase_tx from xoken.blocks_by_height where block_height in ?"
+        str = "SELECT block_hash,block_height,block_header,block_size,tx_count,coinbase_tx from xoken.blocks_by_height where block_height in ?"
         qstr = str :: Q.QueryString Q.R (Identity [Int32]) ( DT.Text
                                                            , Int32
                                                            , DT.Text
                                                            , Maybe Int32
                                                            , Maybe Int32
-                                                           , Maybe DT.Text
                                                            , Maybe Blob)
         p = Q.defQueryParams Q.One $ Identity $ heights
     res <- LE.try $ Q.runClient conn (Q.query qstr p)
@@ -225,14 +218,13 @@ xGetBlocksHeights net heights = do
                 then return []
                 else do
                     case traverse
-                             (\(hs,ht,hdr,size,txc,miner,cbase) ->
+                             (\(hs,ht,hdr,size,txc,cbase) ->
                                     case (eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 hdr) of
                                         (Right bh) -> Right $ BlockRecord (fromIntegral ht)
                                                                           (DT.unpack hs)
                                                                           bh
-                                                                          (maybe 0 fromIntegral size)
-                                                                          (maybe 0 fromIntegral txc)
-                                                                          (maybe "" DT.unpack miner)
+                                                                          (maybe (-1) fromIntegral size)
+                                                                          (maybe (-1) fromIntegral txc)
                                                                           (maybe C.empty fromBlob cbase)
                                         Left err -> Left err
                                         )

@@ -279,20 +279,19 @@ data BlockRecord =
         , rbHeader :: BlockHeader
         , rbSize :: Int
         , rbTxCount :: Int
-        , rbMinerInfo :: String
         , rbCoinbaseTx :: C.ByteString
         }
     deriving (Generic, Show, Hashable, Eq, Serialise)
 
 instance ToJSON BlockRecord where
-    toJSON (BlockRecord height hash header size txCount miner coinbase) =
+    toJSON (BlockRecord height hash header size txCount coinbase) =
         object
             [ "rbHeight" .= height
             , "rbHash" .= hash
             , "rbHeader" .= header
             , "rbSize" .= size
             , "rbTxCount" .= txCount
-            , "rbMinerInfo" .= miner
+            , "rbMinerInfo" .= (coinbaseTxToMinerInfo coinbase)
             , "rbCoinbaseTx" .= (T.decodeUtf8 . BL.toStrict . B64L.encode . GZ.compress $ coinbase)
             ]
 
@@ -449,3 +448,13 @@ addressToScriptOutputs AddressOutputs {..} =
         , scPrevOutpoint = aoPrevOutpoint
         , scValue = aoValue
         }
+
+-- TODO coinbaseTxToMinerInfo
+coinbaseTxToMinerInfo :: C.ByteString -> String
+coinbaseTxToMinerInfo = C.unpack {-C.unpack scriptSig
+    where removePrefix = C.drop 8 . C.dropWhile (== '0') . C.drop 12 $ cbase
+          scriptSigLen :: Int64
+          scriptSigLen = read $ C.unpack $ C.take 2 removePrefix
+          blockHeight :: Int64
+          blockHeight = read $ C.unpack $ C.take 2 $ C.drop 2 removePrefix
+          scriptSig = C.drop (fromIntegral $ 4 + 2*blockHeight) $ C.take (fromIntegral $ 2*scriptSigLen) removePrefix-}
