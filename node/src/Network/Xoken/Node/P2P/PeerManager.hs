@@ -618,7 +618,7 @@ readNextMessage net sock ingss = do
                                         updateBlocks
                                             (biBlockHash bf)
                                             (biBlockHeight bf)
-                                            (1)
+                                            (binBlockSize blin)
                                             (binTxTotalCount blin)
                                             (t)
                                         return qq
@@ -634,6 +634,7 @@ readNextMessage net sock ingss = do
                                 , binTxPayloadLeft = binTxPayloadLeft blin - (txbytLen - B.length unused)
                                 , binTxTotalCount = binTxTotalCount blin
                                 , binTxProcessed = 1 + binTxProcessed blin
+                                , binBlockSize = binBlockSize blin
                                 , binChecksum = binChecksum blin
                                 }
                     return
@@ -668,6 +669,7 @@ readNextMessage net sock ingss = do
                                                         , binTxPayloadLeft = fromIntegral (len) - (88 - B.length unused)
                                                         , binTxTotalCount = fromIntegral $ txnCount b
                                                         , binTxProcessed = 0
+                                                        , binBlockSize = fromIntegral $ len
                                                         , binChecksum = cks
                                                         }
                                             return (Just $ MBlock b, Just $ IngressStreamState bi Nothing)

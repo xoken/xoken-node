@@ -25,6 +25,8 @@ import qualified Data.ByteString.Lazy as BL
 import qualified Data.ByteString.Lazy.Char8 as C
 import Data.ByteString.Short (ShortByteString)
 import qualified Data.ByteString.Short as B.Short
+import Data.Char (chr, toLower)
+import Data.List (elemIndex)
 import Data.Default
 import Data.Foldable
 import Data.Functor.Identity
@@ -291,7 +293,7 @@ instance ToJSON BlockRecord where
             , "rbHeader" .= header
             , "rbSize" .= size
             , "rbTxCount" .= txCount
-            , "rbMinerInfo" .= (coinbaseTxToMinerInfo coinbase)
+            --, "rbMinerInfo" .= (C.unpack coinbase) -- (coinbaseTxToMinerInfo coinbase)
             , "rbCoinbaseTx" .= (T.decodeUtf8 . BL.toStrict . B64L.encode . GZ.compress $ coinbase)
             ]
 
@@ -450,11 +452,18 @@ addressToScriptOutputs AddressOutputs {..} =
         }
 
 -- TODO coinbaseTxToMinerInfo
+{-
 coinbaseTxToMinerInfo :: C.ByteString -> String
-coinbaseTxToMinerInfo = C.unpack {-C.unpack scriptSig
+coinbaseTxToMinerInfo cbase = unHex $ C.unpack scriptSig
     where removePrefix = C.drop 8 . C.dropWhile (== '0') . C.drop 12 $ cbase
           scriptSigLen :: Int64
           scriptSigLen = read $ C.unpack $ C.take 2 removePrefix
           blockHeight :: Int64
           blockHeight = read $ C.unpack $ C.take 2 $ C.drop 2 removePrefix
-          scriptSig = C.drop (fromIntegral $ 4 + 2*blockHeight) $ C.take (fromIntegral $ 2*scriptSigLen) removePrefix-}
+          scriptSig = C.drop (fromIntegral $ 4 + 2*blockHeight) $ C.take (fromIntegral $ 2*scriptSigLen) removePrefix
+
+unHex :: String -> String
+unHex [] = []
+unHex (x:y:xs) = chr (((hex' x) * 16) + (hex' y)) : unHex xs
+    where hex' h = fromJust $ elemIndex (toLower h) "0123456789abcdef"
+-}
