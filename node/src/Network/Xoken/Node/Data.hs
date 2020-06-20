@@ -46,6 +46,7 @@ import GHC.Generics
 import Network.Socket (SockAddr(SockAddrUnix))
 import Paths_xoken_node as P
 import Prelude as P
+import Text.Regex.TDFA
 import UnliftIO
 import UnliftIO.Exception
 import qualified Web.Scotty.Trans as Scotty
@@ -293,7 +294,8 @@ instance ToJSON BlockRecord where
             , "rbHeader" .= header
             , "rbSize" .= size
             , "rbTxCount" .= txCount
-            --, "rbMinerInfo" .= (C.unpack coinbase) -- (coinbaseTxToMinerInfo coinbase)
+            , "rbGuessedMiner" .= ("" :: String)
+            , "rbCoinbaseMessage" .= (coinbaseTxToMessage $ C.unpack coinbase)
             , "rbCoinbaseTx" .= (T.decodeUtf8 . BL.toStrict . B64L.encode . GZ.compress $ coinbase)
             ]
 
@@ -451,7 +453,20 @@ addressToScriptOutputs AddressOutputs {..} =
         , scValue = aoValue
         }
 
--- TODO coinbaseTxToMinerInfo
+
+coinbaseTxToMessage :: String -> String
+coinbaseTxToMessage s = chr <$> (take (sigLen - 2 - htLen) $ drop (2 + htLen) regex)
+    where r :: String
+          r = "ffffffff[a-f0-9]+ffffffff"
+          regex = unHex $ drop 8 $ (s =~ r :: String)
+          sigLen = regex !! 0
+          htLen = regex !! 1
+
+unHex :: String -> [Int]
+unHex [] = []
+unHex (x:y:xs) = (((hex' x) * 16) + (hex' y)) : unHex xs
+    where hex' h = fromJust $ elemIndex (toLower h) "0123456789abcdef"
+
 {-
 coinbaseTxToMinerInfo :: C.ByteString -> String
 coinbaseTxToMinerInfo cbase = unHex $ C.unpack scriptSig
@@ -461,9 +476,4 @@ coinbaseTxToMinerInfo cbase = unHex $ C.unpack scriptSig
           blockHeight :: Int64
           blockHeight = read $ C.unpack $ C.take 2 $ C.drop 2 removePrefix
           scriptSig = C.drop (fromIntegral $ 4 + 2*blockHeight) $ C.take (fromIntegral $ 2*scriptSigLen) removePrefix
-
-unHex :: String -> String
-unHex [] = []
-unHex (x:y:xs) = chr (((hex' x) * 16) + (hex' y)) : unHex xs
-    where hex' h = fromJust $ elemIndex (toLower h) "0123456789abcdef"
 -}

@@ -65,6 +65,7 @@ executable xoken-nexa
     , nqe
     , optparse-applicative
     , random
+    , regex-tdfa
     , resourcet
     , scotty
     , string-conversions
