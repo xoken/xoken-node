@@ -20,15 +20,12 @@ import Data.Aeson as A
 import qualified Data.Aeson.Encoding as A
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as B
-import qualified Data.ByteString.Base16 as B16
-import qualified Data.ByteString.Char8 as C8
 import Data.ByteString.Base64.Lazy as B64L
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.ByteString.Lazy.Char8 as C
 import Data.ByteString.Short (ShortByteString)
 import qualified Data.ByteString.Short as B.Short
-import Data.Char (chr, toLower)
-import Data.List (elemIndex)
+import Data.Char (ord)
 import Data.Default
 import Data.Foldable
 import Data.Functor.Identity
@@ -290,21 +287,6 @@ data BlockRecord =
         }
     deriving (Generic, Show, Hashable, Eq, Serialise, ToJSON)
 
-{-
-instance ToJSON BlockRecord where
-    toJSON (BlockRecord height hash header size txCount coinbase) =
-        object
-            [ "rbHeight" .= height
-            , "rbHash" .= hash
-            , "rbHeader" .= header
-            , "rbSize" .= size
-            , "rbTxCount" .= txCount
-            , "rbGuessedMiner" .= ("" :: String)
-            , "rbCoinbaseMessage" .= (coinbaseTxToMessage . C.unpack $ coinbase)
-            , "rbCoinbaseTx" .= (T.decodeUtf8 . BL.toStrict . B64L.encode . GZ.compress $ coinbase)
-            ]
--}
-
 data RawTxRecord =
     RawTxRecord
         { txId :: String
@@ -460,26 +442,13 @@ addressToScriptOutputs AddressOutputs {..} =
         }
 
 
-coinbaseTxToMessage :: String -> String
-coinbaseTxToMessage s = C8.unpack . fst . B16.decode . C8.pack $ (take (2*(sigLen - htLen - 1)) $ drop (2*htLen+12) regex)
-    where r :: String
-          r = "ffffffff[a-f0-9]+ffffffff"
-          regex = (s =~ r :: String)
-          (sigLen:htLen:_) = unHex $ drop 8 $ regex
-
-
-unHex :: String -> [Int]
-unHex [] = []
-unHex (x:y:xs) = (((hex' x) * 16) + (hex' y)) : unHex xs
-    where hex' h = fromJust $ elemIndex (toLower h) "0123456789abcdef"
-
-{-
-coinbaseTxToMinerInfo :: C.ByteString -> String
-coinbaseTxToMinerInfo cbase = unHex $ C.unpack scriptSig
-    where removePrefix = C.drop 8 . C.dropWhile (== '0') . C.drop 12 $ cbase
-          scriptSigLen :: Int64
-          scriptSigLen = read $ C.unpack $ C.take 2 removePrefix
-          blockHeight :: Int64
-          blockHeight = read $ C.unpack $ C.take 2 $ C.drop 2 removePrefix
-          scriptSig = C.drop (fromIntegral $ 4 + 2*blockHeight) $ C.take (fromIntegral $ 2*scriptSigLen) removePrefix
--}
+coinbaseTxToMessage :: C.ByteString -> String
+coinbaseTxToMessage s = case C.length (C.pack regex) > 6 of
+    True -> let sig = C.drop 4 $ C.pack regex
+                sigLen = fromIntegral . ord . C.head $ sig
+                htLen = fromIntegral . ord . C.head . C.tail $ sig
+            in C.unpack . C.take (sigLen - htLen - 1) . C.drop (htLen+2) $ sig
+    False -> "False"
+  where r :: String
+        r = "\255\255\255\255[\NUL-\255]+"
+        regex = ((C.unpack s) =~ r) :: String

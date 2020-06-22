@@ -118,7 +118,7 @@ xGetBlockHash net hash = do
                                                                 (maybe (-1) fromIntegral size)
                                                                 (maybe (-1) fromIntegral txc)
                                                                 ("")
-                                                                (maybe [] (coinbaseTxToMessage . C.unpack . fromBlob) cbase)
+                                                                (maybe "" (coinbaseTxToMessage . fromBlob) cbase)
                                                                 (maybe "" (C.unpack . fromBlob) cbase)
                         Left err -> do
                             liftIO $ print $ "Decode failed with error: " <> show err
@@ -155,7 +155,7 @@ xGetBlocksHashes net hashes = do
                                                                        (maybe (-1) fromIntegral size)
                                                                        (maybe (-1) fromIntegral txc)
                                                                        ("")
-                                                                       (maybe [] (coinbaseTxToMessage . C.unpack . fromBlob) cbase)
+                                                                       (maybe "" (coinbaseTxToMessage . fromBlob) cbase)
                                                                        (maybe "" (C.unpack . fromBlob) cbase)
                                      Left err -> Left err
                                      )
@@ -190,14 +190,13 @@ xGetBlockHeight net height = do
                     let (hs,ht,hdr,size,txc,cbase) = iop !! 0
                     case eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 hdr of
                         Right bh -> do
-                                liftIO $ print "Right bh"
                                 return $ Just $ BlockRecord (fromIntegral ht)
                                                                 (DT.unpack hs)
                                                                 bh
                                                                 (maybe (-1) fromIntegral size)
                                                                 (maybe (-1) fromIntegral txc)
                                                                 ("")
-                                                                "/bmgpool.com/G1sqy\CANpz\138\174J\147o\DLE\RS\NUL\NUL"
+                                                                (maybe "" (coinbaseTxToMessage . fromBlob) cbase)
                                                                 (maybe "" (C.unpack . fromBlob) cbase)
                         Left err -> do
                             liftIO $ print $ "Decode failed with error: " <> show err
@@ -234,7 +233,7 @@ xGetBlocksHeights net heights = do
                                                                           (maybe (-1) fromIntegral size)
                                                                           (maybe (-1) fromIntegral txc)
                                                                           ("")
-                                                                          (maybe [] (coinbaseTxToMessage . C.unpack . fromBlob) cbase)
+                                                                          (maybe "" (coinbaseTxToMessage . fromBlob) cbase)
                                                                           (maybe "" (C.unpack . fromBlob) cbase)
                                         Left err -> Left err
                                         )
@@ -772,11 +771,7 @@ goGetResource msg net = do
                 Just (GetBlockByHeight ht) -> do
                     blk <- xGetBlockHeight net (fromIntegral ht)
                     case blk of
-                        Just b -> do
-                            liftIO $ print "Just b"
-                            liftIO $ print (rbCoinbaseTx b)
-                            liftIO $ print (rbCoinbaseMessage b)
-                            return $ RPCResponse 200 Nothing $ Just $ RespBlockByHash b
+                        Just b -> return $ RPCResponse 200 Nothing $ Just $ RespBlockByHash b
                         Nothing -> return $ RPCResponse 404 (Just INVALID_REQUEST) Nothing
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "[HEIGHT]->[BLOCK]" -> do
