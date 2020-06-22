@@ -84,6 +84,7 @@ executable xoken-nexa
     , zlib
     , utf8-string
     , base64-bytestring
+    , base16-bytestring
     , extra
     , serialise
     , lifted-async

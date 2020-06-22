@@ -85,6 +85,7 @@ handleRPCReqResp sockMVar format mid version encReq = do
     let net = bitcoinNetwork $ nodeConfig bp2pEnv
     liftIO $ printf "handleRPCReqResp (%d, %s)\n" mid (show encReq)
     rpcResp <- goGetResource encReq net
+    liftIO $ print rpcResp
     let body =
             case format of
                 CBOR ->
@@ -100,7 +101,9 @@ handleRPCReqResp sockMVar format mid version encReq = do
                                      (fromJust version))
                         Nothing -> A.encode (JSONRPCSuccessResponse (fromJust version) (rsBody rpcResp) mid)
     connSock <- liftIO $ takeMVar sockMVar
+    liftIO $ print body
     let prefixbody = LBS.append (DB.encode (fromIntegral (LBS.length body) :: Int32)) body
+    liftIO $ print prefixbody
     NTLS.sendData connSock prefixbody
     liftIO $ putMVar sockMVar connSock
 

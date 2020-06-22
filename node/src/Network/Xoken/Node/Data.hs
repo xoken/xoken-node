@@ -20,6 +20,8 @@ import Data.Aeson as A
 import qualified Data.Aeson.Encoding as A
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as B
+import qualified Data.ByteString.Base16 as B16
+import qualified Data.ByteString.Char8 as C8
 import Data.ByteString.Base64.Lazy as B64L
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.ByteString.Lazy.Char8 as C
@@ -282,10 +284,13 @@ data BlockRecord =
         , rbHeader :: BlockHeader
         , rbSize :: Int
         , rbTxCount :: Int
-        , rbCoinbaseTx :: C.ByteString
+        , rbGuessedMiner :: String
+        , rbCoinbaseMessage :: String
+        , rbCoinbaseTx :: String
         }
-    deriving (Generic, Show, Hashable, Eq, Serialise)
+    deriving (Generic, Show, Hashable, Eq, Serialise, ToJSON)
 
+{-
 instance ToJSON BlockRecord where
     toJSON (BlockRecord height hash header size txCount coinbase) =
         object
@@ -295,9 +300,10 @@ instance ToJSON BlockRecord where
             , "rbSize" .= size
             , "rbTxCount" .= txCount
             , "rbGuessedMiner" .= ("" :: String)
-            , "rbCoinbaseMessage" .= (coinbaseTxToMessage $ C.unpack coinbase)
+            , "rbCoinbaseMessage" .= (coinbaseTxToMessage . C.unpack $ coinbase)
             , "rbCoinbaseTx" .= (T.decodeUtf8 . BL.toStrict . B64L.encode . GZ.compress $ coinbase)
             ]
+-}
 
 data RawTxRecord =
     RawTxRecord
@@ -455,12 +461,12 @@ addressToScriptOutputs AddressOutputs {..} =
 
 
 coinbaseTxToMessage :: String -> String
-coinbaseTxToMessage s = chr <$> (take (sigLen - 2 - htLen) $ drop (2 + htLen) regex)
+coinbaseTxToMessage s = C8.unpack . fst . B16.decode . C8.pack $ (take (2*(sigLen - htLen - 1)) $ drop (2*htLen+12) regex)
     where r :: String
           r = "ffffffff[a-f0-9]+ffffffff"
-          regex = unHex $ drop 8 $ (s =~ r :: String)
-          sigLen = regex !! 0
-          htLen = regex !! 1
+          regex = (s =~ r :: String)
+          (sigLen:htLen:_) = unHex $ drop 8 $ regex
+
 
 unHex :: String -> [Int]
 unHex [] = []
