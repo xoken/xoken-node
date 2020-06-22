@@ -502,36 +502,66 @@ xGetPartiallySignedAllegoryTx net payips (nameArr, isProducer) owner change = do
     --
     let outs =
             if existed
-                then do
-                    let al =
-                            Allegory
-                                1
-                                (nameArr)
-                                (OwnerAction
-                                     (Index 0)
-                                     (OwnerOutput (Index 1) (Just $ Endpoint "XokenP2P" "someuri_1"))
-                                     [ ProxyProvider
-                                           "AllPay"
-                                           "Public"
-                                           (Endpoint "XokenP2P" "someuri_2")
-                                           (Registration "addrCommit" "utxoCommit" "signature" 876543)
-                                     ])
-                    let opRetScript = frameOpReturn $ C.toStrict $ serialise al
-                    let payAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
-                    let payScript = addressToScriptBS payAddr
-                    let paySats = 1000000
-                    let changeSats = totalEffectiveInputSats - (paySats + feeSatsTransfer)
-                    [TxOut 0 opRetScript] ++
-                        (L.map
-                             (\x -> do
-                                  let addr =
-                                          case stringToAddr net (DT.pack $ fst x) of
-                                              Just a -> a
-                                              Nothing -> throw InvalidOutputAddressException
-                                  let script = addressToScriptBS addr
-                                  TxOut (fromIntegral $ snd x) script)
-                             [(owner, (fromIntegral $ anutxos)), (change, changeSats)]) ++
-                        [TxOut (fromIntegral anutxos) payScript] -- the charge for the name transfer
+                then if isProducer
+                         then do
+                             let al =
+                                     Allegory
+                                         1
+                                         (init nameArr)
+                                         (ProducerAction
+                                              (Index 0)
+                                              (ProducerOutput (Index 1) (Just $ Endpoint "XokenP2P" "someuri_1"))
+                                              Nothing
+                                              [])
+                             let opRetScript = frameOpReturn $ C.toStrict $ serialise al
+                            -- derive producer's Address
+                             let prAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
+                             let prScript = addressToScriptBS prAddr
+                             let payAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
+                             let payScript = addressToScriptBS payAddr
+                             let paySats = 1000000
+                             let changeSats = totalEffectiveInputSats - (paySats + feeSatsCreate)
+                             [TxOut 0 opRetScript] ++
+                                 (L.map
+                                      (\x -> do
+                                           let addr =
+                                                   case stringToAddr net (DT.pack $ fst x) of
+                                                       Just a -> a
+                                                       Nothing -> throw InvalidOutputAddressException
+                                           let script = addressToScriptBS addr
+                                           TxOut (fromIntegral $ snd x) script)
+                                      [(owner, (fromIntegral $ anutxos)), (change, changeSats)]) ++
+                                 [TxOut ((fromIntegral paySats) :: Word64) payScript] -- the charge for the name transfer
+                         else do
+                             let al =
+                                     Allegory
+                                         1
+                                         (nameArr)
+                                         (OwnerAction
+                                              (Index 0)
+                                              (OwnerOutput (Index 1) (Just $ Endpoint "XokenP2P" "someuri_1"))
+                                              [ ProxyProvider
+                                                    "AllPay"
+                                                    "Public"
+                                                    (Endpoint "XokenP2P" "someuri_2")
+                                                    (Registration "addrCommit" "utxoCommit" "signature" 876543)
+                                              ])
+                             let opRetScript = frameOpReturn $ C.toStrict $ serialise al
+                             let payAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
+                             let payScript = addressToScriptBS payAddr
+                             let paySats = 1000000
+                             let changeSats = totalEffectiveInputSats - (paySats + feeSatsTransfer)
+                             [TxOut 0 opRetScript] ++
+                                 (L.map
+                                      (\x -> do
+                                           let addr =
+                                                   case stringToAddr net (DT.pack $ fst x) of
+                                                       Just a -> a
+                                                       Nothing -> throw InvalidOutputAddressException
+                                           let script = addressToScriptBS addr
+                                           TxOut (fromIntegral $ snd x) script)
+                                      [(owner, (fromIntegral $ anutxos)), (change, changeSats)]) ++
+                                 [TxOut (fromIntegral anutxos) payScript] -- the charge for the name transfer
                 else do
                     let al =
                             Allegory
