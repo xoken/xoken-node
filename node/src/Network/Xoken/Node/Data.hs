@@ -181,6 +181,10 @@ data RPCReqParams
           , gpsaOutputOwner :: String
           , gpsaOutputChange :: String
           }
+    | GetTxOutputSpendStatus
+          { gtssHash :: String
+          , gtssIndex :: Int32
+          }
     deriving (Generic, Show, Hashable, Eq, Serialise, ToJSON)
 
 instance FromJSON RPCReqParams where
@@ -200,7 +204,8 @@ instance FromJSON RPCReqParams where
         (GetAllegoryNameBranch <$> o .: "gaName" <*> o .: "gaIsProducer") <|>
         (RelayTx . BL.toStrict . GZ.decompress . B64L.decodeLenient . BL.fromStrict . T.encodeUtf8 <$> o .: "rTx") <|>
         (GetPartiallySignedAllegoryTx <$> o .: "gpsaPaymentInputs" <*> o .: "gpsaName" <*> o .: "gpsaOutputOwner" <*>
-         o .: "gpsaOutputChange")
+         o .: "gpsaOutputChange") <|>
+        (GetTxOutputSpendStatus <$> o .: "gtssHash" <*> o .: "gtssIndex")
 
 data RPCResponseBody
     = RespBlockByHeight
@@ -251,6 +256,9 @@ data RPCResponseBody
     | RespPartiallySignedAllegoryTx
           { psaTx :: ByteString
           }
+    | RespTxOutputSpendStatus
+          { spendStatus :: TxOutputSpendStatus
+          }
     deriving (Generic, Show, Hashable, Eq, Serialise)
 
 instance ToJSON RPCResponseBody where
@@ -271,6 +279,7 @@ instance ToJSON RPCResponseBody where
     toJSON (RespRelayTx rrTx) = object ["rrTx" .= rrTx]
     toJSON (RespPartiallySignedAllegoryTx ps) =
         object ["psaTx" .= (T.decodeUtf8 . BL.toStrict . B64L.encode . GZ.compress . BL.fromStrict $ ps)]
+    toJSON (RespTxOutputSpendStatus ss) = object ["spendStatus" .= ss]
 
 data BlockRecord =
     BlockRecord
@@ -303,6 +312,24 @@ data TxRecord =
         , tx :: Tx
         }
     deriving (Show, Generic, Hashable, Eq, Serialise, ToJSON)
+
+data TxOutputSpendStatus =
+    TxOutputSpendStatus
+          { isSpent :: Bool
+          , spendingTxID :: Maybe String
+          , spendingTxHeight :: Maybe Int
+          , spendingTxIndex :: Maybe Int32
+          }
+    deriving (Show, Generic, Hashable, Eq, Serialise)
+
+instance ToJSON TxOutputSpendStatus where
+    toJSON (TxOutputSpendStatus tis stxid stxht stxindex) =
+        object
+            [ "isSpent" .= tis
+            , "spendingTxID" .= stxid
+            , "spendingTxHeight" .= stxht
+            , "spendingTxIndex" .= stxindex
+            ]
 
 data AddressOutputs =
     AddressOutputs

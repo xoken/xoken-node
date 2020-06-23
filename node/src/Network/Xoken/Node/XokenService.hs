@@ -670,6 +670,20 @@ xRelayTx net rawTx = do
                     err lg $ LG.msg $ val $ "error decoding rawTx (2)"
                     return $ False
 
+xGetTxOutputSpendStatus :: 
+        (HasXokenNodeEnv env m, MonadIO m) 
+     => Network 
+     -> String 
+     -> Int32 
+     -> m (TxOutputSpendStatus)
+xGetTxOutputSpendStatus net txId outputIndex = return $
+    TxOutputSpendStatus
+      { isSpent = False
+      , spendingTxID = Nothing
+      , spendingTxHeight = Nothing
+      , spendingTxIndex = Nothing
+      }
+    
 goGetResource :: (HasXokenNodeEnv env m, MonadIO m) => RPCMessage -> Network -> m (RPCMessage)
 goGetResource msg net = do
     dbe <- getDB
@@ -809,6 +823,12 @@ goGetResource msg net = do
                         Left (e :: SomeException) -> do
                             liftIO $ print e
                             return $ RPCResponse 400 (Just INTERNAL_ERROR) Nothing
+                _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
+        "TX_SPEND_STATUS" -> do
+            case rqParams msg of
+                Just (GetTxOutputSpendStatus txid index) -> do
+                    txss <- xGetTxOutputSpendStatus net txid index
+                    return $ RPCResponse 200 Nothing $ Just $ RespTxOutputSpendStatus txss
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         _____ -> return $ RPCResponse 400 (Just INVALID_METHOD) Nothing
 
