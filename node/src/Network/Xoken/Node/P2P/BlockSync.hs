@@ -457,11 +457,6 @@ commitAddressOutputs conn addr typeRecv otherAddr output blockInfo prevOutpoint 
 --                                             , Bool
 --                                             , Maybe Text) ()
 --        parAddrOuts = Q.defQueryParams Q.One (addr, nominalTxIndex, output, typeRecv, otherAddr)
---        batchStr =
---            " BEGIN BATCH"
---         ++ " INSERT INTO xoken.address_outputs (address, is_type_receive, other_address, output, block_info, nominal_tx_index, prev_outpoint, value, is_block_confirmed, is_output_spent) VALUES (?,?,?,?,?,?,?,?,?,?)"
---         ++ " INSERT INTO xoken.txid_outputs (txid, index, block_info, is_output_spent, spending_txid, spending_index, prev_outpoint, value) VALUES (?,?,?,?,?,?,?,?,?,?)"
---         ++ " APPLY BATCH";
         strAddrOuts = "INSERT INTO xoken.address_outputs (address, is_type_receive, other_address, output, block_info, nominal_tx_index, prev_outpoint, value, is_block_confirmed, is_output_spent) VALUES (?,?,?,?,?,?,?,?,?,?)"
         qstrAddrOuts =
             strAddrOuts :: Q.QueryString Q.W ( Text
@@ -487,16 +482,16 @@ commitAddressOutputs conn addr typeRecv otherAddr output blockInfo prevOutpoint 
                                              , Int64) ()
         parTxIDOuts = Q.defQueryParams Q.One (txID, txIndex32, blockInfo, False, Nothing, Nothing, prevOutpoint, value)
     resAddrOuts <- liftIO $ try $ Q.runClient conn (Q.write (qstrAddrOuts) parAddrOuts)
-    resTxIDOuts <- liftIO $ try $ Q.runClient conn (Q.write (qstrTxIDOuts) parTxIDOuts)
     case resAddrOuts of
-        Right () -> return ()
+        Right () -> do
+            resTxIDOuts <- liftIO $ try $ Q.runClient conn (Q.write (qstrTxIDOuts) parTxIDOuts)
+            case resTxIDOuts of
+                Right () -> return ()
+                Left (e :: SomeException) -> do
+                    err lg $ LG.msg $ "Error: INSERTing into 'txid_outputs':" ++ show e
+                    throw KeyValueDBInsertException
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: INSERTing into 'address_outputs': " ++ show e
-            throw KeyValueDBInsertException
-    case resTxIDOuts of
-        Right () -> return ()
-        Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: INSERTing into 'txid_outputs': " ++ show e
             throw KeyValueDBInsertException
 
 processConfTransaction :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Tx -> BlockHash -> Int -> Int -> m ()
