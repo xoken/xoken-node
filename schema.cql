@@ -62,11 +62,11 @@ CREATE TABLE xoken.user_permission (
     first_name text,
     last_name text,
     emailid text,
-    created_date date,
+    created_time timestamp,
     permissions set <text>,
     api_quota int,
     api_used int,
-    api_expiry_date date,
+    api_expiry_time timestamp,
     session_key text,
-    session_key_expiry_date date
+    session_key_expiry_time timestamp
 ); 

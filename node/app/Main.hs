@@ -82,10 +82,8 @@ import Data.Word
 import qualified Database.Bolt as BT
 import qualified Database.CQL.IO as Q
 import Database.CQL.Protocol
-
 import Network.Simple.TCP
 import Network.Socket
-
 import Network.Xoken.Node.AriviService
 import Network.Xoken.Node.Data
 import Network.Xoken.Node.Env
@@ -304,22 +302,21 @@ defaultAdminUser conn = do
                 passwd = B64.encode $ C.pack $ seed
                 hashedPasswd = encodeHex ((S.encode $ sha256 passwd))
                 tempSessionKey = encodeHex ((S.encode $ sha256 $ B.reverse passwd))
-                tdate = (fromIntegral $ toModifiedJulianDay $ utctDay tm) :: Int32
                 str =
-                    "insert INTO xoken.user_permission ( username, password, first_name, last_name, emailid, created_date, permissions, api_quota, api_used, api_expiry_date, session_key, session_key_expiry_date) values (?, ?, ?, ?, ?, ? ,? ,? ,? ,? ,? ,? )"
+                    "insert INTO xoken.user_permission ( username, password, first_name, last_name, emailid, created_time, permissions, api_quota, api_used, api_expiry_time, session_key, session_key_expiry_time) values (?, ?, ?, ?, ?, ? ,? ,? ,? ,? ,? ,? )"
                 qstr =
                     str :: Q.QueryString Q.W ( T.Text
                                              , T.Text
                                              , T.Text
                                              , T.Text
                                              , T.Text
-                                             , Int32
+                                             , UTCTime
                                              , [T.Text]
                                              , Int32
                                              , Int32
-                                             , Int32
+                                             , UTCTime
                                              , T.Text
-                                             , Int32) ()
+                                             , UTCTime) ()
                 par =
                     Q.defQueryParams
                         Q.One
@@ -328,13 +325,13 @@ defaultAdminUser conn = do
                         , "default"
                         , "user"
                         , ""
-                        , tdate
+                        , tm
                         , ["", ""]
                         , -1
                         , -1
-                        , tdate
+                        , (addUTCTime (nominalDay * 90) tm)
                         , tempSessionKey
-                        , (tdate + 7))
+                        , (addUTCTime nominalDay tm))
             putStrLn $ "******************************************************************* "
             putStrLn $ "  Creating default Admin user!"
             putStrLn $ "  Please note down admin password NOW, will not be shown again."

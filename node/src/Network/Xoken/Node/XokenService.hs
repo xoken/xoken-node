@@ -66,6 +66,9 @@ import Data.String (IsString, fromString)
 import qualified Data.Text as DT
 import qualified Data.Text.Encoding as DTE
 import qualified Data.Text.Encoding as E
+import Data.Time.Calendar
+import Data.Time.Clock
+import Data.Time.Clock.POSIX
 import Data.Word
 import Data.Yaml
 import qualified Database.Bolt as BT
@@ -83,6 +86,7 @@ import Network.Xoken.Node.P2P.Common
 import Network.Xoken.Node.P2P.Types
 import System.Logger as LG
 import System.Logger.Message
+import System.Random
 import Text.Read
 import Xoken
 import qualified Xoken.NodeConfig as NC
@@ -693,16 +697,59 @@ xRelayTx net rawTx = do
 authenticateClient ::
        (HasXokenNodeEnv env m, MonadIO m) => RPCMessage -> Network -> EndPointConnection -> m (RPCMessage)
 authenticateClient msg net epConn = do
+    dbe <- getDB
+    lg <- getLogger
+    let conn = keyValDB (dbe)
     case rqMethod msg of
         "AUTHENTICATE" -> do
             case rqParams msg of
                 Just (AuthenticateReq user pass) -> do
-                    liftIO $ atomically $ writeTVar (isAuthenticated epConn) True
-                    case (Just user) of
-                        Just b ->
-                            return $
-                            RPCResponse 200 Nothing $ Just $ AuthenticateResp $ AuthResp (Just "test-key123") 1 100
-                        Nothing -> return $ RPCResponse 404 (Just INVALID_REQUEST) Nothing
+                    let hashedPasswd = encodeHex ((S.encode $ sha256 $ BC.pack pass))
+                        str =
+                            " SELECT password, api_quota, api_used, session_key_expiry_time from xoken.user_permission where username = ? "
+                        qstr = str :: Q.QueryString Q.R (Identity DT.Text) (DT.Text, Int32, Int32, UTCTime)
+                        p = Q.defQueryParams Q.One $ Identity $ (DT.pack user)
+                    res <- liftIO $ try $ Q.runClient conn (Q.query (Q.prepared qstr) p)
+                    case res of
+                        Left (SomeException e) -> do
+                            err lg $ LG.msg $ "Error: SELECT'ing from 'user_permission': " ++ show e
+                            throw e
+                        Right (op) -> do
+                            if length op == 0
+                                then do
+                                    return $ RPCResponse 200 Nothing $ Just $ AuthenticateResp $ AuthResp Nothing 0 0
+                                else do
+                                    case (op !! 0) of
+                                        (sk, _, _, _) -> do
+                                            if (sk /= hashedPasswd)
+                                                then return $
+                                                     RPCResponse 200 Nothing $
+                                                     Just $ AuthenticateResp $ AuthResp Nothing 0 0
+                                                else do
+                                                    tm <- liftIO $ getCurrentTime
+                                                    g <- liftIO $ getStdGen
+                                                    let seed = show $ fst (random g :: (Word64, StdGen))
+                                                        sdb = B64.encode $ BC.pack $ seed
+                                                        newSessionKey = encodeHex ((S.encode $ sha256 $ B.reverse sdb))
+                                                        str1 =
+                                                            "UPDATE xoken.user_permission SET session_key = ?, session_key_expiry_time = ? WHERE username = ? "
+                                                        qstr1 = str1 :: Q.QueryString Q.W (DT.Text, UTCTime, DT.Text) ()
+                                                        par1 = Q.defQueryParams Q.One (newSessionKey, tm, DT.pack user)
+                                                    res1 <- liftIO $ try $ Q.runClient conn (Q.write (qstr1) par1)
+                                                    case res1 of
+                                                        Right () -> return ()
+                                                        Left (SomeException e) -> do
+                                                            err lg $
+                                                                LG.msg $
+                                                                "Error: UPDATE'ing into 'user_permission': " ++ show e
+                                                            throw e
+                                                    liftIO $ atomically $ writeTVar (isAuthenticated epConn) True
+                                                    return $
+                                                        RPCResponse 200 Nothing $
+                                                        Just $
+                                                        AuthenticateResp $
+                                                        AuthResp (Just $ DT.unpack newSessionKey) 1 100
+                Nothing -> return $ RPCResponse 404 (Just INVALID_REQUEST) Nothing
         _____ -> return $ RPCResponse 200 Nothing $ Just $ AuthenticateResp $ AuthResp Nothing 0 0
 
 goGetResource :: (HasXokenNodeEnv env m, MonadIO m) => RPCMessage -> Network -> m (RPCMessage)
