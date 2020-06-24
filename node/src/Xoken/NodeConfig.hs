@@ -49,6 +49,8 @@ data NodeConfig =
         , neo4jUsername :: T.Text
         , neo4jPassword :: T.Text
         , allegoryNameUtxoSatoshis :: Int
+        , allegoryTxFeeSatsProducerAction :: Int
+        , allegoryTxFeeSatsOwnerAction :: Int
         }
     deriving (Show, Generic)
 

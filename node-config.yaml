@@ -4,7 +4,7 @@ indexUnconfirmedTx: False
 
 logLevel: Debug
 
-logFileName: ./nexa.log
+logFileName: ./debug.log
 
 bitcoinNodeListenIP: 127.0.0.1
 
@@ -45,3 +45,7 @@ neo4jUsername : neo4j
 neo4jPassword : neo4j
 
 allegoryNameUtxoSatoshis: 5555
+
+allegoryTxFeeSatsProducerAction : 400
+
+allegoryTxFeeSatsOwnerAction : 200

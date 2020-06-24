@@ -17,8 +17,10 @@ module Network.Xoken.Node.P2P.BlockSync
     , getAddressFromOutpoint
     , getScriptHashFromOutpoint
     , sendRequestMessages
+    , handleIfAllegoryTx
     ) where
 
+import Codec.Serialise
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (AsyncCancelled, mapConcurrently, mapConcurrently_, race_)
 import Control.Concurrent.Async.Lifted as LA (async)
@@ -36,6 +38,7 @@ import Control.Monad.STM
 import Control.Monad.State.Strict
 import qualified Data.Aeson as A (decode, encode)
 import qualified Data.ByteString as B
+import qualified Data.ByteString.Base16 as B16 (decode, encode)
 import qualified Data.ByteString.Char8 as C
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Lazy.Char8 as LC
@@ -47,6 +50,7 @@ import qualified Data.IntMap as I
 import qualified Data.List as L
 import qualified Data.Map.Strict as M
 import Data.Maybe
+import Data.Pool
 import Data.Serialize
 import Data.Serialize as S
 import Data.String.Conversions
@@ -56,6 +60,8 @@ import Data.Time.Clock
 import Data.Time.Clock
 import Data.Time.Clock.POSIX
 import Data.Word
+import qualified Database.Bolt as BT
+import qualified Database.CQL.IO as Q
 import qualified Database.CQL.IO as Q
 import Database.CQL.Protocol
 import qualified Network.Socket as NS
@@ -82,8 +88,18 @@ import qualified Streamly.Prelude as S
 import System.Logger as LG
 import System.Logger.Message
 import System.Random
+import Xoken
 import Xoken.NodeConfig
 
+--
+-- import Network.Xoken.Crypto.Hash
+-- import Network.Xoken.Node.Data
+-- import Network.Xoken.Node.Data.Allegory
+-- import Network.Xoken.Node.Data.Allegory
+-- import Network.Xoken.Node.Env
+-- import Network.Xoken.Node.GraphDB
+-- import Network.Xoken.Node.P2P.Common
+-- import Network.Xoken.Node.P2P.Types
 produceGetDataMessage :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => UTCTime -> m (Maybe Message)
 produceGetDataMessage !tm = do
     lg <- getLogger
@@ -180,7 +196,7 @@ runEgressBlockSync =
                                      Nothing -> return ()
                              else if (diffUTCTime tm rt > staleTime)
                                       then do
-                                          debug lg $ msg ("Removing unresponsive peer. (1)" ++ show peer)
+                                          debug lg $ LG.msg ("Removing unresponsive peer. (1)" ++ show peer)
                                           case bpSocket peer of
                                               Just sock -> liftIO $ NS.close $ sock
                                               Nothing -> return ()
@@ -194,7 +210,7 @@ runEgressBlockSync =
                              Just st -> do
                                  if (diffUTCTime tm st > staleTime)
                                      then do
-                                         debug lg $ msg ("Removing unresponsive peer. (2)" ++ show peer)
+                                         debug lg $ LG.msg ("Removing unresponsive peer. (2)" ++ show peer)
                                          case bpSocket peer of
                                              Just sock -> liftIO $ NS.close $ sock
                                              Nothing -> return ()
@@ -415,13 +431,16 @@ commitAddressOutputs conn addr typeRecv otherAddr output blockInfo prevOutpoint 
                                      , Bool
                                      , Maybe Text
                                      , (Text, Int32)
-                                     , ((Text,Int32), Int32)
+                                     , ((Text, Int32), Int32)
                                      , Int64
                                      , (Text, Int32)
                                      , Int64
                                      , Bool
                                      , Bool) ()
-        par = Q.defQueryParams Q.One (addr, typeRecv, otherAddr, output, blockInfo, nominalTxIndex, prevOutpoint, value, False, False)
+        par =
+            Q.defQueryParams
+                Q.One
+                (addr, typeRecv, otherAddr, output, blockInfo, nominalTxIndex, prevOutpoint, value, False, False)
     res1 <- liftIO $ try $ Q.runClient conn (Q.write (qstr) par)
     case res1 of
         Right () -> return ()
@@ -601,6 +620,11 @@ processConfTransaction tx bhash txind blkht = do
                  outAddrs)
         (catMaybes lookupInAddrs)
     --
+    eres <- LE.try $ handleIfAllegoryTx tx True
+    case eres of
+        Right (flg) -> return ()
+        Left (e :: SomeException) -> err lg $ LG.msg ("Error: " ++ show e)
+    --
     txSyncMap <- liftIO $ readTVarIO (txSynchronizer bp2pEnv)
     case (M.lookup (txHash tx) txSyncMap) of
         Just ev -> liftIO $ EV.signal $ ev
@@ -710,3 +734,42 @@ processBlock dblk = do
     debug lg $ LG.msg ("processing deflated Block! " ++ show dblk)
     -- liftIO $ signalQSem (blockFetchBalance bp2pEnv)
     return ()
+
+handleIfAllegoryTx :: (HasXokenNodeEnv env m, MonadIO m) => Tx -> Bool -> m (Bool)
+handleIfAllegoryTx tx revert = do
+    lg <- getLogger
+    dbe <- getDB
+    debug lg $ LG.msg $ val $ "Checking for Allegory OP_RETURN"
+    let op_return = head (txOut tx)
+    let hexstr = B16.encode (scriptOutput op_return)
+    if "006a0f416c6c65676f72792f416c6c506179" `L.isPrefixOf` (C.unpack hexstr)
+        then do
+            liftIO $ print (hexstr)
+            case decodeOutputScript $ scriptOutput op_return of
+                Right (script) -> do
+                    liftIO $ print (script)
+                    case last $ scriptOps script of
+                        (OP_PUSHDATA payload _) -> do
+                            case (deserialiseOrFail $ BSL.fromStrict payload) of
+                                Right (allegory) -> do
+                                    liftIO $ print (allegory)
+                                    if revert
+                                        then do
+                                            _ <- resdb dbe revertAllegoryStateTree tx allegory
+                                            resdb dbe updateAllegoryStateTrees tx allegory
+                                        else resdb dbe updateAllegoryStateTrees tx allegory
+                                Left (e :: DeserialiseFailure) -> do
+                                    err lg $ LG.msg $ "error deserialising OP_RETURN CBOR data" ++ show e
+                                    throw e
+                Left (e) -> do
+                    err lg $ LG.msg $ "error decoding op_return data:" ++ show e
+                    throw MessageParsingException
+        else do
+            err lg $ LG.msg $ val $ "error: OP_RETURN prefix mismatch"
+            return False
+  where
+    resdb db fn tx al = do
+        eres <- liftIO $ try $ withResource (pool $ graphDB db) (`BT.run` fn tx al)
+        case eres of
+            Right () -> return True
+            Left (SomeException e) -> throw e
