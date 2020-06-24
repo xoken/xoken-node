@@ -792,7 +792,7 @@ goGetResource msg net = do
                     tx <- xGetTxHash net (hs)
                     case tx of
                         Just t -> return $ RPCResponse 200 Nothing $ Just $ RespRawTransactionByTxID t
-                        Nothing -> return $ RPCResponse 404 (Just INVALID_REQUEST) Nothing
+                        Nothing -> return $ RPCResponse 200 Nothing Nothing
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "TXID->TX" -> do
             case rqParams msg of
@@ -806,7 +806,7 @@ goGetResource msg net = do
                                     RPCResponse 200 Nothing $
                                     Just $ RespTransactionByTxID (TxRecord txId txBlockInfo rt)
                                 Left err -> return $ RPCResponse 400 (Just INTERNAL_ERROR) Nothing
-                        Nothing -> return $ RPCResponse 404 (Just INVALID_REQUEST) Nothing
+                        Nothing -> return $ RPCResponse 200 Nothing Nothing 
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "[TXID]->[RAWTX]" -> do
             case rqParams msg of
