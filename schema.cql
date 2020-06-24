@@ -55,3 +55,15 @@ CREATE TABLE xoken.ep_transactions (
     tx_serialized blob,
     PRIMARY KEY (epoch, tx_id)
 ); 
+
+CREATE TABLE xoken.txid_outputs (
+     txid text,
+     idx int,
+     block_info frozen<tuple<frozen<tuple<text, int>>, int>>,
+     is_output_spent boolean,
+     spending_txid text,
+     spending_index int,
+     prev_outpoint frozen<tuple<text, int>>,
+     value bigint,
+     PRIMARY KEY(txid, idx)
+ );
