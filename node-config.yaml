@@ -34,14 +34,18 @@ txProcInputDependenciesWait: 240
 
 txProcTimeoutSecs : 250
 
-tlsCertificatePath : ./certificate.cert
+tlsCertificatePath : ./example.crt
 
-tlsKeyfilePath : ./server.key
+tlsKeyfilePath : ./example.key
 
-tlsCertificateStorePath : /opt/certstore
+tlsCertificateStorePath : ./
 
 neo4jUsername : neo4j
 
 neo4jPassword : neo4j
 
 allegoryNameUtxoSatoshis: 5555
+
+allegoryTxFeeSatsProducerAction : 400
+
+allegoryTxFeeSatsOwnerAction : 200

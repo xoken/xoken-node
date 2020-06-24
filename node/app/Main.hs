@@ -26,48 +26,62 @@ import Arivi.P2P.RPC.Types
 import Arivi.P2P.ServiceRegistry
 import Control.Arrow
 import Control.Concurrent (threadDelay)
-import Control.Concurrent.Async.Lifted (async, wait, withAsync)
+import Control.Concurrent
+import Control.Concurrent.Async.Lifted as LA (async, race, wait, withAsync)
 import Control.Concurrent.Event as EV
 import Control.Concurrent.MSem as MS
 import Control.Concurrent.MVar
 import Control.Concurrent.QSem
 import Control.Concurrent.STM.TVar
-import Control.Exception ()
+import Control.Exception (throw)
+import Control.Monad
 import Control.Monad
 import Control.Monad.Base
 import Control.Monad.Catch
 import Control.Monad.Except
 import Control.Monad.Logger
+import Control.Monad.Loops
 import Control.Monad.Reader
 import Control.Monad.Trans.Control
 import Control.Monad.Trans.Maybe
 import Data.Aeson.Encoding (encodingToLazyByteString, fromEncoding)
 import Data.Bits
+import qualified Data.ByteString as B
 import qualified Data.ByteString.Base16 as B16
+import Data.ByteString.Base64 as B64
 import Data.ByteString.Builder
 import qualified Data.ByteString.Char8 as C
 import qualified Data.ByteString.Lazy as L
 import qualified Data.ByteString.Lazy.Char8 as CL
 import Data.Char
 import Data.Default
+import Data.Default
 import Data.Function
 import Data.Functor.Identity
 import qualified Data.HashTable.IO as H
+import Data.IORef
 import Data.Int
 import Data.List
 import Data.Map.Strict as M
 import Data.Maybe
+import Data.Maybe
 import Data.Pool
 import Data.Serialize as Serialize
+import Data.Serialize as S
 import Data.String.Conv
 import Data.String.Conversions
 import qualified Data.Text as T
 import qualified Data.Text.Lazy as TL
+import Data.Time.Calendar
+import Data.Time.Clock
+import Data.Time.Clock.POSIX
 import Data.Typeable
 import Data.Version
 import Data.Word (Word32)
+import Data.Word
 import qualified Database.Bolt as BT
 import qualified Database.CQL.IO as Q
+import Database.CQL.Protocol
 import Network.Simple.TCP
 import Network.Socket
 import Network.Xoken.Node.AriviService
@@ -90,6 +104,8 @@ import System.FilePath
 import System.IO.Unsafe
 import qualified System.Logger as LG
 import qualified System.Logger.Class as LG
+import System.Posix.Daemon
+import System.Random
 import Text.Read (readMaybe)
 import Xoken
 import Xoken.Node
@@ -199,18 +215,51 @@ runThreads config nodeConf bp2p conn lg p2pEnv certPaths = do
     async $ startTLSEndpoint epHandler (endPointTLSListenIP nodeConf) (endPointTLSListenPort nodeConf) certPaths
     withResource (pool $ graphDB dbh) (`BT.run` initAllegoryRoot genesisTx)
     -- run main workers
-    runFileLoggingT (toS $ Config.logFile config) $
-        runAppM
-            serviceEnv
-            (do initP2P config
-                bp2pEnv <- getBitcoinP2P
-                withAsync runEpochSwitcher $ \a -> do
-                    withAsync setupSeedPeerConnection $ \b -> do
-                        withAsync runEgressChainSync $ \c -> do
-                            withAsync runEgressBlockSync $ \d -> do
-                                withAsync (handleNewConnectionRequest epHandler) $ \e -> do runPeerSync)
-    --
-    return ()
+    forever $ do
+        runFileLoggingT (toS $ Config.logFile config) $
+            runAppM
+                serviceEnv
+                (do initP2P config
+                    bp2pEnv <- getBitcoinP2P
+                    withAsync runEpochSwitcher $ \_ -> do
+                        withAsync setupSeedPeerConnection $ \_ -> do
+                            withAsync runEgressChainSync $ \_ -> do
+                                withAsync runEgressBlockSync $ \_ -> do
+                                    withAsync (handleNewConnectionRequest epHandler) $ \_ -> do
+                                        withAsync runPeerSync $ \_ -> do
+                                            withAsync runWatchDog $ \z -> do
+                                                _ <- LA.wait z
+                                                return ())
+        liftIO $ Q.shutdown conn
+        liftIO $ threadDelay (5 * 1000000)
+        conn <- makeKeyValDBConn
+        return ()
+
+runWatchDog :: (HasXokenNodeEnv env m, MonadIO m) => m ()
+runWatchDog = do
+    dbe <- getDB
+    let conn = keyValDB (dbe)
+    liftIO $ putStrLn $ ("Starting watchdog")
+    continue <- liftIO $ newIORef True
+    whileM_ (liftIO $ readIORef continue) $ do
+        liftIO $ threadDelay (60 * 1000000)
+        tm <- liftIO $ getCurrentTime
+        let ttime = (floor $ utcTimeToPOSIXSeconds tm) :: Int64
+            str = "insert INTO xoken.transactions ( tx_id, block_info, tx_serialized ) values (?, ?, ?)"
+            qstr = str :: Q.QueryString Q.W (T.Text, ((T.Text, Int32), Int32), Blob) ()
+            par = Q.defQueryParams Q.One ("watchdog-last-check", ((T.pack $ show ttime, 0), 0), Blob $ CL.pack "")
+        ores <-
+            LA.race (liftIO $ threadDelay (500000)) (liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr) par))
+        case ores of
+            Right (eth) -> do
+                case eth of
+                    Right () -> return ()
+                    Left (SomeException e) -> do
+                        liftIO $ print ("Error: unable to insert, watchdog raise alert " ++ show e)
+                        liftIO $ writeIORef continue False
+            Left () -> do
+                liftIO $ print ("Error: insert timed-out, watchdog raise alert ")
+                liftIO $ writeIORef continue False
 
 runNode :: Config.Config -> NC.NodeConfig -> Q.ClientState -> BitcoinP2P -> [FilePath] -> IO ()
 runNode config nodeConf conn bp2p certPaths = do
@@ -238,9 +287,65 @@ defNetwork = bsvTest
 netNames :: String
 netNames = intercalate "|" (Data.List.map getNetworkName allNets)
 
-main :: IO ()
-main = do
-    putStrLn $ "Starting Xoken Nexa"
+defaultAdminUser :: Q.ClientState -> IO ()
+defaultAdminUser conn = do
+    let qstr =
+            " SELECT password from xoken.user_permission where username = 'admin' " :: Q.QueryString Q.R () (Identity T.Text)
+        p = Q.defQueryParams Q.One ()
+    op <- Q.runClient conn (Q.query qstr p)
+    if length op == 1
+        then return ()
+        else do
+            tm <- liftIO $ getCurrentTime
+            g <- liftIO $ getStdGen
+            let seed = show $ fst (random g :: (Word64, StdGen))
+                passwd = B64.encode $ C.pack $ seed
+                hashedPasswd = encodeHex ((S.encode $ sha256 passwd))
+                tempSessionKey = encodeHex ((S.encode $ sha256 $ B.reverse passwd))
+                str =
+                    "insert INTO xoken.user_permission ( username, password, first_name, last_name, emailid, created_time, permissions, api_quota, api_used, api_expiry_time, session_key, session_key_expiry_time) values (?, ?, ?, ?, ?, ? ,? ,? ,? ,? ,? ,? )"
+                qstr =
+                    str :: Q.QueryString Q.W ( T.Text
+                                             , T.Text
+                                             , T.Text
+                                             , T.Text
+                                             , T.Text
+                                             , UTCTime
+                                             , [T.Text]
+                                             , Int32
+                                             , Int32
+                                             , UTCTime
+                                             , T.Text
+                                             , UTCTime) ()
+                par =
+                    Q.defQueryParams
+                        Q.One
+                        ( "admin"
+                        , hashedPasswd
+                        , "default"
+                        , "user"
+                        , ""
+                        , tm
+                        , ["", ""]
+                        , -1
+                        , -1
+                        , (addUTCTime (nominalDay * 90) tm)
+                        , tempSessionKey
+                        , (addUTCTime nominalDay tm))
+            putStrLn $ "******************************************************************* "
+            putStrLn $ "  Creating default Admin user!"
+            putStrLn $ "  Please note down admin password NOW, will not be shown again."
+            putStrLn $ "  Password : " ++ (show passwd)
+            putStrLn $ "******************************************************************* "
+            res1 <- liftIO $ try $ Q.runClient conn (Q.write (qstr) par)
+            case res1 of
+                Right () -> return ()
+                Left (SomeException e) -> do
+                    putStrLn $ "Error: INSERTing into 'user_permission': " ++ show e
+                    throw e
+
+makeKeyValDBConn :: IO (Q.ClientState)
+makeKeyValDBConn = do
     let logg = Q.stdoutLogger Q.LogWarn
         stng = Q.setMaxStreams 1024 $ Q.setMaxConnections 10 $ Q.setPoolStripes 12 $ Q.setLogger logg Q.defSettings
         stng2 = Q.setRetrySettings Q.eagerRetrySettings stng
@@ -249,11 +354,10 @@ main = do
     conn <- Q.init stng2
     op <- Q.runClient conn (Q.query qstr p)
     putStrLn $ "Connected to Cassandra database, version " ++ show (runIdentity (op !! 0))
-    b <- doesFileExist "arivi-config.yaml"
-    unless b defaultConfig
-    cnf <- Config.readConfig "arivi-config.yaml"
-    nodeCnf <- NC.readConfig "node-config.yaml"
-    -- BitcoinP2P construction --
+    return conn
+
+defBitcoinP2P :: NodeConfig -> IO (BitcoinP2P)
+defBitcoinP2P nodeCnf = do
     g <- newTVarIO M.empty
     bp <- newTVarIO M.empty
     mv <- newMVar True
@@ -266,8 +370,18 @@ main = do
     mq <- newTVarIO M.empty
     ts <- newTVarIO M.empty
     tbt <- MS.new $ maxTMTBuilderThreads nodeCnf
-    let bp2p = BitcoinP2P nodeCnf g bp mv hl st ep tc (rpf, rpc) mq ts tbt
-    -- TLS certs --
+    return $ BitcoinP2P nodeCnf g bp mv hl st ep tc (rpf, rpc) mq ts tbt
+
+initNexa :: IO ()
+initNexa = do
+    putStrLn $ "Starting Xoken Nexa"
+    conn <- makeKeyValDBConn
+    defaultAdminUser conn
+    b <- doesFileExist "arivi-config.yaml"
+    unless b defaultConfig
+    cnf <- Config.readConfig "arivi-config.yaml"
+    nodeCnf <- NC.readConfig "node-config.yaml"
+    bp2p <- defBitcoinP2P nodeCnf
     let certFP = tlsCertificatePath nodeCnf
         keyFP = tlsKeyfilePath nodeCnf
         csrFP = tlsCertificateStorePath nodeCnf
@@ -277,3 +391,6 @@ main = do
     unless (cfp && kfp && csfp) $ P.error "Error: missing TLS certificate or keyfile"
     -- launch node --
     runNode cnf nodeCnf conn bp2p [certFP, keyFP, csrFP]
+
+main :: IO ()
+main = runDetached (Just "/tmp/nexa.pid") (ToFile "nexa.log") initNexa

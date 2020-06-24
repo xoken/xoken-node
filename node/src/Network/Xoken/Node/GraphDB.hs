@@ -172,10 +172,37 @@ initAllegoryRoot tx = do
         Left (e :: SomeException) -> do
             if isInfixOf (pack "ConstraintValidationFailed") (pack $ show e)
                 then do
-                    liftIO $ print (" Allegory root previously initialized ")
+                    liftIO $ putStrLn "Allegory root previously initialized "
                 else do
-                    liftIO $ print (" [error] initAllegoryRoot " ++ show e)
+                    liftIO $ putStrLn ("[error] initAllegoryRoot " ++ show e)
                     throw e
+        Right (records) -> return ()
+
+revertAllegoryStateTree :: Tx -> Allegory -> BoltActionT IO ()
+revertAllegoryStateTree tx allegory = do
+    let (inp, isProd) =
+            case action allegory of
+                OwnerAction oin _ _ -> (oin, False)
+                ProducerAction pin _ _ _ -> (pin, True)
+    let iop = prevOutput $ (txIn tx !! (index $ inp))
+    let iops = append (txHashToHex $ outPointHash $ iop) $ pack (":" ++ show (outPointIndex $ iop))
+    let cypher =
+            " MATCH (nu:nutxo { outpoint: {in_op}, name: {name}, producer:{is_prod}}) <-[*]-(x) " <>
+            " DETACH DELETE x   MERGE (ns:namestate { name:{nn_str} })-[nr:REVISION]->(nu) "
+    let params =
+            fromList
+                [ ("in_op", T $ iops)
+                , ("name", T $ pack $ Prelude.map (\x -> chr x) (name allegory))
+                , ("nn_str", T $ pack $ Prelude.map (\x -> chr x) (name allegory) ++ "|producer")
+                , ("is_prod", B $ isProd)
+                ]
+    liftIO $ print (cypher)
+    liftIO $ print (params)
+    res <- LE.try $ queryP cypher params
+    case res of
+        Left (e :: SomeException) -> do
+            liftIO $ print ("[ERROR] revertAllegoryStateTree (Owner) " ++ show e)
+            throw e
         Right (records) -> return ()
 
 updateAllegoryStateTrees :: Tx -> Allegory -> BoltActionT IO ()
@@ -214,7 +241,7 @@ updateAllegoryStateTrees tx allegory = do
             res <- LE.try $ queryP cypher params
             case res of
                 Left (e :: SomeException) -> do
-                    liftIO $ print ("[ERROR] updateAllegoryStateTrees (Prod) " ++ show e)
+                    liftIO $ print ("[ERROR] updateAllegoryStateTrees (Owner) " ++ show e)
                     throw e
                 Right (records) -> return ()
         ProducerAction pin pout oout extn -> do

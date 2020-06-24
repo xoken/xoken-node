@@ -27,6 +27,8 @@ import Conduit hiding (runResourceT)
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (AsyncCancelled, mapConcurrently, mapConcurrently_, race_)
 import qualified Control.Concurrent.Async.Lifted as LA (async, mapConcurrently, wait)
+import Control.Concurrent.MVar
+import Control.Concurrent.STM
 import Control.Concurrent.STM.TVar
 import qualified Control.Error.Util as Extra
 import Control.Exception
@@ -51,6 +53,7 @@ import qualified Data.ByteString.UTF8 as BSU (toString)
 import Data.Char
 import Data.Default
 import Data.Hashable
+import Data.IORef
 import Data.Int
 import Data.List
 import qualified Data.List as L
@@ -63,11 +66,15 @@ import Data.String (IsString, fromString)
 import qualified Data.Text as DT
 import qualified Data.Text.Encoding as DTE
 import qualified Data.Text.Encoding as E
+import Data.Time.Calendar
+import Data.Time.Clock
+import Data.Time.Clock.POSIX
 import Data.Word
 import Data.Yaml
 import qualified Database.Bolt as BT
 import qualified Database.CQL.IO as Q
 import Database.CQL.Protocol
+import qualified Network.Simple.TCP.TLS as TLS
 import Network.Xoken.Crypto.Hash
 import Network.Xoken.Node.Data
 import Network.Xoken.Node.Data.Allegory
@@ -79,9 +86,10 @@ import Network.Xoken.Node.P2P.Common
 import Network.Xoken.Node.P2P.Types
 import System.Logger as LG
 import System.Logger.Message
+import System.Random
 import Text.Read
 import Xoken
-import qualified Xoken.NodeConfig as NC (allegoryNameUtxoSatoshis)
+import qualified Xoken.NodeConfig as NC
 
 data AriviServiceException
     = KeyValueDBLookupException
@@ -90,6 +98,19 @@ data AriviServiceException
     deriving (Show)
 
 instance Exception AriviServiceException
+
+data EncodingFormat
+    = CBOR
+    | JSON
+    | DEFAULT
+
+data EndPointConnection =
+    EndPointConnection
+        { requestQueue :: TQueue XDataReq
+        , context :: MVar TLS.Context
+        , encodingFormat :: IORef EncodingFormat
+        , isAuthenticated :: TVar Bool
+        }
 
 xGetBlockHash :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> String -> m (Maybe BlockRecord)
 xGetBlockHash net hash = do
@@ -524,6 +545,8 @@ xGetPartiallySignedAllegoryTx net payips (nameArr, isProducer) owner change = do
     let name = DT.pack $ L.map (\x -> chr x) (nameArr)
     -- read from config file
     let anutxos = NC.allegoryNameUtxoSatoshis $ nodeConfig $ bp2pEnv
+    let feeSatsCreate = NC.allegoryTxFeeSatsProducerAction $ nodeConfig $ bp2pEnv
+    let feeSatsTransfer = NC.allegoryTxFeeSatsOwnerAction $ nodeConfig $ bp2pEnv
     res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameScriptOp (name) isProducer)
     (nameip, existed) <-
         case res of
@@ -577,34 +600,66 @@ xGetPartiallySignedAllegoryTx net payips (nameArr, isProducer) owner change = do
     --
     let outs =
             if existed
-                then do
-                    let al =
-                            Allegory
-                                1
-                                (nameArr)
-                                (OwnerAction
-                                     (Index 0)
-                                     (OwnerOutput (Index 1) (Just $ Endpoint "XokenP2P" "someuri_1"))
-                                     [ ProxyProvider
-                                           "AllPay"
-                                           "Public"
-                                           (Endpoint "XokenP2P" "someuri_2")
-                                           (Registration "addrCommit" "utxoCommit" "signature" 876543)
-                                     ])
-                    let opRetScript = frameOpReturn $ C.toStrict $ serialise al
-                    let payAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
-                    let payScript = addressToScriptBS payAddr
-                    [TxOut 0 opRetScript] ++
-                        (L.map
-                             (\x -> do
-                                  let addr =
-                                          case stringToAddr net (DT.pack $ fst x) of
-                                              Just a -> a
-                                              Nothing -> throw InvalidOutputAddressException
-                                  let script = addressToScriptBS addr
-                                  TxOut (fromIntegral $ snd x) script)
-                             [(owner, (fromIntegral $ anutxos)), (change, 5555)]) ++
-                        [TxOut (fromIntegral anutxos) payScript] -- the charge for the name transfer
+                then if isProducer
+                         then do
+                             let al =
+                                     Allegory
+                                         1
+                                         (init nameArr)
+                                         (ProducerAction
+                                              (Index 0)
+                                              (ProducerOutput (Index 1) (Just $ Endpoint "XokenP2P" "someuri_1"))
+                                              Nothing
+                                              [])
+                             let opRetScript = frameOpReturn $ C.toStrict $ serialise al
+                            -- derive producer's Address
+                             let prAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
+                             let prScript = addressToScriptBS prAddr
+                             let payAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
+                             let payScript = addressToScriptBS payAddr
+                             let paySats = 1000000
+                             let changeSats = totalEffectiveInputSats - (paySats + feeSatsCreate)
+                             [TxOut 0 opRetScript] ++
+                                 (L.map
+                                      (\x -> do
+                                           let addr =
+                                                   case stringToAddr net (DT.pack $ fst x) of
+                                                       Just a -> a
+                                                       Nothing -> throw InvalidOutputAddressException
+                                           let script = addressToScriptBS addr
+                                           TxOut (fromIntegral $ snd x) script)
+                                      [(owner, (fromIntegral $ anutxos)), (change, changeSats)]) ++
+                                 [TxOut ((fromIntegral paySats) :: Word64) payScript] -- the charge for the name transfer
+                         else do
+                             let al =
+                                     Allegory
+                                         1
+                                         (nameArr)
+                                         (OwnerAction
+                                              (Index 0)
+                                              (OwnerOutput (Index 1) (Just $ Endpoint "XokenP2P" "someuri_1"))
+                                              [ ProxyProvider
+                                                    "AllPay"
+                                                    "Public"
+                                                    (Endpoint "XokenP2P" "someuri_2")
+                                                    (Registration "addrCommit" "utxoCommit" "signature" 876543)
+                                              ])
+                             let opRetScript = frameOpReturn $ C.toStrict $ serialise al
+                             let payAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
+                             let payScript = addressToScriptBS payAddr
+                             let paySats = 1000000
+                             let changeSats = totalEffectiveInputSats - (paySats + feeSatsTransfer)
+                             [TxOut 0 opRetScript] ++
+                                 (L.map
+                                      (\x -> do
+                                           let addr =
+                                                   case stringToAddr net (DT.pack $ fst x) of
+                                                       Just a -> a
+                                                       Nothing -> throw InvalidOutputAddressException
+                                           let script = addressToScriptBS addr
+                                           TxOut (fromIntegral $ snd x) script)
+                                      [(owner, (fromIntegral $ anutxos)), (change, changeSats)]) ++
+                                 [TxOut (fromIntegral anutxos) payScript] -- the charge for the name transfer
                 else do
                     let al =
                             Allegory
@@ -625,7 +680,7 @@ xGetPartiallySignedAllegoryTx net payips (nameArr, isProducer) owner change = do
                     let payAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
                     let payScript = addressToScriptBS payAddr
                     let paySats = 1000000
-                    let changeSats = totalEffectiveInputSats - ((fromIntegral $ anutxos) + paySats)
+                    let changeSats = totalEffectiveInputSats - ((fromIntegral $ anutxos) + paySats + feeSatsCreate)
                     [TxOut 0 opRetScript] ++
                         [TxOut (fromIntegral anutxos) prScript] ++
                         (L.map
@@ -708,44 +763,71 @@ xRelayTx net rawTx = do
                     let !connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
                     debug lg $ LG.msg $ val $ "transaction verified - broadcasting tx"
                     mapM_ (\(_, peer) -> do sendRequestMessages peer (MTx (fromJust $ fst res))) connPeers
-                    return True
-                    -- else do
-                    debug lg $ LG.msg $ val $ "Checking for Allegory OP_RETURN"
-                    let op_return = head (txOut tx)
-                    let hexstr = B16.encode (scriptOutput op_return)
-                    if "006a0f416c6c65676f72792f416c6c506179" `isPrefixOf` (BC.unpack hexstr)
-                        then do
-                            liftIO $ print (hexstr)
-                            case decodeOutputScript $ scriptOutput op_return of
-                                Right (script) -> do
-                                    liftIO $ print (script)
-                                    case last $ scriptOps script of
-                                        (OP_PUSHDATA payload _) -> do
-                                            case (deserialiseOrFail $ C.fromStrict payload) of
-                                                Right (allegory) -> do
-                                                    liftIO $ print (allegory)
-                                                    ores <-
-                                                        liftIO $
-                                                        try $
-                                                        withResource
-                                                            (pool $ graphDB dbe)
-                                                            (`BT.run` updateAllegoryStateTrees tx allegory)
-                                                    case ores of
-                                                        Right () -> return True
-                                                        Left (SomeException e) -> return $ False
-                                                Left (e :: DeserialiseFailure) -> do
-                                                    err lg $
-                                                        LG.msg $ "error deserialising OP_RETURN CBOR data" ++ show e
-                                                    return False
-                                Left (e) -> do
-                                    err lg $ LG.msg $ "error decoding op_return data:" ++ show e
-                                    return False
-                        else do
-                            err lg $ LG.msg $ val $ "error: OP_RETURN prefix mismatch"
-                            return False
+                    eres <- LE.try $ handleIfAllegoryTx tx True -- MUST be False
+                    case eres of
+                        Right (flg) -> return True
+                        Left (e :: SomeException) -> return False
                 Nothing -> do
                     err lg $ LG.msg $ val $ "error decoding rawTx (2)"
                     return $ False
+
+authenticateClient ::
+       (HasXokenNodeEnv env m, MonadIO m) => RPCMessage -> Network -> EndPointConnection -> m (RPCMessage)
+authenticateClient msg net epConn = do
+    dbe <- getDB
+    lg <- getLogger
+    let conn = keyValDB (dbe)
+    case rqMethod msg of
+        "AUTHENTICATE" -> do
+            case rqParams msg of
+                Just (AuthenticateReq user pass) -> do
+                    let hashedPasswd = encodeHex ((S.encode $ sha256 $ BC.pack pass))
+                        str =
+                            " SELECT password, api_quota, api_used, session_key_expiry_time from xoken.user_permission where username = ? "
+                        qstr = str :: Q.QueryString Q.R (Identity DT.Text) (DT.Text, Int32, Int32, UTCTime)
+                        p = Q.defQueryParams Q.One $ Identity $ (DT.pack user)
+                    res <- liftIO $ try $ Q.runClient conn (Q.query (Q.prepared qstr) p)
+                    case res of
+                        Left (SomeException e) -> do
+                            err lg $ LG.msg $ "Error: SELECT'ing from 'user_permission': " ++ show e
+                            throw e
+                        Right (op) -> do
+                            if length op == 0
+                                then do
+                                    return $ RPCResponse 200 Nothing $ Just $ AuthenticateResp $ AuthResp Nothing 0 0
+                                else do
+                                    case (op !! 0) of
+                                        (sk, _, _, _) -> do
+                                            if (sk /= hashedPasswd)
+                                                then return $
+                                                     RPCResponse 200 Nothing $
+                                                     Just $ AuthenticateResp $ AuthResp Nothing 0 0
+                                                else do
+                                                    tm <- liftIO $ getCurrentTime
+                                                    g <- liftIO $ getStdGen
+                                                    let seed = show $ fst (random g :: (Word64, StdGen))
+                                                        sdb = B64.encode $ BC.pack $ seed
+                                                        newSessionKey = encodeHex ((S.encode $ sha256 $ B.reverse sdb))
+                                                        str1 =
+                                                            "UPDATE xoken.user_permission SET session_key = ?, session_key_expiry_time = ? WHERE username = ? "
+                                                        qstr1 = str1 :: Q.QueryString Q.W (DT.Text, UTCTime, DT.Text) ()
+                                                        par1 = Q.defQueryParams Q.One (newSessionKey, tm, DT.pack user)
+                                                    res1 <- liftIO $ try $ Q.runClient conn (Q.write (qstr1) par1)
+                                                    case res1 of
+                                                        Right () -> return ()
+                                                        Left (SomeException e) -> do
+                                                            err lg $
+                                                                LG.msg $
+                                                                "Error: UPDATE'ing into 'user_permission': " ++ show e
+                                                            throw e
+                                                    liftIO $ atomically $ writeTVar (isAuthenticated epConn) True
+                                                    return $
+                                                        RPCResponse 200 Nothing $
+                                                        Just $
+                                                        AuthenticateResp $
+                                                        AuthResp (Just $ DT.unpack newSessionKey) 1 100
+                Nothing -> return $ RPCResponse 404 (Just INVALID_REQUEST) Nothing
+        _____ -> return $ RPCResponse 200 Nothing $ Just $ AuthenticateResp $ AuthResp Nothing 0 0
 
 goGetResource :: (HasXokenNodeEnv env m, MonadIO m) => RPCMessage -> Network -> m (RPCMessage)
 goGetResource msg net = do
@@ -755,7 +837,7 @@ goGetResource msg net = do
         "HASH->BLOCK" -> do
             case rqParams msg of
                 Just (GetBlockByHash hs) -> do
-                    blk <- xGetBlockHash net (hs)
+                    !blk <- xGetBlockHash net (hs)
                     case blk of
                         Just b -> return $ RPCResponse 200 Nothing $ Just $ RespBlockByHash b
                         Nothing -> return $ RPCResponse 404 (Just INVALID_REQUEST) Nothing
@@ -786,7 +868,7 @@ goGetResource msg net = do
                     tx <- xGetTxHash net (hs)
                     case tx of
                         Just t -> return $ RPCResponse 200 Nothing $ Just $ RespRawTransactionByTxID t
-                        Nothing -> return $ RPCResponse 404 (Just INVALID_REQUEST) Nothing
+                        Nothing -> return $ RPCResponse 200 Nothing Nothing
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "TXID->TX" -> do
             case rqParams msg of
@@ -800,7 +882,7 @@ goGetResource msg net = do
                                     RPCResponse 200 Nothing $
                                     Just $ RespTransactionByTxID (TxRecord txId txBlockInfo rt)
                                 Left err -> return $ RPCResponse 400 (Just INTERNAL_ERROR) Nothing
-                        Nothing -> return $ RPCResponse 404 (Just INVALID_REQUEST) Nothing
+                        Nothing -> return $ RPCResponse 200 Nothing Nothing 
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "[TXID]->[RAWTX]" -> do
             case rqParams msg of

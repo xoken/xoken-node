@@ -45,21 +45,9 @@ import System.Logger as LG
 import Text.Printf
 import Xoken.NodeConfig
 
-data EncodingFormat
-    = CBOR
-    | JSON
-    | DEFAULT
-
 data TLSEndpointServiceHandler =
     TLSEndpointServiceHandler
         { connQueue :: TQueue EndPointConnection
-        }
-
-data EndPointConnection =
-    EndPointConnection
-        { requestQueue :: TQueue XDataReq
-        , context :: MVar TLS.Context
-        , encodingFormat :: IORef EncodingFormat
         }
 
 newTLSEndpointServiceHandler :: IO TLSEndpointServiceHandler
@@ -72,50 +60,60 @@ newEndPointConnection context = do
     reqQueue <- atomically $ newTQueue
     resLock <- newMVar context
     formatRef <- newIORef DEFAULT
-    return $ EndPointConnection reqQueue resLock formatRef
+    notauth <- newTVarIO False
+    return $ EndPointConnection reqQueue resLock formatRef notauth
 
 handleRPCReqResp ::
        (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
-    => MVar TLS.Context
+    => EndPointConnection
     -> EncodingFormat
     -> Int
     -> Maybe String
     -> RPCMessage
     -> m ()
-handleRPCReqResp sockMVar format mid version encReq = do
+handleRPCReqResp epConn format mid version encReq = do
     bp2pEnv <- getBitcoinP2P
     lg <- getLogger
     let net = bitcoinNetwork $ nodeConfig bp2pEnv
     liftIO $ printf "handleRPCReqResp (%d, %s)\n" mid (show encReq)
-    res <- LE.try $ goGetResource encReq net
+    auth <- liftIO $ readTVarIO $ isAuthenticated epConn
+    res <-
+        if auth
+            then do
+                LE.try $ goGetResource encReq net
+            else do
+                LE.try $ authenticateClient encReq net epConn
     case res of
         Right rpcResp -> do
-            let body = case format of
-                    CBOR ->
-                        serialise $
-                        CBORRPCResponse (mid) (rsStatusCode rpcResp) (show <$> rsStatusMessage rpcResp) (rsBody rpcResp)
-                    JSON ->
-                        case rsStatusMessage rpcResp of
-                            Just err ->
-                                A.encode
-                                    (JSONRPCErrorResponse
-                                        mid
-                                        (ErrorResponse (getJsonRPCErrorCode err) (show err) Nothing)
-                                        (fromJust version))
-                            Nothing -> A.encode (JSONRPCSuccessResponse (fromJust version) (rsBody rpcResp) mid)
-            connSock <- liftIO $ takeMVar sockMVar
+            let body =
+                    case format of
+                        CBOR ->
+                            serialise $
+                            CBORRPCResponse
+                                (mid)
+                                (rsStatusCode rpcResp)
+                                (show <$> rsStatusMessage rpcResp)
+                                (rsBody rpcResp)
+                        JSON ->
+                            case rsStatusMessage rpcResp of
+                                Just err ->
+                                    A.encode
+                                        (JSONRPCErrorResponse
+                                             mid
+                                             (ErrorResponse (getJsonRPCErrorCode err) (show err) Nothing)
+                                             (fromJust version))
+                                Nothing -> A.encode (JSONRPCSuccessResponse (fromJust version) (rsBody rpcResp) mid)
+            connSock <- liftIO $ takeMVar (context epConn)
             let prefixbody = LBS.append (DB.encode (fromIntegral (LBS.length body) :: Int32)) body
             NTLS.sendData connSock prefixbody
-            liftIO $ putMVar sockMVar connSock
+            liftIO $ putMVar (context epConn) connSock
         Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: goGetResource: " ++ show e 
-    
+            err lg $ LG.msg $ "Error: goGetResource / authenticate " ++ show e
 
 handleNewConnectionRequest :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => TLSEndpointServiceHandler -> m ()
 handleNewConnectionRequest handler = do
     continue <- liftIO $ newIORef True
     whileM_ (liftIO $ readIORef continue) $ do
-        liftIO $ printf "handleNewConnectionRequest\n"
         epConn <- liftIO $ atomically $ readTQueue $ connQueue handler
         async $ handleRequest epConn
         return ()
@@ -131,7 +129,7 @@ handleRequest epConn = do
                 liftIO $ printf "Decoded (%s)\n" (show met)
                 let req = RPCRequest met par
                 format <- liftIO $ readIORef (encodingFormat epConn)
-                async (handleRPCReqResp (context epConn) format mid version req) 
+                async (handleRPCReqResp epConn format mid version req)
                 return ()
             XDataRPCBadRequest -> do
                 format <- liftIO $ readIORef (encodingFormat epConn)

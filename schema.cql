@@ -46,12 +46,6 @@ CREATE TABLE xoken.address_outputs (
     PRIMARY KEY (address, nominal_tx_index, output)
 ) WITH CLUSTERING ORDER BY (nominal_tx_index DESC); 
 
-CREATE TABLE xoken.txidmap (
-    txid text PRIMARY KEY,
-    blockhash text,
-    txindex int
-); 
-
 CREATE TABLE xoken.blocks_by_height (
     block_height int PRIMARY KEY,
     block_hash text,
@@ -66,4 +60,19 @@ CREATE TABLE xoken.ep_transactions (
     tx_id text,
     tx_serialized blob,
     PRIMARY KEY (epoch, tx_id)
+); 
+
+CREATE TABLE xoken.user_permission (
+    username text PRIMARY KEY,
+    password text,
+    first_name text,
+    last_name text,
+    emailid text,
+    created_time timestamp,
+    permissions set <text>,
+    api_quota int,
+    api_used int,
+    api_expiry_time timestamp,
+    session_key text,
+    session_key_expiry_time timestamp
 ); 

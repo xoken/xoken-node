@@ -123,7 +123,11 @@ instance ToJSON ErrorResponse where
     toJSON (ErrorResponse c m d) = object ["code" .= c, "message" .= m, "data" .= d]
 
 data RPCReqParams
-    = GetBlockByHeight
+    = AuthenticateReq
+          { username :: String
+          , password :: String
+          }
+    | GetBlockByHeight
           { gbHeight :: Int
           }
     | GetBlocksByHeight
@@ -187,17 +191,20 @@ data RPCReqParams
 
 instance FromJSON RPCReqParams where
     parseJSON (Object o) =
-        (GetBlockByHeight <$> o .: "gbHeight") <|> (GetBlocksByHeight <$> o .: "gbHeights") <|>
+        (AuthenticateReq <$> o .: "username" <*> o .: "password") <|> (GetBlockByHeight <$> o .: "gbHeight") <|>
+        (GetBlocksByHeight <$> o .: "gbHeights") <|>
         (GetBlockByHash <$> o .: "gbBlockHash") <|>
         (GetBlocksByHashes <$> o .: "gbBlockHashes") <|>
         (GetTransactionByTxID <$> o .: "gtTxHash") <|>
         (GetTransactionsByTxIDs <$> o .: "gtTxHashes") <|>
         (GetRawTransactionByTxID <$> o .: "gtRTxHash") <|>
         (GetRawTransactionsByTxIDs <$> o .: "gtRTxHashes") <|>
-        (GetOutputsByAddress <$> o .: "gaAddrOutputs" <*> o .:? "gaPageSize" <*> o .:? "gaNominalTxIndex")  <|>
+        (GetOutputsByAddress <$> o .: "gaAddrOutputs" <*> o .:? "gaPageSize" <*> o .:? "gaNominalTxIndex") <|>
         (GetOutputsByAddresses <$> o .: "gasAddrOutputs" <*> o .:? "gasPageSize" <*> o .:? "gasNominalTxIndex") <|>
-        (GetOutputsByScriptHash <$> o .: "gaScriptHashOutputs" <*> o .:? "gaScriptHashPageSize" <*> o .:? "gaScriptHashNominalTxIndex") <|>
-        (GetOutputsByScriptHashes <$> o .: "gasScriptHashOutputs" <*> o .:? "gasScriptHashPageSize" <*> o .:? "gasScriptHashNominalTxIndex") <|>
+        (GetOutputsByScriptHash <$> o .: "gaScriptHashOutputs" <*> o .:? "gaScriptHashPageSize" <*>
+         o .:? "gaScriptHashNominalTxIndex") <|>
+        (GetOutputsByScriptHashes <$> o .: "gasScriptHashOutputs" <*> o .:? "gasScriptHashPageSize" <*>
+         o .:? "gasScriptHashNominalTxIndex") <|>
         (GetMerkleBranchByTxID <$> o .: "gmbMerkleBranch") <|>
         (GetAllegoryNameBranch <$> o .: "gaName" <*> o .: "gaIsProducer") <|>
         (RelayTx . BL.toStrict . GZ.decompress . B64L.decodeLenient . BL.fromStrict . T.encodeUtf8 <$> o .: "rTx") <|>
@@ -205,7 +212,10 @@ instance FromJSON RPCReqParams where
          o .: "gpsaOutputChange")
 
 data RPCResponseBody
-    = RespBlockByHeight
+    = AuthenticateResp
+          { auth :: AuthResp
+          }
+    | RespBlockByHeight
           { block :: BlockRecord
           }
     | RespBlocksByHeight
@@ -256,6 +266,7 @@ data RPCResponseBody
     deriving (Generic, Show, Hashable, Eq, Serialise)
 
 instance ToJSON RPCResponseBody where
+    toJSON (AuthenticateResp a) = object ["auth" .= a]
     toJSON (RespBlockByHeight b) = object ["block" .= b]
     toJSON (RespBlocksByHeight bs) = object ["blocks" .= bs]
     toJSON (RespBlockByHash b) = object ["block" .= b]
@@ -273,6 +284,14 @@ instance ToJSON RPCResponseBody where
     toJSON (RespRelayTx rrTx) = object ["rrTx" .= rrTx]
     toJSON (RespPartiallySignedAllegoryTx ps) =
         object ["psaTx" .= (T.decodeUtf8 . BL.toStrict . B64L.encode . GZ.compress . BL.fromStrict $ ps)]
+
+data AuthResp =
+    AuthResp
+        { sessionKey :: Maybe String
+        , callsUsed :: Int
+        , callsRemaining :: Int
+        }
+    deriving (Generic, Show, Hashable, Eq, Serialise, ToJSON)
 
 data BlockRecord =
     BlockRecord
