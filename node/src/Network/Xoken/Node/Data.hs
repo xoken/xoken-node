@@ -25,6 +25,7 @@ import qualified Data.ByteString.Lazy as BL
 import qualified Data.ByteString.Lazy.Char8 as C
 import Data.ByteString.Short (ShortByteString)
 import qualified Data.ByteString.Short as B.Short
+import Data.Char (ord)
 import Data.Default
 import Data.Foldable
 import Data.Functor.Identity
@@ -44,6 +45,7 @@ import GHC.Generics
 import Network.Socket (SockAddr(SockAddrUnix))
 import Paths_xoken_node as P
 import Prelude as P
+import Text.Regex.TDFA
 import UnliftIO
 import UnliftIO.Exception
 import qualified Web.Scotty.Trans as Scotty
@@ -121,7 +123,11 @@ instance ToJSON ErrorResponse where
     toJSON (ErrorResponse c m d) = object ["code" .= c, "message" .= m, "data" .= d]
 
 data RPCReqParams
-    = GetBlockByHeight
+    = AuthenticateReq
+          { username :: String
+          , password :: String
+          }
+    | GetBlockByHeight
           { gbHeight :: Int
           }
     | GetBlocksByHeight
@@ -185,17 +191,20 @@ data RPCReqParams
 
 instance FromJSON RPCReqParams where
     parseJSON (Object o) =
-        (GetBlockByHeight <$> o .: "gbHeight") <|> (GetBlocksByHeight <$> o .: "gbHeights") <|>
+        (AuthenticateReq <$> o .: "username" <*> o .: "password") <|> (GetBlockByHeight <$> o .: "gbHeight") <|>
+        (GetBlocksByHeight <$> o .: "gbHeights") <|>
         (GetBlockByHash <$> o .: "gbBlockHash") <|>
         (GetBlocksByHashes <$> o .: "gbBlockHashes") <|>
         (GetTransactionByTxID <$> o .: "gtTxHash") <|>
         (GetTransactionsByTxIDs <$> o .: "gtTxHashes") <|>
         (GetRawTransactionByTxID <$> o .: "gtRTxHash") <|>
         (GetRawTransactionsByTxIDs <$> o .: "gtRTxHashes") <|>
-        (GetOutputsByAddress <$> o .: "gaAddrOutputs" <*> o .:? "gaPageSize" <*> o .:? "gaNominalTxIndex")  <|>
+        (GetOutputsByAddress <$> o .: "gaAddrOutputs" <*> o .:? "gaPageSize" <*> o .:? "gaNominalTxIndex") <|>
         (GetOutputsByAddresses <$> o .: "gasAddrOutputs" <*> o .:? "gasPageSize" <*> o .:? "gasNominalTxIndex") <|>
-        (GetOutputsByScriptHash <$> o .: "gaScriptHashOutputs" <*> o .:? "gaScriptHashPageSize" <*> o .:? "gaScriptHashNominalTxIndex") <|>
-        (GetOutputsByScriptHashes <$> o .: "gasScriptHashOutputs" <*> o .:? "gasScriptHashPageSize" <*> o .:? "gasScriptHashNominalTxIndex") <|>
+        (GetOutputsByScriptHash <$> o .: "gaScriptHashOutputs" <*> o .:? "gaScriptHashPageSize" <*>
+         o .:? "gaScriptHashNominalTxIndex") <|>
+        (GetOutputsByScriptHashes <$> o .: "gasScriptHashOutputs" <*> o .:? "gasScriptHashPageSize" <*>
+         o .:? "gasScriptHashNominalTxIndex") <|>
         (GetMerkleBranchByTxID <$> o .: "gmbMerkleBranch") <|>
         (GetAllegoryNameBranch <$> o .: "gaName" <*> o .: "gaIsProducer") <|>
         (RelayTx . BL.toStrict . GZ.decompress . B64L.decodeLenient . BL.fromStrict . T.encodeUtf8 <$> o .: "rTx") <|>
@@ -203,7 +212,10 @@ instance FromJSON RPCReqParams where
          o .: "gpsaOutputChange")
 
 data RPCResponseBody
-    = RespBlockByHeight
+    = AuthenticateResp
+          { auth :: AuthResp
+          }
+    | RespBlockByHeight
           { block :: BlockRecord
           }
     | RespBlocksByHeight
@@ -254,6 +266,7 @@ data RPCResponseBody
     deriving (Generic, Show, Hashable, Eq, Serialise)
 
 instance ToJSON RPCResponseBody where
+    toJSON (AuthenticateResp a) = object ["auth" .= a]
     toJSON (RespBlockByHeight b) = object ["block" .= b]
     toJSON (RespBlocksByHeight bs) = object ["blocks" .= bs]
     toJSON (RespBlockByHash b) = object ["block" .= b]
@@ -272,11 +285,24 @@ instance ToJSON RPCResponseBody where
     toJSON (RespPartiallySignedAllegoryTx ps) =
         object ["psaTx" .= (T.decodeUtf8 . BL.toStrict . B64L.encode . GZ.compress . BL.fromStrict $ ps)]
 
+data AuthResp =
+    AuthResp
+        { sessionKey :: Maybe String
+        , callsUsed :: Int
+        , callsRemaining :: Int
+        }
+    deriving (Generic, Show, Hashable, Eq, Serialise, ToJSON)
+
 data BlockRecord =
     BlockRecord
         { rbHeight :: Int
         , rbHash :: String
         , rbHeader :: BlockHeader
+        , rbSize :: Int
+        , rbTxCount :: Int
+        , rbGuessedMiner :: String
+        , rbCoinbaseMessage :: String
+        , rbCoinbaseTx :: String
         }
     deriving (Generic, Show, Hashable, Eq, Serialise, ToJSON)
 
@@ -433,3 +459,15 @@ addressToScriptOutputs AddressOutputs {..} =
         , scPrevOutpoint = aoPrevOutpoint
         , scValue = aoValue
         }
+
+
+coinbaseTxToMessage :: C.ByteString -> String
+coinbaseTxToMessage s = case C.length (C.pack regex) > 6 of
+    True -> let sig = C.drop 4 $ C.pack regex
+                sigLen = fromIntegral . ord . C.head $ sig
+                htLen = fromIntegral . ord . C.head . C.tail $ sig
+            in C.unpack . C.take (sigLen - htLen - 1) . C.drop (htLen+2) $ sig
+    False -> "False"
+  where r :: String
+        r = "\255\255\255\255[\NUL-\255]+"
+        regex = ((C.unpack s) =~ r) :: String

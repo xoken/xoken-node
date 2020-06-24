@@ -14,7 +14,10 @@ CREATE TABLE xoken.transactions (
 CREATE TABLE xoken.blocks_by_hash (
     block_hash text PRIMARY KEY,
     block_header text,
-    block_height int
+    block_height int,
+    block_size int,
+    tx_count int,
+    coinbase_tx blob
 ); 
 
 CREATE TABLE xoken.ep_address_outputs (
@@ -46,7 +49,10 @@ CREATE TABLE xoken.address_outputs (
 CREATE TABLE xoken.blocks_by_height (
     block_height int PRIMARY KEY,
     block_hash text,
-    block_header text
+    block_header text,
+    block_size int,
+    tx_count int,
+    coinbase_tx blob
 ); 
 
 CREATE TABLE xoken.ep_transactions (
@@ -54,4 +60,19 @@ CREATE TABLE xoken.ep_transactions (
     tx_id text,
     tx_serialized blob,
     PRIMARY KEY (epoch, tx_id)
+); 
+
+CREATE TABLE xoken.user_permission (
+    username text PRIMARY KEY,
+    password text,
+    first_name text,
+    last_name text,
+    emailid text,
+    created_time timestamp,
+    permissions set <text>,
+    api_quota int,
+    api_used int,
+    api_expiry_time timestamp,
+    session_key text,
+    session_key_expiry_time timestamp
 ); 
