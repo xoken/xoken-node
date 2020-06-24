@@ -257,7 +257,7 @@ data RPCResponseBody
           { psaTx :: ByteString
           }
     | RespTxOutputSpendStatus
-          { spendStatus :: TxOutputSpendStatus
+          { spendStatus :: Maybe TxOutputSpendStatus
           }
     deriving (Generic, Show, Hashable, Eq, Serialise)
 

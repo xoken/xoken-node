@@ -148,6 +148,26 @@ xGetBlockHeight net height = do
                     liftIO $ print $ "Decode failed with error: " <> show err
                     return Nothing
 
+xGetTxOutputSpendStatus :: 
+        (HasXokenNodeEnv env m, MonadIO m) 
+     => Network 
+     -> String 
+     -> Int32 
+     -> m (Maybe TxOutputSpendStatus)
+xGetTxOutputSpendStatus net txId outputIndex = do
+    dbe <- getDB
+    let conn = keyValDB (dbe)
+        str = "SELECT is_output_spent, spending_txid, spending_index FROM xoken.txid_outputs WHERE txid=? AND idx=?"
+        qstr =
+            str :: Q.QueryString Q.R (DT.Text, Int32) (Bool, Maybe DT.Text, Maybe Int32)
+        p = Q.defQueryParams Q.One (DT.pack txId, outputIndex)
+    iop <- Q.runClient conn (Q.query qstr p)
+    if length iop == 0
+        then return Nothing
+        else do
+            let (isSpent, spendingTxID, spendingTxIndex) = iop !! 0
+            return $ Just $ TxOutputSpendStatus isSpent (DT.unpack <$> spendingTxID) Nothing spendingTxIndex 
+
 xGetBlocksHeights :: (HasXokenNodeEnv env m, MonadIO m) => Network -> [Int32] -> m ([BlockRecord])
 xGetBlocksHeights net heights = do
     dbe <- getDB
@@ -670,19 +690,6 @@ xRelayTx net rawTx = do
                     err lg $ LG.msg $ val $ "error decoding rawTx (2)"
                     return $ False
 
-xGetTxOutputSpendStatus :: 
-        (HasXokenNodeEnv env m, MonadIO m) 
-     => Network 
-     -> String 
-     -> Int32 
-     -> m (TxOutputSpendStatus)
-xGetTxOutputSpendStatus net txId outputIndex = return $
-    TxOutputSpendStatus
-      { isSpent = False
-      , spendingTxID = Nothing
-      , spendingTxHeight = Nothing
-      , spendingTxIndex = Nothing
-      }
     
 goGetResource :: (HasXokenNodeEnv env m, MonadIO m) => RPCMessage -> Network -> m (RPCMessage)
 goGetResource msg net = do
