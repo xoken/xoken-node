@@ -115,6 +115,7 @@ executable xoken-nexa
     , x509-store
     , network-simple-tls
     , vformat
+    , daemons
   default-language: Haskell2010
 
 test-suite xoken-node-test

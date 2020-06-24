@@ -55,3 +55,18 @@ CREATE TABLE xoken.ep_transactions (
     tx_serialized blob,
     PRIMARY KEY (epoch, tx_id)
 ); 
+
+CREATE TABLE xoken.user_permission (
+    username text PRIMARY KEY,
+    password text,
+    first_name text,
+    last_name text,
+    emailid text,
+    created_date date,
+    permissions set <text>,
+    api_quota int,
+    api_used int,
+    api_expiry_date date,
+    session_key text,
+    session_key_expiry_date date
+); 

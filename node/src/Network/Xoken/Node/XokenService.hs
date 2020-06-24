@@ -27,6 +27,8 @@ import Conduit hiding (runResourceT)
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (AsyncCancelled, mapConcurrently, mapConcurrently_, race_)
 import qualified Control.Concurrent.Async.Lifted as LA (async, mapConcurrently, wait)
+import Control.Concurrent.MVar
+import Control.Concurrent.STM
 import Control.Concurrent.STM.TVar
 import qualified Control.Error.Util as Extra
 import Control.Exception
@@ -51,6 +53,7 @@ import qualified Data.ByteString.UTF8 as BSU (toString)
 import Data.Char
 import Data.Default
 import Data.Hashable
+import Data.IORef
 import Data.Int
 import Data.List
 import qualified Data.List as L
@@ -68,6 +71,7 @@ import Data.Yaml
 import qualified Database.Bolt as BT
 import qualified Database.CQL.IO as Q
 import Database.CQL.Protocol
+import qualified Network.Simple.TCP.TLS as TLS
 import Network.Xoken.Crypto.Hash
 import Network.Xoken.Node.Data
 import Network.Xoken.Node.Data.Allegory
@@ -90,6 +94,19 @@ data AriviServiceException
     deriving (Show)
 
 instance Exception AriviServiceException
+
+data EncodingFormat
+    = CBOR
+    | JSON
+    | DEFAULT
+
+data EndPointConnection =
+    EndPointConnection
+        { requestQueue :: TQueue XDataReq
+        , context :: MVar TLS.Context
+        , encodingFormat :: IORef EncodingFormat
+        , isAuthenticated :: TVar Bool
+        }
 
 xGetBlockHash :: (HasXokenNodeEnv env m, MonadIO m) => Network -> String -> m (Maybe BlockRecord)
 xGetBlockHash net hash = do
@@ -673,6 +690,21 @@ xRelayTx net rawTx = do
                     err lg $ LG.msg $ val $ "error decoding rawTx (2)"
                     return $ False
 
+authenticateClient ::
+       (HasXokenNodeEnv env m, MonadIO m) => RPCMessage -> Network -> EndPointConnection -> m (RPCMessage)
+authenticateClient msg net epConn = do
+    case rqMethod msg of
+        "AUTHENTICATE" -> do
+            case rqParams msg of
+                Just (AuthenticateReq user pass) -> do
+                    liftIO $ atomically $ writeTVar (isAuthenticated epConn) True
+                    case (Just user) of
+                        Just b ->
+                            return $
+                            RPCResponse 200 Nothing $ Just $ AuthenticateResp $ AuthResp (Just "test-key123") 1 100
+                        Nothing -> return $ RPCResponse 404 (Just INVALID_REQUEST) Nothing
+        _____ -> return $ RPCResponse 200 Nothing $ Just $ AuthenticateResp $ AuthResp Nothing 0 0
+
 goGetResource :: (HasXokenNodeEnv env m, MonadIO m) => RPCMessage -> Network -> m (RPCMessage)
 goGetResource msg net = do
     dbe <- getDB
@@ -681,7 +713,7 @@ goGetResource msg net = do
         "HASH->BLOCK" -> do
             case rqParams msg of
                 Just (GetBlockByHash hs) -> do
-                    blk <- xGetBlockHash net (hs)
+                    !blk <- xGetBlockHash net (hs)
                     case blk of
                         Just b -> return $ RPCResponse 200 Nothing $ Just $ RespBlockByHash b
                         Nothing -> return $ RPCResponse 404 (Just INVALID_REQUEST) Nothing
