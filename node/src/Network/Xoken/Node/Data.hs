@@ -25,6 +25,7 @@ import qualified Data.ByteString.Lazy as BL
 import qualified Data.ByteString.Lazy.Char8 as C
 import Data.ByteString.Short (ShortByteString)
 import qualified Data.ByteString.Short as B.Short
+import Data.Char (ord)
 import Data.Default
 import Data.Foldable
 import Data.Functor.Identity
@@ -44,6 +45,7 @@ import GHC.Generics
 import Network.Socket (SockAddr(SockAddrUnix))
 import Paths_xoken_node as P
 import Prelude as P
+import Text.Regex.TDFA
 import UnliftIO
 import UnliftIO.Exception
 import qualified Web.Scotty.Trans as Scotty
@@ -296,6 +298,11 @@ data BlockRecord =
         { rbHeight :: Int
         , rbHash :: String
         , rbHeader :: BlockHeader
+        , rbSize :: Int
+        , rbTxCount :: Int
+        , rbGuessedMiner :: String
+        , rbCoinbaseMessage :: String
+        , rbCoinbaseTx :: String
         }
     deriving (Generic, Show, Hashable, Eq, Serialise, ToJSON)
 
@@ -452,3 +459,15 @@ addressToScriptOutputs AddressOutputs {..} =
         , scPrevOutpoint = aoPrevOutpoint
         , scValue = aoValue
         }
+
+
+coinbaseTxToMessage :: C.ByteString -> String
+coinbaseTxToMessage s = case C.length (C.pack regex) > 6 of
+    True -> let sig = C.drop 4 $ C.pack regex
+                sigLen = fromIntegral . ord . C.head $ sig
+                htLen = fromIntegral . ord . C.head . C.tail $ sig
+            in C.unpack . C.take (sigLen - htLen - 1) . C.drop (htLen+2) $ sig
+    False -> "False"
+  where r :: String
+        r = "\255\255\255\255[\NUL-\255]+"
+        regex = ((C.unpack s) =~ r) :: String
