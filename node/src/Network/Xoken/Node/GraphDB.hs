@@ -172,9 +172,9 @@ initAllegoryRoot tx = do
         Left (e :: SomeException) -> do
             if isInfixOf (pack "ConstraintValidationFailed") (pack $ show e)
                 then do
-                    liftIO $ print (" Allegory root previously initialized " ++ (show e))
+                    liftIO $ putStrLn "Allegory root previously initialized "
                 else do
-                    liftIO $ print (" [error] initAllegoryRoot " ++ show e)
+                    liftIO $ putStrLn ("[error] initAllegoryRoot " ++ show e)
                     throw e
         Right (records) -> return ()
 
