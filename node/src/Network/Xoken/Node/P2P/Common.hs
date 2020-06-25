@@ -23,6 +23,7 @@ import Control.Monad.State.Strict
 import qualified Data.Aeson as A (decode, encode)
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Base16 as B16
+import Data.ByteString.Base64 as B64
 import Data.ByteString.Builder
 import qualified Data.ByteString.Char8 as C
 import qualified Data.ByteString.Lazy as BSL
@@ -41,6 +42,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Clock
 import Data.Time.Clock.POSIX
+import Data.Word
 import Data.Word
 import qualified Database.CQL.IO as Q
 import Network.Socket
@@ -186,3 +188,10 @@ frameOpReturn opReturn = do
                                            else word8 0x99 -- error scenario!!
     let bs = LC.toStrict $ toLazyByteString xx
     C.append (C.append prefix bs) opReturn
+
+generateSessionKey :: IO (Text)
+generateSessionKey = do
+    g <- liftIO $ getStdGen
+    let seed = show $ fst (random g :: (Word64, StdGen))
+        sdb = B64.encode $ C.pack $ seed
+    return $ encodeHex ((S.encode $ sha256 $ B.reverse sdb))
