@@ -112,6 +112,10 @@ data EndPointConnection =
         , isAuthenticated :: TVar Bool
         }
 
+xGetChainInfo :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> String -> m (Maybe String)
+xGetChainInfo net hash = do
+    return $ Just "0x1001001"
+
 xGetBlockHash :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> String -> m (Maybe BlockRecord)
 xGetBlockHash net hash = do
     dbe <- getDB
@@ -834,10 +838,18 @@ goGetResource msg net = do
     dbe <- getDB
     let grdb = graphDB (dbe)
     case rqMethod msg of
+        "CHAIN_INFO" -> do
+            case rqParams msg of
+                Just (GetChainInfo hs) -> do
+                    cw <- xGetChainInfo net (hs)
+                    case cw of
+                        Just c -> return $ RPCResponse 200 Nothing $ Just $ RespChainInfo c
+                        Nothing -> return $ RPCResponse 404 (Just INVALID_REQUEST) Nothing
+                _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "HASH->BLOCK" -> do
             case rqParams msg of
                 Just (GetBlockByHash hs) -> do
-                    !blk <- xGetBlockHash net (hs)
+                    blk <- xGetBlockHash net (hs)
                     case blk of
                         Just b -> return $ RPCResponse 200 Nothing $ Just $ RespBlockByHash b
                         Nothing -> return $ RPCResponse 404 (Just INVALID_REQUEST) Nothing
