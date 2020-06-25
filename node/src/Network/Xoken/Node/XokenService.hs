@@ -112,9 +112,11 @@ data EndPointConnection =
         , isAuthenticated :: TVar Bool
         }
 
-xGetChainInfo :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> String -> m (Maybe String)
-xGetChainInfo net hash = do
-    return $ Just "0x1001001"
+xGetChainInfo :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> m (Maybe String)
+xGetChainInfo net = do
+    lg <- getLogger
+    debug lg $ LG.msg $ ("Returning 0x1001001 Chainwork" :: String)
+    return $ Just $ "0x1001001"
 
 xGetBlockHash :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> String -> m (Maybe BlockRecord)
 xGetBlockHash net hash = do
@@ -841,7 +843,7 @@ goGetResource msg net = do
         "CHAIN_INFO" -> do
             case rqParams msg of
                 Just (GetChainInfo hs) -> do
-                    cw <- xGetChainInfo net (hs)
+                    cw <- xGetChainInfo net
                     case cw of
                         Just c -> return $ RPCResponse 200 Nothing $ Just $ RespChainInfo c
                         Nothing -> return $ RPCResponse 404 (Just INVALID_REQUEST) Nothing

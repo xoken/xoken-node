@@ -58,6 +58,7 @@ import Network.Xoken.Node.Env
 import Network.Xoken.Node.GraphDB
 import Network.Xoken.Node.P2P.Common
 import Network.Xoken.Node.P2P.Types
+import Numeric
 import Streamly
 import Streamly.Prelude ((|:), nil)
 import qualified Streamly.Prelude as S
@@ -284,6 +285,7 @@ processHeaders hdrs = do
                     indexed
             unless (L.null indexed) $ do
                 markBestBlock (blockHashToHex $ headerHash $ fst $ snd $ last $ indexed) (fst $ last indexed) conn
+                updateChainWork indexed conn
                 liftIO $ putMVar (bestBlockUpdated bp2pEnv) True
         False -> do
             err lg $ LG.msg $ val "Error: BlocksNotChainedException"
@@ -301,3 +303,37 @@ fetchMatchBlockOffset conn net hashes = do
         else do
             let (maxHt, bhash) = iop !! 0
             return $ Just (bhash, maxHt)
+
+updateChainWork :: (HasLogger m, MonadIO m) => [(Int32, BlockHeaderCount)] -> Q.ClientState -> m ()
+updateChainWork indexed conn = do
+    lg <- getLogger
+    let str = "SELECT value from xoken.misc_store where key = ?"
+        qstr = str :: Q.QueryString Q.R (Identity Text) (Identity (Maybe Bool, Maybe Int32, Maybe Int64, Maybe T.Text))
+        str1 = "insert INTO xoken.misc_store (key, value) values (?, ?)"
+        qstr1 = str1 :: Q.QueryString Q.W (Text, (Maybe Bool, Int32, Maybe Int64, Text)) ()
+        par = Q.defQueryParams Q.One $ Identity "chain-work"
+        indexedCW = foldr (\x y -> y + (convertBitsToBlockWork $ blockBits $ fst $ snd $ x)) 0 indexed
+    iop <- Q.runClient conn (Q.query qstr par)
+    let (_, _, _, chainWork) = case L.length iop of
+           0 -> (Nothing, Just 0, Nothing, Just "4295032833")  -- 4295032833 is chainwork for genesis block
+           _ -> runIdentity $ iop !! 0
+        par1 = Q.defQueryParams Q.One ("chain-work", (Nothing, fst $ last indexed, Nothing, T.pack $ show $ indexedCW + (read . T.unpack $ fromJust chainWork)))
+    res <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr1) par1)
+    case res of
+        Right () -> return ()
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg ("Error: INSERT 'cahin-work' into 'misc_store' failed: " ++ show e)
+            throw KeyValueDBInsertException
+
+targetMax :: Integer
+targetMax = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+
+convertBitsToTarget :: Word32 -> Integer
+convertBitsToTarget b = read $ "0x" ++ (drop 2 hexBits) ++ replicate ((read $ "0x" ++ take 2 hexBits)*2 - 6) '0'
+    where hexBits = showHex b ""
+
+getBlockWork :: Integer -> Integer
+getBlockWork = div targetMax
+
+convertBitsToBlockWork :: Word32 -> Integer
+convertBitsToBlockWork = getBlockWork . convertBitsToTarget
