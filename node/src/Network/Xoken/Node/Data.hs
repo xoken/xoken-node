@@ -319,8 +319,8 @@ data ChainInfo =
         { ciChain :: String
         , ciChainWork :: String
         , ciDifficulty :: Double
-        , ciHeaders :: Int
-        , ciBlocks :: Int
+        , ciHeaders :: Int32
+        , ciBlocks :: Int32
         , ciBestBlockHash :: String
         } deriving (Generic, Show, Hashable, Eq, Serialise, ToJSON)
 

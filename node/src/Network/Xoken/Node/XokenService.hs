@@ -118,25 +118,32 @@ xGetChainInfo net = do
     dbe <- getDB
     lg <- getLogger
     let conn = keyValDB $ dbe
-        str = "SELECT value from xoken.misc_store where key = ?"
-        qstr = str :: Q.QueryString Q.R (Identity DT.Text) (Identity (Maybe Bool, Maybe Int32, Maybe Int64, Maybe DT.Text))
-        p = Q.defQueryParams Q.One $ Identity "chain-work"
-    iop <- Q.runClient conn (Q.query qstr p)
-    if L.null iop 
-        then do
-            return Nothing
-        else do
-            let (_, height, _, chainwork) = runIdentity $ iop !! 0
-            blk <- xGetBlockHeight net (fromJust height)
-            case blk of
-                Nothing -> return Nothing
-                Just b -> do
-                    return $ Just $ ChainInfo "main"
-                                     (showHex (read . DT.unpack $ fromJust chainwork) "")
-                                     (convertBitsToDifficulty . blockBits . rbHeader $ b)
-                                     (-1)
-                                     (fromIntegral $ fromJust height)
-                                     (rbHash b)
+        str = "SELECT key,value from xoken.misc_store"
+        qstr = str :: Q.QueryString Q.R () (DT.Text,(Maybe Bool, Int32, Maybe Int64, DT.Text))
+        p = Q.defQueryParams Q.One ()
+    res <- LE.try $ Q.runClient conn (Q.query qstr p)
+    case res of
+        Right iop -> do
+            if L.length iop < 3
+                then do
+                    return Nothing
+                else do
+                    let (_,blocks,_,_) = snd . head $ (L.filter (\x -> fst x == "best-synced") iop)
+                        (_,headers,_,bestBlockHash) = snd . head $ (L.filter (\x -> fst x == "best_chain_tip") iop)
+                        (_,height,_,chainwork) = snd . head $ (L.filter (\x -> fst x == "chain-work") iop)
+                    blk <- xGetBlockHeight net height
+                    case blk of
+                        Nothing -> return Nothing
+                        Just b -> do
+                            return $ Just $ ChainInfo "main"
+                                            (showHex (read . DT.unpack $ chainwork) "")
+                                            (convertBitsToDifficulty . blockBits . rbHeader $ b)
+                                            (headers)
+                                            (blocks)
+                                            (rbHash b)
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: xGetChainInfo: " ++ show e
+            throw KeyValueDBLookupException
 
 xGetBlockHash :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> String -> m (Maybe BlockRecord)
 xGetBlockHash net hash = do

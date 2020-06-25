@@ -314,9 +314,10 @@ updateChainWork indexed conn = do
         indexedCW = foldr (\x y -> y + (convertBitsToBlockWork $ blockBits $ fst $ snd $ x)) 0 indexed
     iop <- Q.runClient conn (Q.query qstr par)
     let (_, _, _, chainWork) = case L.length iop of
-           0 -> (Nothing, Just 0, Nothing, Just "4295032833")  -- 4295032833 is chainwork for genesis block
+           0 -> (Nothing, Just 0, Nothing, Just "4295032833")  -- 4295032833 (0x100010001) is chainwork for genesis block
            _ -> runIdentity $ iop !! 0
-        par1 = Q.defQueryParams Q.One ("chain-work", (Nothing, fst $ last indexed, Nothing, T.pack $ show $ indexedCW + (read . T.unpack $ fromJust chainWork)))
+        updatedChainwork = T.pack $ show $ indexedCW + (read . T.unpack $ fromJust chainWork)
+        par1 = Q.defQueryParams Q.One ("chain-work", (Nothing, fst $ last indexed, Nothing, updatedChainwork))
     res <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr1) par1)
     case res of
         Right () -> return ()
