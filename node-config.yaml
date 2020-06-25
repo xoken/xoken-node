@@ -4,7 +4,7 @@ indexUnconfirmedTx: False
 
 logLevel: Debug
 
-logFileName: ./nexa.log
+logFileName: ./debug.log
 
 bitcoinNodeListenIP: 127.0.0.1
 
