@@ -64,6 +64,7 @@ import qualified Database.Bolt as BT
 import qualified Database.CQL.IO as Q
 import qualified Database.CQL.IO as Q
 import Database.CQL.Protocol
+import Numeric (showHex)
 import qualified Network.Socket as NS
 import qualified Network.Socket.ByteString as SB (recv)
 import qualified Network.Socket.ByteString.Lazy as LB (recv, sendAll)
@@ -707,3 +708,15 @@ handleIfAllegoryTx tx revert = do
         case eres of
             Right () -> return True
             Left (SomeException e) -> throw e
+
+-- Chainwork calculation
+
+targetMax :: Integer
+targetMax = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+
+convertBitsToTarget :: Int -> Integer
+convertBitsToTarget b = read $ "0x" ++ (drop 2 hexBits) ++ replicate ((read $ "0x" ++ take 2 hexBits)*2 - 6) '0'
+    where hexBits = showHex b ""
+
+getBlockWork :: Integer -> Integer
+getBlockWork = div targetMax
