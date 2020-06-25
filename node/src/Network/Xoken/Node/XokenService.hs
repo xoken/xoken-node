@@ -1013,7 +1013,7 @@ goGetResource msg net = do
                             return $ RPCResponse 400 (Just INTERNAL_ERROR) Nothing
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "TX_SPEND_STATUS" -> do
-            case rqParams msg of
+            case methodParams $ rqParams msg of
                 Just (GetTxOutputSpendStatus txid index) -> do
                     txss <- xGetTxOutputSpendStatus net txid index
                     return $ RPCResponse 200 Nothing $ Just $ RespTxOutputSpendStatus txss
