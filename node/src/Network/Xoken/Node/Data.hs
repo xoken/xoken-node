@@ -139,6 +139,9 @@ data RPCReqParams
     | GetBlocksByHashes
           { gbBlockHashes :: [String]
           }
+    | GetChainInfo
+          { gcChainInfo :: String
+          }
     | GetTransactionByTxID
           { gtTxHash :: String
           }
@@ -187,6 +190,8 @@ data RPCReqParams
           , gpsaOutputOwner :: String
           , gpsaOutputChange :: String
           }
+    
+    
     deriving (Generic, Show, Hashable, Eq, Serialise, ToJSON)
 
 instance FromJSON RPCReqParams where
@@ -195,6 +200,7 @@ instance FromJSON RPCReqParams where
         (GetBlocksByHeight <$> o .: "gbHeights") <|>
         (GetBlockByHash <$> o .: "gbBlockHash") <|>
         (GetBlocksByHashes <$> o .: "gbBlockHashes") <|>
+        (GetChainInfo <$> o .: "gcChainInfo") <|>
         (GetTransactionByTxID <$> o .: "gtTxHash") <|>
         (GetTransactionsByTxIDs <$> o .: "gtTxHashes") <|>
         (GetRawTransactionByTxID <$> o .: "gtRTxHash") <|>
@@ -226,6 +232,9 @@ data RPCResponseBody
           }
     | RespBlocksByHashes
           { blocks :: [BlockRecord]
+          }
+    | RespChainInfo
+          { chainwork :: String
           }
     | RespTransactionByTxID
           { tx :: TxRecord
@@ -271,6 +280,7 @@ instance ToJSON RPCResponseBody where
     toJSON (RespBlocksByHeight bs) = object ["blocks" .= bs]
     toJSON (RespBlockByHash b) = object ["block" .= b]
     toJSON (RespBlocksByHashes bs) = object ["blocks" .= bs]
+    toJSON (RespChainInfo cw) = object ["chainwork" .= cw]
     toJSON (RespTransactionByTxID tx) = object ["tx" .= tx]
     toJSON (RespTransactionsByTxIDs txs) = object ["txs" .= txs]
     toJSON (RespRawTransactionByTxID tx) = object ["rawTx" .= tx]
