@@ -31,14 +31,19 @@ import Data.Int
 import qualified Data.Map.Strict as M
 import Data.Maybe
 import Data.Serialize
+import qualified Data.Serialize as S
 import Data.Text as T
+import Data.Time.Clock
+import Data.Time.Clock.POSIX
 import Data.X509.CertificateStore
+import qualified Database.CQL.IO as Q
 import GHC.Generics
 import qualified Network.Simple.TCP.TLS as TLS
 import Network.Socket
 import qualified Network.TLS as NTLS
 import Network.Xoken.Node.Data
 import Network.Xoken.Node.Env as NEnv
+import Network.Xoken.Node.P2P.Common
 import Network.Xoken.Node.XokenService
 import Prelude as P
 import System.Logger as LG
@@ -60,8 +65,7 @@ newEndPointConnection context = do
     reqQueue <- atomically $ newTQueue
     resLock <- newMVar context
     formatRef <- newIORef DEFAULT
-    notauth <- newTVarIO False
-    return $ EndPointConnection reqQueue resLock formatRef notauth
+    return $ EndPointConnection reqQueue resLock formatRef
 
 handleRPCReqResp ::
        (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
@@ -76,13 +80,7 @@ handleRPCReqResp epConn format mid version encReq = do
     lg <- getLogger
     let net = bitcoinNetwork $ nodeConfig bp2pEnv
     liftIO $ printf "handleRPCReqResp (%d, %s)\n" mid (show encReq)
-    auth <- liftIO $ readTVarIO $ isAuthenticated epConn
-    res <-
-        if auth
-            then do
-                LE.try $ goGetResource encReq net
-            else do
-                LE.try $ authenticateClient encReq net epConn
+    res <- LE.try $ delegateRequest encReq epConn net
     case res of
         Right rpcResp -> do
             let body =
