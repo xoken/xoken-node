@@ -63,7 +63,7 @@ decodeShort bs =
 data RPCMessage
     = RPCRequest
           { rqMethod :: String
-          , rqParams :: Maybe RPCReqParams
+          , rqParams :: RPCReqParams
           }
     | RPCResponse
           { rsStatusCode :: Int16
@@ -76,11 +76,11 @@ data XRPCRequest
     = CBORRPCRequest
           { reqId :: Int
           , method :: String
-          , params :: Maybe RPCReqParams
+          , params :: RPCReqParams
           }
     | JSONRPCRequest
           { method :: String
-          , params :: Maybe RPCReqParams
+          , params :: RPCReqParams
           , jsonrpc :: String
           , id :: Int
           }
@@ -127,7 +127,19 @@ data RPCReqParams
           { username :: String
           , password :: String
           }
-    | GetBlockByHeight
+    | GeneralReq
+          { sessionKey :: String
+          , methodParams :: Maybe RPCReqParams'
+          }
+    deriving (Show, Generic, Hashable, Eq, Serialise)
+
+instance FromJSON RPCReqParams where
+    parseJSON (Object o) =
+        (AuthenticateReq <$> o .: "username" <*> o .: "password") <|>
+        (GeneralReq <$> o .: "sessionKey" <*> o .: "methodParams")
+
+data RPCReqParams'
+    = GetBlockByHeight
           { gbHeight :: Int
           }
     | GetBlocksByHeight
@@ -193,10 +205,9 @@ data RPCReqParams
           }
     deriving (Generic, Show, Hashable, Eq, Serialise, ToJSON)
 
-instance FromJSON RPCReqParams where
+instance FromJSON RPCReqParams' where
     parseJSON (Object o) =
-        (AuthenticateReq <$> o .: "username" <*> o .: "password") <|> (GetBlockByHeight <$> o .: "gbHeight") <|>
-        (GetBlocksByHeight <$> o .: "gbHeights") <|>
+        (GetBlockByHeight <$> o .: "gbHeight") <|> (GetBlocksByHeight <$> o .: "gbHeights") <|>
         (GetBlockByHash <$> o .: "gbBlockHash") <|>
         (GetBlocksByHashes <$> o .: "gbBlockHashes") <|>
         (GetTransactionByTxID <$> o .: "gtTxHash") <|>
@@ -426,7 +437,7 @@ data XDataReq
     = XDataRPCReq
           { reqId :: Int
           , method :: String
-          , params :: Maybe RPCReqParams
+          , params :: RPCReqParams
           , version :: Maybe String
           }
     | XDataRPCBadRequest
