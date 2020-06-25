@@ -381,6 +381,43 @@ xGetOutputsAddress net address pgSize mbNomTxInd = do
             err lg $ LG.msg $ "Error: xGetOutputsAddress: " ++ show e
             throw KeyValueDBLookupException
 
+xGetOutputsAddress' ::
+       (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
+    => Network
+    -> String
+    -> Maybe Int32
+    -> Maybe Int64
+    -> m ([AddressOutputs])
+xGetOutputsAddress' net address pgSize mbNomTxInd = do
+    dbe <- getDB
+    lg <- getLogger
+    let conn = keyValDB (dbe)
+        nominalTxIndex =
+            case mbNomTxInd of
+                (Just n) -> n
+                Nothing -> maxBound
+        str = "SELECT address,nominal_tx_index,output,is_type_receive,other_address FROM xoken.address_outputs WHERE address=? AND nominal_tx_index=?"
+        qstr =
+            str :: Q.QueryString Q.R (DT.Text, Int64) ( DT.Text
+                                                      , Int64
+                                                      , (DT.Text, Int32)
+                                                      , Bool
+                                                      , Maybe DT.Text)
+        p = Q.defQueryParams Q.One (DT.pack address, nominalTxIndex)
+    res <- LE.try $ Q.runClient conn (Q.query qstr (p {pageSize = pgSize}))
+    case res of
+        Right iop -> do
+            if length iop == 0 
+            then return []
+            else do
+--               return $ Data.List.map (\(addr, nomTxIndex, (txid, idx), isTypeReceive, otherAddress) ->
+--                    AddressOutputs
+--                        (DT.unpack addr)) iop 
+                return []
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: xGetOutputsAddress':" ++ show e
+            throw KeyValueDBLookupException
+
 xGetOutputsAddresses ::
        (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
     => Network

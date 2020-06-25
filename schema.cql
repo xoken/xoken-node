@@ -46,6 +46,17 @@ CREATE TABLE xoken.address_outputs (
     PRIMARY KEY (address, nominal_tx_index, output)
 ) WITH CLUSTERING ORDER BY (nominal_tx_index DESC); 
 
+-- new schema
+
+CREATE TABLE xoken.address_outputs (
+    address text,
+    nominal_tx_index bigint,
+    output frozen<tuple<text, int>>,
+    is_type_receive boolean,
+    other_address text,
+    PRIMARY KEY (address, nominal_tx_index, output)
+) WITH CLUSTERING ORDER BY (nominal_tx_index DESC);
+
 CREATE TABLE xoken.blocks_by_height (
     block_height int PRIMARY KEY,
     block_hash text,
@@ -78,14 +89,14 @@ CREATE TABLE xoken.user_permission (
 ); 
 
 CREATE TABLE xoken.txid_outputs (
-     txid text,
-     idx int,
-     block_info frozen<tuple<frozen<tuple<text, int>>, int>>,
-     is_output_spent boolean,
-     spending_txid text,
-     spending_index int,
-     prev_outpoint frozen<tuple<text, int>>,
-     value bigint,
-     PRIMARY KEY(txid, idx)
+    txid text,
+    idx int,
+    block_info frozen<tuple<frozen<tuple<text, int>>, int>>,
+    is_output_spent boolean,
+    spending_txid text,
+    spending_index int,
+    prev_outpoint frozen<tuple<text, int>>,
+    value bigint,
+    PRIMARY KEY(txid, idx)
  );
 
