@@ -109,7 +109,6 @@ data EndPointConnection =
         { requestQueue :: TQueue XDataReq
         , context :: MVar TLS.Context
         , encodingFormat :: IORef EncodingFormat
-        , isAuthenticated :: TVar Bool
         }
 
 xGetChainInfo :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> m (Maybe String)
@@ -777,19 +776,18 @@ xRelayTx net rawTx = do
                     err lg $ LG.msg $ val $ "error decoding rawTx (2)"
                     return $ False
 
-authenticateClient ::
-       (HasXokenNodeEnv env m, MonadIO m) => RPCMessage -> Network -> EndPointConnection -> m (RPCMessage)
-authenticateClient msg net epConn = do
+authLoginClient :: (HasXokenNodeEnv env m, MonadIO m) => RPCMessage -> Network -> EndPointConnection -> m (RPCMessage)
+authLoginClient msg net epConn = do
     dbe <- getDB
     lg <- getLogger
     let conn = keyValDB (dbe)
     case rqMethod msg of
         "AUTHENTICATE" -> do
             case rqParams msg of
-                Just (AuthenticateReq user pass) -> do
+                (AuthenticateReq user pass) -> do
                     let hashedPasswd = encodeHex ((S.encode $ sha256 $ BC.pack pass))
                         str =
-                            " SELECT password, api_quota, api_used, session_key_expiry_time from xoken.user_permission where username = ? "
+                            " SELECT password, api_quota, api_used, session_key_expiry_time FROM xoken.user_permission WHERE username = ? "
                         qstr = str :: Q.QueryString Q.R (Identity DT.Text) (DT.Text, Int32, Int32, UTCTime)
                         p = Q.defQueryParams Q.One $ Identity $ (DT.pack user)
                     res <- liftIO $ try $ Q.runClient conn (Q.query (Q.prepared qstr) p)
@@ -810,11 +808,8 @@ authenticateClient msg net epConn = do
                                                      Just $ AuthenticateResp $ AuthResp Nothing 0 0
                                                 else do
                                                     tm <- liftIO $ getCurrentTime
-                                                    g <- liftIO $ getStdGen
-                                                    let seed = show $ fst (random g :: (Word64, StdGen))
-                                                        sdb = B64.encode $ BC.pack $ seed
-                                                        newSessionKey = encodeHex ((S.encode $ sha256 $ B.reverse sdb))
-                                                        str1 =
+                                                    newSessionKey <- liftIO $ generateSessionKey
+                                                    let str1 =
                                                             "UPDATE xoken.user_permission SET session_key = ?, session_key_expiry_time = ? WHERE username = ? "
                                                         qstr1 = str1 :: Q.QueryString Q.W (DT.Text, UTCTime, DT.Text) ()
                                                         par1 = Q.defQueryParams Q.One (newSessionKey, tm, DT.pack user)
@@ -826,14 +821,43 @@ authenticateClient msg net epConn = do
                                                                 LG.msg $
                                                                 "Error: UPDATE'ing into 'user_permission': " ++ show e
                                                             throw e
-                                                    liftIO $ atomically $ writeTVar (isAuthenticated epConn) True
                                                     return $
                                                         RPCResponse 200 Nothing $
                                                         Just $
                                                         AuthenticateResp $
                                                         AuthResp (Just $ DT.unpack newSessionKey) 1 100
-                Nothing -> return $ RPCResponse 404 (Just INVALID_REQUEST) Nothing
+                ___ -> return $ RPCResponse 404 (Just INVALID_REQUEST) Nothing
         _____ -> return $ RPCResponse 200 Nothing $ Just $ AuthenticateResp $ AuthResp Nothing 0 0
+
+delegateRequest :: (HasXokenNodeEnv env m, MonadIO m) => RPCMessage -> EndPointConnection -> Network -> m (RPCMessage)
+delegateRequest encReq epConn net = do
+    dbe <- getDB
+    lg <- getLogger
+    let conn = keyValDB (dbe)
+    case rqParams encReq of
+        (AuthenticateReq _ _) -> authLoginClient encReq net epConn
+        (GeneralReq sessionKey __) -> do
+            let str =
+                    " SELECT api_quota, api_used, session_key_expiry_time FROM xoken.user_permission WHERE session_key = ? ALLOW FILTERING "
+                qstr = str :: Q.QueryString Q.R (Q.Identity DT.Text) (Int32, Int32, UTCTime)
+                p = Q.defQueryParams Q.One $ Identity $ (DT.pack sessionKey)
+            res <- liftIO $ try $ Q.runClient conn (Q.query (Q.prepared qstr) p)
+            case res of
+                Left (SomeException e) -> do
+                    err lg $ LG.msg $ "Error: SELECT'ing from 'user_permission': " ++ show e
+                    throw e
+                Right (op) -> do
+                    if length op == 0
+                        then do
+                            return $ RPCResponse 200 Nothing $ Just $ AuthenticateResp $ AuthResp Nothing 0 0
+                        else do
+                            case op !! 0 of
+                                (quota, used, exp) -> do
+                                    curtm <- liftIO $ getCurrentTime
+                                    if exp > curtm && quota > used
+                                        then goGetResource encReq net
+                                        else return $
+                                             RPCResponse 200 Nothing $ Just $ AuthenticateResp $ AuthResp Nothing 0 0
 
 goGetResource :: (HasXokenNodeEnv env m, MonadIO m) => RPCMessage -> Network -> m (RPCMessage)
 goGetResource msg net = do
@@ -849,7 +873,7 @@ goGetResource msg net = do
                         Nothing -> return $ RPCResponse 404 (Just INVALID_REQUEST) Nothing
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "HASH->BLOCK" -> do
-            case rqParams msg of
+            case methodParams $ rqParams msg of
                 Just (GetBlockByHash hs) -> do
                     blk <- xGetBlockHash net (hs)
                     case blk of
@@ -857,13 +881,13 @@ goGetResource msg net = do
                         Nothing -> return $ RPCResponse 404 (Just INVALID_REQUEST) Nothing
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "[HASH]->[BLOCK]" -> do
-            case rqParams msg of
+            case methodParams $ rqParams msg of
                 Just (GetBlocksByHashes hashes) -> do
                     blks <- xGetBlocksHashes net hashes
                     return $ RPCResponse 200 Nothing $ Just $ RespBlocksByHashes blks
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "HEIGHT->BLOCK" -> do
-            case rqParams msg of
+            case methodParams $ rqParams msg of
                 Just (GetBlockByHeight ht) -> do
                     blk <- xGetBlockHeight net (fromIntegral ht)
                     case blk of
@@ -871,13 +895,13 @@ goGetResource msg net = do
                         Nothing -> return $ RPCResponse 404 (Just INVALID_REQUEST) Nothing
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "[HEIGHT]->[BLOCK]" -> do
-            case rqParams msg of
+            case methodParams $ rqParams msg of
                 Just (GetBlocksByHeight hts) -> do
                     blks <- xGetBlocksHeights net $ Data.List.map (fromIntegral) hts
                     return $ RPCResponse 200 Nothing $ Just $ RespBlocksByHashes blks
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "TXID->RAWTX" -> do
-            case rqParams msg of
+            case methodParams $ rqParams msg of
                 Just (GetRawTransactionByTxID hs) -> do
                     tx <- xGetTxHash net (hs)
                     case tx of
@@ -885,7 +909,7 @@ goGetResource msg net = do
                         Nothing -> return $ RPCResponse 200 Nothing Nothing
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "TXID->TX" -> do
-            case rqParams msg of
+            case methodParams $ rqParams msg of
                 Just (GetTransactionByTxID hs) -> do
                     tx <- xGetTxHash net (hs)
                     case tx of
@@ -899,13 +923,13 @@ goGetResource msg net = do
                         Nothing -> return $ RPCResponse 200 Nothing Nothing 
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "[TXID]->[RAWTX]" -> do
-            case rqParams msg of
+            case methodParams $ rqParams msg of
                 Just (GetRawTransactionsByTxIDs hashes) -> do
                     txs <- xGetTxHashes net hashes
                     return $ RPCResponse 200 Nothing $ Just $ RespRawTransactionsByTxIDs txs
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "[TXID]->[TX]" -> do
-            case rqParams msg of
+            case methodParams $ rqParams msg of
                 Just (GetTransactionsByTxIDs hashes) -> do
                     txs <- xGetTxHashes net hashes
                     let rawTxs =
@@ -915,7 +939,7 @@ goGetResource msg net = do
                     return $ RPCResponse 200 Nothing $ Just $ RespTransactionsByTxIDs $ catMaybes rawTxs
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "ADDR->[OUTPUT]" -> do
-            case rqParams msg of
+            case methodParams $ rqParams msg of
                 Just (GetOutputsByAddress addr psize nominalTxIndex) -> do
                     ops <-
                         case convertToScriptHash net addr of
@@ -925,7 +949,7 @@ goGetResource msg net = do
                         RPCResponse 200 Nothing $ Just $ RespOutputsByAddress $ (\ao -> ao {aoAddress = addr}) <$> ops
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "[ADDR]->[OUTPUT]" -> do
-            case rqParams msg of
+            case methodParams $ rqParams msg of
                 Just (GetOutputsByAddresses addrs pgSize nomTxInd) -> do
                     let (shs, shMap) =
                             L.foldl'
@@ -943,37 +967,37 @@ goGetResource msg net = do
                         (\ao -> ao {aoAddress = fromJust $ M.lookup (aoAddress ao) shMap}) <$> ops
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "SCRIPTHASH->[OUTPUT]" -> do
-            case rqParams msg of
+            case methodParams $ rqParams msg of
                 Just (GetOutputsByScriptHash sh pgSize nomTxInd) -> do
                     ops <- L.map addressToScriptOutputs <$> xGetOutputsAddress net (sh) pgSize nomTxInd
                     return $ RPCResponse 200 Nothing $ Just $ RespOutputsByScriptHash ops
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "[SCRIPTHASH]->[OUTPUT]" -> do
-            case rqParams msg of
+            case methodParams $ rqParams msg of
                 Just (GetOutputsByScriptHashes shs pgSize nomTxInd) -> do
                     ops <- L.map addressToScriptOutputs <$> xGetOutputsAddresses net shs pgSize nomTxInd
                     return $ RPCResponse 200 Nothing $ Just $ RespOutputsByScriptHashes ops
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "TXID->[MNODE]" -> do
-            case rqParams msg of
+            case methodParams $ rqParams msg of
                 Just (GetMerkleBranchByTxID txid) -> do
                     ops <- xGetMerkleBranch net txid
                     return $ RPCResponse 200 Nothing $ Just $ RespMerkleBranchByTxID ops
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "NAME->[OUTPOINT]" -> do
-            case rqParams msg of
+            case methodParams $ rqParams msg of
                 Just (GetAllegoryNameBranch name isProducer) -> do
                     ops <- xGetAllegoryNameBranch net name isProducer
                     return $ RPCResponse 200 Nothing $ Just $ RespAllegoryNameBranch ops
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "RELAY_TX" -> do
-            case rqParams msg of
+            case methodParams $ rqParams msg of
                 Just (RelayTx tx) -> do
                     ops <- xRelayTx net tx
                     return $ RPCResponse 200 Nothing $ Just $ RespRelayTx ops
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "PS_ALLEGORY_TX" -> do
-            case rqParams msg of
+            case methodParams $ rqParams msg of
                 Just (GetPartiallySignedAllegoryTx payips (name, isProducer) owner change) -> do
                     opsE <- LE.try $ xGetPartiallySignedAllegoryTx net payips (name, isProducer) owner change
                     case opsE of

@@ -327,11 +327,11 @@ defaultAdminUser conn = do
                         , ""
                         , tm
                         , ["", ""]
-                        , -1
-                        , -1
-                        , (addUTCTime (nominalDay * 90) tm)
+                        , 100000000
+                        , 0
+                        , (addUTCTime (nominalDay * 365) tm)
                         , tempSessionKey
-                        , (addUTCTime nominalDay tm))
+                        , (addUTCTime (nominalDay * 30) tm))
             putStrLn $ "******************************************************************* "
             putStrLn $ "  Creating default Admin user!"
             putStrLn $ "  Please note down admin password NOW, will not be shown again."
