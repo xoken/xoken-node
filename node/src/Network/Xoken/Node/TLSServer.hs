@@ -17,6 +17,7 @@ import Control.Concurrent.Async.Lifted (async)
 import Control.Concurrent.MVar
 import Control.Concurrent.STM
 import Control.Exception
+import qualified Control.Exception.Lifted as LE (try)
 import Control.Monad
 import Control.Monad.IO.Class
 import Control.Monad.Loops
@@ -45,6 +46,7 @@ import Network.Xoken.Node.Env as NEnv
 import Network.Xoken.Node.P2P.Common
 import Network.Xoken.Node.XokenService
 import Prelude as P
+import System.Logger as LG
 import Text.Printf
 import Xoken.NodeConfig
 
@@ -75,27 +77,36 @@ handleRPCReqResp ::
     -> m ()
 handleRPCReqResp epConn format mid version encReq = do
     bp2pEnv <- getBitcoinP2P
+    lg <- getLogger
     let net = bitcoinNetwork $ nodeConfig bp2pEnv
     liftIO $ printf "handleRPCReqResp (%d, %s)\n" mid (show encReq)
-    rpcResp <- delegateRequest encReq epConn net
-    let body =
-            case format of
-                CBOR ->
-                    serialise $
-                    CBORRPCResponse (mid) (rsStatusCode rpcResp) (show <$> rsStatusMessage rpcResp) (rsBody rpcResp)
-                JSON ->
-                    case rsStatusMessage rpcResp of
-                        Just err ->
-                            A.encode
-                                (JSONRPCErrorResponse
-                                     mid
-                                     (ErrorResponse (getJsonRPCErrorCode err) (show err) Nothing)
-                                     (fromJust version))
-                        Nothing -> A.encode (JSONRPCSuccessResponse (fromJust version) (rsBody rpcResp) mid)
-    connSock <- liftIO $ takeMVar (context epConn)
-    let prefixbody = LBS.append (DB.encode (fromIntegral (LBS.length body) :: Int32)) body
-    NTLS.sendData connSock prefixbody
-    liftIO $ putMVar (context epConn) connSock
+    res <- LE.try $ delegateRequest encReq epConn net
+    case res of
+        Right rpcResp -> do
+            let body =
+                    case format of
+                        CBOR ->
+                            serialise $
+                            CBORRPCResponse
+                                (mid)
+                                (rsStatusCode rpcResp)
+                                (show <$> rsStatusMessage rpcResp)
+                                (rsBody rpcResp)
+                        JSON ->
+                            case rsStatusMessage rpcResp of
+                                Just err ->
+                                    A.encode
+                                        (JSONRPCErrorResponse
+                                             mid
+                                             (ErrorResponse (getJsonRPCErrorCode err) (show err) Nothing)
+                                             (fromJust version))
+                                Nothing -> A.encode (JSONRPCSuccessResponse (fromJust version) (rsBody rpcResp) mid)
+            connSock <- liftIO $ takeMVar (context epConn)
+            let prefixbody = LBS.append (DB.encode (fromIntegral (LBS.length body) :: Int32)) body
+            NTLS.sendData connSock prefixbody
+            liftIO $ putMVar (context epConn) connSock
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: goGetResource / authenticate " ++ show e
 
 handleNewConnectionRequest :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => TLSEndpointServiceHandler -> m ()
 handleNewConnectionRequest handler = do
