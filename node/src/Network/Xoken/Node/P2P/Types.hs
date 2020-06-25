@@ -113,6 +113,7 @@ data BlockIngestState =
         , binTxPayloadLeft :: !Int
         , binTxTotalCount :: !Int
         , binTxProcessed :: !Int
+        , binBlockSize :: !Int
         , binChecksum :: !CheckSum32
         }
     deriving (Show)
