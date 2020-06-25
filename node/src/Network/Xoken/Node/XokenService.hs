@@ -806,7 +806,12 @@ authLoginClient msg net epConn = do
                                                     let str1 =
                                                             "UPDATE xoken.user_permission SET session_key = ?, session_key_expiry_time = ? WHERE username = ? "
                                                         qstr1 = str1 :: Q.QueryString Q.W (DT.Text, UTCTime, DT.Text) ()
-                                                        par1 = Q.defQueryParams Q.One (newSessionKey, tm, DT.pack user)
+                                                        par1 =
+                                                            Q.defQueryParams
+                                                                Q.One
+                                                                ( newSessionKey
+                                                                , (addUTCTime (nominalDay * 30) tm)
+                                                                , DT.pack user)
                                                     res1 <- liftIO $ try $ Q.runClient conn (Q.write (qstr1) par1)
                                                     case res1 of
                                                         Right () -> return ()
