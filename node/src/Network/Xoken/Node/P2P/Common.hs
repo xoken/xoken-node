@@ -43,7 +43,6 @@ import qualified Data.Text as T
 import Data.Time.Clock
 import Data.Time.Clock.POSIX
 import Data.Word
-import Data.Word
 import qualified Database.CQL.IO as Q
 import Network.Socket
 import qualified Network.Socket.ByteString as SB (recv)

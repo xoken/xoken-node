@@ -58,7 +58,6 @@ import Network.Xoken.Node.Env
 import Network.Xoken.Node.GraphDB
 import Network.Xoken.Node.P2P.Common
 import Network.Xoken.Node.P2P.Types
-import Numeric
 import Streamly
 import Streamly.Prelude ((|:), nil)
 import qualified Streamly.Prelude as S
@@ -322,18 +321,5 @@ updateChainWork indexed conn = do
     case res of
         Right () -> return ()
         Left (e :: SomeException) -> do
-            err lg $ LG.msg ("Error: INSERT 'cahin-work' into 'misc_store' failed: " ++ show e)
+            err lg $ LG.msg ("Error: INSERT 'chain-work' into 'misc_store' failed: " ++ show e)
             throw KeyValueDBInsertException
-
-targetMax :: Integer
-targetMax = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
-
-convertBitsToTarget :: Word32 -> Integer
-convertBitsToTarget b = read $ "0x" ++ (drop 2 hexBits) ++ replicate ((read $ "0x" ++ take 2 hexBits)*2 - 6) '0'
-    where hexBits = showHex b ""
-
-getBlockWork :: Integer -> Integer
-getBlockWork = div targetMax
-
-convertBitsToBlockWork :: Word32 -> Integer
-convertBitsToBlockWork = getBlockWork . convertBitsToTarget

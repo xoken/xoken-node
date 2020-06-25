@@ -64,7 +64,6 @@ import qualified Database.Bolt as BT
 import qualified Database.CQL.IO as Q
 import qualified Database.CQL.IO as Q
 import Database.CQL.Protocol
-import Numeric (showHex)
 import qualified Network.Socket as NS
 import qualified Network.Socket.ByteString as SB (recv)
 import qualified Network.Socket.ByteString.Lazy as LB (recv, sendAll)

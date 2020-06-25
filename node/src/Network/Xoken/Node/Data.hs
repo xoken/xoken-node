@@ -245,7 +245,7 @@ data RPCResponseBody
           { blocks :: [BlockRecord]
           }
     | RespChainInfo
-          { chainwork :: String
+          { chainInfo :: ChainInfo
           }
     | RespTransactionByTxID
           { tx :: TxRecord
@@ -313,6 +313,16 @@ data AuthResp =
         , callsRemaining :: Int
         }
     deriving (Generic, Show, Hashable, Eq, Serialise, ToJSON)
+
+data ChainInfo =
+    ChainInfo
+        { ciChain :: String
+        , ciChainWork :: String
+        , ciDifficulty :: Double
+        , ciHeaders :: Int
+        , ciBlocks :: Int
+        , ciBestBlockHash :: String
+        } deriving (Generic, Show, Hashable, Eq, Serialise, ToJSON)
 
 data BlockRecord =
     BlockRecord

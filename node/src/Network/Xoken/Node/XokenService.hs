@@ -75,6 +75,7 @@ import qualified Database.Bolt as BT
 import qualified Database.CQL.IO as Q
 import Database.CQL.Protocol
 import qualified Network.Simple.TCP.TLS as TLS
+import Network.Xoken.Block.Common
 import Network.Xoken.Crypto.Hash
 import Network.Xoken.Node.Data
 import Network.Xoken.Node.Data.Allegory
@@ -84,6 +85,7 @@ import Network.Xoken.Node.GraphDB
 import Network.Xoken.Node.P2P.BlockSync
 import Network.Xoken.Node.P2P.Common
 import Network.Xoken.Node.P2P.Types
+import Numeric (showHex)
 import System.Logger as LG
 import System.Logger.Message
 import System.Random
@@ -111,11 +113,30 @@ data EndPointConnection =
         , encodingFormat :: IORef EncodingFormat
         }
 
-xGetChainInfo :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> m (Maybe String)
+xGetChainInfo :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> m (Maybe ChainInfo)
 xGetChainInfo net = do
+    dbe <- getDB
     lg <- getLogger
-    debug lg $ LG.msg $ ("Returning 0x1001001 Chainwork" :: String)
-    return $ Just $ "0x1001001"
+    let conn = keyValDB $ dbe
+        str = "SELECT value from xoken.misc_store where key = ?"
+        qstr = str :: Q.QueryString Q.R (Identity DT.Text) (Identity (Maybe Bool, Maybe Int32, Maybe Int64, Maybe DT.Text))
+        p = Q.defQueryParams Q.One $ Identity "chain-work"
+    iop <- Q.runClient conn (Q.query qstr p)
+    if L.null iop 
+        then do
+            return Nothing
+        else do
+            let (_, height, _, chainwork) = runIdentity $ iop !! 0
+            blk <- xGetBlockHeight net (fromJust height)
+            case blk of
+                Nothing -> return Nothing
+                Just b -> do
+                    return $ Just $ ChainInfo "main"
+                                     (showHex (read . DT.unpack $ fromJust chainwork) "")
+                                     (convertBitsToDifficulty . blockBits . rbHeader $ b)
+                                     (-1)
+                                     (fromIntegral $ fromJust height)
+                                     (rbHash b)
 
 xGetBlockHash :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> String -> m (Maybe BlockRecord)
 xGetBlockHash net hash = do
@@ -865,7 +886,7 @@ goGetResource msg net = do
     let grdb = graphDB (dbe)
     case rqMethod msg of
         "CHAIN_INFO" -> do
-            case rqParams msg of
+            case methodParams $ rqParams msg of
                 Just (GetChainInfo hs) -> do
                     cw <- xGetChainInfo net
                     case cw of
