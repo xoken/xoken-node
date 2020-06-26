@@ -151,9 +151,6 @@ data RPCReqParams'
     | GetBlocksByHashes
           { gbBlockHashes :: [String]
           }
-    | GetChainInfo
-          { gcChainInfo :: String
-          }
     | GetTransactionByTxID
           { gtTxHash :: String
           }
@@ -211,7 +208,6 @@ instance FromJSON RPCReqParams' where
         (GetBlockByHeight <$> o .: "gbHeight") <|> (GetBlocksByHeight <$> o .: "gbHeights") <|>
         (GetBlockByHash <$> o .: "gbBlockHash") <|>
         (GetBlocksByHashes <$> o .: "gbBlockHashes") <|>
-        (GetChainInfo <$> o .: "gcChainInfo") <|>
         (GetTransactionByTxID <$> o .: "gtTxHash") <|>
         (GetTransactionsByTxIDs <$> o .: "gtTxHashes") <|>
         (GetRawTransactionByTxID <$> o .: "gtRTxHash") <|>

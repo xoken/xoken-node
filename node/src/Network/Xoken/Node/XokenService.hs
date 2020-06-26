@@ -890,13 +890,10 @@ goGetResource msg net = do
     let grdb = graphDB (dbe)
     case rqMethod msg of
         "CHAIN_INFO" -> do
-            case methodParams $ rqParams msg of
-                Just (GetChainInfo hs) -> do
-                    cw <- xGetChainInfo net
-                    case cw of
-                        Just c -> return $ RPCResponse 200 Nothing $ Just $ RespChainInfo c
-                        Nothing -> return $ RPCResponse 404 (Just INVALID_REQUEST) Nothing
-                _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
+            cw <- xGetChainInfo net
+            case cw of
+                Just c -> return $ RPCResponse 200 Nothing $ Just $ RespChainInfo c
+                Nothing -> return $ RPCResponse 404 (Just INVALID_REQUEST) Nothing
         "HASH->BLOCK" -> do
             case methodParams $ rqParams msg of
                 Just (GetBlockByHash hs) -> do
