@@ -136,7 +136,7 @@ data RPCReqParams
 instance FromJSON RPCReqParams where
     parseJSON (Object o) =
         (AuthenticateReq <$> o .: "username" <*> o .: "password") <|>
-        (GeneralReq <$> o .: "sessionKey" <*> o .: "methodParams")
+        (GeneralReq <$> o .: "sessionKey" <*> o .:? "methodParams")
 
 data RPCReqParams'
     = GetBlockByHeight
