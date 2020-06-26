@@ -78,7 +78,6 @@ import qualified Network.Simple.TCP.TLS as TLS
 import Network.Xoken.Crypto.Hash
 import Network.Xoken.Node.Data
 import Network.Xoken.Node.Data.Allegory
-import Network.Xoken.Node.Data.Allegory
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.GraphDB
 import Network.Xoken.Node.P2P.BlockSync
@@ -911,7 +910,7 @@ goGetResource msg net = do
                                     RPCResponse 200 Nothing $
                                     Just $ RespTransactionByTxID (TxRecord txId txBlockInfo rt)
                                 Left err -> return $ RPCResponse 400 (Just INTERNAL_ERROR) Nothing
-                        Nothing -> return $ RPCResponse 200 Nothing Nothing 
+                        Nothing -> return $ RPCResponse 200 Nothing Nothing
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "[TXID]->[RAWTX]" -> do
             case methodParams $ rqParams msg of

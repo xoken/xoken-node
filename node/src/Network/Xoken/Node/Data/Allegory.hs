@@ -6,18 +6,8 @@
 module Network.Xoken.Node.Data.Allegory where
 
 import Codec.Serialise
-import Control.Exception
-import Control.Monad (guard)
 import Data.Aeson
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Base16 as B16
-import Data.ByteString.Char8 as C
-import qualified Data.ByteString.Lazy.Char8 as BL
-import Data.Foldable
-import Data.Maybe
-import Data.Text as T
-import qualified Data.Text.Encoding as E
-import Data.Yaml
+import Data.Yaml ()
 import GHC.Generics
 
 data Allegory =

@@ -53,6 +53,8 @@ import Data.ByteString.Builder
 import qualified Data.ByteString.Char8 as C
 import qualified Data.ByteString.Lazy as L
 import qualified Data.ByteString.Lazy.Char8 as CL
+import qualified Data.Text as DT
+import qualified Data.Text.Encoding as DTE
 import Data.Char
 import Data.Default
 import Data.Default
@@ -88,6 +90,7 @@ import Network.Xoken.Node.AriviService
 import Network.Xoken.Node.Data
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.GraphDB
+import Network.Xoken.Node.HTTP.Server
 import Network.Xoken.Node.P2P.BlockSync
 import Network.Xoken.Node.P2P.ChainSync
 import Network.Xoken.Node.P2P.PeerManager
@@ -97,6 +100,7 @@ import Network.Xoken.Node.TLSServer
 import Options.Applicative
 import Paths_xoken_node as P
 import Prelude as P
+import qualified Snap as Snap
 import System.Directory (doesDirectoryExist, doesFileExist)
 import System.Environment (getArgs)
 import System.Exit
@@ -213,6 +217,12 @@ runThreads config nodeConf bp2p conn lg p2pEnv certPaths = do
     epHandler <- newTLSEndpointServiceHandler
     -- start TLS endpoint
     async $ startTLSEndpoint epHandler (endPointTLSListenIP nodeConf) (endPointTLSListenPort nodeConf) certPaths
+    -- start HTTP endpoint
+    async $
+        Snap.serveSnapletNoArgParsing
+            (Snap.setPort (fromEnum $ endPointHTTPListenPort nodeConf) $
+             Snap.setHostname (DTE.encodeUtf8 $ DT.pack $ endPointHTTPListenIP nodeConf) Snap.defaultConfig)
+            (appInit xknEnv)
     withResource (pool $ graphDB dbh) (`BT.run` initAllegoryRoot genesisTx)
     -- run main workers
     forever $ do
