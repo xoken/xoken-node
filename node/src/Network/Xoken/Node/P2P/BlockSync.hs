@@ -426,14 +426,6 @@ commitAddressOutputs conn addr typeRecv otherAddr output blockInfo prevOutpoint 
         nominalTxIndex = blkHeight * 1000000000 + txIndex
         txID = fst $ output
         txIndex32 = snd $ output
---        strAddrOuts = "INSERT INTO xoken.address_outputs (address, nominal_tx_index, output, is_type_receive, other_address) VALUES (?,?,?,?,?)"
---        qstrAddrOuts =
---            strAddrOuts :: Q.QueryString Q.W ( Text
---                                             , Int64
---                                             , (Text, Int32)
---                                             , Bool
---                                             , Maybe Text) ()
---        parAddrOuts = Q.defQueryParams Q.One (addr, nominalTxIndex, output, typeRecv, otherAddr)
         strAddrOuts = "INSERT INTO xoken.address_outputs (address, is_type_receive, other_address, output, block_info, nominal_tx_index, prev_outpoint, value, is_block_confirmed, is_output_spent) VALUES (?,?,?,?,?,?,?,?,?,?)"
         qstrAddrOuts =
             strAddrOuts :: Q.QueryString Q.W ( Text
@@ -471,6 +463,7 @@ commitAddressOutputs conn addr typeRecv otherAddr output blockInfo prevOutpoint 
             err lg $ LG.msg $ "Error: INSERTing into 'address_outputs': " ++ show e
             throw KeyValueDBInsertException
 
+-- switch to this after address_outputs loses fat 
 commitAddressOutputs' ::
         (HasLogger m, MonadIO m)
      => Q.ClientState
