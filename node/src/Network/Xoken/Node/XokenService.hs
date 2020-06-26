@@ -122,17 +122,19 @@ xGetChainInfo net = do
                 else do
                     let (_,blocks,_,_) = snd . head $ (L.filter (\x -> fst x == "best-synced") iop)
                         (_,headers,_,bestBlockHash) = snd . head $ (L.filter (\x -> fst x == "best_chain_tip") iop)
-                        (_,height,_,chainwork) = snd . head $ (L.filter (\x -> fst x == "chain-work") iop)
-                    blk <- xGetBlockHeight net height
+                        (_,lagHeight,_,chainwork) = snd . head $ (L.filter (\x -> fst x == "chain-work") iop)
+                    blk <- xGetBlockHeight net headers
+                    lagCW <- calculateChainWork [(lagHeight + 1)..(headers)] conn
                     case blk of
                         Nothing -> return Nothing
                         Just b -> do
-                            return $ Just $ ChainInfo "main"
-                                            (showHex (read . DT.unpack $ chainwork) "")
-                                            (convertBitsToDifficulty . blockBits . rbHeader $ b)
-                                            (headers)
-                                            (blocks)
-                                            (rbHash b)
+                            return $ Just $ ChainInfo
+                                                "main"
+                                                (showHex (lagCW + (read . DT.unpack $ chainwork)) "")
+                                                (convertBitsToDifficulty . blockBits . rbHeader $ b)
+                                                (headers)
+                                                (blocks)
+                                                (rbHash b)
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetChainInfo: " ++ show e
             throw KeyValueDBLookupException

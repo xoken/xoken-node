@@ -25,7 +25,7 @@ import Control.Monad.Logger
 import Control.Monad.Reader
 import Control.Monad.STM
 import Control.Monad.State.Strict
-import qualified Data.Aeson as A (decode, encode)
+import qualified Data.Aeson as A (decode, eitherDecode, encode)
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as C
 import qualified Data.ByteString.Lazy as BSL
@@ -41,6 +41,7 @@ import Data.Serialize
 import Data.String.Conversions
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as DTE
 import Data.Time.Clock
 import Data.Time.Clock.POSIX
 import Data.Word
@@ -307,19 +308,23 @@ updateChainWork :: (HasLogger m, MonadIO m) => [(Int32, BlockHeaderCount)] -> Q.
 updateChainWork indexed conn = do
     lg <- getLogger
     let str = "SELECT value from xoken.misc_store where key = ?"
-        qstr = str :: Q.QueryString Q.R (Identity Text) (Identity (Maybe Bool, Maybe Int32, Maybe Int64, Maybe T.Text))
+        qstr = str :: Q.QueryString Q.R (Identity Text) (Identity (Maybe Bool, Int32, Maybe Int64, T.Text))
         str1 = "insert INTO xoken.misc_store (key, value) values (?, ?)"
         qstr1 = str1 :: Q.QueryString Q.W (Text, (Maybe Bool, Int32, Maybe Int64, Text)) ()
         par = Q.defQueryParams Q.One $ Identity "chain-work"
-        indexedCW = foldr (\x y -> y + (convertBitsToBlockWork $ blockBits $ fst $ snd $ x)) 0 indexed
+        lenInd = L.length indexed
+        lagIndexed = take (lenInd - 10) indexed
+        indexedCW = foldr (\x y -> y + (convertBitsToBlockWork $ blockBits $ fst $ snd $ x)) 0 lagIndexed
     res <- liftIO $ try $ Q.runClient conn (Q.query qstr par)
     case res of
         Right iop -> do
-            let (_, _, _, chainWork) = case L.length iop of
-                    0 -> (Nothing, Just 0, Nothing, Just "4295032833")  -- 4295032833 (0x100010001) is chainwork for genesis block
+            let (_, height, _, chainWork) = case L.length iop of
+                    0 -> (Nothing, 0, Nothing, "4295032833")  -- 4295032833 (0x100010001) is chainwork for genesis block
                     _ -> runIdentity $ iop !! 0
-                updatedChainwork = T.pack $ show $ indexedCW + (read . T.unpack $ fromJust chainWork)
-                par1 = Q.defQueryParams Q.One ("chain-work", (Nothing, fst $ last indexed, Nothing, updatedChainwork))
+                lag = [(height + 1)..((fst $ head lagIndexed) - 1)]
+            lagCW <- calculateChainWork lag conn
+            let updatedChainwork = T.pack $ show $ lagCW + indexedCW + (read . T.unpack $ chainWork)
+                par1 = Q.defQueryParams Q.One ("chain-work", (Nothing, fst $ last lagIndexed, Nothing, updatedChainwork))
             res1 <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr1) par1)
             case res1 of
                 Right () -> return ()
@@ -329,3 +334,4 @@ updateChainWork indexed conn = do
         Left (e :: SomeException) -> do
             err lg $ LG.msg ("Error: SELECT from 'misc_store' failed: " ++ show e)
             throw KeyValueDBLookupException
+    

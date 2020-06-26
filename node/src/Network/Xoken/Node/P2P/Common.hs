@@ -20,7 +20,7 @@ import Control.Monad.Logger
 import Control.Monad.Reader
 import Control.Monad.STM
 import Control.Monad.State.Strict
-import qualified Data.Aeson as A (decode, encode)
+import qualified Data.Aeson as A (decode, eitherDecode, encode)
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Base16 as B16
 import Data.ByteString.Base64 as B64
@@ -40,6 +40,7 @@ import Data.Serialize as S
 import Data.String.Conversions
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as DTE
 import Data.Time.Clock
 import Data.Time.Clock.POSIX
 import Data.Word
@@ -60,6 +61,7 @@ import Network.Xoken.Util
 import Streamly
 import Streamly.Prelude ((|:), nil)
 import qualified Streamly.Prelude as S
+import System.Logger as LG
 import System.Random
 import Text.Format
 
@@ -202,3 +204,31 @@ generateSessionKey = do
     let seed = show $ fst (random g :: (Word64, StdGen))
         sdb = B64.encode $ C.pack $ seed
     return $ encodeHex ((S.encode $ sha256 $ B.reverse sdb))
+
+-- | Calculates sum of chainworks for blocks with blockheight in input list
+calculateChainWork :: (HasLogger m, MonadIO m) => [Int32] -> Q.ClientState -> m Integer
+calculateChainWork blks conn = do
+    lg <- getLogger
+    let str = "SELECT block_height,block_header from xoken.blocks_by_height where block_height in ?"
+        qstr = str :: Q.QueryString Q.R (Identity [Int32]) (Int32, Text)
+        p = Q.defQueryParams Q.One $ Identity $ blks
+    res <- liftIO $ try $ Q.runClient conn (Q.query qstr p)
+    case res of
+        Right iop -> do
+            if L.length iop == 0
+                then return 0
+                else do
+                    case traverse
+                             (\(ht,hdr) ->
+                                    case (A.eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 hdr) of
+                                        (Right bh) -> Right $ bh
+                                        Left err -> Left err
+                                        )
+                             (iop) of
+                        Right hdrs -> return $ foldr (\x y -> y + (convertBitsToBlockWork $ blockBits $ x)) 0 hdrs 
+                        Left err -> do
+                            liftIO $ print $ "decode failed for blockrecord: " <> show err
+                            return (-1)
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: xGetBlockHeights: " ++ show e
+            throw KeyValueDBLookupException
