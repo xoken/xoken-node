@@ -283,8 +283,8 @@ processHeaders hdrs = do
                                  throw KeyValueDBInsertException)
                     indexed
             unless (L.null indexed) $ do
-                markBestBlock (blockHashToHex $ headerHash $ fst $ snd $ last $ indexed) (fst $ last indexed) conn
                 updateChainWork indexed conn
+                markBestBlock (blockHashToHex $ headerHash $ fst $ snd $ last $ indexed) (fst $ last indexed) conn
                 liftIO $ putMVar (bestBlockUpdated bp2pEnv) True
         False -> do
             err lg $ LG.msg $ val "Error: BlocksNotChainedException"
@@ -312,15 +312,20 @@ updateChainWork indexed conn = do
         qstr1 = str1 :: Q.QueryString Q.W (Text, (Maybe Bool, Int32, Maybe Int64, Text)) ()
         par = Q.defQueryParams Q.One $ Identity "chain-work"
         indexedCW = foldr (\x y -> y + (convertBitsToBlockWork $ blockBits $ fst $ snd $ x)) 0 indexed
-    iop <- Q.runClient conn (Q.query qstr par)
-    let (_, _, _, chainWork) = case L.length iop of
-           0 -> (Nothing, Just 0, Nothing, Just "4295032833")  -- 4295032833 (0x100010001) is chainwork for genesis block
-           _ -> runIdentity $ iop !! 0
-        updatedChainwork = T.pack $ show $ indexedCW + (read . T.unpack $ fromJust chainWork)
-        par1 = Q.defQueryParams Q.One ("chain-work", (Nothing, fst $ last indexed, Nothing, updatedChainwork))
-    res <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr1) par1)
+    res <- liftIO $ try $ Q.runClient conn (Q.query qstr par)
     case res of
-        Right () -> return ()
+        Right iop -> do
+            let (_, _, _, chainWork) = case L.length iop of
+                    0 -> (Nothing, Just 0, Nothing, Just "4295032833")  -- 4295032833 (0x100010001) is chainwork for genesis block
+                    _ -> runIdentity $ iop !! 0
+                updatedChainwork = T.pack $ show $ indexedCW + (read . T.unpack $ fromJust chainWork)
+                par1 = Q.defQueryParams Q.One ("chain-work", (Nothing, fst $ last indexed, Nothing, updatedChainwork))
+            res1 <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr1) par1)
+            case res1 of
+                Right () -> return ()
+                Left (e :: SomeException) -> do
+                    err lg $ LG.msg ("Error: INSERT 'chain-work' into 'misc_store' failed: " ++ show e)
+                    throw KeyValueDBInsertException
         Left (e :: SomeException) -> do
-            err lg $ LG.msg ("Error: INSERT 'chain-work' into 'misc_store' failed: " ++ show e)
-            throw KeyValueDBInsertException
+            err lg $ LG.msg ("Error: SELECT from 'misc_store' failed: " ++ show e)
+            throw KeyValueDBLookupException

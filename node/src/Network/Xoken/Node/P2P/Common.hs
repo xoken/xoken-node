@@ -107,6 +107,14 @@ data PeerMessageException
 
 instance Exception PeerMessageException
 
+data AriviServiceException
+    = KeyValueDBLookupException
+    | GraphDBLookupException
+    | InvalidOutputAddressException
+    deriving (Show)
+
+instance Exception AriviServiceException
+
 --
 --
 -- | Create version data structure.

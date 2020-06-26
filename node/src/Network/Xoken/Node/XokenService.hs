@@ -93,14 +93,6 @@ import Text.Read
 import Xoken
 import qualified Xoken.NodeConfig as NC
 
-data AriviServiceException
-    = KeyValueDBLookupException
-    | GraphDBLookupException
-    | InvalidOutputAddressException
-    deriving (Show)
-
-instance Exception AriviServiceException
-
 data EncodingFormat
     = CBOR
     | JSON
