@@ -25,7 +25,7 @@ import Control.Monad.Logger
 import Control.Monad.Reader
 import Control.Monad.STM
 import Control.Monad.State.Strict
-import qualified Data.Aeson as A (decode, encode)
+import qualified Data.Aeson as A (decode, eitherDecode, encode)
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as C
 import qualified Data.ByteString.Lazy as BSL
@@ -41,6 +41,7 @@ import Data.Serialize
 import Data.String.Conversions
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as DTE
 import Data.Time.Clock
 import Data.Time.Clock.POSIX
 import Data.Word
@@ -283,6 +284,7 @@ processHeaders hdrs = do
                                  throw KeyValueDBInsertException)
                     indexed
             unless (L.null indexed) $ do
+                updateChainWork indexed conn
                 markBestBlock (blockHashToHex $ headerHash $ fst $ snd $ last $ indexed) (fst $ last indexed) conn
                 liftIO $ putMVar (bestBlockUpdated bp2pEnv) True
         False -> do
@@ -301,3 +303,44 @@ fetchMatchBlockOffset conn net hashes = do
         else do
             let (maxHt, bhash) = iop !! 0
             return $ Just (bhash, maxHt)
+
+updateChainWork :: (HasLogger m, MonadIO m) => [(Int32, BlockHeaderCount)] -> Q.ClientState -> m ()
+updateChainWork indexed conn = do
+    lg <- getLogger
+    if L.length indexed == 0
+        then do
+            debug lg $ LG.msg $ val "updateChainWork: Input list empty. Nothing updated."
+            return ()
+    else do
+        let str = "SELECT value from xoken.misc_store where key = ?"
+            qstr = str :: Q.QueryString Q.R (Identity Text) (Identity (Maybe Bool, Int32, Maybe Int64, T.Text))
+            str1 = "insert INTO xoken.misc_store (key, value) values (?, ?)"
+            qstr1 = str1 :: Q.QueryString Q.W (Text, (Maybe Bool, Int32, Maybe Int64, Text)) ()
+            par = Q.defQueryParams Q.One $ Identity "chain-work"
+            lenInd = L.length indexed
+            lenOffset = fromIntegral $ if lenInd <= 10 then (10 - lenInd) else 0
+            lagIndexed = take (lenInd - 10) indexed
+            indexedCW = foldr (\x y -> y + (convertBitsToBlockWork $ blockBits $ fst $ snd $ x)) 0 lagIndexed
+        res <- liftIO $ try $ Q.runClient conn (Q.query qstr par)
+        case res of
+            Right iop -> do
+                let (_, height, _, chainWork) = case L.length iop of
+                        0 -> (Nothing, 0, Nothing, "4295032833")  -- 4295032833 (0x100010001) is chainwork for genesis block
+                        _ -> runIdentity $ iop !! 0
+                    lag = [(height + 1)..((fst $ head indexed) - (1 + lenOffset))]
+                lagCW <- calculateChainWork lag conn
+                let updatedChainwork = T.pack $ show $ lagCW + indexedCW + (read . T.unpack $ chainWork)
+                    updatedBlock = if L.null lagIndexed then last lag else fst $ last lagIndexed
+                    par1 = Q.defQueryParams Q.One ("chain-work", (Nothing, updatedBlock, Nothing, updatedChainwork))
+                res1 <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr1) par1)
+                case res1 of
+                    Right () -> do
+                        debug lg $ LG.msg $ val $ ("updateChainWork: updated till block" <> (C.pack $ show updatedBlock))
+                        return ()
+                    Left (e :: SomeException) -> do
+                        err lg $ LG.msg ("Error: INSERT 'chain-work' into 'misc_store' failed: " ++ show e)
+                        throw KeyValueDBInsertException
+            Left (e :: SomeException) -> do
+                err lg $ LG.msg ("Error: SELECT from 'misc_store' failed: " ++ show e)
+                throw KeyValueDBLookupException
+    

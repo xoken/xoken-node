@@ -75,6 +75,7 @@ import qualified Database.Bolt as BT
 import qualified Database.CQL.IO as Q
 import Database.CQL.Protocol
 import qualified Network.Simple.TCP.TLS as TLS
+import Network.Xoken.Block.Common
 import Network.Xoken.Crypto.Hash
 import Network.Xoken.Node.Data
 import Network.Xoken.Node.Data.Allegory
@@ -84,20 +85,13 @@ import Network.Xoken.Node.GraphDB
 import Network.Xoken.Node.P2P.BlockSync
 import Network.Xoken.Node.P2P.Common
 import Network.Xoken.Node.P2P.Types
+import Numeric (showHex)
 import System.Logger as LG
 import System.Logger.Message
 import System.Random
 import Text.Read
 import Xoken
 import qualified Xoken.NodeConfig as NC
-
-data AriviServiceException
-    = KeyValueDBLookupException
-    | GraphDBLookupException
-    | InvalidOutputAddressException
-    deriving (Show)
-
-instance Exception AriviServiceException
 
 data EncodingFormat
     = CBOR
@@ -110,6 +104,40 @@ data EndPointConnection =
         , context :: MVar TLS.Context
         , encodingFormat :: IORef EncodingFormat
         }
+
+xGetChainInfo :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> m (Maybe ChainInfo)
+xGetChainInfo net = do
+    dbe <- getDB
+    lg <- getLogger
+    let conn = keyValDB $ dbe
+        str = "SELECT key,value from xoken.misc_store"
+        qstr = str :: Q.QueryString Q.R () (DT.Text,(Maybe Bool, Int32, Maybe Int64, DT.Text))
+        p = Q.defQueryParams Q.One ()
+    res <- LE.try $ Q.runClient conn (Q.query qstr p)
+    case res of
+        Right iop -> do
+            if L.length iop < 3
+                then do
+                    return Nothing
+                else do
+                    let (_,blocks,_,_) = snd . head $ (L.filter (\x -> fst x == "best-synced") iop)
+                        (_,headers,_,bestBlockHash) = snd . head $ (L.filter (\x -> fst x == "best_chain_tip") iop)
+                        (_,lagHeight,_,chainwork) = snd . head $ (L.filter (\x -> fst x == "chain-work") iop)
+                    blk <- xGetBlockHeight net headers
+                    lagCW <- calculateChainWork [(lagHeight + 1)..(headers)] conn
+                    case blk of
+                        Nothing -> return Nothing
+                        Just b -> do
+                            return $ Just $ ChainInfo
+                                                "main"
+                                                (showHex (lagCW + (read . DT.unpack $ chainwork)) "")
+                                                (convertBitsToDifficulty . blockBits . rbHeader $ b)
+                                                (headers)
+                                                (blocks)
+                                                (rbHash b)
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: xGetChainInfo: " ++ show e
+            throw KeyValueDBLookupException
 
 xGetBlockHash :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> String -> m (Maybe BlockRecord)
 xGetBlockHash net hash = do
@@ -902,10 +930,15 @@ goGetResource msg net = do
     dbe <- getDB
     let grdb = graphDB (dbe)
     case rqMethod msg of
+        "CHAIN_INFO" -> do
+            cw <- xGetChainInfo net
+            case cw of
+                Just c -> return $ RPCResponse 200 Nothing $ Just $ RespChainInfo c
+                Nothing -> return $ RPCResponse 404 (Just INVALID_REQUEST) Nothing
         "HASH->BLOCK" -> do
             case methodParams $ rqParams msg of
                 Just (GetBlockByHash hs) -> do
-                    !blk <- xGetBlockHash net (hs)
+                    blk <- xGetBlockHash net (hs)
                     case blk of
                         Just b -> return $ RPCResponse 200 Nothing $ Just $ RespBlockByHash b
                         Nothing -> return $ RPCResponse 404 (Just INVALID_REQUEST) Nothing
