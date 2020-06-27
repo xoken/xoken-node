@@ -34,22 +34,6 @@ CREATE TABLE xoken.ep_address_outputs (
 
 CREATE TABLE xoken.address_outputs (
     address text,
-    output frozen<tuple<text, int>>,
-    block_info frozen<tuple<frozen<tuple<text, int>>, int>>,
-    nominal_tx_index bigint,
-    is_block_confirmed boolean,
-    is_output_spent boolean,
-    is_type_receive boolean,
-    other_address text,
-    prev_outpoint frozen<tuple<text, int>>,
-    value bigint,
-    PRIMARY KEY (address, nominal_tx_index, output)
-) WITH CLUSTERING ORDER BY (nominal_tx_index DESC); 
-
--- new schema
-
-CREATE TABLE xoken.address_outputs (
-    address text,
     nominal_tx_index bigint,
     output frozen<tuple<text, int>>,
     is_type_receive boolean,
