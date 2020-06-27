@@ -389,7 +389,6 @@ xGetOutputsAddress net address pgSize mbNomTxInd = do
                             (OutPoint' (DT.unpack op_txid) (fromIntegral op_txidx))
                             (BlockInfo' (DT.unpack bsh) (fromIntegral bidx) (fromIntegral bht))
                             nti
-                            False
                             ios
                             itr
                             (if isJust oa

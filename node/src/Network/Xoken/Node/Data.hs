@@ -374,7 +374,6 @@ data AddressOutputs =
         , aoOutput :: OutPoint'
         , aoBlockInfo :: BlockInfo'
         , aoNominalTxIndex :: Int64
-        , aoIsBlockConfirmed :: Bool
         , aoIsOutputSpent :: Bool
         , aoIsTypeReceive :: Bool
         , aoOtherAddress :: String
@@ -392,7 +391,6 @@ data ScriptOutputs =
         , scOutput :: OutPoint'
         , scBlockInfo :: BlockInfo'
         , scNominalTxIndex :: Int64
-        , scIsBlockConfirmed :: Bool
         , scIsOutputSpent :: Bool
         , scIsTypeReceive :: Bool
         , scOtherAddress :: String
@@ -490,7 +488,6 @@ addressToScriptOutputs AddressOutputs {..} =
         , scOutput = aoOutput
         , scBlockInfo = aoBlockInfo
         , scNominalTxIndex = aoNominalTxIndex
-        , scIsBlockConfirmed = aoIsBlockConfirmed
         , scIsOutputSpent = aoIsOutputSpent
         , scIsTypeReceive = aoIsTypeReceive
         , scOtherAddress = aoOtherAddress
