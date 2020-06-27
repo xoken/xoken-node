@@ -407,7 +407,6 @@ fetchBestSyncedBlock conn net = do
                         Nothing -> throw InvalidBlockHashException
                 Nothing -> throw InvalidMetaDataException
 
--- Keep the address_outputs schema unchanged for now but also add txid_outputs
 commitAddressOutputs ::
         (HasLogger m, MonadIO m)
      => Q.ClientState
@@ -420,62 +419,6 @@ commitAddressOutputs ::
      -> Int64                   -- value
      -> m ()
 commitAddressOutputs conn addr typeRecv otherAddr output blockInfo prevOutpoint value = do
-    lg <- getLogger
-    let blkHeight = fromIntegral $ snd . fst $ blockInfo
-        txIndex = fromIntegral $ snd blockInfo
-        nominalTxIndex = blkHeight * 1000000000 + txIndex
-        txID = fst $ output
-        txIndex32 = snd $ output
-        strAddrOuts = "INSERT INTO xoken.address_outputs (address, is_type_receive, other_address, output, block_info, nominal_tx_index, prev_outpoint, value, is_block_confirmed, is_output_spent) VALUES (?,?,?,?,?,?,?,?,?,?)"
-        qstrAddrOuts =
-            strAddrOuts :: Q.QueryString Q.W ( Text
-                                             , Bool
-                                             , Maybe Text
-                                             , (Text, Int32)
-                                             , ((Text,Int32), Int32)
-                                             , Int64
-                                             , (Text, Int32)
-                                             , Int64
-                                             , Bool
-                                             , Bool) ()
-        parAddrOuts = Q.defQueryParams Q.One (addr, typeRecv, otherAddr, output, blockInfo, nominalTxIndex, prevOutpoint, value, False, False)
-        strTxIDOuts = "INSERT INTO xoken.txid_outputs (txid, idx, block_info, is_output_spent, spending_txid, spending_index, prev_outpoint, value) VALUES (?,?,?,?,?,?,?,?)"
-        qstrTxIDOuts =
-            strTxIDOuts :: Q.QueryString Q.W ( Text
-                                             , Int32
-                                             , ((Text, Int32), Int32)
-                                             , Bool
-                                             , Maybe Text
-                                             , Maybe Int32
-                                             , (Text, Int32)
-                                             , Int64) ()
-        parTxIDOuts = Q.defQueryParams Q.One (txID, txIndex32, blockInfo, False, Nothing, Nothing, prevOutpoint, value)
-    resAddrOuts <- liftIO $ try $ Q.runClient conn (Q.write (qstrAddrOuts) parAddrOuts)
-    case resAddrOuts of
-        Right () -> do
-            resTxIDOuts <- liftIO $ try $ Q.runClient conn (Q.write (qstrTxIDOuts) parTxIDOuts)
-            case resTxIDOuts of
-                Right () -> return ()
-                Left (e :: SomeException) -> do
-                    err lg $ LG.msg $ "Error: INSERTing into 'txid_outputs':" ++ show e
-                    throw KeyValueDBInsertException
-        Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: INSERTing into 'address_outputs': " ++ show e
-            throw KeyValueDBInsertException
-
--- switch to this after address_outputs loses fat 
-commitAddressOutputs' ::
-        (HasLogger m, MonadIO m)
-     => Q.ClientState
-     -> Text                    -- address
-     -> Bool                    -- isTypeRecv
-     -> Maybe Text              -- otherAddr
-     -> (Text, Int32)           -- output (txid, index)
-     -> ((Text, Int32), Int32)  -- blockInfo ((blockHash, blockHeight), blockTxIndex)
-     -> (Text, Int32)           -- prevOutpoint (txid, index)
-     -> Int64                   -- value
-     -> m ()
-commitAddressOutputs' conn addr typeRecv otherAddr output blockInfo prevOutpoint value = do
     lg <- getLogger
     let blkHeight = fromIntegral $ snd . fst $ blockInfo
         txIndex = fromIntegral $ snd blockInfo
