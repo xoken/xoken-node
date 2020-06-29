@@ -196,7 +196,7 @@ generateSessionKey = do
         sdb = B64.encode $ C.pack $ seed
     return $ encodeHex ((S.encode $ sha256 $ B.reverse sdb))
 
-addNewUser :: Q.ClientState -> T.Text -> T.Text -> T.Text -> T.Text -> T.Text -> Int32 -> UTCTime -> IO String
+addNewUser :: Q.ClientState -> T.Text -> T.Text -> T.Text -> T.Text -> Maybe String -> Maybe Int32 -> Maybe UTCTime -> IO String
 addNewUser conn uname fname lname email role api_quota api_expiry_time = do
     tm <- liftIO $ getCurrentTime
     g <- liftIO $ getStdGen
@@ -228,10 +228,10 @@ addNewUser conn uname fname lname email role api_quota api_expiry_time = do
                 , lname
                 , email
                 , tm
-                , [role]
-                , api_quota
+                , [maybe "read" T.pack role]
+                , (fromMaybe 100 api_quota)
                 , 0
-                , api_expiry_time
+                , (fromMaybe (addUTCTime (nominalDay * 30) tm) api_expiry_time)
                 , tempSessionKey
                 , (addUTCTime (nominalDay * 30) tm))
     res1 <- liftIO $ try $ Q.runClient conn (Q.write (qstr) par)

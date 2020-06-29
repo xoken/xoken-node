@@ -62,6 +62,7 @@ import Data.Maybe
 import Data.Pool
 import qualified Data.Serialize as S
 import Data.Serialize
+import qualified Data.Set as Set
 import Data.String (IsString, fromString)
 import qualified Data.Text as DT
 import qualified Data.Text.Encoding as DTE
@@ -837,8 +838,8 @@ delegateRequest encReq epConn net = do
         (AuthenticateReq _ _) -> authLoginClient encReq net epConn
         (GeneralReq sessionKey __) -> do
             let str =
-                    " SELECT api_quota, api_used, session_key_expiry_time, role FROM xoken.user_permission WHERE session_key = ? ALLOW FILTERING "
-                qstr = str :: Q.QueryString Q.R (Q.Identity DT.Text) (Int32, Int32, UTCTime, [DT.Text])
+                    " SELECT api_quota, api_used, session_key_expiry_time, permissions FROM xoken.user_permission WHERE session_key = ? ALLOW FILTERING "
+                qstr = str :: Q.QueryString Q.R (Q.Identity DT.Text) (Int32, Int32, UTCTime, Set DT.Text)
                 p = Q.defQueryParams Q.One $ Identity $ (DT.pack sessionKey)
             res <- liftIO $ try $ Q.runClient conn (Q.query (Q.prepared qstr) p)
             case res of
@@ -854,7 +855,7 @@ delegateRequest encReq epConn net = do
                                 (quota, used, exp, role) -> do
                                     curtm <- liftIO $ getCurrentTime
                                     if exp > curtm && quota > used
-                                        then goGetResource encReq net role
+                                        then goGetResource encReq net (Database.CQL.Protocol.fromSet role)
                                         else return $
                                              RPCResponse 200 Nothing $ Just $ AuthenticateResp $ AuthResp Nothing 0 0
 
@@ -874,7 +875,7 @@ goGetResource msg net role = do
                                                        (DT.pack $ fname)
                                                        (DT.pack $ lname)
                                                        (DT.pack $ email)
-                                                       (DT.pack $ addUserRole)
+                                                       (addUserRole)
                                                        (apiQuota)
                                                        (apiExp)
                             return $ RPCResponse 200 Nothing $ Just $ RespAddUser pwd

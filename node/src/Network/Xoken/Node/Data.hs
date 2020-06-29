@@ -143,12 +143,12 @@ instance FromJSON RPCReqParams where
 data RPCReqParams'
     = AddUser 
           { auUsername :: String
-          , auApiExpiryTime :: UTCTime
-          , auApiQuota :: Int32
+          , auApiExpiryTime :: Maybe UTCTime
+          , auApiQuota :: Maybe Int32
           , auFirstName :: String
           , auLastName :: String
           , auEmail :: String
-          , auRole :: String
+          , auRole :: Maybe String
           } 
     | GetBlockByHeight
           { gbHeight :: Int
@@ -232,8 +232,8 @@ instance FromJSON RPCReqParams' where
         (RelayTx . BL.toStrict . GZ.decompress . B64L.decodeLenient . BL.fromStrict . T.encodeUtf8 <$> o .: "rTx") <|>
         (GetPartiallySignedAllegoryTx <$> o .: "gpsaPaymentInputs" <*> o .: "gpsaName" <*> o .: "gpsaOutputOwner" <*>
          o .: "gpsaOutputChange") <|>
-        (AddUser <$> o .: "username" <*> o .: "api_expiry_time" <*> o .: "api_quota" <*>
-         o .: "first_name" <*> o .: "last_name" <*> o .: "email" <*> o .: "role")
+        (AddUser <$> o .: "username" <*> o .:? "api_expiry_time" <*> o .:? "api_quota" <*>
+         o .: "first_name" <*> o .: "last_name" <*> o .: "email" <*> o .:? "role")
 
 data RPCResponseBody
     = AuthenticateResp
@@ -288,8 +288,8 @@ data RPCResponseBody
           { psaTx :: ByteString
           }
     | RespAddUser
-            { userPassword :: String
-            }
+          { userPassword :: String
+          }
     deriving (Generic, Show, Hashable, Eq, Serialise)
 
 instance ToJSON RPCResponseBody where

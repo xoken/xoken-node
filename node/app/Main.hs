@@ -290,13 +290,20 @@ netNames = intercalate "|" (Data.List.map getNetworkName allNets)
 
 defaultAdminUser :: Q.ClientState -> IO ()
 defaultAdminUser conn = do
-    tm <- liftIO $ getCurrentTime
-    pwd <- addNewUser conn "admin" "default" "user" "" "admin" 100000000 (addUTCTime (nominalDay * 365) tm)
-    putStrLn $ "******************************************************************* "
-    putStrLn $ "  Creating default Admin user!"
-    putStrLn $ "  Please note down admin password NOW, will not be shown again."
-    putStrLn $ "  Password : " ++ pwd
-    putStrLn $ "******************************************************************* "
+    let qstr =
+            " SELECT password from xoken.user_permission where username = 'admin' " :: Q.QueryString Q.R () (Identity T.Text)
+        p = Q.defQueryParams Q.One ()
+    op <- Q.runClient conn (Q.query qstr p)
+    if length op == 1
+        then return ()
+        else do
+            tm <- liftIO $ getCurrentTime
+            pwd <- addNewUser conn "admin" "default" "user" "" (Just "admin") (Just 100000000) (Just (addUTCTime (nominalDay * 365) tm))
+            putStrLn $ "******************************************************************* "
+            putStrLn $ "  Creating default Admin user!"
+            putStrLn $ "  Please note down admin password NOW, will not be shown again."
+            putStrLn $ "  Password : " ++ pwd
+            putStrLn $ "******************************************************************* "
 
 
 makeKeyValDBConn :: IO (Q.ClientState)
