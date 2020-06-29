@@ -225,7 +225,7 @@ calculateChainWork blks conn = do
                                         Left err -> Left err
                                         )
                              (iop) of
-                        Right hdrs -> return $ foldr (\x y -> y + (convertBitsToBlockWork $ blockBits $ x)) 0 hdrs 
+                        Right hdrs -> return $ foldr (\x y -> y + (convertBitsToBlockWork $ blockBits $ x)) 0 hdrs
                         Left err -> do
                             liftIO $ print $ "decode failed for blockrecord: " <> show err
                             return (-1)

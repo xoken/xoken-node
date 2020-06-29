@@ -40,6 +40,7 @@ import Control.Monad.IO.Class
 import Control.Monad.Logger
 import Control.Monad.Loops
 import Control.Monad.Reader
+import Control.Monad.Trans.Control
 import Data.Aeson as A
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Base16 as B16 (decode, encode)
@@ -110,7 +111,7 @@ xGetChainInfo net = do
     lg <- getLogger
     let conn = keyValDB $ dbe
         str = "SELECT key,value from xoken.misc_store"
-        qstr = str :: Q.QueryString Q.R () (DT.Text,(Maybe Bool, Int32, Maybe Int64, DT.Text))
+        qstr = str :: Q.QueryString Q.R () (DT.Text, (Maybe Bool, Int32, Maybe Int64, DT.Text))
         p = Q.defQueryParams Q.One ()
     res <- LE.try $ Q.runClient conn (Q.query qstr p)
     case res of
@@ -119,54 +120,55 @@ xGetChainInfo net = do
                 then do
                     return Nothing
                 else do
-                    let (_,blocks,_,_) = snd . head $ (L.filter (\x -> fst x == "best-synced") iop)
-                        (_,headers,_,bestBlockHash) = snd . head $ (L.filter (\x -> fst x == "best_chain_tip") iop)
-                        (_,lagHeight,_,chainwork) = snd . head $ (L.filter (\x -> fst x == "chain-work") iop)
+                    let (_, blocks, _, _) = snd . head $ (L.filter (\x -> fst x == "best-synced") iop)
+                        (_, headers, _, bestBlockHash) = snd . head $ (L.filter (\x -> fst x == "best_chain_tip") iop)
+                        (_, lagHeight, _, chainwork) = snd . head $ (L.filter (\x -> fst x == "chain-work") iop)
                     blk <- xGetBlockHeight net headers
-                    lagCW <- calculateChainWork [(lagHeight + 1)..(headers)] conn
+                    lagCW <- calculateChainWork [(lagHeight + 1) .. (headers)] conn
                     case blk of
                         Nothing -> return Nothing
                         Just b -> do
-                            return $ Just $ ChainInfo
-                                                "main"
-                                                (showHex (lagCW + (read . DT.unpack $ chainwork)) "")
-                                                (convertBitsToDifficulty . blockBits . rbHeader $ b)
-                                                (headers)
-                                                (blocks)
-                                                (rbHash b)
+                            return $
+                                Just $
+                                ChainInfo
+                                    "main"
+                                    (showHex (lagCW + (read . DT.unpack $ chainwork)) "")
+                                    (convertBitsToDifficulty . blockBits . rbHeader $ b)
+                                    (headers)
+                                    (blocks)
+                                    (rbHash b)
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetChainInfo: " ++ show e
             throw KeyValueDBLookupException
 
-xGetBlockHash :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> String -> m (Maybe BlockRecord)
-xGetBlockHash net hash = do
-    dbe <- getDB
-    lg <- getLogger
+xGetBlockHash :: (MonadIO m, MonadBaseControl IO m) => DatabaseHandles -> Logger -> DT.Text -> m (Maybe BlockRecord)
+xGetBlockHash dbe lg hash = do
     let conn = keyValDB (dbe)
-        str = "SELECT block_hash,block_height,block_header,block_size,tx_count,coinbase_tx from xoken.blocks_by_hash where block_hash = ?"
-        qstr = str :: Q.QueryString Q.R (Identity DT.Text) ( DT.Text
-                                                           , Int32
-                                                           , DT.Text
-                                                           , Maybe Int32
-                                                           , Maybe Int32
-                                                           , Maybe Blob)
-        p = Q.defQueryParams Q.One $ Identity $ DT.pack hash
+        str =
+            "SELECT block_hash,block_height,block_header,block_size,tx_count,coinbase_tx from xoken.blocks_by_hash where block_hash = ?"
+        qstr =
+            str :: Q.QueryString Q.R (Identity DT.Text) (DT.Text, Int32, DT.Text, Maybe Int32, Maybe Int32, Maybe Blob)
+        p = Q.defQueryParams Q.One $ Identity hash
     res <- LE.try $ Q.runClient conn (Q.query qstr p)
     case res of
         Right iop -> do
             if length iop == 0
                 then return Nothing
                 else do
-                    let (hs,ht,hdr,size,txc,cbase) = iop !! 0
+                    let (hs, ht, hdr, size, txc, cbase) = iop !! 0
                     case eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 hdr of
-                        Right bh -> return $ Just $ BlockRecord (fromIntegral ht)
-                                                                (DT.unpack hs)
-                                                                bh
-                                                                (maybe (-1) fromIntegral size)
-                                                                (maybe (-1) fromIntegral txc)
-                                                                ("")
-                                                                (maybe "" (coinbaseTxToMessage . fromBlob) cbase)
-                                                                (maybe "" (C.unpack . fromBlob) cbase)
+                        Right bh ->
+                            return $
+                            Just $
+                            BlockRecord
+                                (fromIntegral ht)
+                                (DT.unpack hs)
+                                bh
+                                (maybe (-1) fromIntegral size)
+                                (maybe (-1) fromIntegral txc)
+                                ("")
+                                (maybe "" (coinbaseTxToMessage . fromBlob) cbase)
+                                (maybe "" (C.unpack . fromBlob) cbase)
                         Left err -> do
                             liftIO $ print $ "Decode failed with error: " <> show err
                             return Nothing
@@ -179,13 +181,15 @@ xGetBlocksHashes net hashes = do
     dbe <- getDB
     lg <- getLogger
     let conn = keyValDB (dbe)
-        str = "SELECT block_hash,block_height,block_header,block_size,tx_count,coinbase_tx from xoken.blocks_by_hash where block_hash in ?"
-        qstr = str :: Q.QueryString Q.R (Identity [DT.Text]) ( DT.Text
-                                                             , Int32
-                                                             , DT.Text
-                                                             , Maybe Int32
-                                                             , Maybe Int32
-                                                             , Maybe Blob)
+        str =
+            "SELECT block_hash,block_height,block_header,block_size,tx_count,coinbase_tx from xoken.blocks_by_hash where block_hash in ?"
+        qstr =
+            str :: Q.QueryString Q.R (Identity [DT.Text]) ( DT.Text
+                                                          , Int32
+                                                          , DT.Text
+                                                          , Maybe Int32
+                                                          , Maybe Int32
+                                                          , Maybe Blob)
         p = Q.defQueryParams Q.One $ Identity $ Data.List.map (DT.pack) hashes
     res <- LE.try $ Q.runClient conn (Q.query qstr p)
     case res of
@@ -194,18 +198,20 @@ xGetBlocksHashes net hashes = do
                 then return []
                 else do
                     case traverse
-                             (\(hs,ht,hdr,size,txc,cbase) ->
-                                 case (eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 hdr) of
-                                     (Right bh) -> Right $ BlockRecord (fromIntegral ht)
-                                                                       (DT.unpack hs)
-                                                                       bh
-                                                                       (maybe (-1) fromIntegral size)
-                                                                       (maybe (-1) fromIntegral txc)
-                                                                       ("")
-                                                                       (maybe "" (coinbaseTxToMessage . fromBlob) cbase)
-                                                                       (maybe "" (C.unpack . fromBlob) cbase)
-                                     Left err -> Left err
-                                     )
+                             (\(hs, ht, hdr, size, txc, cbase) ->
+                                  case (eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 hdr) of
+                                      (Right bh) ->
+                                          Right $
+                                          BlockRecord
+                                              (fromIntegral ht)
+                                              (DT.unpack hs)
+                                              bh
+                                              (maybe (-1) fromIntegral size)
+                                              (maybe (-1) fromIntegral txc)
+                                              ("")
+                                              (maybe "" (coinbaseTxToMessage . fromBlob) cbase)
+                                              (maybe "" (C.unpack . fromBlob) cbase)
+                                      Left err -> Left err)
                              (iop) of
                         Right x -> return x
                         Left err -> do
@@ -220,13 +226,9 @@ xGetBlockHeight net height = do
     dbe <- getDB
     lg <- getLogger
     let conn = keyValDB (dbe)
-        str = "SELECT block_hash,block_height,block_header,block_size,tx_count,coinbase_tx from xoken.blocks_by_height where block_height = ?"
-        qstr = str :: Q.QueryString Q.R (Identity Int32) ( DT.Text
-                                                         , Int32
-                                                         , DT.Text
-                                                         , Maybe Int32
-                                                         , Maybe Int32
-                                                         , Maybe Blob)
+        str =
+            "SELECT block_hash,block_height,block_header,block_size,tx_count,coinbase_tx from xoken.blocks_by_height where block_height = ?"
+        qstr = str :: Q.QueryString Q.R (Identity Int32) (DT.Text, Int32, DT.Text, Maybe Int32, Maybe Int32, Maybe Blob)
         p = Q.defQueryParams Q.One $ Identity height
     res <- LE.try $ Q.runClient conn (Q.query qstr p)
     case res of
@@ -234,17 +236,20 @@ xGetBlockHeight net height = do
             if length iop == 0
                 then return Nothing
                 else do
-                    let (hs,ht,hdr,size,txc,cbase) = iop !! 0
+                    let (hs, ht, hdr, size, txc, cbase) = iop !! 0
                     case eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 hdr of
                         Right bh -> do
-                                return $ Just $ BlockRecord (fromIntegral ht)
-                                                                (DT.unpack hs)
-                                                                bh
-                                                                (maybe (-1) fromIntegral size)
-                                                                (maybe (-1) fromIntegral txc)
-                                                                ("")
-                                                                (maybe "" (coinbaseTxToMessage . fromBlob) cbase)
-                                                                (maybe "" (C.unpack . fromBlob) cbase)
+                            return $
+                                Just $
+                                BlockRecord
+                                    (fromIntegral ht)
+                                    (DT.unpack hs)
+                                    bh
+                                    (maybe (-1) fromIntegral size)
+                                    (maybe (-1) fromIntegral txc)
+                                    ("")
+                                    (maybe "" (coinbaseTxToMessage . fromBlob) cbase)
+                                    (maybe "" (C.unpack . fromBlob) cbase)
                         Left err -> do
                             liftIO $ print $ "Decode failed with error: " <> show err
                             return Nothing
@@ -257,13 +262,10 @@ xGetBlocksHeights net heights = do
     dbe <- getDB
     lg <- getLogger
     let conn = keyValDB (dbe)
-        str = "SELECT block_hash,block_height,block_header,block_size,tx_count,coinbase_tx from xoken.blocks_by_height where block_height in ?"
-        qstr = str :: Q.QueryString Q.R (Identity [Int32]) ( DT.Text
-                                                           , Int32
-                                                           , DT.Text
-                                                           , Maybe Int32
-                                                           , Maybe Int32
-                                                           , Maybe Blob)
+        str =
+            "SELECT block_hash,block_height,block_header,block_size,tx_count,coinbase_tx from xoken.blocks_by_height where block_height in ?"
+        qstr =
+            str :: Q.QueryString Q.R (Identity [Int32]) (DT.Text, Int32, DT.Text, Maybe Int32, Maybe Int32, Maybe Blob)
         p = Q.defQueryParams Q.One $ Identity $ heights
     res <- LE.try $ Q.runClient conn (Q.query qstr p)
     case res of
@@ -272,18 +274,20 @@ xGetBlocksHeights net heights = do
                 then return []
                 else do
                     case traverse
-                             (\(hs,ht,hdr,size,txc,cbase) ->
-                                    case (eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 hdr) of
-                                        (Right bh) -> Right $ BlockRecord (fromIntegral ht)
-                                                                          (DT.unpack hs)
-                                                                          bh
-                                                                          (maybe (-1) fromIntegral size)
-                                                                          (maybe (-1) fromIntegral txc)
-                                                                          ("")
-                                                                          (maybe "" (coinbaseTxToMessage . fromBlob) cbase)
-                                                                          (maybe "" (C.unpack . fromBlob) cbase)
-                                        Left err -> Left err
-                                        )
+                             (\(hs, ht, hdr, size, txc, cbase) ->
+                                  case (eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 hdr) of
+                                      (Right bh) ->
+                                          Right $
+                                          BlockRecord
+                                              (fromIntegral ht)
+                                              (DT.unpack hs)
+                                              bh
+                                              (maybe (-1) fromIntegral size)
+                                              (maybe (-1) fromIntegral txc)
+                                              ("")
+                                              (maybe "" (coinbaseTxToMessage . fromBlob) cbase)
+                                              (maybe "" (C.unpack . fromBlob) cbase)
+                                      Left err -> Left err)
                              (iop) of
                         Right x -> return x
                         Left err -> do
@@ -801,59 +805,53 @@ authLoginClient :: (HasXokenNodeEnv env m, MonadIO m) => RPCMessage -> Network -
 authLoginClient msg net epConn = do
     dbe <- getDB
     lg <- getLogger
-    let conn = keyValDB (dbe)
     case rqMethod msg of
-        "AUTHENTICATE" -> do
+        "AUTHENTICATE" ->
             case rqParams msg of
                 (AuthenticateReq user pass) -> do
-                    let hashedPasswd = encodeHex ((S.encode $ sha256 $ BC.pack pass))
-                        str =
-                            " SELECT password, api_quota, api_used, session_key_expiry_time FROM xoken.user_permission WHERE username = ? "
-                        qstr = str :: Q.QueryString Q.R (Identity DT.Text) (DT.Text, Int32, Int32, UTCTime)
-                        p = Q.defQueryParams Q.One $ Identity $ (DT.pack user)
-                    res <- liftIO $ try $ Q.runClient conn (Q.query (Q.prepared qstr) p)
-                    case res of
-                        Left (SomeException e) -> do
-                            err lg $ LG.msg $ "Error: SELECT'ing from 'user_permission': " ++ show e
-                            throw e
-                        Right (op) -> do
-                            if length op == 0
-                                then do
-                                    return $ RPCResponse 200 Nothing $ Just $ AuthenticateResp $ AuthResp Nothing 0 0
-                                else do
-                                    case (op !! 0) of
-                                        (sk, _, _, _) -> do
-                                            if (sk /= hashedPasswd)
-                                                then return $
-                                                     RPCResponse 200 Nothing $
-                                                     Just $ AuthenticateResp $ AuthResp Nothing 0 0
-                                                else do
-                                                    tm <- liftIO $ getCurrentTime
-                                                    newSessionKey <- liftIO $ generateSessionKey
-                                                    let str1 =
-                                                            "UPDATE xoken.user_permission SET session_key = ?, session_key_expiry_time = ? WHERE username = ? "
-                                                        qstr1 = str1 :: Q.QueryString Q.W (DT.Text, UTCTime, DT.Text) ()
-                                                        par1 =
-                                                            Q.defQueryParams
-                                                                Q.One
-                                                                ( newSessionKey
-                                                                , (addUTCTime (nominalDay * 30) tm)
-                                                                , DT.pack user)
-                                                    res1 <- liftIO $ try $ Q.runClient conn (Q.write (qstr1) par1)
-                                                    case res1 of
-                                                        Right () -> return ()
-                                                        Left (SomeException e) -> do
-                                                            err lg $
-                                                                LG.msg $
-                                                                "Error: UPDATE'ing into 'user_permission': " ++ show e
-                                                            throw e
-                                                    return $
-                                                        RPCResponse 200 Nothing $
-                                                        Just $
-                                                        AuthenticateResp $
-                                                        AuthResp (Just $ DT.unpack newSessionKey) 1 100
+                    resp <- login dbe lg (DT.pack user) (BC.pack pass)
+                    return $ RPCResponse 200 Nothing $ Just $ AuthenticateResp resp
                 ___ -> return $ RPCResponse 404 (Just INVALID_REQUEST) Nothing
         _____ -> return $ RPCResponse 200 Nothing $ Just $ AuthenticateResp $ AuthResp Nothing 0 0
+
+login :: (MonadIO m, MonadBaseControl IO m) => DatabaseHandles -> Logger -> DT.Text -> BC.ByteString -> m AuthResp
+login dbe lg user pass = do
+    let conn = keyValDB dbe
+        hashedPasswd = encodeHex ((S.encode $ sha256 pass))
+        str =
+            " SELECT password, api_quota, api_used, session_key_expiry_time FROM xoken.user_permission WHERE username = ? "
+        qstr = str :: Q.QueryString Q.R (Identity DT.Text) (DT.Text, Int32, Int32, UTCTime)
+        p = Q.defQueryParams Q.One $ Identity $ user
+    res <- liftIO $ try $ Q.runClient conn (Q.query (Q.prepared qstr) p)
+    case res of
+        Left (SomeException e) -> do
+            err lg $ LG.msg $ "Error: SELECT'ing from 'user_permission': " ++ show e
+            throw e
+        Right (op) -> do
+            if length op == 0
+                then return $ AuthResp Nothing 0 0
+                else do
+                    case (op !! 0) of
+                        (sk, _, _, _) -> do
+                            if (sk /= hashedPasswd)
+                                then return $ AuthResp Nothing 0 0
+                                else do
+                                    tm <- liftIO $ getCurrentTime
+                                    newSessionKey <- liftIO $ generateSessionKey
+                                    let str1 =
+                                            "UPDATE xoken.user_permission SET session_key = ?, session_key_expiry_time = ? WHERE username = ? "
+                                        qstr1 = str1 :: Q.QueryString Q.W (DT.Text, UTCTime, DT.Text) ()
+                                        par1 =
+                                            Q.defQueryParams
+                                                Q.One
+                                                (newSessionKey, (addUTCTime (nominalDay * 30) tm), user)
+                                    res1 <- liftIO $ try $ Q.runClient conn (Q.write (qstr1) par1)
+                                    case res1 of
+                                        Right () -> return ()
+                                        Left (SomeException e) -> do
+                                            err lg $ LG.msg $ "Error: UPDATE'ing into 'user_permission': " ++ show e
+                                            throw e
+                                    return $ AuthResp (Just $ DT.unpack newSessionKey) 1 100
 
 delegateRequest :: (HasXokenNodeEnv env m, MonadIO m) => RPCMessage -> EndPointConnection -> Network -> m (RPCMessage)
 delegateRequest encReq epConn net = do
@@ -898,7 +896,8 @@ goGetResource msg net = do
         "HASH->BLOCK" -> do
             case methodParams $ rqParams msg of
                 Just (GetBlockByHash hs) -> do
-                    blk <- xGetBlockHash net (hs)
+                    lg <- getLogger
+                    blk <- xGetBlockHash dbe lg (DT.pack hs)
                     case blk of
                         Just b -> return $ RPCResponse 200 Nothing $ Just $ RespBlockByHash b
                         Nothing -> return $ RPCResponse 404 (Just INVALID_REQUEST) Nothing
