@@ -79,7 +79,9 @@ CREATE TABLE xoken.txid_outputs (
     is_output_spent boolean,
     spending_txid text,
     spending_index int,
+    spending_tx_block_height int,
     prev_outpoint frozen<tuple<text, int>>,
+    input_index int,
     value bigint,
     PRIMARY KEY(txid, idx)
  );
