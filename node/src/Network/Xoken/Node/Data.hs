@@ -379,7 +379,7 @@ data TxOutputSpendStatus =
     TxOutputSpendStatus
           { isSpent :: Bool
           , spendingTxID :: Maybe String
-          , spendingTxHeight :: Maybe Int
+          , spendingTxBlockHt :: Maybe Int
           , spendingTxIndex :: Maybe Int32
           }
     deriving (Show, Generic, Hashable, Eq, Serialise)
@@ -389,7 +389,7 @@ instance ToJSON TxOutputSpendStatus where
         object
             [ "isSpent" .= tis
             , "spendingTxID" .= stxid
-            , "spendingTxHeight" .= stxht
+            , "spendingTxBlockHt" .= stxht
             , "spendingTxIndex" .= stxindex
             ]
 
