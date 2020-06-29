@@ -44,6 +44,7 @@ executable xoken-nexa
       Network.Xoken.Node.TLSServer
       Network.Xoken.Node.HTTP.Types
       Network.Xoken.Node.HTTP.Server
+      Network.Xoken.Node.HTTP.Handler
 
   ghc-options:  -fprof-auto -fprof-cafs -rtsopts -O2 -threaded
   hs-source-dirs:

@@ -195,12 +195,10 @@ data RPCReqParams'
           }
     | GetPartiallySignedAllegoryTx
           { gpsaPaymentInputs :: [(OutPoint', Int)]
-          , gpsaName :: ([Int], Bool) -- name & isProducer 
+          , gpsaName :: ([Int], Bool) -- name & isProducer
           , gpsaOutputOwner :: String
           , gpsaOutputChange :: String
           }
-    
-    
     deriving (Generic, Show, Hashable, Eq, Serialise, ToJSON)
 
 instance FromJSON RPCReqParams' where

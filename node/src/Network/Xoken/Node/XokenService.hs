@@ -309,13 +309,12 @@ xGetTxHash dbe hash = do
                     (BlockInfo' (DT.unpack bhash) (fromIntegral txind) (fromIntegral blkht))
                     (fromBlob sz)
 
-xGetTxHashes :: (HasXokenNodeEnv env m, MonadIO m) => Network -> [String] -> m ([RawTxRecord])
-xGetTxHashes net hashes = do
-    dbe <- getDB
+xGetTxHashes :: (MonadBaseControl IO m, MonadIO m) => DatabaseHandles -> [DT.Text] -> m ([RawTxRecord])
+xGetTxHashes dbe hashes = do
     let conn = keyValDB (dbe)
         str = "SELECT tx_id, block_info, tx_serialized from xoken.transactions where tx_id in ?"
         qstr = str :: Q.QueryString Q.R (Identity [DT.Text]) (DT.Text, ((DT.Text, Int32), Int32), Blob)
-        p = Q.defQueryParams Q.One $ Identity $ Data.List.map (DT.pack) hashes
+        p = Q.defQueryParams Q.One $ Identity $ hashes
     iop <- Q.runClient conn (Q.query qstr p)
     if length iop == 0
         then return []
@@ -330,15 +329,14 @@ xGetTxHashes net hashes = do
                     iop
 
 xGetOutputsAddress ::
-       (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
-    => Network
+       (MonadBaseControl IO m, MonadIO m)
+    => DatabaseHandles
+    -> Logger
     -> String
     -> Maybe Int32
     -> Maybe Int64
     -> m ([AddressOutputs])
-xGetOutputsAddress net address pgSize mbNomTxInd = do
-    dbe <- getDB
-    lg <- getLogger
+xGetOutputsAddress dbe lg address pgSize mbNomTxInd = do
     let conn = keyValDB (dbe)
         nominalTxIndex =
             case mbNomTxInd of
@@ -386,14 +384,15 @@ xGetOutputsAddress net address pgSize mbNomTxInd = do
             throw KeyValueDBLookupException
 
 xGetOutputsAddresses ::
-       (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
-    => Network
+       (MonadBaseControl IO m, MonadIO m)
+    => DatabaseHandles
+    -> Logger
     -> [String]
     -> Maybe Int32
     -> Maybe Int64
     -> m ([AddressOutputs])
-xGetOutputsAddresses net addresses pgSize mbNomTxInd = do
-    listOfAddresses <- LA.mapConcurrently (\a -> xGetOutputsAddress net a pgSize mbNomTxInd) addresses
+xGetOutputsAddresses dbe lg addresses pgSize mbNomTxInd = do
+    listOfAddresses <- LA.mapConcurrently (\a -> xGetOutputsAddress dbe lg a pgSize mbNomTxInd) addresses
     let pageSize =
             fromIntegral $
             if isJust pgSize
@@ -409,10 +408,8 @@ xGetOutputsAddresses net addresses pgSize mbNomTxInd = do
             ao2n = aoNominalTxIndex ao2
     return $ (L.take pageSize . sortBy sortAddressOutputs . concat $ listOfAddresses)
 
-xGetMerkleBranch :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> String -> m ([MerkleBranchNode'])
-xGetMerkleBranch net txid = do
-    dbe <- getDB
-    lg <- getLogger
+xGetMerkleBranch :: (MonadBaseControl IO m, MonadIO m) => DatabaseHandles -> Logger -> String -> m ([MerkleBranchNode'])
+xGetMerkleBranch dbe lg txid = do
     res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryMerkleBranch (DT.pack txid))
     case res of
         Right mb -> do
@@ -422,14 +419,13 @@ xGetMerkleBranch net txid = do
             throw KeyValueDBLookupException
 
 xGetAllegoryNameBranch ::
-       (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
-    => Network
+       (MonadBaseControl IO m, MonadIO m)
+    => DatabaseHandles
+    -> Logger
     -> String
     -> Bool
     -> m ([(OutPoint', [MerkleBranchNode'])])
-xGetAllegoryNameBranch net name isProducer = do
-    dbe <- getDB
-    lg <- getLogger
+xGetAllegoryNameBranch dbe lg name isProducer = do
     res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameBranch (DT.pack name) isProducer)
     case res of
         Right nb -> do
@@ -461,12 +457,14 @@ xGetAllegoryNameBranch net name isProducer = do
             throw KeyValueDBLookupException
 
 getOrMakeProducer ::
-       (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> [Int] -> m (((OutPoint', DT.Text), Bool))
-getOrMakeProducer net nameArr = do
-    dbe <- getDB
-    bp2pEnv <- getBitcoinP2P
-    lg <- getLogger
-    alg <- getAllegory
+       (MonadBaseControl IO m, MonadIO m)
+    => DatabaseHandles
+    -> Logger
+    -> BitcoinP2P
+    -> AllegoryEnv
+    -> [Int]
+    -> m (((OutPoint', DT.Text), Bool))
+getOrMakeProducer dbe lg bp2pEnv alg nameArr = do
     let name = DT.pack $ L.map (\x -> chr x) (nameArr)
     let anutxos = NC.allegoryNameUtxoSatoshis $ nodeConfig $ bp2pEnv
     res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameScriptOp (name) True)
@@ -476,7 +474,7 @@ getOrMakeProducer net nameArr = do
             throw e
         Right [] -> do
             debug lg $ LG.msg $ "allegory name not found, create recursively (1): " <> name
-            createCommitImplictTx net (nameArr)
+            createCommitImplictTx dbe lg bp2pEnv alg (nameArr)
             inres <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameScriptOp (name) True)
             case inres of
                 Left (e :: SomeException) -> do
@@ -502,13 +500,11 @@ getOrMakeProducer net nameArr = do
                 Just i -> return $ ((OutPoint' txid (fromIntegral i), (snd $ head nb)), True)
                 Nothing -> throw KeyValueDBLookupException
 
-createCommitImplictTx :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> [Int] -> m ()
-createCommitImplictTx net nameArr = do
-    dbe <- getDB
-    bp2pEnv <- getBitcoinP2P
-    lg <- getLogger
-    alg <- getAllegory
-    (nameip, existed) <- getOrMakeProducer net (init nameArr)
+createCommitImplictTx ::
+       (MonadBaseControl IO m, MonadIO m) => DatabaseHandles -> Logger -> BitcoinP2P -> AllegoryEnv -> [Int] -> m ()
+createCommitImplictTx dbe lg bp2pEnv alg nameArr = do
+    let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
+    (nameip, existed) <- getOrMakeProducer dbe lg bp2pEnv alg (init nameArr)
     let anutxos = NC.allegoryNameUtxoSatoshis $ nodeConfig $ bp2pEnv
     let ins =
             L.map
@@ -541,7 +537,7 @@ createCommitImplictTx net nameArr = do
     let psatx = Tx version ins outs locktime
     case signTx net psatx sigInputs [allegorySecretKey alg] of
         Right tx -> do
-            xRelayTx net $ Data.Serialize.encode $ tx
+            xRelayTx dbe lg bp2pEnv $ Data.Serialize.encode $ tx
             return ()
         Left err -> do
             liftIO $ print $ "error occurred while signing the Tx: " <> show err
@@ -551,19 +547,19 @@ createCommitImplictTx net nameArr = do
     locktime = 0
 
 xGetPartiallySignedAllegoryTx ::
-       (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
-    => Network
+       (MonadBaseControl IO m, MonadIO m)
+    => DatabaseHandles
+    -> Logger
+    -> BitcoinP2P
+    -> AllegoryEnv
     -> [(OutPoint', Int)]
     -> ([Int], Bool)
     -> (String)
     -> (String)
     -> m (BC.ByteString)
-xGetPartiallySignedAllegoryTx net payips (nameArr, isProducer) owner change = do
-    dbe <- getDB
-    bp2pEnv <- getBitcoinP2P
-    lg <- getLogger
-    alg <- getAllegory
+xGetPartiallySignedAllegoryTx dbe lg bp2pEnv alg payips (nameArr, isProducer) owner change = do
     let conn = keyValDB (dbe)
+    let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
     -- check if name (of given type) exists
     let name = DT.pack $ L.map (\x -> chr x) (nameArr)
     -- read from config file
@@ -578,7 +574,7 @@ xGetPartiallySignedAllegoryTx net payips (nameArr, isProducer) owner change = do
                 throw e
             Right [] -> do
                 debug lg $ LG.msg $ "allegory name not found, get or make interim producers recursively : " <> name
-                getOrMakeProducer net (init nameArr)
+                getOrMakeProducer dbe lg bp2pEnv alg (init nameArr)
             Right nb -> do
                 debug lg $ LG.msg $ "allegory name found! : " <> name
                 let sp = DT.split (== ':') $ fst (head nb)
@@ -728,11 +724,8 @@ xGetPartiallySignedAllegoryTx net payips (nameArr, isProducer) owner change = do
     version = 1
     locktime = 0
 
-xRelayTx :: (HasXokenNodeEnv env m, MonadIO m) => Network -> BC.ByteString -> m (Bool)
-xRelayTx net rawTx = do
-    dbe <- getDB
-    bp2pEnv <- getBitcoinP2P
-    lg <- getLogger
+xRelayTx :: (MonadBaseControl IO m, MonadIO m) => DatabaseHandles -> Logger -> BitcoinP2P -> BC.ByteString -> m (Bool)
+xRelayTx dbe lg bp2pEnv rawTx = do
     let conn = keyValDB (dbe)
     -- broadcast Tx
     case runGetState (getConfirmedTx) (rawTx) 0 of
@@ -785,8 +778,8 @@ xRelayTx net rawTx = do
                     allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
                     let !connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
                     debug lg $ LG.msg $ val $ "transaction verified - broadcasting tx"
-                    mapM_ (\(_, peer) -> do sendRequestMessages peer (MTx (fromJust $ fst res))) connPeers
-                    eres <- LE.try $ handleIfAllegoryTx tx True -- MUST be False
+                    mapM_ (\(_, peer) -> do sendRequestMessages lg bp2pEnv peer (MTx (fromJust $ fst res))) connPeers
+                    eres <- LE.try $ handleIfAllegoryTx dbe lg tx True -- MUST be False
                     case eres of
                         Right (flg) -> return True
                         Left (e :: SomeException) -> return False
@@ -940,13 +933,13 @@ goGetResource msg net = do
         "[TXID]->[RAWTX]" -> do
             case methodParams $ rqParams msg of
                 Just (GetRawTransactionsByTxIDs hashes) -> do
-                    txs <- xGetTxHashes net hashes
+                    txs <- xGetTxHashes dbe (DT.pack <$> hashes)
                     return $ RPCResponse 200 Nothing $ Just $ RespRawTransactionsByTxIDs txs
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "[TXID]->[TX]" -> do
             case methodParams $ rqParams msg of
                 Just (GetTransactionsByTxIDs hashes) -> do
-                    txs <- xGetTxHashes net hashes
+                    txs <- xGetTxHashes dbe (DT.pack <$> hashes)
                     let rawTxs =
                             (\RawTxRecord {..} ->
                                  (TxRecord txId txBlockInfo) <$> (Extra.hush $ S.decodeLazy txSerialized)) <$>
@@ -958,7 +951,7 @@ goGetResource msg net = do
                 Just (GetOutputsByAddress addr psize nominalTxIndex) -> do
                     ops <-
                         case convertToScriptHash net addr of
-                            Just o -> xGetOutputsAddress net o psize nominalTxIndex
+                            Just o -> xGetOutputsAddress dbe lg o psize nominalTxIndex
                             Nothing -> return []
                     return $
                         RPCResponse 200 Nothing $ Just $ RespOutputsByAddress $ (\ao -> ao {aoAddress = addr}) <$> ops
@@ -974,7 +967,7 @@ goGetResource msg net = do
                                          Nothing -> (arr, m))
                                 ([], M.empty)
                                 addrs
-                    ops <- xGetOutputsAddresses net shs pgSize nomTxInd
+                    ops <- xGetOutputsAddresses dbe lg shs pgSize nomTxInd
                     return $
                         RPCResponse 200 Nothing $
                         Just $
@@ -984,37 +977,41 @@ goGetResource msg net = do
         "SCRIPTHASH->[OUTPUT]" -> do
             case methodParams $ rqParams msg of
                 Just (GetOutputsByScriptHash sh pgSize nomTxInd) -> do
-                    ops <- L.map addressToScriptOutputs <$> xGetOutputsAddress net (sh) pgSize nomTxInd
+                    ops <- L.map addressToScriptOutputs <$> xGetOutputsAddress dbe lg (sh) pgSize nomTxInd
                     return $ RPCResponse 200 Nothing $ Just $ RespOutputsByScriptHash ops
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "[SCRIPTHASH]->[OUTPUT]" -> do
             case methodParams $ rqParams msg of
                 Just (GetOutputsByScriptHashes shs pgSize nomTxInd) -> do
-                    ops <- L.map addressToScriptOutputs <$> xGetOutputsAddresses net shs pgSize nomTxInd
+                    ops <- L.map addressToScriptOutputs <$> xGetOutputsAddresses dbe lg shs pgSize nomTxInd
                     return $ RPCResponse 200 Nothing $ Just $ RespOutputsByScriptHashes ops
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "TXID->[MNODE]" -> do
             case methodParams $ rqParams msg of
                 Just (GetMerkleBranchByTxID txid) -> do
-                    ops <- xGetMerkleBranch net txid
+                    ops <- xGetMerkleBranch dbe lg txid
                     return $ RPCResponse 200 Nothing $ Just $ RespMerkleBranchByTxID ops
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "NAME->[OUTPOINT]" -> do
             case methodParams $ rqParams msg of
                 Just (GetAllegoryNameBranch name isProducer) -> do
-                    ops <- xGetAllegoryNameBranch net name isProducer
+                    ops <- xGetAllegoryNameBranch dbe lg name isProducer
                     return $ RPCResponse 200 Nothing $ Just $ RespAllegoryNameBranch ops
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "RELAY_TX" -> do
             case methodParams $ rqParams msg of
                 Just (RelayTx tx) -> do
-                    ops <- xRelayTx net tx
+                    bp2pEnv <- getBitcoinP2P
+                    ops <- xRelayTx dbe lg bp2pEnv tx
                     return $ RPCResponse 200 Nothing $ Just $ RespRelayTx ops
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "PS_ALLEGORY_TX" -> do
             case methodParams $ rqParams msg of
                 Just (GetPartiallySignedAllegoryTx payips (name, isProducer) owner change) -> do
-                    opsE <- LE.try $ xGetPartiallySignedAllegoryTx net payips (name, isProducer) owner change
+                    bp2pEnv <- getBitcoinP2P
+                    alg <- getAllegory
+                    opsE <-
+                        LE.try $ xGetPartiallySignedAllegoryTx dbe lg bp2pEnv alg payips (name, isProducer) owner change
                     case opsE of
                         Right ops -> return $ RPCResponse 200 Nothing $ Just $ RespPartiallySignedAllegoryTx ops
                         Left (e :: SomeException) -> do
