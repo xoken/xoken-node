@@ -58,6 +58,7 @@ executable xoken-nexa
     , errors
     , filepath
     , hashable
+    , hashable-time
     , http-types
     , monad-logger
     , mtl

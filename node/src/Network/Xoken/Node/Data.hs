@@ -30,6 +30,7 @@ import Data.Default
 import Data.Foldable
 import Data.Functor.Identity
 import Data.Hashable
+import Data.Hashable.Time
 import Data.Int
 import qualified Data.IntMap as I
 import Data.IntMap.Strict (IntMap)
@@ -39,6 +40,7 @@ import Data.String.Conversions
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.Lazy as T.Lazy
+import Data.Time.Clock (UTCTime)
 import Data.Word
 import qualified Database.CQL.IO as Q
 import GHC.Generics
@@ -139,7 +141,16 @@ instance FromJSON RPCReqParams where
         (GeneralReq <$> o .: "sessionKey" <*> o .: "methodParams")
 
 data RPCReqParams'
-    = GetBlockByHeight
+    = AddUser 
+          { auUsername :: String
+          , auApiExpiryTime :: UTCTime
+          , auApiQuota :: Int32
+          , auFirstName :: String
+          , auLastName :: String
+          , auEmail :: String
+          , auRole :: String
+          } 
+    | GetBlockByHeight
           { gbHeight :: Int
           }
     | GetBlocksByHeight
@@ -198,7 +209,7 @@ data RPCReqParams'
           , gpsaName :: ([Int], Bool) -- name & isProducer 
           , gpsaOutputOwner :: String
           , gpsaOutputChange :: String
-          }
+          }  
     deriving (Generic, Show, Hashable, Eq, Serialise, ToJSON)
 
 instance FromJSON RPCReqParams' where
@@ -220,7 +231,9 @@ instance FromJSON RPCReqParams' where
         (GetAllegoryNameBranch <$> o .: "gaName" <*> o .: "gaIsProducer") <|>
         (RelayTx . BL.toStrict . GZ.decompress . B64L.decodeLenient . BL.fromStrict . T.encodeUtf8 <$> o .: "rTx") <|>
         (GetPartiallySignedAllegoryTx <$> o .: "gpsaPaymentInputs" <*> o .: "gpsaName" <*> o .: "gpsaOutputOwner" <*>
-         o .: "gpsaOutputChange")
+         o .: "gpsaOutputChange") <|>
+        (AddUser <$> o .: "username" <*> o .: "api_expiry_time" <*> o .: "api_quota" <*>
+         o .: "first_name" <*> o .: "last_name" <*> o .: "email" <*> o .: "role")
 
 data RPCResponseBody
     = AuthenticateResp
@@ -274,6 +287,9 @@ data RPCResponseBody
     | RespPartiallySignedAllegoryTx
           { psaTx :: ByteString
           }
+    | RespAddUser
+            { userPassword :: String
+            }
     deriving (Generic, Show, Hashable, Eq, Serialise)
 
 instance ToJSON RPCResponseBody where
@@ -295,6 +311,7 @@ instance ToJSON RPCResponseBody where
     toJSON (RespRelayTx rrTx) = object ["rrTx" .= rrTx]
     toJSON (RespPartiallySignedAllegoryTx ps) =
         object ["psaTx" .= (T.decodeUtf8 . BL.toStrict . B64L.encode . GZ.compress . BL.fromStrict $ ps)]
+    toJSON (RespAddUser pwd) = object ["password" .= pwd]
 
 data AuthResp =
     AuthResp
