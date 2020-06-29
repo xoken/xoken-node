@@ -42,7 +42,11 @@ appInit env =
         return $ App env
 
 apiRoutes :: [(B.ByteString, Handler App App ())]
-apiRoutes = [("/v1/auth", method POST authClient), ("/v1/block/hash/:hash", method GET (withAuth getBlockByHash))]
+apiRoutes = [ ("/v1/auth", method POST authClient)
+            , ("/v1/block/hash/:hash", method GET (withAuth getBlockByHash))
+            , ("/v1/block/hash", method GET (withAuth getBlocksByHash))
+            , ("/v1/block/height/:height", method GET (withAuth getBlockByHeight))
+            ]
 
 authClient :: Handler App App ()
 authClient = do
@@ -64,7 +68,7 @@ authClient = do
                 Left (e :: SomeException) -> do
                     modifyResponse $ setResponseStatus 500 "Internal Server Error"
                     writeBS "INTERNAL_SERVER_ERROR"
-                Right ar -> writeBS $ BSL.toStrict $ Aeson.encode  ar
+                Right ar -> writeBS $ BSL.toStrict $ Aeson.encode ar
 
 getBlockByHash :: Handler App App ()
 getBlockByHash = do
@@ -82,6 +86,52 @@ getBlockByHash = do
       Right Nothing -> do
             modifyResponse $ setResponseStatus 400 "Bad Request"
             writeBS "400 error"
+
+getBlocksByHash :: Handler App App ()
+getBlocksByHash = do
+    allMap <- getQueryParams
+    env <- gets _env
+    let dbe = dbHandles env
+        lg = loggerEnv env
+    res <- LE.try $ xGetBlocksHashes dbe lg (DTE.decodeUtf8 <$> (fromJust $ Map.lookup "hash" allMap))
+    case res of
+      Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: xGetBlocksHash: " ++ show e
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+      Right rec -> writeBS $ BSL.toStrict $ Aeson.encode rec
+
+getBlockByHeight :: Handler App App ()
+getBlockByHeight = do
+    height <- getParam "height"
+    env <- gets _env
+    let dbe = dbHandles env
+        lg = loggerEnv env
+    res <- LE.try $ xGetBlockHeight dbe lg (read $ DT.unpack $ DTE.decodeUtf8 $ fromJust height)
+    case res of
+      Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: xGetBlocksHeight: " ++ show e
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+      Right (Just rec) -> writeBS $ BSL.toStrict $ Aeson.encode rec
+      Right Nothing -> do
+            modifyResponse $ setResponseStatus 400 "Bad Request"
+            writeBS "400 error"
+
+getBlocksByHeight :: Handler App App ()
+getBlocksByHeight = do
+    allMap <- getQueryParams
+    env <- gets _env
+    let dbe = dbHandles env
+        lg = loggerEnv env
+    res <- LE.try $ xGetBlocksHeights dbe lg (read . DT.unpack . DTE.decodeUtf8 <$> (fromJust $ Map.lookup "height" allMap))
+    case res of
+      Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: xGetBlocksHeight: " ++ show e
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+      Right rec -> writeBS $ BSL.toStrict $ Aeson.encode rec
+
 --- Helpers
 withAuth :: Handler App App () -> Handler App App ()
 withAuth onSuccess = do

@@ -123,7 +123,7 @@ xGetChainInfo net = do
                     let (_, blocks, _, _) = snd . head $ (L.filter (\x -> fst x == "best-synced") iop)
                         (_, headers, _, bestBlockHash) = snd . head $ (L.filter (\x -> fst x == "best_chain_tip") iop)
                         (_, lagHeight, _, chainwork) = snd . head $ (L.filter (\x -> fst x == "chain-work") iop)
-                    blk <- xGetBlockHeight net headers
+                    blk <- xGetBlockHeight dbe lg headers
                     lagCW <- calculateChainWork [(lagHeight + 1) .. (headers)] conn
                     case blk of
                         Nothing -> return Nothing
@@ -176,10 +176,8 @@ xGetBlockHash dbe lg hash = do
             err lg $ LG.msg $ "Error: xGetBlocksHash: " ++ show e
             throw KeyValueDBLookupException
 
-xGetBlocksHashes :: (HasXokenNodeEnv env m, MonadIO m) => Network -> [String] -> m ([BlockRecord])
-xGetBlocksHashes net hashes = do
-    dbe <- getDB
-    lg <- getLogger
+xGetBlocksHashes :: (MonadBaseControl IO m, MonadIO m) => DatabaseHandles -> Logger -> [DT.Text] -> m ([BlockRecord])
+xGetBlocksHashes dbe lg hashes = do
     let conn = keyValDB (dbe)
         str =
             "SELECT block_hash,block_height,block_header,block_size,tx_count,coinbase_tx from xoken.blocks_by_hash where block_hash in ?"
@@ -190,7 +188,7 @@ xGetBlocksHashes net hashes = do
                                                           , Maybe Int32
                                                           , Maybe Int32
                                                           , Maybe Blob)
-        p = Q.defQueryParams Q.One $ Identity $ Data.List.map (DT.pack) hashes
+        p = Q.defQueryParams Q.One $ Identity $ hashes
     res <- LE.try $ Q.runClient conn (Q.query qstr p)
     case res of
         Right iop -> do
@@ -221,10 +219,8 @@ xGetBlocksHashes net hashes = do
             err lg $ LG.msg $ "Error: xGetBlocksHashes: " ++ show e
             throw KeyValueDBLookupException
 
-xGetBlockHeight :: (HasXokenNodeEnv env m, MonadIO m) => Network -> Int32 -> m (Maybe BlockRecord)
-xGetBlockHeight net height = do
-    dbe <- getDB
-    lg <- getLogger
+xGetBlockHeight :: (MonadBaseControl IO m, MonadIO m) => DatabaseHandles -> Logger -> Int32 -> m (Maybe BlockRecord)
+xGetBlockHeight dbe lg height = do
     let conn = keyValDB (dbe)
         str =
             "SELECT block_hash,block_height,block_header,block_size,tx_count,coinbase_tx from xoken.blocks_by_height where block_height = ?"
@@ -257,10 +253,8 @@ xGetBlockHeight net height = do
             err lg $ LG.msg $ "Error: xGetBlockHeight: " <> show e
             throw KeyValueDBLookupException
 
-xGetBlocksHeights :: (HasXokenNodeEnv env m, MonadIO m) => Network -> [Int32] -> m ([BlockRecord])
-xGetBlocksHeights net heights = do
-    dbe <- getDB
-    lg <- getLogger
+xGetBlocksHeights :: (MonadBaseControl IO m, MonadIO m) => DatabaseHandles -> Logger -> [Int32] -> m ([BlockRecord])
+xGetBlocksHeights dbe lg heights = do
     let conn = keyValDB (dbe)
         str =
             "SELECT block_hash,block_height,block_header,block_size,tx_count,coinbase_tx from xoken.blocks_by_height where block_height in ?"
@@ -297,13 +291,12 @@ xGetBlocksHeights net heights = do
             err lg $ LG.msg $ "Error: xGetBlockHeights: " ++ show e
             throw KeyValueDBLookupException
 
-xGetTxHash :: (HasXokenNodeEnv env m, MonadIO m) => Network -> String -> m (Maybe RawTxRecord)
-xGetTxHash net hash = do
-    dbe <- getDB
+xGetTxHash :: (MonadBaseControl IO m, MonadIO m) => DatabaseHandles -> DT.Text -> m (Maybe RawTxRecord)
+xGetTxHash dbe hash = do
     let conn = keyValDB (dbe)
         str = "SELECT tx_id, block_info, tx_serialized from xoken.transactions where tx_id = ?"
         qstr = str :: Q.QueryString Q.R (Identity DT.Text) (DT.Text, ((DT.Text, Int32), Int32), Blob)
-        p = Q.defQueryParams Q.One $ Identity $ DT.pack hash
+        p = Q.defQueryParams Q.One $ Identity $ hash
     iop <- Q.runClient conn (Q.query qstr p)
     if length iop == 0
         then return Nothing
@@ -886,6 +879,7 @@ delegateRequest encReq epConn net = do
 goGetResource :: (HasXokenNodeEnv env m, MonadIO m) => RPCMessage -> Network -> m (RPCMessage)
 goGetResource msg net = do
     dbe <- getDB
+    lg <- getLogger
     let grdb = graphDB (dbe)
     case rqMethod msg of
         "CHAIN_INFO" -> do
@@ -896,7 +890,6 @@ goGetResource msg net = do
         "HASH->BLOCK" -> do
             case methodParams $ rqParams msg of
                 Just (GetBlockByHash hs) -> do
-                    lg <- getLogger
                     blk <- xGetBlockHash dbe lg (DT.pack hs)
                     case blk of
                         Just b -> return $ RPCResponse 200 Nothing $ Just $ RespBlockByHash b
@@ -905,13 +898,13 @@ goGetResource msg net = do
         "[HASH]->[BLOCK]" -> do
             case methodParams $ rqParams msg of
                 Just (GetBlocksByHashes hashes) -> do
-                    blks <- xGetBlocksHashes net hashes
+                    blks <- xGetBlocksHashes dbe lg (DT.pack <$> hashes)
                     return $ RPCResponse 200 Nothing $ Just $ RespBlocksByHashes blks
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "HEIGHT->BLOCK" -> do
             case methodParams $ rqParams msg of
                 Just (GetBlockByHeight ht) -> do
-                    blk <- xGetBlockHeight net (fromIntegral ht)
+                    blk <- xGetBlockHeight dbe lg (fromIntegral ht)
                     case blk of
                         Just b -> return $ RPCResponse 200 Nothing $ Just $ RespBlockByHash b
                         Nothing -> return $ RPCResponse 404 (Just INVALID_REQUEST) Nothing
@@ -919,13 +912,13 @@ goGetResource msg net = do
         "[HEIGHT]->[BLOCK]" -> do
             case methodParams $ rqParams msg of
                 Just (GetBlocksByHeight hts) -> do
-                    blks <- xGetBlocksHeights net $ Data.List.map (fromIntegral) hts
+                    blks <- xGetBlocksHeights dbe lg $ Data.List.map (fromIntegral) hts
                     return $ RPCResponse 200 Nothing $ Just $ RespBlocksByHashes blks
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "TXID->RAWTX" -> do
             case methodParams $ rqParams msg of
                 Just (GetRawTransactionByTxID hs) -> do
-                    tx <- xGetTxHash net (hs)
+                    tx <- xGetTxHash dbe (DT.pack hs)
                     case tx of
                         Just t -> return $ RPCResponse 200 Nothing $ Just $ RespRawTransactionByTxID t
                         Nothing -> return $ RPCResponse 200 Nothing Nothing
@@ -933,7 +926,7 @@ goGetResource msg net = do
         "TXID->TX" -> do
             case methodParams $ rqParams msg of
                 Just (GetTransactionByTxID hs) -> do
-                    tx <- xGetTxHash net (hs)
+                    tx <- xGetTxHash dbe (DT.pack hs)
                     case tx of
                         Just RawTxRecord {..} ->
                             case S.decodeLazy txSerialized of
