@@ -837,8 +837,8 @@ delegateRequest encReq epConn net = do
         (AuthenticateReq _ _) -> authLoginClient encReq net epConn
         (GeneralReq sessionKey __) -> do
             let str =
-                    " SELECT api_quota, api_used, session_key_expiry_time FROM xoken.user_permission WHERE session_key = ? ALLOW FILTERING "
-                qstr = str :: Q.QueryString Q.R (Q.Identity DT.Text) (Int32, Int32, UTCTime)
+                    " SELECT api_quota, api_used, session_key_expiry_time, role FROM xoken.user_permission WHERE session_key = ? ALLOW FILTERING "
+                qstr = str :: Q.QueryString Q.R (Q.Identity DT.Text) (Int32, Int32, UTCTime, [DT.Text])
                 p = Q.defQueryParams Q.One $ Identity $ (DT.pack sessionKey)
             res <- liftIO $ try $ Q.runClient conn (Q.query (Q.prepared qstr) p)
             case res of
@@ -851,18 +851,35 @@ delegateRequest encReq epConn net = do
                             return $ RPCResponse 200 Nothing $ Just $ AuthenticateResp $ AuthResp Nothing 0 0
                         else do
                             case op !! 0 of
-                                (quota, used, exp) -> do
+                                (quota, used, exp, role) -> do
                                     curtm <- liftIO $ getCurrentTime
                                     if exp > curtm && quota > used
-                                        then goGetResource encReq net
+                                        then goGetResource encReq net role
                                         else return $
                                              RPCResponse 200 Nothing $ Just $ AuthenticateResp $ AuthResp Nothing 0 0
 
-goGetResource :: (HasXokenNodeEnv env m, MonadIO m) => RPCMessage -> Network -> m (RPCMessage)
-goGetResource msg net = do
+goGetResource :: (HasXokenNodeEnv env m, MonadIO m) => RPCMessage -> Network -> [DT.Text] -> m (RPCMessage)
+goGetResource msg net role = do
     dbe <- getDB
     let grdb = graphDB (dbe)
+        conn = keyValDB (dbe)
     case rqMethod msg of
+        "ADD_USER" -> do
+            case methodParams $ rqParams msg of
+                Just (AddUser uname apiExp apiQuota fname lname email addUserRole) -> do
+                    if "admin" `elem` role
+                        then do
+                            pwd <- liftIO $ addNewUser conn 
+                                                       (DT.pack $ uname)
+                                                       (DT.pack $ fname)
+                                                       (DT.pack $ lname)
+                                                       (DT.pack $ email)
+                                                       (DT.pack $ addUserRole)
+                                                       (apiQuota)
+                                                       (apiExp)
+                            return $ RPCResponse 200 Nothing $ Just $ RespAddUser pwd
+                        else return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
+                _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         "HASH->BLOCK" -> do
             case methodParams $ rqParams msg of
                 Just (GetBlockByHash hs) -> do
