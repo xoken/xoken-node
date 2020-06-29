@@ -62,7 +62,6 @@ import Data.Maybe
 import Data.Pool
 import qualified Data.Serialize as S
 import Data.Serialize
-import qualified Data.Set as Set
 import Data.String (IsString, fromString)
 import qualified Data.Text as DT
 import qualified Data.Text.Encoding as DTE
