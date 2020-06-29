@@ -195,3 +195,48 @@ generateSessionKey = do
     let seed = show $ fst (random g :: (Word64, StdGen))
         sdb = B64.encode $ C.pack $ seed
     return $ encodeHex ((S.encode $ sha256 $ B.reverse sdb))
+
+addNewUser :: Q.ClientState -> T.Text -> T.Text -> T.Text -> T.Text -> T.Text -> Int32 -> UTCTime -> IO String
+addNewUser conn uname fname lname email role api_quota api_expiry_time = do
+    tm <- liftIO $ getCurrentTime
+    g <- liftIO $ getStdGen
+    let seed = show $ fst (random g :: (Word64, StdGen))
+        passwd = B64.encode $ C.pack $ seed
+        hashedPasswd = encodeHex ((S.encode $ sha256 passwd))
+        tempSessionKey = encodeHex ((S.encode $ sha256 $ B.reverse passwd))
+        str =
+            "insert INTO xoken.user_permission ( username, password, first_name, last_name, emailid, created_time, permissions, api_quota, api_used, api_expiry_time, session_key, session_key_expiry_time) values (?, ?, ?, ?, ?, ? ,? ,? ,? ,? ,? ,? )"
+        qstr =
+            str :: Q.QueryString Q.W ( T.Text
+                                     , T.Text
+                                     , T.Text
+                                     , T.Text
+                                     , T.Text
+                                     , UTCTime
+                                     , [T.Text]
+                                     , Int32
+                                     , Int32
+                                     , UTCTime
+                                     , T.Text
+                                     , UTCTime) ()
+        par =
+            Q.defQueryParams
+                Q.One
+                ( uname
+                , hashedPasswd
+                , fname
+                , lname
+                , email
+                , tm
+                , [role]
+                , api_quota
+                , 0
+                , api_expiry_time
+                , tempSessionKey
+                , (addUTCTime (nominalDay * 30) tm))
+    res1 <- liftIO $ try $ Q.runClient conn (Q.write (qstr) par)
+    case res1 of
+        Right () -> return $ C.unpack passwd
+        Left (SomeException e) -> do
+            putStrLn $ "Error: INSERTing into 'user_permission': " ++ show e
+            throw e
