@@ -3,7 +3,6 @@ allow-newer: true
 packages:
     - node
 
-
 extra-deps:
 
     - ../arivi-core/utils
@@ -38,5 +37,10 @@ extra-deps:
     - yaml-0.11.1.2
     - vformat-0.14.1.0
     - daemons-0.3.0
-    
-    
+    - snap-1.1.3.0
+    - heist-1.1.0.1
+    - map-syntax-0.3
+    - pwstore-fast-2.4.4
+    - xmlhtml-0.2.5.2
+    - git: https://github.com/xoken/snap-server.git
+      commit: 20d4a32b9da8c927230016b76185dff223b3907e

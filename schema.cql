@@ -57,21 +57,6 @@ CREATE TABLE xoken.ep_transactions (
     PRIMARY KEY (epoch, tx_id)
 ); 
 
-CREATE TABLE xoken.user_permission (
-    username text PRIMARY KEY,
-    password text,
-    first_name text,
-    last_name text,
-    emailid text,
-    created_time timestamp,
-    permissions set <text>,
-    api_quota int,
-    api_used int,
-    api_expiry_time timestamp,
-    session_key text,
-    session_key_expiry_time timestamp
-); 
-
 CREATE TABLE xoken.txid_outputs (
     txid text,
     idx int,
@@ -86,3 +71,17 @@ CREATE TABLE xoken.txid_outputs (
     PRIMARY KEY(txid, idx)
  );
 
+CREATE TABLE xoken.user_permission (
+    username text PRIMARY KEY,
+    password text,
+    first_name text,
+    last_name text,
+    emailid text,
+    created_time timestamp,
+    permissions set <text>,
+    api_quota int,
+    api_used int,
+    api_expiry_time timestamp,
+    session_key text,
+    session_key_expiry_time timestamp
+); 

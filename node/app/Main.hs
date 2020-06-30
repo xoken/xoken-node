@@ -11,6 +11,8 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE BlockArguments #-}
+
 
 import Arivi.Crypto.Utils.PublicKey.Signature as ACUPS
 import Arivi.Crypto.Utils.PublicKey.Utils
@@ -70,7 +72,9 @@ import Data.Serialize as Serialize
 import Data.Serialize as S
 import Data.String.Conv
 import Data.String.Conversions
+import qualified Data.Text as DT
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as DTE
 import qualified Data.Text.Lazy as TL
 import Data.Time.Calendar
 import Data.Time.Clock
@@ -88,6 +92,7 @@ import Network.Xoken.Node.AriviService
 import Network.Xoken.Node.Data
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.GraphDB
+import Network.Xoken.Node.HTTP.Server
 import Network.Xoken.Node.P2P.BlockSync
 import Network.Xoken.Node.P2P.ChainSync
 import Network.Xoken.Node.P2P.Common
@@ -98,6 +103,7 @@ import Network.Xoken.Node.TLSServer
 import Options.Applicative
 import Paths_xoken_node as P
 import Prelude as P
+import qualified Snap as Snap
 import System.Directory (doesDirectoryExist, doesFileExist)
 import System.Environment (getArgs)
 import System.Exit
@@ -214,6 +220,15 @@ runThreads config nodeConf bp2p conn lg p2pEnv certPaths = do
     epHandler <- newTLSEndpointServiceHandler
     -- start TLS endpoint
     async $ startTLSEndpoint epHandler (endPointTLSListenIP nodeConf) (endPointTLSListenPort nodeConf) certPaths
+    -- start HTTP endpoint
+    let snapConfig = Snap.defaultConfig
+            & Snap.setSSLBind (DTE.encodeUtf8 $ DT.pack $ endPointHTTPListenIP nodeConf)
+            & Snap.setSSLPort (fromEnum $ endPointHTTPListenPort nodeConf)
+            & Snap.setSSLKey (certPaths !! 1)
+            & Snap.setSSLCert (head certPaths)
+            & Snap.setSSLChainCert False
+    async $
+        Snap.serveSnaplet snapConfig (appInit xknEnv)
     withResource (pool $ graphDB dbh) (`BT.run` initAllegoryRoot genesisTx)
     -- run main workers
     forever $ do

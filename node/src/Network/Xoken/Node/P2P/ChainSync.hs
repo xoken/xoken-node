@@ -343,4 +343,4 @@ updateChainWork indexed conn = do
             Left (e :: SomeException) -> do
                 err lg $ LG.msg ("Error: SELECT from 'misc_store' failed: " ++ show e)
                 throw KeyValueDBLookupException
-    
+

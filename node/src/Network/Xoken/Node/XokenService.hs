@@ -40,6 +40,7 @@ import Control.Monad.IO.Class
 import Control.Monad.Logger
 import Control.Monad.Loops
 import Control.Monad.Reader
+import Control.Monad.Trans.Control
 import Data.Aeson as A
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Base16 as B16 (decode, encode)
@@ -79,7 +80,6 @@ import Network.Xoken.Block.Common
 import Network.Xoken.Crypto.Hash
 import Network.Xoken.Node.Data
 import Network.Xoken.Node.Data.Allegory
-import Network.Xoken.Node.Data.Allegory
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.GraphDB
 import Network.Xoken.Node.P2P.BlockSync
@@ -111,7 +111,7 @@ xGetChainInfo net = do
     lg <- getLogger
     let conn = keyValDB $ dbe
         str = "SELECT key,value from xoken.misc_store"
-        qstr = str :: Q.QueryString Q.R () (DT.Text,(Maybe Bool, Int32, Maybe Int64, DT.Text))
+        qstr = str :: Q.QueryString Q.R () (DT.Text, (Maybe Bool, Int32, Maybe Int64, DT.Text))
         p = Q.defQueryParams Q.One ()
     res <- LE.try $ Q.runClient conn (Q.query qstr p)
     case res of
@@ -120,54 +120,57 @@ xGetChainInfo net = do
                 then do
                     return Nothing
                 else do
-                    let (_,blocks,_,_) = snd . head $ (L.filter (\x -> fst x == "best-synced") iop)
-                        (_,headers,_,bestBlockHash) = snd . head $ (L.filter (\x -> fst x == "best_chain_tip") iop)
-                        (_,lagHeight,_,chainwork) = snd . head $ (L.filter (\x -> fst x == "chain-work") iop)
-                    blk <- xGetBlockHeight net headers
-                    lagCW <- calculateChainWork [(lagHeight + 1)..(headers)] conn
+                    let (_, blocks, _, _) = snd . head $ (L.filter (\x -> fst x == "best-synced") iop)
+                        (_, headers, _, bestBlockHash) = snd . head $ (L.filter (\x -> fst x == "best_chain_tip") iop)
+                        (_, lagHeight, _, chainwork) = snd . head $ (L.filter (\x -> fst x == "chain-work") iop)
+                    blk <- xGetBlockHeight headers
+                    lagCW <- calculateChainWork [(lagHeight + 1) .. (headers)] conn
                     case blk of
                         Nothing -> return Nothing
                         Just b -> do
-                            return $ Just $ ChainInfo
-                                                "main"
-                                                (showHex (lagCW + (read . DT.unpack $ chainwork)) "")
-                                                (convertBitsToDifficulty . blockBits . rbHeader $ b)
-                                                (headers)
-                                                (blocks)
-                                                (rbHash b)
+                            return $
+                                Just $
+                                ChainInfo
+                                    "main"
+                                    (showHex (lagCW + (read . DT.unpack $ chainwork)) "")
+                                    (convertBitsToDifficulty . blockBits . rbHeader $ b)
+                                    (headers)
+                                    (blocks)
+                                    (rbHash b)
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetChainInfo: " ++ show e
             throw KeyValueDBLookupException
 
-xGetBlockHash :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> String -> m (Maybe BlockRecord)
-xGetBlockHash net hash = do
+xGetBlockHash :: (HasXokenNodeEnv env m, MonadIO m) =>  DT.Text -> m (Maybe BlockRecord)
+xGetBlockHash hash = do
     dbe <- getDB
     lg <- getLogger
     let conn = keyValDB (dbe)
-        str = "SELECT block_hash,block_height,block_header,block_size,tx_count,coinbase_tx from xoken.blocks_by_hash where block_hash = ?"
-        qstr = str :: Q.QueryString Q.R (Identity DT.Text) ( DT.Text
-                                                           , Int32
-                                                           , DT.Text
-                                                           , Maybe Int32
-                                                           , Maybe Int32
-                                                           , Maybe Blob)
-        p = Q.defQueryParams Q.One $ Identity $ DT.pack hash
+        str =
+            "SELECT block_hash,block_height,block_header,block_size,tx_count,coinbase_tx from xoken.blocks_by_hash where block_hash = ?"
+        qstr =
+            str :: Q.QueryString Q.R (Identity DT.Text) (DT.Text, Int32, DT.Text, Maybe Int32, Maybe Int32, Maybe Blob)
+        p = Q.defQueryParams Q.One $ Identity hash
     res <- LE.try $ Q.runClient conn (Q.query qstr p)
     case res of
         Right iop -> do
             if length iop == 0
                 then return Nothing
                 else do
-                    let (hs,ht,hdr,size,txc,cbase) = iop !! 0
+                    let (hs, ht, hdr, size, txc, cbase) = iop !! 0
                     case eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 hdr of
-                        Right bh -> return $ Just $ BlockRecord (fromIntegral ht)
-                                                                (DT.unpack hs)
-                                                                bh
-                                                                (maybe (-1) fromIntegral size)
-                                                                (maybe (-1) fromIntegral txc)
-                                                                ("")
-                                                                (maybe "" (coinbaseTxToMessage . fromBlob) cbase)
-                                                                (maybe "" fromBlob cbase)
+                        Right bh ->
+                            return $
+                            Just $
+                            BlockRecord
+                                (fromIntegral ht)
+                                (DT.unpack hs)
+                                bh
+                                (maybe (-1) fromIntegral size)
+                                (maybe (-1) fromIntegral txc)
+                                ("")
+                                (maybe "" (coinbaseTxToMessage . fromBlob) cbase)
+                                (maybe "" (C.unpack . fromBlob) cbase)
                         Left err -> do
                             liftIO $ print $ "Decode failed with error: " <> show err
                             return Nothing
@@ -175,19 +178,21 @@ xGetBlockHash net hash = do
             err lg $ LG.msg $ "Error: xGetBlocksHash: " ++ show e
             throw KeyValueDBLookupException
 
-xGetBlocksHashes :: (HasXokenNodeEnv env m, MonadIO m) => Network -> [String] -> m ([BlockRecord])
-xGetBlocksHashes net hashes = do
+xGetBlocksHashes :: (HasXokenNodeEnv env m, MonadIO m) => [DT.Text] -> m ([BlockRecord])
+xGetBlocksHashes hashes = do
     dbe <- getDB
     lg <- getLogger
     let conn = keyValDB (dbe)
-        str = "SELECT block_hash,block_height,block_header,block_size,tx_count,coinbase_tx from xoken.blocks_by_hash where block_hash in ?"
-        qstr = str :: Q.QueryString Q.R (Identity [DT.Text]) ( DT.Text
-                                                             , Int32
-                                                             , DT.Text
-                                                             , Maybe Int32
-                                                             , Maybe Int32
-                                                             , Maybe Blob)
-        p = Q.defQueryParams Q.One $ Identity $ Data.List.map (DT.pack) hashes
+        str =
+            "SELECT block_hash,block_height,block_header,block_size,tx_count,coinbase_tx from xoken.blocks_by_hash where block_hash in ?"
+        qstr =
+            str :: Q.QueryString Q.R (Identity [DT.Text]) ( DT.Text
+                                                          , Int32
+                                                          , DT.Text
+                                                          , Maybe Int32
+                                                          , Maybe Int32
+                                                          , Maybe Blob)
+        p = Q.defQueryParams Q.One $ Identity $ hashes
     res <- LE.try $ Q.runClient conn (Q.query qstr p)
     case res of
         Right iop -> do
@@ -195,18 +200,20 @@ xGetBlocksHashes net hashes = do
                 then return []
                 else do
                     case traverse
-                             (\(hs,ht,hdr,size,txc,cbase) ->
-                                 case (eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 hdr) of
-                                     (Right bh) -> Right $ BlockRecord (fromIntegral ht)
-                                                                       (DT.unpack hs)
-                                                                       bh
-                                                                       (maybe (-1) fromIntegral size)
-                                                                       (maybe (-1) fromIntegral txc)
-                                                                       ("")
-                                                                       (maybe "" (coinbaseTxToMessage . fromBlob) cbase)
-                                                                       (maybe "" fromBlob cbase)
-                                     Left err -> Left err
-                                     )
+                             (\(hs, ht, hdr, size, txc, cbase) ->
+                                  case (eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 hdr) of
+                                      (Right bh) ->
+                                          Right $
+                                          BlockRecord
+                                              (fromIntegral ht)
+                                              (DT.unpack hs)
+                                              bh
+                                              (maybe (-1) fromIntegral size)
+                                              (maybe (-1) fromIntegral txc)
+                                              ("")
+                                              (maybe "" (coinbaseTxToMessage . fromBlob) cbase)
+                                              (maybe "" (C.unpack . fromBlob) cbase)
+                                      Left err -> Left err)
                              (iop) of
                         Right x -> return x
                         Left err -> do
@@ -216,18 +223,14 @@ xGetBlocksHashes net hashes = do
             err lg $ LG.msg $ "Error: xGetBlocksHashes: " ++ show e
             throw KeyValueDBLookupException
 
-xGetBlockHeight :: (HasXokenNodeEnv env m, MonadIO m) => Network -> Int32 -> m (Maybe BlockRecord)
-xGetBlockHeight net height = do
+xGetBlockHeight :: (HasXokenNodeEnv env m, MonadIO m) => Int32 -> m (Maybe BlockRecord)
+xGetBlockHeight height = do
     dbe <- getDB
     lg <- getLogger
     let conn = keyValDB (dbe)
-        str = "SELECT block_hash,block_height,block_header,block_size,tx_count,coinbase_tx from xoken.blocks_by_height where block_height = ?"
-        qstr = str :: Q.QueryString Q.R (Identity Int32) ( DT.Text
-                                                         , Int32
-                                                         , DT.Text
-                                                         , Maybe Int32
-                                                         , Maybe Int32
-                                                         , Maybe Blob)
+        str =
+            "SELECT block_hash,block_height,block_header,block_size,tx_count,coinbase_tx from xoken.blocks_by_height where block_height = ?"
+        qstr = str :: Q.QueryString Q.R (Identity Int32) (DT.Text, Int32, DT.Text, Maybe Int32, Maybe Int32, Maybe Blob)
         p = Q.defQueryParams Q.One $ Identity height
     res <- LE.try $ Q.runClient conn (Q.query qstr p)
     case res of
@@ -235,17 +238,20 @@ xGetBlockHeight net height = do
             if length iop == 0
                 then return Nothing
                 else do
-                    let (hs,ht,hdr,size,txc,cbase) = iop !! 0
+                    let (hs, ht, hdr, size, txc, cbase) = iop !! 0
                     case eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 hdr of
                         Right bh -> do
-                                return $ Just $ BlockRecord (fromIntegral ht)
-                                                                (DT.unpack hs)
-                                                                bh
-                                                                (maybe (-1) fromIntegral size)
-                                                                (maybe (-1) fromIntegral txc)
-                                                                ("")
-                                                                (maybe "" (coinbaseTxToMessage . fromBlob) cbase)
-                                                                (maybe "" fromBlob cbase)
+                            return $
+                                Just $
+                                BlockRecord
+                                    (fromIntegral ht)
+                                    (DT.unpack hs)
+                                    bh
+                                    (maybe (-1) fromIntegral size)
+                                    (maybe (-1) fromIntegral txc)
+                                    ("")
+                                    (maybe "" (coinbaseTxToMessage . fromBlob) cbase)
+                                    (maybe "" (C.unpack . fromBlob) cbase)
                         Left err -> do
                             liftIO $ print $ "Decode failed with error: " <> show err
                             return Nothing
@@ -273,18 +279,16 @@ xGetTxOutputSpendStatus net txId outputIndex = do
             let (isSpent, spendingTxID, spendingTxIndex, spendingTxBlkHeight) = iop !! 0
             return $ Just $ TxOutputSpendStatus isSpent (DT.unpack <$> spendingTxID) spendingTxBlkHeight spendingTxIndex 
 
-xGetBlocksHeights :: (HasXokenNodeEnv env m, MonadIO m) => Network -> [Int32] -> m ([BlockRecord])
-xGetBlocksHeights net heights = do
+
+xGetBlocksHeights :: (HasXokenNodeEnv env m, MonadIO m) => [Int32] -> m ([BlockRecord])
+xGetBlocksHeights heights = do
     dbe <- getDB
     lg <- getLogger
     let conn = keyValDB (dbe)
-        str = "SELECT block_hash,block_height,block_header,block_size,tx_count,coinbase_tx from xoken.blocks_by_height where block_height in ?"
-        qstr = str :: Q.QueryString Q.R (Identity [Int32]) ( DT.Text
-                                                           , Int32
-                                                           , DT.Text
-                                                           , Maybe Int32
-                                                           , Maybe Int32
-                                                           , Maybe Blob)
+        str =
+            "SELECT block_hash,block_height,block_header,block_size,tx_count,coinbase_tx from xoken.blocks_by_height where block_height in ?"
+        qstr =
+            str :: Q.QueryString Q.R (Identity [Int32]) (DT.Text, Int32, DT.Text, Maybe Int32, Maybe Int32, Maybe Blob)
         p = Q.defQueryParams Q.One $ Identity $ heights
     res <- LE.try $ Q.runClient conn (Q.query qstr p)
     case res of
@@ -293,18 +297,20 @@ xGetBlocksHeights net heights = do
                 then return []
                 else do
                     case traverse
-                             (\(hs,ht,hdr,size,txc,cbase) ->
-                                    case (eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 hdr) of
-                                        (Right bh) -> Right $ BlockRecord (fromIntegral ht)
-                                                                          (DT.unpack hs)
-                                                                          bh
-                                                                          (maybe (-1) fromIntegral size)
-                                                                          (maybe (-1) fromIntegral txc)
-                                                                          ("")
-                                                                          (maybe "" (coinbaseTxToMessage . fromBlob) cbase)
-                                                                          (maybe "" fromBlob cbase)
-                                        Left err -> Left err
-                                        )
+                             (\(hs, ht, hdr, size, txc, cbase) ->
+                                  case (eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 hdr) of
+                                      (Right bh) ->
+                                          Right $
+                                          BlockRecord
+                                              (fromIntegral ht)
+                                              (DT.unpack hs)
+                                              bh
+                                              (maybe (-1) fromIntegral size)
+                                              (maybe (-1) fromIntegral txc)
+                                              ("")
+                                              (maybe "" (coinbaseTxToMessage . fromBlob) cbase)
+                                              (maybe "" (C.unpack . fromBlob) cbase)
+                                      Left err -> Left err)
                              (iop) of
                         Right x -> return x
                         Left err -> do
@@ -314,13 +320,13 @@ xGetBlocksHeights net heights = do
             err lg $ LG.msg $ "Error: xGetBlockHeights: " ++ show e
             throw KeyValueDBLookupException
 
-xGetTxHash :: (HasXokenNodeEnv env m, MonadIO m) => Network -> String -> m (Maybe RawTxRecord)
-xGetTxHash net hash = do
+xGetTxHash :: (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> m (Maybe RawTxRecord)
+xGetTxHash hash = do
     dbe <- getDB
     let conn = keyValDB (dbe)
         str = "SELECT tx_id, block_info, tx_serialized from xoken.transactions where tx_id = ?"
         qstr = str :: Q.QueryString Q.R (Identity DT.Text) (DT.Text, ((DT.Text, Int32), Int32), Blob)
-        p = Q.defQueryParams Q.One $ Identity $ DT.pack hash
+        p = Q.defQueryParams Q.One $ Identity $ hash
     iop <- Q.runClient conn (Q.query qstr p)
     if length iop == 0
         then return Nothing
@@ -333,13 +339,13 @@ xGetTxHash net hash = do
                     (BlockInfo' (DT.unpack bhash) (fromIntegral txind) (fromIntegral blkht))
                     (fromBlob sz)
 
-xGetTxHashes :: (HasXokenNodeEnv env m, MonadIO m) => Network -> [String] -> m ([RawTxRecord])
-xGetTxHashes net hashes = do
+xGetTxHashes :: (HasXokenNodeEnv env m, MonadIO m) => [DT.Text] -> m ([RawTxRecord])
+xGetTxHashes hashes = do
     dbe <- getDB
     let conn = keyValDB (dbe)
         str = "SELECT tx_id, block_info, tx_serialized from xoken.transactions where tx_id in ?"
         qstr = str :: Q.QueryString Q.R (Identity [DT.Text]) (DT.Text, ((DT.Text, Int32), Int32), Blob)
-        p = Q.defQueryParams Q.One $ Identity $ Data.List.map (DT.pack) hashes
+        p = Q.defQueryParams Q.One $ Identity $ hashes
     iop <- Q.runClient conn (Q.query qstr p)
     if length iop == 0
         then return []
@@ -381,13 +387,12 @@ getTxOutputsData net (txid, idx) = do
             throw KeyValueDBLookupException
 
 xGetOutputsAddress ::
-       (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
-    => Network
-    -> String
+       (HasXokenNodeEnv env m, MonadIO m)
+    => String
     -> Maybe Int32
     -> Maybe Int64
     -> m ([AddressOutputs])
-xGetOutputsAddress net address pgSize mbNomTxInd = do
+xGetOutputsAddress address pgSize mbNomTxInd = do
     dbe <- getDB
     lg <- getLogger
     let conn = keyValDB (dbe)
@@ -429,14 +434,15 @@ xGetOutputsAddress net address pgSize mbNomTxInd = do
             throw KeyValueDBLookupException
 
 xGetOutputsAddresses ::
-       (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
-    => Network
-    -> [String]
+       (HasXokenNodeEnv env m, MonadIO m)
+    => [String]
     -> Maybe Int32
     -> Maybe Int64
     -> m ([AddressOutputs])
-xGetOutputsAddresses net addresses pgSize mbNomTxInd = do
-    listOfAddresses <- LA.mapConcurrently (\a -> xGetOutputsAddress net a pgSize mbNomTxInd) addresses
+xGetOutputsAddresses addresses pgSize mbNomTxInd = do
+    dbe <- getDB
+    lg <- getLogger
+    listOfAddresses <- LA.mapConcurrently (\a -> xGetOutputsAddress a pgSize mbNomTxInd) addresses
     let pageSize =
             fromIntegral $
             if isJust pgSize
@@ -452,8 +458,8 @@ xGetOutputsAddresses net addresses pgSize mbNomTxInd = do
             ao2n = aoNominalTxIndex ao2
     return $ (L.take pageSize . sortBy sortAddressOutputs . concat $ listOfAddresses)
 
-xGetMerkleBranch :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> String -> m ([MerkleBranchNode'])
-xGetMerkleBranch net txid = do
+xGetMerkleBranch :: (HasXokenNodeEnv env m, MonadIO m) => String -> m ([MerkleBranchNode'])
+xGetMerkleBranch txid = do
     dbe <- getDB
     lg <- getLogger
     res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryMerkleBranch (DT.pack txid))
@@ -465,12 +471,11 @@ xGetMerkleBranch net txid = do
             throw KeyValueDBLookupException
 
 xGetAllegoryNameBranch ::
-       (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
-    => Network
-    -> String
+       (HasXokenNodeEnv env m, MonadIO m)
+    => String
     -> Bool
     -> m ([(OutPoint', [MerkleBranchNode'])])
-xGetAllegoryNameBranch net name isProducer = do
+xGetAllegoryNameBranch name isProducer = do
     dbe <- getDB
     lg <- getLogger
     res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameBranch (DT.pack name) isProducer)
@@ -504,12 +509,13 @@ xGetAllegoryNameBranch net name isProducer = do
             throw KeyValueDBLookupException
 
 getOrMakeProducer ::
-       (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> [Int] -> m (((OutPoint', DT.Text), Bool))
-getOrMakeProducer net nameArr = do
+       (HasXokenNodeEnv env m, MonadIO m)
+    => [Int]
+    -> m (((OutPoint', DT.Text), Bool))
+getOrMakeProducer nameArr = do
     dbe <- getDB
-    bp2pEnv <- getBitcoinP2P
     lg <- getLogger
-    alg <- getAllegory
+    bp2pEnv <- getBitcoinP2P
     let name = DT.pack $ L.map (\x -> chr x) (nameArr)
     let anutxos = NC.allegoryNameUtxoSatoshis $ nodeConfig $ bp2pEnv
     res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameScriptOp (name) True)
@@ -519,7 +525,7 @@ getOrMakeProducer net nameArr = do
             throw e
         Right [] -> do
             debug lg $ LG.msg $ "allegory name not found, create recursively (1): " <> name
-            createCommitImplictTx net (nameArr)
+            createCommitImplictTx (nameArr)
             inres <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameScriptOp (name) True)
             case inres of
                 Left (e :: SomeException) -> do
@@ -545,13 +551,15 @@ getOrMakeProducer net nameArr = do
                 Just i -> return $ ((OutPoint' txid (fromIntegral i), (snd $ head nb)), True)
                 Nothing -> throw KeyValueDBLookupException
 
-createCommitImplictTx :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> [Int] -> m ()
-createCommitImplictTx net nameArr = do
+createCommitImplictTx ::
+       (HasXokenNodeEnv env m, MonadIO m) => [Int] -> m ()
+createCommitImplictTx nameArr = do
     dbe <- getDB
-    bp2pEnv <- getBitcoinP2P
     lg <- getLogger
+    bp2pEnv <- getBitcoinP2P
     alg <- getAllegory
-    (nameip, existed) <- getOrMakeProducer net (init nameArr)
+    let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
+    (nameip, existed) <- getOrMakeProducer (init nameArr)
     let anutxos = NC.allegoryNameUtxoSatoshis $ nodeConfig $ bp2pEnv
     let ins =
             L.map
@@ -584,7 +592,7 @@ createCommitImplictTx net nameArr = do
     let psatx = Tx version ins outs locktime
     case signTx net psatx sigInputs [allegorySecretKey alg] of
         Right tx -> do
-            xRelayTx net $ Data.Serialize.encode $ tx
+            xRelayTx $ Data.Serialize.encode tx
             return ()
         Left err -> do
             liftIO $ print $ "error occurred while signing the Tx: " <> show err
@@ -594,19 +602,19 @@ createCommitImplictTx net nameArr = do
     locktime = 0
 
 xGetPartiallySignedAllegoryTx ::
-       (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
-    => Network
-    -> [(OutPoint', Int)]
+       (HasXokenNodeEnv env m, MonadIO m)
+    => [(OutPoint', Int)]
     -> ([Int], Bool)
     -> (String)
     -> (String)
     -> m (BC.ByteString)
-xGetPartiallySignedAllegoryTx net payips (nameArr, isProducer) owner change = do
+xGetPartiallySignedAllegoryTx payips (nameArr, isProducer) owner change = do
     dbe <- getDB
     bp2pEnv <- getBitcoinP2P
     lg <- getLogger
     alg <- getAllegory
     let conn = keyValDB (dbe)
+    let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
     -- check if name (of given type) exists
     let name = DT.pack $ L.map (\x -> chr x) (nameArr)
     -- read from config file
@@ -621,7 +629,7 @@ xGetPartiallySignedAllegoryTx net payips (nameArr, isProducer) owner change = do
                 throw e
             Right [] -> do
                 debug lg $ LG.msg $ "allegory name not found, get or make interim producers recursively : " <> name
-                getOrMakeProducer net (init nameArr)
+                getOrMakeProducer (init nameArr)
             Right nb -> do
                 debug lg $ LG.msg $ "allegory name found! : " <> name
                 let sp = DT.split (== ':') $ fst (head nb)
@@ -771,11 +779,11 @@ xGetPartiallySignedAllegoryTx net payips (nameArr, isProducer) owner change = do
     version = 1
     locktime = 0
 
-xRelayTx :: (HasXokenNodeEnv env m, MonadIO m) => Network -> BC.ByteString -> m (Bool)
-xRelayTx net rawTx = do
+xRelayTx :: (HasXokenNodeEnv env m, MonadIO m) => BC.ByteString -> m (Bool)
+xRelayTx rawTx = do
     dbe <- getDB
-    bp2pEnv <- getBitcoinP2P
     lg <- getLogger
+    bp2pEnv <- getBitcoinP2P
     let conn = keyValDB (dbe)
     -- broadcast Tx
     case runGetState (getConfirmedTx) (rawTx) 0 of
@@ -841,58 +849,56 @@ authLoginClient :: (HasXokenNodeEnv env m, MonadIO m) => RPCMessage -> Network -
 authLoginClient msg net epConn = do
     dbe <- getDB
     lg <- getLogger
-    let conn = keyValDB (dbe)
     case rqMethod msg of
-        "AUTHENTICATE" -> do
+        "AUTHENTICATE" ->
             case rqParams msg of
                 (AuthenticateReq user pass) -> do
-                    let hashedPasswd = encodeHex ((S.encode $ sha256 $ BC.pack pass))
-                        str =
-                            " SELECT password, api_quota, api_used, session_key_expiry_time FROM xoken.user_permission WHERE username = ? "
-                        qstr = str :: Q.QueryString Q.R (Identity DT.Text) (DT.Text, Int32, Int32, UTCTime)
-                        p = Q.defQueryParams Q.One $ Identity $ (DT.pack user)
-                    res <- liftIO $ try $ Q.runClient conn (Q.query (Q.prepared qstr) p)
-                    case res of
-                        Left (SomeException e) -> do
-                            err lg $ LG.msg $ "Error: SELECT'ing from 'user_permission': " ++ show e
-                            throw e
-                        Right (op) -> do
-                            if length op == 0
-                                then do
-                                    return $ RPCResponse 200 $ Right $ Just $ AuthenticateResp $ AuthResp Nothing 0 0
+                    resp <- login (DT.pack user) (BC.pack pass)
+                    return $ RPCResponse 200 Nothing $ Just $ AuthenticateResp resp
+                ___ -> return $ RPCResponse 404 (Just INVALID_REQUEST) Nothing
+        _____ -> return $ RPCResponse 200 Nothing $ Just $ AuthenticateResp $ AuthResp Nothing 0 0
+
+
+login :: (MonadIO m, HasXokenNodeEnv env m) => DT.Text -> BC.ByteString -> m AuthResp
+login user pass = do
+    dbe <- getDB
+    lg <- getLogger
+    let conn = keyValDB dbe
+        hashedPasswd = encodeHex ((S.encode $ sha256 pass))
+        str =
+            " SELECT password, api_quota, api_used, session_key_expiry_time FROM xoken.user_permission WHERE username = ? "
+        qstr = str :: Q.QueryString Q.R (Identity DT.Text) (DT.Text, Int32, Int32, UTCTime)
+        p = Q.defQueryParams Q.One $ Identity $ user
+    res <- liftIO $ try $ Q.runClient conn (Q.query (Q.prepared qstr) p)
+    case res of
+        Left (SomeException e) -> do
+            err lg $ LG.msg $ "Error: SELECT'ing from 'user_permission': " ++ show e
+            throw e
+        Right (op) -> do
+            if length op == 0
+                then return $ AuthResp Nothing 0 0
+                else do
+                    case (op !! 0) of
+                        (sk, _, _, _) -> do
+                            if (sk /= hashedPasswd)
+                                then return $ AuthResp Nothing 0 0
                                 else do
-                                    case (op !! 0) of
-                                        (sk, _, _, _) -> do
-                                            if (sk /= hashedPasswd)
-                                                then return $
-                                                     RPCResponse 200 $ Right $
-                                                     Just $ AuthenticateResp $ AuthResp Nothing 0 0
-                                                else do
-                                                    tm <- liftIO $ getCurrentTime
-                                                    newSessionKey <- liftIO $ generateSessionKey
-                                                    let str1 =
-                                                            "UPDATE xoken.user_permission SET session_key = ?, session_key_expiry_time = ? WHERE username = ? "
-                                                        qstr1 = str1 :: Q.QueryString Q.W (DT.Text, UTCTime, DT.Text) ()
-                                                        par1 =
-                                                            Q.defQueryParams
-                                                                Q.One
-                                                                ( newSessionKey
-                                                                , (addUTCTime (nominalDay * 30) tm)
-                                                                , DT.pack user)
-                                                    res1 <- liftIO $ try $ Q.runClient conn (Q.write (qstr1) par1)
-                                                    case res1 of
-                                                        Right () -> return ()
-                                                        Left (SomeException e) -> do
-                                                            err lg $
-                                                                LG.msg $
-                                                                "Error: UPDATE'ing into 'user_permission': " ++ show e
-                                                            throw e
-                                                    return $
-                                                        RPCResponse 200 $ Right $
-                                                        Just $ AuthenticateResp $
-                                                        AuthResp (Just $ DT.unpack newSessionKey) 1 100
-                ___ -> return $ RPCResponse 404 $ Left $ RPCError INVALID_REQUEST Nothing
-        _____ -> return $ RPCResponse 200 $ Right $ Just $ AuthenticateResp $ AuthResp Nothing 0 0
+                                    tm <- liftIO $ getCurrentTime
+                                    newSessionKey <- liftIO $ generateSessionKey
+                                    let str1 =
+                                            "UPDATE xoken.user_permission SET session_key = ?, session_key_expiry_time = ? WHERE username = ? "
+                                        qstr1 = str1 :: Q.QueryString Q.W (DT.Text, UTCTime, DT.Text) ()
+                                        par1 =
+                                            Q.defQueryParams
+                                                Q.One
+                                                (newSessionKey, (addUTCTime (nominalDay * 30) tm), user)
+                                    res1 <- liftIO $ try $ Q.runClient conn (Q.write (qstr1) par1)
+                                    case res1 of
+                                        Right () -> return ()
+                                        Left (SomeException e) -> do
+                                            err lg $ LG.msg $ "Error: UPDATE'ing into 'user_permission': " ++ show e
+                                            throw e
+                                    return $ AuthResp (Just $ DT.unpack newSessionKey) 1 100
 
 delegateRequest :: (HasXokenNodeEnv env m, MonadIO m) => RPCMessage -> EndPointConnection -> Network -> m (RPCMessage)
 delegateRequest encReq epConn net = do
@@ -927,6 +933,7 @@ delegateRequest encReq epConn net = do
 goGetResource :: (HasXokenNodeEnv env m, MonadIO m) => RPCMessage -> Network -> [DT.Text] -> m (RPCMessage)
 goGetResource msg net roles = do
     dbe <- getDB
+    lg <- getLogger
     let grdb = graphDB (dbe)
         conn = keyValDB (dbe)
     case rqMethod msg of
@@ -962,7 +969,7 @@ goGetResource msg net roles = do
         "HASH->BLOCK" -> do
             case methodParams $ rqParams msg of
                 Just (GetBlockByHash hs) -> do
-                    blk <- xGetBlockHash net (hs)
+                    blk <- xGetBlockHash (DT.pack hs)
                     case blk of
                         Just b -> return $ RPCResponse 200 $ Right $ Just $ RespBlockByHash b
                         Nothing -> return $ RPCResponse 404 $ Left $ RPCError INVALID_REQUEST Nothing
@@ -970,13 +977,13 @@ goGetResource msg net roles = do
         "[HASH]->[BLOCK]" -> do
             case methodParams $ rqParams msg of
                 Just (GetBlocksByHashes hashes) -> do
-                    blks <- xGetBlocksHashes net hashes
+                    blks <- xGetBlocksHashes (DT.pack <$> hashes)
                     return $ RPCResponse 200 $ Right $ Just $ RespBlocksByHashes blks
                 _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "HEIGHT->BLOCK" -> do
             case methodParams $ rqParams msg of
                 Just (GetBlockByHeight ht) -> do
-                    blk <- xGetBlockHeight net (fromIntegral ht)
+                    blk <- xGetBlockHeight (fromIntegral ht)
                     case blk of
                         Just b -> return $ RPCResponse 200 $ Right $ Just $ RespBlockByHash b
                         Nothing -> return $ RPCResponse 404 $ Left $ RPCError INVALID_REQUEST Nothing
@@ -984,13 +991,13 @@ goGetResource msg net roles = do
         "[HEIGHT]->[BLOCK]" -> do
             case methodParams $ rqParams msg of
                 Just (GetBlocksByHeight hts) -> do
-                    blks <- xGetBlocksHeights net $ Data.List.map (fromIntegral) hts
+                    blks <- xGetBlocksHeights $ Data.List.map (fromIntegral) hts
                     return $ RPCResponse 200 $ Right $ Just $ RespBlocksByHashes blks
                 _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "TXID->RAWTX" -> do
             case methodParams $ rqParams msg of
                 Just (GetRawTransactionByTxID hs) -> do
-                    tx <- xGetTxHash net (hs)
+                    tx <- xGetTxHash (DT.pack hs)
                     case tx of
                         Just t -> return $ RPCResponse 200 $ Right $ Just $ RespRawTransactionByTxID t
                         Nothing -> return $ RPCResponse 200 $ Right $ Nothing
@@ -998,7 +1005,7 @@ goGetResource msg net roles = do
         "TXID->TX" -> do
             case methodParams $ rqParams msg of
                 Just (GetTransactionByTxID hs) -> do
-                    tx <- xGetTxHash net (hs)
+                    tx <- xGetTxHash (DT.pack hs)
                     case tx of
                         Just RawTxRecord {..} ->
                             case S.decodeLazy txSerialized of
@@ -1012,13 +1019,13 @@ goGetResource msg net roles = do
         "[TXID]->[RAWTX]" -> do
             case methodParams $ rqParams msg of
                 Just (GetRawTransactionsByTxIDs hashes) -> do
-                    txs <- xGetTxHashes net hashes
+                    txs <- xGetTxHashes (DT.pack <$> hashes)
                     return $ RPCResponse 200 $ Right $ Just $ RespRawTransactionsByTxIDs txs
                 _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "[TXID]->[TX]" -> do
             case methodParams $ rqParams msg of
                 Just (GetTransactionsByTxIDs hashes) -> do
-                    txs <- xGetTxHashes net hashes
+                    txs <- xGetTxHashes (DT.pack <$> hashes)
                     let rawTxs =
                             (\RawTxRecord {..} ->
                                  (TxRecord txId txBlockInfo) <$> (Extra.hush $ S.decodeLazy txSerialized)) <$>
@@ -1030,7 +1037,7 @@ goGetResource msg net roles = do
                 Just (GetOutputsByAddress addr psize nominalTxIndex) -> do
                     ops <-
                         case convertToScriptHash net addr of
-                            Just o -> xGetOutputsAddress net o psize nominalTxIndex
+                            Just o -> xGetOutputsAddress o psize nominalTxIndex
                             Nothing -> return []
                     return $
                         RPCResponse 200 $ Right $ Just $ RespOutputsByAddress $ (\ao -> ao {aoAddress = addr}) <$> ops
@@ -1046,7 +1053,7 @@ goGetResource msg net roles = do
                                          Nothing -> (arr, m))
                                 ([], M.empty)
                                 addrs
-                    ops <- xGetOutputsAddresses net shs pgSize nomTxInd
+                    ops <- xGetOutputsAddresses shs pgSize nomTxInd
                     return $
                         RPCResponse 200 $ Right $
                         Just $ RespOutputsByAddresses $
@@ -1055,37 +1062,38 @@ goGetResource msg net roles = do
         "SCRIPTHASH->[OUTPUT]" -> do
             case methodParams $ rqParams msg of
                 Just (GetOutputsByScriptHash sh pgSize nomTxInd) -> do
-                    ops <- L.map addressToScriptOutputs <$> xGetOutputsAddress net (sh) pgSize nomTxInd
+                    ops <- L.map addressToScriptOutputs <$> xGetOutputsAddress (sh) pgSize nomTxInd
                     return $ RPCResponse 200 $ Right $ Just $ RespOutputsByScriptHash ops
                 _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "[SCRIPTHASH]->[OUTPUT]" -> do
             case methodParams $ rqParams msg of
                 Just (GetOutputsByScriptHashes shs pgSize nomTxInd) -> do
-                    ops <- L.map addressToScriptOutputs <$> xGetOutputsAddresses net shs pgSize nomTxInd
+                    ops <- L.map addressToScriptOutputs <$> xGetOutputsAddresses shs pgSize nomTxInd
                     return $ RPCResponse 200 $ Right $ Just $ RespOutputsByScriptHashes ops
                 _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "TXID->[MNODE]" -> do
             case methodParams $ rqParams msg of
                 Just (GetMerkleBranchByTxID txid) -> do
-                    ops <- xGetMerkleBranch net txid
+                    ops <- xGetMerkleBranch txid
                     return $ RPCResponse 200 $ Right $ Just $ RespMerkleBranchByTxID ops
                 _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "NAME->[OUTPOINT]" -> do
             case methodParams $ rqParams msg of
                 Just (GetAllegoryNameBranch name isProducer) -> do
-                    ops <- xGetAllegoryNameBranch net name isProducer
+                    ops <- xGetAllegoryNameBranch name isProducer
                     return $ RPCResponse 200 $ Right $ Just $ RespAllegoryNameBranch ops
                 _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "RELAY_TX" -> do
             case methodParams $ rqParams msg of
                 Just (RelayTx tx) -> do
-                    ops <- xRelayTx net tx
+                    ops <- xRelayTx tx
                     return $ RPCResponse 200 $ Right $ Just $ RespRelayTx ops
                 _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "PS_ALLEGORY_TX" -> do
             case methodParams $ rqParams msg of
                 Just (GetPartiallySignedAllegoryTx payips (name, isProducer) owner change) -> do
-                    opsE <- LE.try $ xGetPartiallySignedAllegoryTx net payips (name, isProducer) owner change
+                    opsE <-
+                        LE.try $ xGetPartiallySignedAllegoryTx payips (name, isProducer) owner change
                     case opsE of
                         Right ops -> return $ RPCResponse 200 $ Right $ Just $ RespPartiallySignedAllegoryTx ops
                         Left (e :: SomeException) -> do

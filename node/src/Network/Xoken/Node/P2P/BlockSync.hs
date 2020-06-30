@@ -36,6 +36,7 @@ import Control.Monad.Logger
 import Control.Monad.Reader
 import Control.Monad.STM
 import Control.Monad.State.Strict
+import Control.Monad.Trans.Control
 import qualified Data.Aeson as A (decode, encode)
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Base16 as B16 (decode, encode)
@@ -128,7 +129,7 @@ produceGetDataMessage !tm = do
                     err lg $ LG.msg ("[ERROR] produceGetDataMessage " ++ show e)
                     return Nothing
 
-sendRequestMessages :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BitcoinPeer -> Message -> m ()
+sendRequestMessages :: (HasXokenNodeEnv env m, MonadIO m) => BitcoinPeer -> Message -> m ()
 sendRequestMessages pr msg = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
@@ -715,8 +716,8 @@ processBlock dblk = do
 
 handleIfAllegoryTx :: (HasXokenNodeEnv env m, MonadIO m) => Tx -> Bool -> m (Bool)
 handleIfAllegoryTx tx revert = do
-    lg <- getLogger
     dbe <- getDB
+    lg <- getLogger
     debug lg $ LG.msg $ val $ "Checking for Allegory OP_RETURN"
     let op_return = head (txOut tx)
     let hexstr = B16.encode (scriptOutput op_return)
