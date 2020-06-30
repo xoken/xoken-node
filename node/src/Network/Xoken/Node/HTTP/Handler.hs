@@ -8,9 +8,9 @@ import Arivi.P2P.Config (decodeHex, encodeHex)
 import qualified Control.Error.Util as Extra
 import Control.Exception (SomeException(..), throw, try)
 import qualified Control.Exception.Lifted as LE (try)
+import Control.Monad
 import Control.Monad.IO.Class
 import Control.Monad.State.Class
-import Control.Monad
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as BC
