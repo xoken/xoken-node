@@ -253,6 +253,26 @@ xGetBlockHeight net height = do
             err lg $ LG.msg $ "Error: xGetBlockHeight: " <> show e
             throw KeyValueDBLookupException
 
+xGetTxOutputSpendStatus :: 
+        (HasXokenNodeEnv env m, MonadIO m) 
+     => Network 
+     -> String 
+     -> Int32 
+     -> m (Maybe TxOutputSpendStatus)
+xGetTxOutputSpendStatus net txId outputIndex = do
+    dbe <- getDB
+    let conn = keyValDB (dbe)
+        str = "SELECT is_output_spent, spending_txid, spending_index, spending_tx_block_height FROM xoken.txid_outputs WHERE txid=? AND idx=?"
+        qstr =
+            str :: Q.QueryString Q.R (DT.Text, Int32) (Bool, Maybe DT.Text, Maybe Int32, Maybe Int32)
+        p = Q.defQueryParams Q.One (DT.pack txId, outputIndex)
+    iop <- Q.runClient conn (Q.query qstr p)
+    if length iop == 0
+        then return Nothing
+        else do
+            let (isSpent, spendingTxID, spendingTxIndex, spendingTxBlkHeight) = iop !! 0
+            return $ Just $ TxOutputSpendStatus isSpent (DT.unpack <$> spendingTxID) spendingTxBlkHeight spendingTxIndex 
+
 xGetBlocksHeights :: (HasXokenNodeEnv env m, MonadIO m) => Network -> [Int32] -> m ([BlockRecord])
 xGetBlocksHeights net heights = do
     dbe <- getDB
@@ -333,6 +353,33 @@ xGetTxHashes net hashes = do
                              (fromBlob sz))
                     iop
 
+getTxOutputsData ::
+       (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
+    => Network
+    -> (DT.Text, Int32)
+    -> m (((DT.Text, Int32), Int32), Bool, (DT.Text, Int32), Int64)
+getTxOutputsData net (txid, idx) = do
+    dbe <- getDB
+    lg <- getLogger
+    let conn = keyValDB (dbe)
+        toStr = "SELECT block_info,is_output_spent,prev_outpoint,value FROM xoken.txid_outputs WHERE txid=? AND idx=?"
+        toQStr =
+            toStr :: Q.QueryString Q.R (DT.Text, Int32) ( ((DT.Text, Int32), Int32)
+                                                        , Bool
+                                                        , (DT.Text, Int32)
+                                                        , Int64)
+        top = Q.defQueryParams Q.One (txid, idx)
+    toRes <- LE.try $ Q.runClient conn (Q.query toQStr top)
+    case toRes of
+        Right es -> do
+            if length es == 0
+            then do err lg $ LG.msg $ "Error: getTxOutputsData: No entry in txid_outputs for (txid,idx): " ++ show (txid,idx)
+                    throw KeyValueDBLookupException
+            else return (es !! 0)
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: getTxOutputsData: " ++ show e
+            throw KeyValueDBLookupException
+
 xGetOutputsAddress ::
        (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
     => Network
@@ -348,45 +395,37 @@ xGetOutputsAddress net address pgSize mbNomTxInd = do
             case mbNomTxInd of
                 (Just n) -> n
                 Nothing -> maxBound
-        str =
-            "SELECT address,output,block_info,nominal_tx_index,is_block_confirmed,is_output_spent,is_type_receive,other_address,prev_outpoint,value from xoken.address_outputs where address = ? and nominal_tx_index < ?"
-        qstr =
-            str :: Q.QueryString Q.R (DT.Text, Int64) ( DT.Text
-                                                      , (DT.Text, Int32)
-                                                      , ((DT.Text, Int32), Int32)
-                                                      , Int64
-                                                      , Bool
-                                                      , Bool
-                                                      , Bool
-                                                      , Maybe DT.Text
-                                                      , (DT.Text, Int32)
-                                                      , Int64)
-        p = Q.defQueryParams Q.One (DT.pack address, nominalTxIndex)
-    res <- LE.try $ Q.runClient conn (Q.query qstr (p {pageSize = pgSize}))
-    case res of
+        aoStr = "SELECT address,nominal_tx_index,output,is_type_receive,other_address FROM xoken.address_outputs WHERE address=? AND nominal_tx_index<?"
+        aoQStr =
+            aoStr :: Q.QueryString Q.R (DT.Text, Int64) ( DT.Text
+                                                        , Int64
+                                                        , (DT.Text, Int32)
+                                                        , Bool
+                                                        , Maybe DT.Text)
+        aop = Q.defQueryParams Q.One (DT.pack address, nominalTxIndex)
+    aoRes <- LE.try $ Q.runClient conn (Q.query aoQStr (aop {pageSize = pgSize}))
+    case aoRes of
         Right iop -> do
-            if length iop == 0
-                then return []
-                else do
-                    return $
-                        Data.List.map
-                            (\(addr, (txhs, ind), ((bhash, blkht), txind), nomTxInd, fconf, fospent, freceive, oaddr, (ptxhs, pind), val) ->
-                                 AddressOutputs
-                                     (DT.unpack addr)
-                                     (OutPoint' (DT.unpack txhs) (fromIntegral ind))
-                                     (BlockInfo' (DT.unpack bhash) (fromIntegral txind) (fromIntegral blkht))
-                                     nomTxInd
-                                     fconf
-                                     fospent
-                                     freceive
-                                     (if isJust oaddr
-                                          then DT.unpack $ fromJust oaddr
-                                          else "")
-                                     (OutPoint' (DT.unpack ptxhs) (fromIntegral pind))
-                                     val)
-                            iop
+            if length iop == 0 
+            then return []
+            else do
+                res <- sequence $ (\(_, _, (txid, idx), _, _) ->
+                    getTxOutputsData net (txid, idx)) <$> iop
+                return $ ((\((addr, nti, (op_txid, op_txidx), itr, oa), (((bsh, bht), bidx), ios, (oph, opi), val)) -> 
+                        AddressOutputs
+                            (DT.unpack addr)
+                            (OutPoint' (DT.unpack op_txid) (fromIntegral op_txidx))
+                            (BlockInfo' (DT.unpack bsh) (fromIntegral bidx) (fromIntegral bht))
+                            nti
+                            ios
+                            itr
+                            (if isJust oa
+                                then DT.unpack $ fromJust oa
+                                else "")
+                            (OutPoint' (DT.unpack oph) (fromIntegral opi))
+                            val) <$>) (zip iop res)
         Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: xGetOutputsAddress: " ++ show e
+            err lg $ LG.msg $ "Error: xGetOutputsAddress':" ++ show e
             throw KeyValueDBLookupException
 
 xGetOutputsAddresses ::
@@ -1029,6 +1068,12 @@ goGetResource msg net = do
                         Left (e :: SomeException) -> do
                             liftIO $ print e
                             return $ RPCResponse 400 (Just INTERNAL_ERROR) Nothing
+                _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
+        "TX_SPEND_STATUS" -> do
+            case methodParams $ rqParams msg of
+                Just (GetTxOutputSpendStatus txid index) -> do
+                    txss <- xGetTxOutputSpendStatus net txid index
+                    return $ RPCResponse 200 Nothing $ Just $ RespTxOutputSpendStatus txss
                 _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
         _____ -> return $ RPCResponse 400 (Just INVALID_METHOD) Nothing
 
