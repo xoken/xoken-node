@@ -530,3 +530,7 @@ coinbaseTxToMessage s = case C.length (C.pack regex) > 6 of
   where r :: String
         r = "\255\255\255\255[\NUL-\255]+"
         regex = ((C.unpack s) =~ r) :: String
+        
+validateEmail :: String -> Bool
+validateEmail email = let emailRegex = "^[a-zA-Z0-9+._-]+@[a-zA-Z-]+\\.[a-z]+$" :: String
+                      in (email =~ emailRegex :: Bool) || (null email)

@@ -853,11 +853,11 @@ delegateRequest encReq epConn net = do
                                 (quota, used, exp, role) -> do
                                     curtm <- liftIO $ getCurrentTime
                                     if exp > curtm && quota > used
-                                        then goGetResource encReq net (DT.unpack <$> (Database.CQL.Protocol.fromSet role))
+                                        then goGetResource encReq net (Database.CQL.Protocol.fromSet role)
                                         else return $
                                              RPCResponse 200 $ Right $ Just $ AuthenticateResp $ AuthResp Nothing 0 0
 
-goGetResource :: (HasXokenNodeEnv env m, MonadIO m) => RPCMessage -> Network -> [String] -> m (RPCMessage)
+goGetResource :: (HasXokenNodeEnv env m, MonadIO m) => RPCMessage -> Network -> [DT.Text] -> m (RPCMessage)
 goGetResource msg net role = do
     dbe <- getDB
     let grdb = graphDB (dbe)
@@ -868,18 +868,24 @@ goGetResource msg net role = do
                 Just (AddUser uname apiExp apiQuota fname lname email addUserRole) -> do
                     if "admin" `elem` role
                         then do
-                            usr <- liftIO $ addNewUser conn 
-                                                       (DT.pack $ uname)
-                                                       (DT.pack $ fname)
-                                                       (DT.pack $ lname)
-                                                       (DT.pack $ email)
-                                                       (addUserRole)
-                                                       (apiQuota)
-                                                       (apiExp)
-                            case usr of
-                                Just u -> return $ RPCResponse 200 $ Right $ Just $ RespAddUser u
-                                Nothing -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS (Just "User with username already exists")
-                        else return $ RPCResponse 403 $ Left $ RPCError INVALID_PARAMS (Just "User lacks permission to create users")
+                            if validateEmail email
+                                then do
+                                    usr <- liftIO $ addNewUser conn 
+                                                            (DT.pack $ uname)
+                                                            (DT.pack $ fname)
+                                                            (DT.pack $ lname)
+                                                            (DT.pack $ email)
+                                                            (addUserRole)
+                                                            (apiQuota)
+                                                            (apiExp)
+                                    case usr of
+                                        Just u -> return $ RPCResponse 200 $ Right $ Just $ RespAddUser u
+                                        Nothing -> return $ RPCResponse 400 $ Left $
+                                                            RPCError INVALID_PARAMS
+                                                                     (Just $ "User with username " ++ uname ++ " already exists")
+                                else return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS (Just "Invalid email")
+                        else return $ RPCResponse 403 $ Left $
+                                      RPCError INVALID_PARAMS (Just "User lacks permission to create users")
                 _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "HASH->BLOCK" -> do
             case methodParams $ rqParams msg of
