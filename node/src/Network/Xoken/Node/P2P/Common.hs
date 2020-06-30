@@ -192,7 +192,7 @@ frameOpReturn opReturn = do
 
 generateSessionKey :: IO (Text)
 generateSessionKey = do
-    g <- liftIO $ getStdGen
+    g <- liftIO $ newStdGen
     let seed = show $ fst (random g :: (Word64, StdGen))
         sdb = B64.encode $ C.pack $ seed
     return $ encodeHex ((S.encode $ sha256 $ B.reverse sdb))
@@ -207,7 +207,7 @@ addNewUser conn uname fname lname email role api_quota api_expiry_time = do
     if L.length op == 1
         then return Nothing
         else do
-            g <- liftIO $ getStdGen
+            g <- liftIO $ newStdGen
             let seed = show $ fst (random g :: (Word64, StdGen))
                 passwd = B64.encode $ C.pack $ seed
                 hashedPasswd = encodeHex ((S.encode $ sha256 passwd))
