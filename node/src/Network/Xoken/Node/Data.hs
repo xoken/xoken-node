@@ -144,7 +144,7 @@ data RPCReqParams
 instance FromJSON RPCReqParams where
     parseJSON (Object o) =
         (AuthenticateReq <$> o .: "username" <*> o .: "password") <|>
-        (GeneralReq <$> o .: "sessionKey" <*> o .: "methodParams")
+        (GeneralReq <$> o .: "sessionKey" <*> o .:? "methodParams")
 
 data RPCReqParams'
     = AddUser 
@@ -260,6 +260,9 @@ data RPCResponseBody
     | RespBlocksByHashes
           { blocks :: [BlockRecord]
           }
+    | RespChainInfo
+          { chainInfo :: ChainInfo
+          }
     | RespTransactionByTxID
           { tx :: TxRecord
           }
@@ -305,6 +308,7 @@ instance ToJSON RPCResponseBody where
     toJSON (RespBlocksByHeight bs) = object ["blocks" .= bs]
     toJSON (RespBlockByHash b) = object ["block" .= b]
     toJSON (RespBlocksByHashes bs) = object ["blocks" .= bs]
+    toJSON (RespChainInfo cw) = object ["chainwork" .= cw]
     toJSON (RespTransactionByTxID tx) = object ["tx" .= tx]
     toJSON (RespTransactionsByTxIDs txs) = object ["txs" .= txs]
     toJSON (RespRawTransactionByTxID tx) = object ["rawTx" .= tx]
@@ -351,6 +355,26 @@ instance ToJSON AddUserResp where
             , "roles" .= roles
             , "api_quota" .= apiQuota
             , "api_expiry_time" .= apiExpTime
+
+data ChainInfo =
+    ChainInfo
+        { ciChain :: String
+        , ciChainWork :: String
+        , ciDifficulty :: Double
+        , ciHeaders :: Int32
+        , ciBlocks :: Int32
+        , ciBestBlockHash :: String
+        } deriving (Generic, Show, Hashable, Eq, Serialise)
+
+instance ToJSON ChainInfo where
+    toJSON (ChainInfo ch cw diff hdr blk hs) =
+        object
+            [ "chain" .= ch
+            , "chainwork" .= cw
+            , "difficulty" .= diff
+            , "headers" .= hdr
+            , "blocks" .= blk
+            , "bestBlockHash" .= hs
             ]
 
 data BlockRecord =
