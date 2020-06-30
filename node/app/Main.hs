@@ -298,7 +298,7 @@ defaultAdminUser conn = do
         then return ()
         else do
             tm <- liftIO $ getCurrentTime
-            usr <- addNewUser conn "admin" "default" "user" "" (Just "admin") (Just 100000000) (Just (addUTCTime (nominalDay * 365) tm))
+            usr <- addNewUser conn "admin" "default" "user" "" (Just ["admin"]) (Just 100000000) (Just (addUTCTime (nominalDay * 365) tm))
             putStrLn $ "******************************************************************* "
             putStrLn $ "  Creating default Admin user!"
             putStrLn $ "  Please note down admin password NOW, will not be shown again."

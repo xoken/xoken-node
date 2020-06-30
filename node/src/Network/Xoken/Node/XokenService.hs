@@ -850,23 +850,23 @@ delegateRequest encReq epConn net = do
                             return $ RPCResponse 200 $ Right $ Just $ AuthenticateResp $ AuthResp Nothing 0 0
                         else do
                             case op !! 0 of
-                                (quota, used, exp, role) -> do
+                                (quota, used, exp, roles) -> do
                                     curtm <- liftIO $ getCurrentTime
                                     if exp > curtm && quota > used
-                                        then goGetResource encReq net (Database.CQL.Protocol.fromSet role)
+                                        then goGetResource encReq net (Database.CQL.Protocol.fromSet roles)
                                         else return $
                                              RPCResponse 200 $ Right $ Just $ AuthenticateResp $ AuthResp Nothing 0 0
 
 goGetResource :: (HasXokenNodeEnv env m, MonadIO m) => RPCMessage -> Network -> [DT.Text] -> m (RPCMessage)
-goGetResource msg net role = do
+goGetResource msg net roles = do
     dbe <- getDB
     let grdb = graphDB (dbe)
         conn = keyValDB (dbe)
     case rqMethod msg of
         "ADD_USER" -> do
             case methodParams $ rqParams msg of
-                Just (AddUser uname apiExp apiQuota fname lname email addUserRole) -> do
-                    if "admin" `elem` role
+                Just (AddUser uname apiExp apiQuota fname lname email userRoles) -> do
+                    if "admin" `elem` roles
                         then do
                             if validateEmail email
                                 then do
@@ -875,7 +875,7 @@ goGetResource msg net role = do
                                                             (DT.pack $ fname)
                                                             (DT.pack $ lname)
                                                             (DT.pack $ email)
-                                                            (addUserRole)
+                                                            (userRoles)
                                                             (apiQuota)
                                                             (apiExp)
                                     case usr of

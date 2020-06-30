@@ -197,8 +197,8 @@ generateSessionKey = do
         sdb = B64.encode $ C.pack $ seed
     return $ encodeHex ((S.encode $ sha256 $ B.reverse sdb))
 
-addNewUser :: Q.ClientState -> T.Text -> T.Text -> T.Text -> T.Text -> Maybe String -> Maybe Int32 -> Maybe UTCTime -> IO (Maybe AddUserResp)
-addNewUser conn uname fname lname email role api_quota api_expiry_time = do
+addNewUser :: Q.ClientState -> T.Text -> T.Text -> T.Text -> T.Text -> Maybe [String] -> Maybe Int32 -> Maybe UTCTime -> IO (Maybe AddUserResp)
+addNewUser conn uname fname lname email roles api_quota api_expiry_time = do
     let qstr =
             " SELECT password from xoken.user_permission where username = ? " :: Q.QueryString Q.R (Identity T.Text) (Identity T.Text)
         p = Q.defQueryParams Q.One (Identity uname)
@@ -236,10 +236,10 @@ addNewUser conn uname fname lname email role api_quota api_expiry_time = do
                         , lname
                         , email
                         , tm
-                        , [maybe "read" T.pack role]
-                        , (fromMaybe 100 api_quota)
+                        , (fromMaybe ["read"] ((fmap . fmap) T.pack roles))
+                        , (fromMaybe 10000 api_quota)
                         , 0
-                        , (fromMaybe (addUTCTime (nominalDay * 30) tm) api_expiry_time)
+                        , (fromMaybe (addUTCTime (nominalDay * 365) tm) api_expiry_time)
                         , tempSessionKey
                         , (addUTCTime (nominalDay * 30) tm))
             res1 <- liftIO $ try $ Q.runClient conn (Q.write (qstr) par)
@@ -249,9 +249,9 @@ addNewUser conn uname fname lname email role api_quota api_expiry_time = do
                                                         (T.unpack fname)
                                                         (T.unpack lname)
                                                         (T.unpack email)
-                                                        [fromMaybe "read" role]
-                                                        (fromIntegral $ fromMaybe 100 api_quota)
-                                                        (fromMaybe (addUTCTime (nominalDay * 30) tm) api_expiry_time)
+                                                        (fromMaybe ["read"] roles)
+                                                        (fromIntegral $ fromMaybe 10000 api_quota)
+                                                        (fromMaybe (addUTCTime (nominalDay * 365) tm) api_expiry_time)
                 Left (SomeException e) -> do
                     putStrLn $ "Error: INSERTing into 'user_permission': " ++ show e
                     throw e

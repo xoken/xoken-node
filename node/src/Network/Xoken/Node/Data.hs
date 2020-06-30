@@ -154,7 +154,7 @@ data RPCReqParams'
           , auFirstName :: String
           , auLastName :: String
           , auEmail :: String
-          , auRole :: Maybe String
+          , auRoles :: Maybe [String]
           } 
     | GetBlockByHeight
           { gbHeight :: Int
@@ -239,7 +239,7 @@ instance FromJSON RPCReqParams' where
         (GetPartiallySignedAllegoryTx <$> o .: "gpsaPaymentInputs" <*> o .: "gpsaName" <*> o .: "gpsaOutputOwner" <*>
          o .: "gpsaOutputChange") <|>
         (AddUser <$> o .: "username" <*> o .:? "api_expiry_time" <*> o .:? "api_quota" <*>
-         o .: "first_name" <*> o .: "last_name" <*> o .: "email" <*> o .:? "role")
+         o .: "first_name" <*> o .: "last_name" <*> o .: "email" <*> o .:? "roles")
 
 data RPCResponseBody
     = AuthenticateResp
