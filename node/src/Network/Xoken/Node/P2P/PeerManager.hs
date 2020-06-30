@@ -704,7 +704,7 @@ doVersionHandshake ::
 doVersionHandshake net sock sa = do
     p2pEnv <- getBitcoinP2P
     lg <- getLogger
-    g <- liftIO $ getStdGen
+    g <- liftIO $ newStdGen
     now <- round <$> liftIO getPOSIXTime
     let ip = bitcoinNodeListenIP $ nodeConfig p2pEnv
         port = toInteger $ bitcoinNodeListenPort $ nodeConfig p2pEnv

@@ -259,6 +259,27 @@ xGetBlockHeight height = do
             err lg $ LG.msg $ "Error: xGetBlockHeight: " <> show e
             throw KeyValueDBLookupException
 
+xGetTxOutputSpendStatus :: 
+        (HasXokenNodeEnv env m, MonadIO m) 
+     => Network 
+     -> String 
+     -> Int32 
+     -> m (Maybe TxOutputSpendStatus)
+xGetTxOutputSpendStatus net txId outputIndex = do
+    dbe <- getDB
+    let conn = keyValDB (dbe)
+        str = "SELECT is_output_spent, spending_txid, spending_index, spending_tx_block_height FROM xoken.txid_outputs WHERE txid=? AND idx=?"
+        qstr =
+            str :: Q.QueryString Q.R (DT.Text, Int32) (Bool, Maybe DT.Text, Maybe Int32, Maybe Int32)
+        p = Q.defQueryParams Q.One (DT.pack txId, outputIndex)
+    iop <- Q.runClient conn (Q.query qstr p)
+    if length iop == 0
+        then return Nothing
+        else do
+            let (isSpent, spendingTxID, spendingTxIndex, spendingTxBlkHeight) = iop !! 0
+            return $ Just $ TxOutputSpendStatus isSpent (DT.unpack <$> spendingTxID) spendingTxBlkHeight spendingTxIndex 
+
+
 xGetBlocksHeights :: (HasXokenNodeEnv env m, MonadIO m) => [Int32] -> m ([BlockRecord])
 xGetBlocksHeights heights = do
     dbe <- getDB
@@ -338,6 +359,33 @@ xGetTxHashes hashes = do
                              (fromBlob sz))
                     iop
 
+getTxOutputsData ::
+       (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
+    => Network
+    -> (DT.Text, Int32)
+    -> m (((DT.Text, Int32), Int32), Bool, (DT.Text, Int32), Int64)
+getTxOutputsData net (txid, idx) = do
+    dbe <- getDB
+    lg <- getLogger
+    let conn = keyValDB (dbe)
+        toStr = "SELECT block_info,is_output_spent,prev_outpoint,value FROM xoken.txid_outputs WHERE txid=? AND idx=?"
+        toQStr =
+            toStr :: Q.QueryString Q.R (DT.Text, Int32) ( ((DT.Text, Int32), Int32)
+                                                        , Bool
+                                                        , (DT.Text, Int32)
+                                                        , Int64)
+        top = Q.defQueryParams Q.One (txid, idx)
+    toRes <- LE.try $ Q.runClient conn (Q.query toQStr top)
+    case toRes of
+        Right es -> do
+            if length es == 0
+            then do err lg $ LG.msg $ "Error: getTxOutputsData: No entry in txid_outputs for (txid,idx): " ++ show (txid,idx)
+                    throw KeyValueDBLookupException
+            else return (es !! 0)
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: getTxOutputsData: " ++ show e
+            throw KeyValueDBLookupException
+
 xGetOutputsAddress ::
        (HasXokenNodeEnv env m, MonadIO m)
     => String
@@ -352,45 +400,37 @@ xGetOutputsAddress address pgSize mbNomTxInd = do
             case mbNomTxInd of
                 (Just n) -> n
                 Nothing -> maxBound
-        str =
-            "SELECT address,output,block_info,nominal_tx_index,is_block_confirmed,is_output_spent,is_type_receive,other_address,prev_outpoint,value from xoken.address_outputs where address = ? and nominal_tx_index < ?"
-        qstr =
-            str :: Q.QueryString Q.R (DT.Text, Int64) ( DT.Text
-                                                      , (DT.Text, Int32)
-                                                      , ((DT.Text, Int32), Int32)
-                                                      , Int64
-                                                      , Bool
-                                                      , Bool
-                                                      , Bool
-                                                      , Maybe DT.Text
-                                                      , (DT.Text, Int32)
-                                                      , Int64)
-        p = Q.defQueryParams Q.One (DT.pack address, nominalTxIndex)
-    res <- LE.try $ Q.runClient conn (Q.query qstr (p {pageSize = pgSize}))
-    case res of
+        aoStr = "SELECT address,nominal_tx_index,output,is_type_receive,other_address FROM xoken.address_outputs WHERE address=? AND nominal_tx_index<?"
+        aoQStr =
+            aoStr :: Q.QueryString Q.R (DT.Text, Int64) ( DT.Text
+                                                        , Int64
+                                                        , (DT.Text, Int32)
+                                                        , Bool
+                                                        , Maybe DT.Text)
+        aop = Q.defQueryParams Q.One (DT.pack address, nominalTxIndex)
+    aoRes <- LE.try $ Q.runClient conn (Q.query aoQStr (aop {pageSize = pgSize}))
+    case aoRes of
         Right iop -> do
-            if length iop == 0
-                then return []
-                else do
-                    return $
-                        Data.List.map
-                            (\(addr, (txhs, ind), ((bhash, blkht), txind), nomTxInd, fconf, fospent, freceive, oaddr, (ptxhs, pind), val) ->
-                                 AddressOutputs
-                                     (DT.unpack addr)
-                                     (OutPoint' (DT.unpack txhs) (fromIntegral ind))
-                                     (BlockInfo' (DT.unpack bhash) (fromIntegral txind) (fromIntegral blkht))
-                                     nomTxInd
-                                     fconf
-                                     fospent
-                                     freceive
-                                     (if isJust oaddr
-                                          then DT.unpack $ fromJust oaddr
-                                          else "")
-                                     (OutPoint' (DT.unpack ptxhs) (fromIntegral pind))
-                                     val)
-                            iop
+            if length iop == 0 
+            then return []
+            else do
+                res <- sequence $ (\(_, _, (txid, idx), _, _) ->
+                    getTxOutputsData net (txid, idx)) <$> iop
+                return $ ((\((addr, nti, (op_txid, op_txidx), itr, oa), (((bsh, bht), bidx), ios, (oph, opi), val)) -> 
+                        AddressOutputs
+                            (DT.unpack addr)
+                            (OutPoint' (DT.unpack op_txid) (fromIntegral op_txidx))
+                            (BlockInfo' (DT.unpack bsh) (fromIntegral bidx) (fromIntegral bht))
+                            nti
+                            ios
+                            itr
+                            (if isJust oa
+                                then DT.unpack $ fromJust oa
+                                else "")
+                            (OutPoint' (DT.unpack oph) (fromIntegral opi))
+                            val) <$>) (zip iop res)
         Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: xGetOutputsAddress: " ++ show e
+            err lg $ LG.msg $ "Error: xGetOutputsAddress':" ++ show e
             throw KeyValueDBLookupException
 
 xGetOutputsAddresses ::
@@ -818,6 +858,7 @@ authLoginClient msg net epConn = do
                 ___ -> return $ RPCResponse 404 (Just INVALID_REQUEST) Nothing
         _____ -> return $ RPCResponse 200 Nothing $ Just $ AuthenticateResp $ AuthResp Nothing 0 0
 
+
 login :: (MonadIO m, HasXokenNodeEnv env m) => DT.Text -> BC.ByteString -> m AuthResp
 login user pass = do
     dbe <- getDB
@@ -868,8 +909,8 @@ delegateRequest encReq epConn net = do
         (AuthenticateReq _ _) -> authLoginClient encReq net epConn
         (GeneralReq sessionKey __) -> do
             let str =
-                    " SELECT api_quota, api_used, session_key_expiry_time FROM xoken.user_permission WHERE session_key = ? ALLOW FILTERING "
-                qstr = str :: Q.QueryString Q.R (Q.Identity DT.Text) (Int32, Int32, UTCTime)
+                    " SELECT api_quota, api_used, session_key_expiry_time, permissions FROM xoken.user_permission WHERE session_key = ? ALLOW FILTERING "
+                qstr = str :: Q.QueryString Q.R (Q.Identity DT.Text) (Int32, Int32, UTCTime, Set DT.Text)
                 p = Q.defQueryParams Q.One $ Identity $ (DT.pack sessionKey)
             res <- liftIO $ try $ Q.runClient conn (Q.query (Q.prepared qstr) p)
             case res of
@@ -879,63 +920,88 @@ delegateRequest encReq epConn net = do
                 Right (op) -> do
                     if length op == 0
                         then do
-                            return $ RPCResponse 200 Nothing $ Just $ AuthenticateResp $ AuthResp Nothing 0 0
+                            return $ RPCResponse 200 $ Right $ Just $ AuthenticateResp $ AuthResp Nothing 0 0
                         else do
                             case op !! 0 of
-                                (quota, used, exp) -> do
+                                (quota, used, exp, roles) -> do
                                     curtm <- liftIO $ getCurrentTime
                                     if exp > curtm && quota > used
-                                        then goGetResource encReq net
+                                        then goGetResource encReq net (Database.CQL.Protocol.fromSet roles)
                                         else return $
-                                             RPCResponse 200 Nothing $ Just $ AuthenticateResp $ AuthResp Nothing 0 0
+                                             RPCResponse 200 $ Right $ Just $ AuthenticateResp $ AuthResp Nothing 0 0
 
-goGetResource :: (HasXokenNodeEnv env m, MonadIO m) => RPCMessage -> Network -> m (RPCMessage)
-goGetResource msg net = do
+goGetResource :: (HasXokenNodeEnv env m, MonadIO m) => RPCMessage -> Network -> [DT.Text] -> m (RPCMessage)
+goGetResource msg net roles = do
     dbe <- getDB
     lg <- getLogger
     let grdb = graphDB (dbe)
+        conn = keyValDB (dbe)
     case rqMethod msg of
+        "ADD_USER" -> do
+            case methodParams $ rqParams msg of
+                Just (AddUser uname apiExp apiQuota fname lname email userRoles) -> do
+                    if "admin" `elem` roles
+                        then do
+                            if validateEmail email
+                                then do
+                                    usr <- liftIO $ addNewUser conn 
+                                                            (DT.pack $ uname)
+                                                            (DT.pack $ fname)
+                                                            (DT.pack $ lname)
+                                                            (DT.pack $ email)
+                                                            (userRoles)
+                                                            (apiQuota)
+                                                            (apiExp)
+                                    case usr of
+                                        Just u -> return $ RPCResponse 200 $ Right $ Just $ RespAddUser u
+                                        Nothing -> return $ RPCResponse 400 $ Left $
+                                                            RPCError INVALID_PARAMS
+                                                                     (Just $ "User with username " ++ uname ++ " already exists")
+                                else return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS (Just "Invalid email")
+                        else return $ RPCResponse 403 $ Left $
+                                      RPCError INVALID_PARAMS (Just "User lacks permission to create users")
+                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "CHAIN_INFO" -> do
             cw <- xGetChainInfo net
             case cw of
-                Just c -> return $ RPCResponse 200 Nothing $ Just $ RespChainInfo c
-                Nothing -> return $ RPCResponse 404 (Just INVALID_REQUEST) Nothing
+                Just c -> return $ RPCResponse 200 $ Right $ Just $ RespChainInfo c
+                Nothing -> return $ RPCResponse 404 $ Left $ RPCError INVALID_REQUEST Nothing
         "HASH->BLOCK" -> do
             case methodParams $ rqParams msg of
                 Just (GetBlockByHash hs) -> do
                     blk <- xGetBlockHash (DT.pack hs)
                     case blk of
-                        Just b -> return $ RPCResponse 200 Nothing $ Just $ RespBlockByHash b
-                        Nothing -> return $ RPCResponse 404 (Just INVALID_REQUEST) Nothing
-                _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
+                        Just b -> return $ RPCResponse 200 $ Right $ Just $ RespBlockByHash b
+                        Nothing -> return $ RPCResponse 404 $ Left $ RPCError INVALID_REQUEST Nothing
+                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "[HASH]->[BLOCK]" -> do
             case methodParams $ rqParams msg of
                 Just (GetBlocksByHashes hashes) -> do
                     blks <- xGetBlocksHashes (DT.pack <$> hashes)
-                    return $ RPCResponse 200 Nothing $ Just $ RespBlocksByHashes blks
-                _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
+                    return $ RPCResponse 200 $ Right $ Just $ RespBlocksByHashes blks
+                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "HEIGHT->BLOCK" -> do
             case methodParams $ rqParams msg of
                 Just (GetBlockByHeight ht) -> do
                     blk <- xGetBlockHeight (fromIntegral ht)
                     case blk of
-                        Just b -> return $ RPCResponse 200 Nothing $ Just $ RespBlockByHash b
-                        Nothing -> return $ RPCResponse 404 (Just INVALID_REQUEST) Nothing
-                _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
+                        Just b -> return $ RPCResponse 200 $ Right $ Just $ RespBlockByHash b
+                        Nothing -> return $ RPCResponse 404 $ Left $ RPCError INVALID_REQUEST Nothing
+                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "[HEIGHT]->[BLOCK]" -> do
             case methodParams $ rqParams msg of
                 Just (GetBlocksByHeight hts) -> do
                     blks <- xGetBlocksHeights $ Data.List.map (fromIntegral) hts
-                    return $ RPCResponse 200 Nothing $ Just $ RespBlocksByHashes blks
-                _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
+                    return $ RPCResponse 200 $ Right $ Just $ RespBlocksByHashes blks
+                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "TXID->RAWTX" -> do
             case methodParams $ rqParams msg of
                 Just (GetRawTransactionByTxID hs) -> do
                     tx <- xGetTxHash (DT.pack hs)
                     case tx of
-                        Just t -> return $ RPCResponse 200 Nothing $ Just $ RespRawTransactionByTxID t
-                        Nothing -> return $ RPCResponse 200 Nothing Nothing
-                _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
+                        Just t -> return $ RPCResponse 200 $ Right $ Just $ RespRawTransactionByTxID t
+                        Nothing -> return $ RPCResponse 200 $ Right $ Nothing
+                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "TXID->TX" -> do
             case methodParams $ rqParams msg of
                 Just (GetTransactionByTxID hs) -> do
@@ -945,17 +1011,17 @@ goGetResource msg net = do
                             case S.decodeLazy txSerialized of
                                 Right rt ->
                                     return $
-                                    RPCResponse 200 Nothing $
+                                    RPCResponse 200 $ Right $
                                     Just $ RespTransactionByTxID (TxRecord txId txBlockInfo rt)
-                                Left err -> return $ RPCResponse 400 (Just INTERNAL_ERROR) Nothing
-                        Nothing -> return $ RPCResponse 200 Nothing Nothing
-                _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
+                                Left err -> return $ RPCResponse 400 $ Left $ RPCError INTERNAL_ERROR Nothing
+                        Nothing -> return $ RPCResponse 200 $ Right Nothing
+                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "[TXID]->[RAWTX]" -> do
             case methodParams $ rqParams msg of
                 Just (GetRawTransactionsByTxIDs hashes) -> do
                     txs <- xGetTxHashes (DT.pack <$> hashes)
-                    return $ RPCResponse 200 Nothing $ Just $ RespRawTransactionsByTxIDs txs
-                _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
+                    return $ RPCResponse 200 $ Right $ Just $ RespRawTransactionsByTxIDs txs
+                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "[TXID]->[TX]" -> do
             case methodParams $ rqParams msg of
                 Just (GetTransactionsByTxIDs hashes) -> do
@@ -964,8 +1030,8 @@ goGetResource msg net = do
                             (\RawTxRecord {..} ->
                                  (TxRecord txId txBlockInfo) <$> (Extra.hush $ S.decodeLazy txSerialized)) <$>
                             txs
-                    return $ RPCResponse 200 Nothing $ Just $ RespTransactionsByTxIDs $ catMaybes rawTxs
-                _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
+                    return $ RPCResponse 200 $ Right $ Just $ RespTransactionsByTxIDs $ catMaybes rawTxs
+                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "ADDR->[OUTPUT]" -> do
             case methodParams $ rqParams msg of
                 Just (GetOutputsByAddress addr psize nominalTxIndex) -> do
@@ -974,8 +1040,8 @@ goGetResource msg net = do
                             Just o -> xGetOutputsAddress o psize nominalTxIndex
                             Nothing -> return []
                     return $
-                        RPCResponse 200 Nothing $ Just $ RespOutputsByAddress $ (\ao -> ao {aoAddress = addr}) <$> ops
-                _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
+                        RPCResponse 200 $ Right $ Just $ RespOutputsByAddress $ (\ao -> ao {aoAddress = addr}) <$> ops
+                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "[ADDR]->[OUTPUT]" -> do
             case methodParams $ rqParams msg of
                 Just (GetOutputsByAddresses addrs pgSize nomTxInd) -> do
@@ -989,53 +1055,58 @@ goGetResource msg net = do
                                 addrs
                     ops <- xGetOutputsAddresses shs pgSize nomTxInd
                     return $
-                        RPCResponse 200 Nothing $
-                        Just $
-                        RespOutputsByAddresses $
+                        RPCResponse 200 $ Right $
+                        Just $ RespOutputsByAddresses $
                         (\ao -> ao {aoAddress = fromJust $ M.lookup (aoAddress ao) shMap}) <$> ops
-                _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
+                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "SCRIPTHASH->[OUTPUT]" -> do
             case methodParams $ rqParams msg of
                 Just (GetOutputsByScriptHash sh pgSize nomTxInd) -> do
                     ops <- L.map addressToScriptOutputs <$> xGetOutputsAddress (sh) pgSize nomTxInd
-                    return $ RPCResponse 200 Nothing $ Just $ RespOutputsByScriptHash ops
-                _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
+                    return $ RPCResponse 200 $ Right $ Just $ RespOutputsByScriptHash ops
+                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "[SCRIPTHASH]->[OUTPUT]" -> do
             case methodParams $ rqParams msg of
                 Just (GetOutputsByScriptHashes shs pgSize nomTxInd) -> do
                     ops <- L.map addressToScriptOutputs <$> xGetOutputsAddresses shs pgSize nomTxInd
-                    return $ RPCResponse 200 Nothing $ Just $ RespOutputsByScriptHashes ops
-                _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
+                    return $ RPCResponse 200 $ Right $ Just $ RespOutputsByScriptHashes ops
+                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "TXID->[MNODE]" -> do
             case methodParams $ rqParams msg of
                 Just (GetMerkleBranchByTxID txid) -> do
                     ops <- xGetMerkleBranch txid
-                    return $ RPCResponse 200 Nothing $ Just $ RespMerkleBranchByTxID ops
-                _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
+                    return $ RPCResponse 200 $ Right $ Just $ RespMerkleBranchByTxID ops
+                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "NAME->[OUTPOINT]" -> do
             case methodParams $ rqParams msg of
                 Just (GetAllegoryNameBranch name isProducer) -> do
                     ops <- xGetAllegoryNameBranch name isProducer
-                    return $ RPCResponse 200 Nothing $ Just $ RespAllegoryNameBranch ops
-                _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
+                    return $ RPCResponse 200 $ Right $ Just $ RespAllegoryNameBranch ops
+                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "RELAY_TX" -> do
             case methodParams $ rqParams msg of
                 Just (RelayTx tx) -> do
                     ops <- xRelayTx tx
-                    return $ RPCResponse 200 Nothing $ Just $ RespRelayTx ops
-                _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
+                    return $ RPCResponse 200 $ Right $ Just $ RespRelayTx ops
+                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "PS_ALLEGORY_TX" -> do
             case methodParams $ rqParams msg of
                 Just (GetPartiallySignedAllegoryTx payips (name, isProducer) owner change) -> do
                     opsE <-
                         LE.try $ xGetPartiallySignedAllegoryTx payips (name, isProducer) owner change
                     case opsE of
-                        Right ops -> return $ RPCResponse 200 Nothing $ Just $ RespPartiallySignedAllegoryTx ops
+                        Right ops -> return $ RPCResponse 200 $ Right $ Just $ RespPartiallySignedAllegoryTx ops
                         Left (e :: SomeException) -> do
                             liftIO $ print e
-                            return $ RPCResponse 400 (Just INTERNAL_ERROR) Nothing
-                _____ -> return $ RPCResponse 400 (Just INVALID_PARAMS) Nothing
-        _____ -> return $ RPCResponse 400 (Just INVALID_METHOD) Nothing
+                            return $ RPCResponse 400 $ Left $ RPCError INTERNAL_ERROR Nothing 
+                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing 
+        "TX_SPEND_STATUS" -> do
+            case methodParams $ rqParams msg of
+                Just (GetTxOutputSpendStatus txid index) -> do
+                    txss <- xGetTxOutputSpendStatus net txid index
+                    return $ RPCResponse 200 $ Right $ Just $ RespTxOutputSpendStatus txss
+                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
+        _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_METHOD Nothing 
 
 convertToScriptHash :: Network -> String -> Maybe String
 convertToScriptHash net s = do
