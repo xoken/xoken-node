@@ -54,6 +54,7 @@ import Network.Xoken.Constants
 import Network.Xoken.Crypto.Hash
 import Network.Xoken.Network.Common -- (GetData(..), MessageCommand(..), NetworkAddress(..))
 import Network.Xoken.Network.Message
+import Network.Xoken.Node.Data
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.P2P.Types
 import Network.Xoken.Transaction.Common
@@ -200,10 +201,71 @@ frameOpReturn opReturn = do
 
 generateSessionKey :: IO (Text)
 generateSessionKey = do
-    g <- liftIO $ getStdGen
+    g <- liftIO $ newStdGen
     let seed = show $ fst (random g :: (Word64, StdGen))
         sdb = B64.encode $ C.pack $ seed
     return $ encodeHex ((S.encode $ sha256 $ B.reverse sdb))
+
+addNewUser :: Q.ClientState -> T.Text -> T.Text -> T.Text -> T.Text -> Maybe [String] -> Maybe Int32 -> Maybe UTCTime -> IO (Maybe AddUserResp)
+addNewUser conn uname fname lname email roles api_quota api_expiry_time = do
+    let qstr =
+            " SELECT password from xoken.user_permission where username = ? " :: Q.QueryString Q.R (Identity T.Text) (Identity T.Text)
+        p = Q.defQueryParams Q.One (Identity uname)
+    op <- Q.runClient conn (Q.query qstr p)
+    tm <- liftIO $ getCurrentTime
+    if L.length op == 1
+        then return Nothing
+        else do
+            g <- liftIO $ newStdGen
+            let seed = show $ fst (random g :: (Word64, StdGen))
+                passwd = B64.encode $ C.pack $ seed
+                hashedPasswd = encodeHex ((S.encode $ sha256 passwd))
+                tempSessionKey = encodeHex ((S.encode $ sha256 $ B.reverse passwd))
+                str =
+                    "insert INTO xoken.user_permission ( username, password, first_name, last_name, emailid, created_time, permissions, api_quota, api_used, api_expiry_time, session_key, session_key_expiry_time) values (?, ?, ?, ?, ?, ? ,? ,? ,? ,? ,? ,? )"
+                qstr =
+                    str :: Q.QueryString Q.W ( T.Text
+                                             , T.Text
+                                             , T.Text
+                                             , T.Text
+                                             , T.Text
+                                             , UTCTime
+                                             , [T.Text]
+                                             , Int32
+                                             , Int32
+                                             , UTCTime
+                                             , T.Text
+                                             , UTCTime) ()
+                par =
+                    Q.defQueryParams
+                        Q.One
+                        ( uname
+                        , hashedPasswd
+                        , fname
+                        , lname
+                        , email
+                        , tm
+                        , (fromMaybe ["read"] ((fmap . fmap) T.pack roles))
+                        , (fromMaybe 10000 api_quota)
+                        , 0
+                        , (fromMaybe (addUTCTime (nominalDay * 365) tm) api_expiry_time)
+                        , tempSessionKey
+                        , (addUTCTime (nominalDay * 30) tm))
+            res1 <- liftIO $ try $ Q.runClient conn (Q.write (qstr) par)
+            case res1 of
+                Right () -> do
+                    putStrLn $ "Added user: " ++ (T.unpack uname)
+                    return $ Just $ AddUserResp (T.unpack uname)
+                                                (C.unpack passwd)
+                                                (T.unpack fname)
+                                                (T.unpack lname)
+                                                (T.unpack email)
+                                                (fromMaybe ["read"] roles)
+                                                (fromIntegral $ fromMaybe 10000 api_quota)
+                                                (fromMaybe (addUTCTime (nominalDay * 365) tm) api_expiry_time)
+                Left (SomeException e) -> do
+                    putStrLn $ "Error: INSERTing into 'user_permission': " ++ show e
+                    throw e
 
 -- | Calculates sum of chainworks for blocks with blockheight in input list
 calculateChainWork :: (HasLogger m, MonadIO m) => [Int32] -> Q.ClientState -> m Integer
