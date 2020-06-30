@@ -215,7 +215,11 @@ data RPCReqParams'
           , gpsaName :: ([Int], Bool) -- name & isProducer 
           , gpsaOutputOwner :: String
           , gpsaOutputChange :: String
-          }  
+          }
+    | GetTxOutputSpendStatus
+          { gtssHash :: String
+          , gtssIndex :: Int32
+          }
     deriving (Generic, Show, Hashable, Eq, Serialise, ToJSON)
 
 instance FromJSON RPCReqParams' where
@@ -240,6 +244,8 @@ instance FromJSON RPCReqParams' where
          o .: "gpsaOutputChange") <|>
         (AddUser <$> o .: "username" <*> o .:? "api_expiry_time" <*> o .:? "api_quota" <*>
          o .: "first_name" <*> o .: "last_name" <*> o .: "email" <*> o .:? "roles")
+        (GetTxOutputSpendStatus <$> o .: "gtssHash" <*> o .: "gtssIndex")
+
 
 data RPCResponseBody
     = AuthenticateResp
@@ -299,6 +305,9 @@ data RPCResponseBody
     | RespPartiallySignedAllegoryTx
           { psaTx :: ByteString
           }
+    | RespTxOutputSpendStatus
+          { spendStatus :: Maybe TxOutputSpendStatus
+          }
     deriving (Generic, Show, Hashable, Eq, Serialise)
 
 instance ToJSON RPCResponseBody where
@@ -322,6 +331,7 @@ instance ToJSON RPCResponseBody where
     toJSON (RespRelayTx rrTx) = object ["rrTx" .= rrTx]
     toJSON (RespPartiallySignedAllegoryTx ps) =
         object ["psaTx" .= (T.decodeUtf8 . BL.toStrict . B64L.encode . GZ.compress . BL.fromStrict $ ps)]
+    toJSON (RespTxOutputSpendStatus ss) = object ["spendStatus" .= ss]
 
 data AuthResp =
     AuthResp
@@ -428,13 +438,30 @@ data TxRecord =
         }
     deriving (Show, Generic, Hashable, Eq, Serialise, ToJSON)
 
+data TxOutputSpendStatus =
+    TxOutputSpendStatus
+          { isSpent :: Bool
+          , spendingTxID :: Maybe String
+          , spendingTxBlockHt :: Maybe Int32
+          , spendingTxIndex :: Maybe Int32
+          }
+    deriving (Show, Generic, Hashable, Eq, Serialise)
+
+instance ToJSON TxOutputSpendStatus where
+    toJSON (TxOutputSpendStatus tis stxid stxht stxindex) =
+        object
+            [ "isSpent" .= tis
+            , "spendingTxID" .= stxid
+            , "spendingTxBlockHt" .= stxht
+            , "spendingTxIndex" .= stxindex
+            ]
+
 data AddressOutputs =
     AddressOutputs
         { aoAddress :: String
         , aoOutput :: OutPoint'
         , aoBlockInfo :: BlockInfo'
         , aoNominalTxIndex :: Int64
-        , aoIsBlockConfirmed :: Bool
         , aoIsOutputSpent :: Bool
         , aoIsTypeReceive :: Bool
         , aoOtherAddress :: String
@@ -452,7 +479,6 @@ data ScriptOutputs =
         , scOutput :: OutPoint'
         , scBlockInfo :: BlockInfo'
         , scNominalTxIndex :: Int64
-        , scIsBlockConfirmed :: Bool
         , scIsOutputSpent :: Bool
         , scIsTypeReceive :: Bool
         , scOtherAddress :: String
@@ -550,7 +576,6 @@ addressToScriptOutputs AddressOutputs {..} =
         , scOutput = aoOutput
         , scBlockInfo = aoBlockInfo
         , scNominalTxIndex = aoNominalTxIndex
-        , scIsBlockConfirmed = aoIsBlockConfirmed
         , scIsOutputSpent = aoIsOutputSpent
         , scIsTypeReceive = aoIsTypeReceive
         , scOtherAddress = aoOtherAddress
