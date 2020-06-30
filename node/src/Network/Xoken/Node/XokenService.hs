@@ -918,8 +918,8 @@ goGetResource msg net roles = do
         "CHAIN_INFO" -> do
             cw <- xGetChainInfo net
             case cw of
-                Just c -> return $ RPCResponse 200 Nothing $ Just $ RespChainInfo c
-                Nothing -> return $ RPCResponse 404 (Just INVALID_REQUEST) Nothing
+                Just c -> return $ RPCResponse 200 $ Right $ Just $ RespChainInfo c
+                Nothing -> return $ RPCResponse 404 $ Left $ RPCError INVALID_REQUEST Nothing
         "HASH->BLOCK" -> do
             case methodParams $ rqParams msg of
                 Just (GetBlockByHash hs) -> do

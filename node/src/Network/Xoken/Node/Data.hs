@@ -355,6 +355,7 @@ instance ToJSON AddUserResp where
             , "roles" .= roles
             , "api_quota" .= apiQuota
             , "api_expiry_time" .= apiExpTime
+            ]
 
 data ChainInfo =
     ChainInfo
