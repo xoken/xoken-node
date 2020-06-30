@@ -416,9 +416,10 @@ commitAddressOutputs ::
      -> (Text, Int32)           -- output (txid, index)
      -> ((Text, Int32), Int32)  -- blockInfo ((blockHash, blockHeight), blockTxIndex)
      -> (Text, Int32)           -- prevOutpoint (txid, index)
+     -> Int32                   -- inputIndex
      -> Int64                   -- value
      -> m ()
-commitAddressOutputs conn addr typeRecv otherAddr output blockInfo prevOutpoint value = do
+commitAddressOutputs conn addr typeRecv otherAddr output blockInfo prevOutpoint inputIndex value = do
     lg <- getLogger
     let blkHeight = fromIntegral $ snd . fst $ blockInfo
         txIndex = fromIntegral $ snd blockInfo
@@ -433,28 +434,11 @@ commitAddressOutputs conn addr typeRecv otherAddr output blockInfo prevOutpoint 
                                              , Bool
                                              , Maybe Text) ()
         parAddrOuts = Q.defQueryParams Q.One (addr, nominalTxIndex, output, typeRecv, otherAddr)
---      strTxIDOuts = "INSERT INTO xoken.txid_outputs (txid, idx, block_info, is_output_spent, spending_txid, spending_index, prev_outpoint, value) VALUES (?,?,?,?,?,?,?,?)"
---      qstrTxIDOuts =
---          strTxIDOuts :: Q.QueryString Q.W ( Text
---                                           , Int32
---                                           , ((Text, Int32), Int32)
---                                           , Bool
---                                           , Maybe Text
---                                           , Maybe Int32
---                                           , (Text, Int32)
---                                           , Int64) ()
---        parTxIDOuts = Q.defQueryParams Q.One (txID, txIndex32, blockInfo, False, Nothing, Nothing, prevOutpoint, value)
     resAddrOuts <- liftIO $ try $ Q.runClient conn (Q.write (qstrAddrOuts) parAddrOuts)
     case resAddrOuts of
         Right () -> do
-            commitTxIdOutputs conn typeRecv output blockInfo prevOutpoint 0 value
+            commitTxIdOutputs conn typeRecv output blockInfo prevOutpoint inputIndex value
             return ()
---          resTxIDOuts <- liftIO $ try $ Q.runClient conn (Q.write (qstrTxIDOuts) parTxIDOuts)
---          case resTxIDOuts of
---              Right () -> return ()
---              Left (e :: SomeException) -> do
---                  err lg $ LG.msg $ "Error: INSERTing into 'txid_outputs':" ++ show e
---                  throw KeyValueDBInsertException
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: INSERTing into 'address_outputs': " ++ show e
             throw KeyValueDBInsertException
@@ -466,13 +450,13 @@ commitTxIdOutputs ::
      -> (Text, Int32)           -- output (txid, index)
      -> ((Text, Int32), Int32)  -- blockInfo ((blockHash, blockHeight), blockTxIndex)
      -> (Text, Int32)           -- prevOutpoint (txid, index)
-     -> Int                     -- input index
+     -> Int32                   -- input index
      -> Int64                   -- value
      -> m ()
 commitTxIdOutputs conn isInsert (txid, idx) blockInfo prevOutpoint inputIndex value = do
     lg <- getLogger
-    let inputTxId = fst $ prevOutpoint
-        inputIdx = snd $ prevOutpoint
+    let prevTxId = fst $ prevOutpoint
+        prevIdx = snd $ prevOutpoint
         blockHeight = snd $ fst $ blockInfo
     res <- liftIO $ try $ Q.runClient conn $ if isInsert then
         let strTxIdOuts = "INSERT INTO xoken.txid_outputs (txid,idx,block_info,is_output_spent,spending_txid,spending_index,spending_tx_block_height,prev_outpoint,input_index,value) VALUES (?,?,?,?,?,?,?,?,?,?)"
@@ -487,10 +471,10 @@ commitTxIdOutputs conn isInsert (txid, idx) blockInfo prevOutpoint inputIndex va
                                                  , (Text, Int32)
                                                  , Int32
                                                 , Int64) ()
-            parTxIdOuts = Q.defQueryParams Q.One (txid, idx, blockInfo, False, Nothing, Nothing, Nothing, prevOutpoint, 0, value)
+            parTxIdOuts = Q.defQueryParams Q.One (txid, idx, blockInfo, False, Nothing, Nothing, Nothing, prevOutpoint, inputIndex, value)
         in (Q.write qstrTxIdOuts parTxIdOuts)
     else
-        let strUpdateSpends = "UPDATE xoken.txid_outputs SET is_output_spent=?, spending_txid=?, spending_index=?, spending_tx_block_height=? WHERE txid=? AND idx=?"
+        let strUpdateSpends = "UPDATE xoken.txid_outputs SET is_output_spent=?,spending_txid=?,spending_index=?,spending_tx_block_height=? WHERE txid=? AND idx=?"
             qstrUpdateSpends =
                 strUpdateSpends :: Q.QueryString Q.W ( Bool
                                                      , Text
@@ -498,7 +482,7 @@ commitTxIdOutputs conn isInsert (txid, idx) blockInfo prevOutpoint inputIndex va
                                                      , Int32
                                                      , Text
                                                      , Int32) ()
-            parUpdateSpends = Q.defQueryParams Q.One (True, txid, 0, blockHeight, inputTxId, inputIdx)
+            parUpdateSpends = Q.defQueryParams Q.One (True, txid, inputIndex, blockHeight, prevTxId, prevIdx)
         in (Q.write qstrUpdateSpends parUpdateSpends)
     case res of
         Right () -> return ()
@@ -594,6 +578,7 @@ processConfTransaction tx bhash txind blkht = do
                           (txHashToHex $ txHash tx, i)  -- output
                           ((blockHashToHex bhash, fromIntegral blkht), fromIntegral txind)  -- blockInfo
                           (txHashToHex $ outPointHash $ prevOutput b, fromIntegral $ outPointIndex $ prevOutput b)  -- prevOutpoint
+                          0                 -- inputIndex
                           (fromIntegral $ outValue a))  --value
                  inAddrs)
         outAddrs
@@ -609,6 +594,7 @@ processConfTransaction tx bhash txind blkht = do
                           (txHashToHex $ txHash tx, i)
                           ((blockHashToHex bhash, fromIntegral blkht), fromIntegral txind)
                           (txHashToHex $ outPointHash $ prevOutput a, fromIntegral $ outPointIndex $ prevOutput a)
+                          0
                           (fromIntegral $ outValue b))
                  outAddrs)
         (catMaybes lookupInAddrs)
