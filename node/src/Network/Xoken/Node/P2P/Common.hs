@@ -244,14 +244,16 @@ addNewUser conn uname fname lname email roles api_quota api_expiry_time = do
                         , (addUTCTime (nominalDay * 30) tm))
             res1 <- liftIO $ try $ Q.runClient conn (Q.write (qstr) par)
             case res1 of
-                Right () -> return $ Just $ AddUserResp (T.unpack uname)
-                                                        (C.unpack passwd)
-                                                        (T.unpack fname)
-                                                        (T.unpack lname)
-                                                        (T.unpack email)
-                                                        (fromMaybe ["read"] roles)
-                                                        (fromIntegral $ fromMaybe 10000 api_quota)
-                                                        (fromMaybe (addUTCTime (nominalDay * 365) tm) api_expiry_time)
+                Right () -> do
+                    putStrLn $ "Added user: " ++ (T.unpack uname)
+                    return $ Just $ AddUserResp (T.unpack uname)
+                                                (C.unpack passwd)
+                                                (T.unpack fname)
+                                                (T.unpack lname)
+                                                (T.unpack email)
+                                                (fromMaybe ["read"] roles)
+                                                (fromIntegral $ fromMaybe 10000 api_quota)
+                                                (fromMaybe (addUTCTime (nominalDay * 365) tm) api_expiry_time)
                 Left (SomeException e) -> do
                     putStrLn $ "Error: INSERTing into 'user_permission': " ++ show e
                     throw e

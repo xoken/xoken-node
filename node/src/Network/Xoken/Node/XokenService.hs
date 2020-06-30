@@ -139,7 +139,7 @@ xGetBlockHash net hash = do
                                                                 (maybe (-1) fromIntegral txc)
                                                                 ("")
                                                                 (maybe "" (coinbaseTxToMessage . fromBlob) cbase)
-                                                                (maybe "" (C.unpack . fromBlob) cbase)
+                                                                (maybe "" fromBlob cbase)
                         Left err -> do
                             liftIO $ print $ "Decode failed with error: " <> show err
                             return Nothing
@@ -176,7 +176,7 @@ xGetBlocksHashes net hashes = do
                                                                        (maybe (-1) fromIntegral txc)
                                                                        ("")
                                                                        (maybe "" (coinbaseTxToMessage . fromBlob) cbase)
-                                                                       (maybe "" (C.unpack . fromBlob) cbase)
+                                                                       (maybe "" fromBlob cbase)
                                      Left err -> Left err
                                      )
                              (iop) of
@@ -217,7 +217,7 @@ xGetBlockHeight net height = do
                                                                 (maybe (-1) fromIntegral txc)
                                                                 ("")
                                                                 (maybe "" (coinbaseTxToMessage . fromBlob) cbase)
-                                                                (maybe "" (C.unpack . fromBlob) cbase)
+                                                                (maybe "" fromBlob cbase)
                         Left err -> do
                             liftIO $ print $ "Decode failed with error: " <> show err
                             return Nothing
@@ -254,7 +254,7 @@ xGetBlocksHeights net heights = do
                                                                           (maybe (-1) fromIntegral txc)
                                                                           ("")
                                                                           (maybe "" (coinbaseTxToMessage . fromBlob) cbase)
-                                                                          (maybe "" (C.unpack . fromBlob) cbase)
+                                                                          (maybe "" fromBlob cbase)
                                         Left err -> Left err
                                         )
                              (iop) of
