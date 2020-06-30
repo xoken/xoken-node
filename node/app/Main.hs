@@ -11,6 +11,8 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE BlockArguments #-}
+
 
 import Arivi.Crypto.Utils.PublicKey.Signature as ACUPS
 import Arivi.Crypto.Utils.PublicKey.Utils
@@ -53,8 +55,6 @@ import Data.ByteString.Builder
 import qualified Data.ByteString.Char8 as C
 import qualified Data.ByteString.Lazy as L
 import qualified Data.ByteString.Lazy.Char8 as CL
-import qualified Data.Text as DT
-import qualified Data.Text.Encoding as DTE
 import Data.Char
 import Data.Default
 import Data.Default
@@ -72,7 +72,9 @@ import Data.Serialize as Serialize
 import Data.Serialize as S
 import Data.String.Conv
 import Data.String.Conversions
+import qualified Data.Text as DT
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as DTE
 import qualified Data.Text.Lazy as TL
 import Data.Time.Calendar
 import Data.Time.Clock
@@ -218,11 +220,14 @@ runThreads config nodeConf bp2p conn lg p2pEnv certPaths = do
     -- start TLS endpoint
     async $ startTLSEndpoint epHandler (endPointTLSListenIP nodeConf) (endPointTLSListenPort nodeConf) certPaths
     -- start HTTP endpoint
+    let snapConfig = Snap.defaultConfig
+            & Snap.setSSLBind (DTE.encodeUtf8 $ DT.pack $ endPointHTTPListenIP nodeConf)
+            & Snap.setSSLPort (fromEnum $ endPointHTTPListenPort nodeConf)
+            & Snap.setSSLKey (certPaths !! 1)
+            & Snap.setSSLCert (head certPaths)
+            & Snap.setSSLChainCert False
     async $
-        Snap.serveSnapletNoArgParsing
-            (Snap.setPort (fromEnum $ endPointHTTPListenPort nodeConf) $
-             Snap.setHostname (DTE.encodeUtf8 $ DT.pack $ endPointHTTPListenIP nodeConf) Snap.defaultConfig)
-            (appInit xknEnv)
+        Snap.serveSnaplet snapConfig (appInit xknEnv)
     withResource (pool $ graphDB dbh) (`BT.run` initAllegoryRoot genesisTx)
     -- run main workers
     forever $ do
