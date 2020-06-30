@@ -578,7 +578,7 @@ processConfTransaction tx bhash txind blkht = do
                           (txHashToHex $ txHash tx, i)  -- output
                           ((blockHashToHex bhash, fromIntegral blkht), fromIntegral txind)  -- blockInfo
                           (txHashToHex $ outPointHash $ prevOutput b, fromIntegral $ outPointIndex $ prevOutput b)  -- prevOutpoint
-                          0                 -- inputIndex
+                          j                 -- inputIndex
                           (fromIntegral $ outValue a))  --value
                  inAddrs)
         outAddrs
@@ -594,7 +594,7 @@ processConfTransaction tx bhash txind blkht = do
                           (txHashToHex $ txHash tx, i)
                           ((blockHashToHex bhash, fromIntegral blkht), fromIntegral txind)
                           (txHashToHex $ outPointHash $ prevOutput a, fromIntegral $ outPointIndex $ prevOutput a)
-                          0
+                          j 
                           (fromIntegral $ outValue b))
                  outAddrs)
         (catMaybes lookupInAddrs)
