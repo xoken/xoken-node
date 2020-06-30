@@ -69,9 +69,15 @@ data RPCMessage
           }
     | RPCResponse
           { rsStatusCode :: Int16
-          , rsStatusMessage :: Maybe RPCErrors
-          , rsBody :: Maybe RPCResponseBody
+          , rsResp :: Either RPCError (Maybe RPCResponseBody)
           }
+    deriving (Show, Generic, Hashable, Eq, Serialise)
+
+data RPCError
+    = RPCError
+        { rsStatusMessage :: RPCErrors
+        , rsErrorData :: Maybe String
+        }
     deriving (Show, Generic, Hashable, Eq, Serialise)
 
 data XRPCRequest
@@ -239,6 +245,9 @@ data RPCResponseBody
     = AuthenticateResp
           { auth :: AuthResp
           }
+    | RespAddUser
+          { user :: AddUserResp
+          }
     | RespBlockByHeight
           { block :: BlockRecord
           }
@@ -287,13 +296,11 @@ data RPCResponseBody
     | RespPartiallySignedAllegoryTx
           { psaTx :: ByteString
           }
-    | RespAddUser
-          { userPassword :: String
-          }
     deriving (Generic, Show, Hashable, Eq, Serialise)
 
 instance ToJSON RPCResponseBody where
     toJSON (AuthenticateResp a) = object ["auth" .= a]
+    toJSON (RespAddUser usr) = object ["user" .= usr]
     toJSON (RespBlockByHeight b) = object ["block" .= b]
     toJSON (RespBlocksByHeight bs) = object ["blocks" .= bs]
     toJSON (RespBlockByHash b) = object ["block" .= b]
@@ -311,7 +318,6 @@ instance ToJSON RPCResponseBody where
     toJSON (RespRelayTx rrTx) = object ["rrTx" .= rrTx]
     toJSON (RespPartiallySignedAllegoryTx ps) =
         object ["psaTx" .= (T.decodeUtf8 . BL.toStrict . B64L.encode . GZ.compress . BL.fromStrict $ ps)]
-    toJSON (RespAddUser pwd) = object ["password" .= pwd]
 
 data AuthResp =
     AuthResp
@@ -320,6 +326,32 @@ data AuthResp =
         , callsRemaining :: Int
         }
     deriving (Generic, Show, Hashable, Eq, Serialise, ToJSON)
+
+data AddUserResp = 
+    AddUserResp
+        { aurUsername :: String
+        , aurPassword :: String
+        , aurFirstName :: String
+        , aurLastName :: String
+        , aurEmail :: String
+        , aurRoles :: [String]
+        , aurApiQuota :: Int
+        , aurApiExpiryTime :: UTCTime
+        }
+    deriving (Generic, Show, Hashable, Eq, Serialise)
+
+instance ToJSON AddUserResp where
+    toJSON (AddUserResp uname pwd fname lname email roles apiQuota apiExpTime) =
+        object
+            [ "username" .= uname
+            , "password" .= pwd
+            , "first_name" .= fname
+            , "last_name" .= lname
+            , "email" .= email
+            , "roles" .= roles
+            , "api_quota" .= apiQuota
+            , "api_expiry_time" .= apiExpTime
+            ]
 
 data BlockRecord =
     BlockRecord
@@ -487,7 +519,6 @@ addressToScriptOutputs AddressOutputs {..} =
         , scPrevOutpoint = aoPrevOutpoint
         , scValue = aoValue
         }
-
 
 coinbaseTxToMessage :: C.ByteString -> String
 coinbaseTxToMessage s = case C.length (C.pack regex) > 6 of
