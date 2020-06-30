@@ -379,7 +379,7 @@ data TxOutputSpendStatus =
     TxOutputSpendStatus
           { isSpent :: Bool
           , spendingTxID :: Maybe String
-          , spendingTxBlockHt :: Maybe Int
+          , spendingTxBlockHt :: Maybe Int32
           , spendingTxIndex :: Maybe Int32
           }
     deriving (Show, Generic, Hashable, Eq, Serialise)
