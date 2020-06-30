@@ -129,8 +129,10 @@ produceGetDataMessage !tm = do
                     err lg $ LG.msg ("[ERROR] produceGetDataMessage " ++ show e)
                     return Nothing
 
-sendRequestMessages :: (MonadBaseControl IO m, MonadIO m) => Logger -> BitcoinP2P -> BitcoinPeer -> Message -> m ()
-sendRequestMessages lg bp2pEnv pr msg = do
+sendRequestMessages :: (HasXokenNodeEnv env m, MonadIO m) => BitcoinPeer -> Message -> m ()
+sendRequestMessages pr msg = do
+    lg <- getLogger
+    bp2pEnv <- getBitcoinP2P
     let net = bitcoinNetwork $ nodeConfig bp2pEnv
     debug lg $ LG.msg $ val "sendRequestMessages - called."
     case msg of
@@ -183,7 +185,7 @@ runEgressBlockSync =
                                  mmsg <- produceGetDataMessage tm
                                  case mmsg of
                                      Just msg -> do
-                                         res <- LE.try $ sendRequestMessages lg bp2pEnv peer msg
+                                         res <- LE.try $ sendRequestMessages peer msg
                                          case res of
                                              Right () -> do
                                                  debug lg $ LG.msg $ val "updating state."
@@ -222,7 +224,7 @@ runEgressBlockSync =
                                          mmsg <- produceGetDataMessage tm
                                          case mmsg of
                                              Just msg -> do
-                                                 res <- LE.try $ sendRequestMessages lg bp2pEnv peer msg
+                                                 res <- LE.try $ sendRequestMessages peer msg
                                                  case res of
                                                      Right () -> do
                                                          debug lg $ LG.msg $ val "updating state."
@@ -553,7 +555,7 @@ processConfTransaction tx bhash txind blkht = do
                  outAddrs)
         (catMaybes lookupInAddrs)
     --
-    eres <- LE.try $ handleIfAllegoryTx dbe' lg tx True
+    eres <- LE.try $ handleIfAllegoryTx tx True
     case eres of
         Right (flg) -> return ()
         Left (e :: SomeException) -> err lg $ LG.msg ("Error: " ++ show e)
@@ -668,8 +670,10 @@ processBlock dblk = do
     -- liftIO $ signalQSem (blockFetchBalance bp2pEnv)
     return ()
 
-handleIfAllegoryTx :: (MonadBaseControl IO m, MonadIO m) => DatabaseHandles -> Logger -> Tx -> Bool -> m (Bool)
-handleIfAllegoryTx dbe lg tx revert = do
+handleIfAllegoryTx :: (HasXokenNodeEnv env m, MonadIO m) => Tx -> Bool -> m (Bool)
+handleIfAllegoryTx tx revert = do
+    dbe <- getDB
+    lg <- getLogger
     debug lg $ LG.msg $ val $ "Checking for Allegory OP_RETURN"
     let op_return = head (txOut tx)
     let hexstr = B16.encode (scriptOutput op_return)

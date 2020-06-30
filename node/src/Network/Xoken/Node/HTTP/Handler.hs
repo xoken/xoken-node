@@ -61,11 +61,7 @@ authClient = do
             modifyResponse $ setResponseStatus 400 "Bad Request"
             writeBS "400 error"
         else do
-            env <- gets _env
-            let dbe = dbHandles env
-            let conn = keyValDB (dbe)
-            let lg = loggerEnv env
-            resp <- LE.try $ login dbe lg (DTE.decodeUtf8 $ fromJust user) (fromJust pass)
+            resp <- LE.try $ login (DTE.decodeUtf8 $ fromJust user) (fromJust pass)
             case resp of
                 Left (e :: SomeException) -> do
                     modifyResponse $ setResponseStatus 500 "Internal Server Error"
@@ -75,10 +71,8 @@ authClient = do
 getBlockByHash :: Handler App App ()
 getBlockByHash = do
     hash <- getParam "hash"
-    env <- gets _env
-    let dbe = dbHandles env
-        lg = loggerEnv env
-    res <- LE.try $ xGetBlockHash dbe lg (DTE.decodeUtf8 $ fromJust hash)
+    lg <- getLogger
+    res <- LE.try $ xGetBlockHash (DTE.decodeUtf8 $ fromJust hash)
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetBlocksHash: " ++ show e
@@ -92,10 +86,8 @@ getBlockByHash = do
 getBlocksByHash :: Handler App App ()
 getBlocksByHash = do
     allMap <- getQueryParams
-    env <- gets _env
-    let dbe = dbHandles env
-        lg = loggerEnv env
-    res <- LE.try $ xGetBlocksHashes dbe lg (DTE.decodeUtf8 <$> (fromJust $ Map.lookup "hash" allMap))
+    lg <- getLogger
+    res <- LE.try $ xGetBlocksHashes (DTE.decodeUtf8 <$> (fromJust $ Map.lookup "hash" allMap))
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetBlocksHash: " ++ show e
@@ -106,10 +98,8 @@ getBlocksByHash = do
 getBlockByHeight :: Handler App App ()
 getBlockByHeight = do
     height <- getParam "height"
-    env <- gets _env
-    let dbe = dbHandles env
-        lg = loggerEnv env
-    res <- LE.try $ xGetBlockHeight dbe lg (read $ DT.unpack $ DTE.decodeUtf8 $ fromJust height)
+    lg <- getLogger
+    res <- LE.try $ xGetBlockHeight (read $ DT.unpack $ DTE.decodeUtf8 $ fromJust height)
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetBlocksHeight: " ++ show e
@@ -123,12 +113,10 @@ getBlockByHeight = do
 getBlocksByHeight :: Handler App App ()
 getBlocksByHeight = do
     allMap <- getQueryParams
-    env <- gets _env
-    let dbe = dbHandles env
-        lg = loggerEnv env
+    lg <- getLogger
     res <-
         LE.try $
-        xGetBlocksHeights dbe lg (read . DT.unpack . DTE.decodeUtf8 <$> (fromJust $ Map.lookup "height" allMap))
+        xGetBlocksHeights (read . DT.unpack . DTE.decodeUtf8 <$> (fromJust $ Map.lookup "height" allMap))
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetBlocksHeight: " ++ show e
@@ -139,10 +127,8 @@ getBlocksByHeight = do
 getRawTxById :: Handler App App ()
 getRawTxById = do
     txId <- getParam "id"
-    env <- gets _env
-    let dbe = dbHandles env
-        lg = loggerEnv env
-    res <- LE.try $ xGetTxHash dbe (DTE.decodeUtf8 $ fromJust txId)
+    lg <- getLogger
+    res <- LE.try $ xGetTxHash (DTE.decodeUtf8 $ fromJust txId)
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetTxHash: " ++ show e
@@ -156,10 +142,8 @@ getRawTxById = do
 getRawTxByIds :: Handler App App ()
 getRawTxByIds = do
     allMap <- getQueryParams
-    env <- gets _env
-    let dbe = dbHandles env
-        lg = loggerEnv env
-    res <- LE.try $ xGetTxHashes dbe (DTE.decodeUtf8 <$> (fromJust $ Map.lookup "id" allMap))
+    lg <- getLogger
+    res <- LE.try $ xGetTxHashes (DTE.decodeUtf8 <$> (fromJust $ Map.lookup "id" allMap))
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetTxHash: " ++ show e
@@ -170,10 +154,8 @@ getRawTxByIds = do
 getTxById :: Handler App App ()
 getTxById = do
     txId <- getParam "id"
-    env <- gets _env
-    let dbe = dbHandles env
-        lg = loggerEnv env
-    res <- LE.try $ xGetTxHash dbe (DTE.decodeUtf8 $ fromJust txId)
+    lg <- getLogger
+    res <- LE.try $ xGetTxHash (DTE.decodeUtf8 $ fromJust txId)
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetTxHash: " ++ show e
@@ -192,10 +174,8 @@ getTxById = do
 getTxByIds :: Handler App App ()
 getTxByIds = do
     allMap <- getQueryParams
-    env <- gets _env
-    let dbe = dbHandles env
-        lg = loggerEnv env
-    res <- LE.try $ xGetTxHashes dbe (DTE.decodeUtf8 <$> (fromJust $ Map.lookup "id" allMap))
+    lg <- getLogger
+    res <- LE.try $ xGetTxHashes (DTE.decodeUtf8 <$> (fromJust $ Map.lookup "id" allMap))
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetTxHash: " ++ show e
@@ -212,16 +192,13 @@ getOutputsByAddr = do
     addr <- (DT.unpack . DTE.decodeUtf8 . fromJust) <$> getPostParam "addr"
     psize <- (\p -> readMaybe =<< fmap (DT.unpack . DTE.decodeUtf8) p) <$> getPostParam "psize"
     nominalTxIndex <- (\p -> readMaybe =<< fmap (DT.unpack . DTE.decodeUtf8) p) <$> getPostParam "nominalTxIndex"
-    env <- gets _env
-    let dbe = dbHandles env
-        lg = loggerEnv env
-        bp2pEnv = bitcoinP2PEnv env
-        alg = allegoryEnv env
-        net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
+    bp2pEnv <- getBitcoinP2P
+    let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
+    lg <- getLogger
     res <-
         LE.try $
         case convertToScriptHash net addr of
-            Just o -> xGetOutputsAddress dbe lg o psize nominalTxIndex
+            Just o -> xGetOutputsAddress o psize nominalTxIndex
             Nothing -> return []
     case res of
         Left (e :: SomeException) -> do
@@ -237,12 +214,9 @@ getOutputsByAddrs = do
     let addrs = (DT.unpack . DTE.decodeUtf8) <$> (fromJust $ Map.lookup "addrs" allMap)
     pgSize <- (\p -> readMaybe =<< fmap (DT.unpack . DTE.decodeUtf8) p) <$> getPostParam "psize"
     nomTxInd <- (\p -> readMaybe =<< fmap (DT.unpack . DTE.decodeUtf8) p) <$> getPostParam "nominalTxIndex"
-    env <- gets _env
-    let dbe = dbHandles env
-        lg = loggerEnv env
-        bp2pEnv = bitcoinP2PEnv env
-        alg = allegoryEnv env
-        net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
+    bp2pEnv <- getBitcoinP2P
+    let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
+    lg <- getLogger
     let (shs, shMap) =
             L.foldl'
                 (\(arr, m) x ->
@@ -251,7 +225,7 @@ getOutputsByAddrs = do
                          Nothing -> (arr, m))
                 ([], Map.empty)
                 addrs
-    res <- LE.try $ xGetOutputsAddresses dbe lg shs pgSize nomTxInd
+    res <- LE.try $ xGetOutputsAddresses shs pgSize nomTxInd
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetOutputsAddress: " ++ show e
@@ -268,13 +242,10 @@ getOutputsByScriptHash = do
     sh <- (DT.unpack . DTE.decodeUtf8 . fromJust) <$> getPostParam "scriptHash"
     psize <- (\p -> readMaybe =<< fmap (DT.unpack . DTE.decodeUtf8) p) <$> getPostParam "psize"
     nominalTxIndex <- (\p -> readMaybe =<< fmap (DT.unpack . DTE.decodeUtf8) p) <$> getPostParam "nominalTxIndex"
-    env <- gets _env
-    let dbe = dbHandles env
-        lg = loggerEnv env
-        bp2pEnv = bitcoinP2PEnv env
-        alg = allegoryEnv env
-        net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
-    res <- LE.try $ xGetOutputsAddress dbe lg sh psize nominalTxIndex
+    bp2pEnv <- getBitcoinP2P
+    let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
+    lg <- getLogger
+    res <- LE.try $ xGetOutputsAddress sh psize nominalTxIndex
     case res of
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
@@ -288,13 +259,10 @@ getOutputsByScriptHashes = do
     let shs = (DT.unpack . DTE.decodeUtf8) <$> (fromJust $ Map.lookup "scriptHashes" allMap)
     pgSize <- (\p -> readMaybe =<< fmap (DT.unpack . DTE.decodeUtf8) p) <$> getPostParam "psize"
     nomTxInd <- (\p -> readMaybe =<< fmap (DT.unpack . DTE.decodeUtf8) p) <$> getPostParam "nominalTxIndex"
-    env <- gets _env
-    let dbe = dbHandles env
-        lg = loggerEnv env
-        bp2pEnv = bitcoinP2PEnv env
-        alg = allegoryEnv env
-        net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
-    res <- LE.try $ xGetOutputsAddresses dbe lg shs pgSize nomTxInd
+    bp2pEnv <- getBitcoinP2P
+    let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
+    lg <- getLogger
+    res <- LE.try $ xGetOutputsAddresses shs pgSize nomTxInd
     case res of
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
@@ -305,10 +273,7 @@ getOutputsByScriptHashes = do
 getMNodesByTxID :: Handler App App ()
 getMNodesByTxID = do
     txId <- (DT.unpack . DTE.decodeUtf8 . fromJust) <$> getParam "txId"
-    env <- gets _env
-    let dbe = dbHandles env
-        lg = loggerEnv env
-    res <- LE.try $ xGetMerkleBranch dbe lg txId
+    res <- LE.try $ xGetMerkleBranch txId
     case res of
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
@@ -320,30 +285,23 @@ getOutpointsByName :: Handler App App ()
 getOutpointsByName = do
     name <- (DT.unpack . DTE.decodeUtf8 . fromJust) <$> getPostParam "name"
     isProducer <- (read . DT.unpack . DTE.decodeUtf8 . fromJust) <$> getPostParam "isProducer"
-    env <- gets _env
-    let dbe = dbHandles env
-        lg = loggerEnv env
-    res <- LE.try $ xGetAllegoryNameBranch dbe lg name isProducer
+    res <- LE.try $ xGetAllegoryNameBranch name isProducer
     case res of
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
-        Right ops -> do
+        Right ops ->
             writeBS $ BSL.toStrict $ Aeson.encode $ RespAllegoryNameBranch ops
 
 getRelayTx :: Handler App App ()
 getRelayTx = do
     tx <- fromJust <$> getParam "tx"
-    env <- gets _env
-    let dbe = dbHandles env
-        lg = loggerEnv env
-        bp2pEnv = bitcoinP2PEnv env
-    res <- LE.try $ xRelayTx dbe lg bp2pEnv tx
+    res <- LE.try $ xRelayTx tx
     case res of
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
-        Right ops -> do
+        Right ops ->
             writeBS $ BSL.toStrict $ Aeson.encode $ RespRelayTx ops
 
 getPartiallySignedAllegoryTx :: Handler App App ()
@@ -358,12 +316,7 @@ getPartiallySignedAllegoryTx = do
     isProducer <- (read . DT.unpack . DTE.decodeUtf8 . fromJust) <$> getPostParam "isProducer"
     owner <- (DT.unpack . DTE.decodeUtf8 . fromJust) <$> getPostParam "owner"
     change <- (DT.unpack . DTE.decodeUtf8 . fromJust) <$> getPostParam "change"
-    env <- gets _env
-    let dbe = dbHandles env
-        lg = loggerEnv env
-        bp2pEnv = bitcoinP2PEnv env
-        alg = allegoryEnv env
-    res <- LE.try $ xGetPartiallySignedAllegoryTx dbe lg bp2pEnv alg payips (name, isProducer) owner change
+    res <- LE.try $ xGetPartiallySignedAllegoryTx payips (name, isProducer) owner change
     case res of
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
