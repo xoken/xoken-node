@@ -243,7 +243,7 @@ instance FromJSON RPCReqParams' where
         (GetPartiallySignedAllegoryTx <$> o .: "gpsaPaymentInputs" <*> o .: "gpsaName" <*> o .: "gpsaOutputOwner" <*>
          o .: "gpsaOutputChange") <|>
         (AddUser <$> o .: "username" <*> o .:? "api_expiry_time" <*> o .:? "api_quota" <*>
-         o .: "first_name" <*> o .: "last_name" <*> o .: "email" <*> o .:? "roles")
+         o .: "first_name" <*> o .: "last_name" <*> o .: "email" <*> o .:? "roles") <|>
         (GetTxOutputSpendStatus <$> o .: "gtssHash" <*> o .: "gtssIndex")
 
 
