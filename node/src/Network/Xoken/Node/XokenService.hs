@@ -262,16 +262,16 @@ xGetTxOutputSpendStatus ::
 xGetTxOutputSpendStatus net txId outputIndex = do
     dbe <- getDB
     let conn = keyValDB (dbe)
-        str = "SELECT is_output_spent, spending_txid, spending_index FROM xoken.txid_outputs WHERE txid=? AND idx=?"
+        str = "SELECT is_output_spent, spending_txid, spending_index, spending_tx_block_height FROM xoken.txid_outputs WHERE txid=? AND idx=?"
         qstr =
-            str :: Q.QueryString Q.R (DT.Text, Int32) (Bool, Maybe DT.Text, Maybe Int32)
+            str :: Q.QueryString Q.R (DT.Text, Int32) (Bool, Maybe DT.Text, Maybe Int32, Maybe Int32)
         p = Q.defQueryParams Q.One (DT.pack txId, outputIndex)
     iop <- Q.runClient conn (Q.query qstr p)
     if length iop == 0
         then return Nothing
         else do
-            let (isSpent, spendingTxID, spendingTxIndex) = iop !! 0
-            return $ Just $ TxOutputSpendStatus isSpent (DT.unpack <$> spendingTxID) Nothing spendingTxIndex 
+            let (isSpent, spendingTxID, spendingTxIndex, spendingTxBlkHeight) = iop !! 0
+            return $ Just $ TxOutputSpendStatus isSpent (DT.unpack <$> spendingTxID) spendingTxBlkHeight spendingTxIndex 
 
 xGetBlocksHeights :: (HasXokenNodeEnv env m, MonadIO m) => Network -> [Int32] -> m ([BlockRecord])
 xGetBlocksHeights net heights = do
