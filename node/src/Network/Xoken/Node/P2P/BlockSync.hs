@@ -408,32 +408,28 @@ fetchBestSyncedBlock conn net = do
                         Nothing -> throw InvalidBlockHashException
                 Nothing -> throw InvalidMetaDataException
 
-commitAddressOutputs ::
-        (HasLogger m, MonadIO m)
-     => Q.ClientState
-     -> Text                    -- address
-     -> Bool                    -- isTypeRecv
-     -> Maybe Text              -- otherAddr
-     -> (Text, Int32)           -- output (txid, index)
-     -> ((Text, Int32), Int32)  -- blockInfo ((blockHash, blockHeight), blockTxIndex)
-     -> (Text, Int32)           -- prevOutpoint (txid, index)
-     -> Int32                   -- inputIndex
-     -> Int64                   -- value
-     -> m ()
-commitAddressOutputs conn addr typeRecv otherAddr output blockInfo prevOutpoint inputIndex value = do
+commitScriptHashOutputs ::
+       (HasLogger m, MonadIO m)
+    => Q.ClientState
+    -> Text -- address
+    -> Bool -- isTypeRecv
+    -> Maybe Text -- otherAddr
+    -> (Text, Int32) -- output (txid, index)
+    -> ((Text, Int32), Int32) -- blockInfo ((blockHash, blockHeight), blockTxIndex)
+    -> (Text, Int32) -- prevOutpoint (txid, index)
+    -> Int32 -- inputIndex
+    -> Int64 -- value
+    -> m ()
+commitScriptHashOutputs conn addr typeRecv otherAddr output blockInfo prevOutpoint inputIndex value = do
     lg <- getLogger
     let blkHeight = fromIntegral $ snd . fst $ blockInfo
         txIndex = fromIntegral $ snd blockInfo
         nominalTxIndex = blkHeight * 1000000000 + txIndex
         txID = fst $ output
         txIndex32 = snd $ output
-        strAddrOuts = "INSERT INTO xoken.address_outputs (address, nominal_tx_index, output, is_type_receive, other_address) VALUES (?,?,?,?,?)"
-        qstrAddrOuts =
-            strAddrOuts :: Q.QueryString Q.W ( Text
-                                             , Int64
-                                             , (Text, Int32)
-                                             , Bool
-                                             , Maybe Text) ()
+        strAddrOuts =
+            "INSERT INTO xoken.script_hash_outputs (script_hash, nominal_tx_index, output, is_type_receive, other_address) VALUES (?,?,?,?,?)"
+        qstrAddrOuts = strAddrOuts :: Q.QueryString Q.W (Text, Int64, (Text, Int32), Bool, Maybe Text) ()
         parAddrOuts = Q.defQueryParams Q.One (addr, nominalTxIndex, output, typeRecv, otherAddr)
     resAddrOuts <- liftIO $ try $ Q.runClient conn (Q.write (qstrAddrOuts) parAddrOuts)
     case resAddrOuts of
@@ -441,50 +437,52 @@ commitAddressOutputs conn addr typeRecv otherAddr output blockInfo prevOutpoint 
             commitTxIdOutputs conn typeRecv output blockInfo prevOutpoint inputIndex value
             return ()
         Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: INSERTing into 'address_outputs': " ++ show e
+            err lg $ LG.msg $ "Error: INSERTing into 'script_hash_outputs': " ++ show e
             throw KeyValueDBInsertException
 
 commitTxIdOutputs ::
-        (HasLogger m, MonadIO m)
-     => Q.ClientState
-     -> Bool                    -- insert/update switch
-     -> (Text, Int32)           -- output (txid, index)
-     -> ((Text, Int32), Int32)  -- blockInfo ((blockHash, blockHeight), blockTxIndex)
-     -> (Text, Int32)           -- prevOutpoint (txid, index)
-     -> Int32                   -- input index
-     -> Int64                   -- value
-     -> m ()
+       (HasLogger m, MonadIO m)
+    => Q.ClientState
+    -> Bool -- insert/update switch
+    -> (Text, Int32) -- output (txid, index)
+    -> ((Text, Int32), Int32) -- blockInfo ((blockHash, blockHeight), blockTxIndex)
+    -> (Text, Int32) -- prevOutpoint (txid, index)
+    -> Int32 -- input index
+    -> Int64 -- value
+    -> m ()
 commitTxIdOutputs conn isInsert (txid, idx) blockInfo prevOutpoint inputIndex value = do
     lg <- getLogger
     let prevTxId = fst $ prevOutpoint
         prevIdx = snd $ prevOutpoint
         blockHeight = snd $ fst $ blockInfo
-    res <- liftIO $ try $ Q.runClient conn $ if isInsert then
-        let strTxIdOuts = "INSERT INTO xoken.txid_outputs (txid,idx,block_info,is_output_spent,spending_txid,spending_index,spending_tx_block_height,prev_outpoint,input_index,value) VALUES (?,?,?,?,?,?,?,?,?,?)"
-            qstrTxIdOuts =
-                strTxIdOuts :: Q.QueryString Q.W ( Text
-                                                 , Int32
-                                                 , ((Text, Int32), Int32)
-                                                 , Bool
-                                                 , Maybe Text
-                                                 , Maybe Int32
-                                                 , Maybe Int32
-                                                 , (Text, Int32)
-                                                 , Int32
-                                                , Int64) ()
-            parTxIdOuts = Q.defQueryParams Q.One (txid, idx, blockInfo, False, Nothing, Nothing, Nothing, prevOutpoint, inputIndex, value)
-        in (Q.write qstrTxIdOuts parTxIdOuts)
-    else
-        let strUpdateSpends = "UPDATE xoken.txid_outputs SET is_output_spent=?,spending_txid=?,spending_index=?,spending_tx_block_height=? WHERE txid=? AND idx=?"
-            qstrUpdateSpends =
-                strUpdateSpends :: Q.QueryString Q.W ( Bool
-                                                     , Text
-                                                     , Int32
-                                                     , Int32
-                                                     , Text
-                                                     , Int32) ()
-            parUpdateSpends = Q.defQueryParams Q.One (True, txid, inputIndex, blockHeight, prevTxId, prevIdx)
-        in (Q.write qstrUpdateSpends parUpdateSpends)
+    res <-
+        liftIO $
+        try $
+        Q.runClient conn $
+        if isInsert
+            then let strTxIdOuts =
+                         "INSERT INTO xoken.txid_outputs (txid,idx,block_info,is_output_spent,spending_txid,spending_index,spending_tx_block_height,prev_outpoint,input_index,value) VALUES (?,?,?,?,?,?,?,?,?,?)"
+                     qstrTxIdOuts =
+                         strTxIdOuts :: Q.QueryString Q.W ( Text
+                                                          , Int32
+                                                          , ((Text, Int32), Int32)
+                                                          , Bool
+                                                          , Maybe Text
+                                                          , Maybe Int32
+                                                          , Maybe Int32
+                                                          , (Text, Int32)
+                                                          , Int32
+                                                          , Int64) ()
+                     parTxIdOuts =
+                         Q.defQueryParams
+                             Q.One
+                             (txid, idx, blockInfo, False, Nothing, Nothing, Nothing, prevOutpoint, inputIndex, value)
+                  in (Q.write qstrTxIdOuts parTxIdOuts)
+            else let strUpdateSpends =
+                         "UPDATE xoken.txid_outputs SET is_output_spent=?,spending_txid=?,spending_index=?,spending_tx_block_height=? WHERE txid=? AND idx=?"
+                     qstrUpdateSpends = strUpdateSpends :: Q.QueryString Q.W (Bool, Text, Int32, Int32, Text, Int32) ()
+                     parUpdateSpends = Q.defQueryParams Q.One (True, txid, inputIndex, blockHeight, prevTxId, prevIdx)
+                  in (Q.write qstrUpdateSpends parUpdateSpends)
     case res of
         Right () -> return ()
         Left (e :: SomeException) -> do
@@ -541,53 +539,57 @@ processConfTransaction tx bhash txind blkht = do
     lookupInAddrs <-
         mapM
             (\(a, b, c) ->
-                 if (outPointHash nullOutPoint) == (outPointHash $ prevOutput b)
-                     then return Nothing
-                     else do
-                         res <-
-                             liftIO $
-                             try $
-                             getScriptHashFromOutpoint
-                                 conn
-                                 (txSynchronizer bp2pEnv)
-                                 lg
-                                 net
-                                 (prevOutput b)
-                                 (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
-                         case res of
-                             Right (ma) -> do
-                                 case (ma) of
-                                     Just x -> return $ Just (x, b, c)
-                                     Nothing -> do
-                                         liftIO $ err lg $ LG.msg $ val "Error: ScriptHashNotFoundException "
+                 if a == Nothing
+                     then do
+                         if (outPointHash nullOutPoint) == (outPointHash $ prevOutput b)
+                             then return Nothing
+                             else do
+                                 res <-
+                                     liftIO $
+                                     try $
+                                     getScriptHashFromOutpoint
+                                         conn
+                                         (txSynchronizer bp2pEnv)
+                                         lg
+                                         net
+                                         (prevOutput b)
+                                         (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
+                                 case res of
+                                     Right (ma) -> do
+                                         case (ma) of
+                                             Just x -> return $ Just (x, b, c)
+                                             Nothing -> do
+                                                 liftIO $ err lg $ LG.msg $ val "Error: ScriptHashNotFoundException "
+                                                 return Nothing
+                                     Left TxIDNotFoundException -- report and ignore
+                                      -> do
+                                         err lg $ LG.msg $ val "Error: TxIDNotFoundException"
                                          return Nothing
-                             Left TxIDNotFoundException -- report and ignore
-                              -> do
-                                 err lg $ LG.msg $ val "Error: TxIDNotFoundException"
-                                 return Nothing)
+                     else return $ Just (fromJust a, b, c))
             inAddrs
     mapM_
         (\(x, a, i) ->
              mapM_
                  (\(y, b, j) -> do
                       let sh = txHashToHex $ TxHash $ sha256 (scriptOutput a)
-                      commitAddressOutputs
-                          conn              -- connection
-                          sh                -- address
-                          True              -- isTypeRecv
-                          y                 -- otherAddress
-                          (txHashToHex $ txHash tx, i)  -- output
-                          ((blockHashToHex bhash, fromIntegral blkht), fromIntegral txind)  -- blockInfo
-                          (txHashToHex $ outPointHash $ prevOutput b, fromIntegral $ outPointIndex $ prevOutput b)  -- prevOutpoint
-                          j                 -- inputIndex
-                          (fromIntegral $ outValue a))  --value
+                      commitScriptHashOutputs
+                          conn -- connection
+                          sh -- scriptHash
+                          True -- isTypeRecv
+                          y -- otherAddress
+                          (txHashToHex $ txHash tx, i) -- output
+                          ((blockHashToHex bhash, fromIntegral blkht), fromIntegral txind) -- blockInfo
+                          (txHashToHex $ outPointHash $ prevOutput b, fromIntegral $ outPointIndex $ prevOutput b) -- prevOutpoint
+                          j -- inputIndex
+                          (fromIntegral $ outValue a) --value
+                  )
                  inAddrs)
         outAddrs
     mapM_
         (\(x, a, i) ->
              mapM_
                  (\(y, b, j) -> do
-                      commitAddressOutputs
+                      commitScriptHashOutputs
                           conn
                           x
                           False
@@ -595,7 +597,7 @@ processConfTransaction tx bhash txind blkht = do
                           (txHashToHex $ txHash tx, i)
                           ((blockHashToHex bhash, fromIntegral blkht), fromIntegral txind)
                           (txHashToHex $ outPointHash $ prevOutput a, fromIntegral $ outPointIndex $ prevOutput a)
-                          j 
+                          j
                           (fromIntegral $ outValue b))
                  outAddrs)
         (catMaybes lookupInAddrs)

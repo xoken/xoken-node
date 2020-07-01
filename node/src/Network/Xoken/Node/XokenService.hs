@@ -170,7 +170,7 @@ xGetBlockHash hash = do
                                 (maybe (-1) fromIntegral txc)
                                 ("")
                                 (maybe "" (coinbaseTxToMessage . fromBlob) cbase)
-                                (maybe "" (C.unpack . fromBlob) cbase)
+                                (maybe "" fromBlob cbase)
                         Left err -> do
                             liftIO $ print $ "Decode failed with error: " <> show err
                             return Nothing
@@ -212,7 +212,7 @@ xGetBlocksHashes hashes = do
                                               (maybe (-1) fromIntegral txc)
                                               ("")
                                               (maybe "" (coinbaseTxToMessage . fromBlob) cbase)
-                                              (maybe "" (C.unpack . fromBlob) cbase)
+                                              (maybe "" fromBlob cbase)
                                       Left err -> Left err)
                              (iop) of
                         Right x -> return x
@@ -251,7 +251,7 @@ xGetBlockHeight height = do
                                     (maybe (-1) fromIntegral txc)
                                     ("")
                                     (maybe "" (coinbaseTxToMessage . fromBlob) cbase)
-                                    (maybe "" (C.unpack . fromBlob) cbase)
+                                    (maybe "" fromBlob cbase)
                         Left err -> do
                             liftIO $ print $ "Decode failed with error: " <> show err
                             return Nothing
@@ -261,11 +261,10 @@ xGetBlockHeight height = do
 
 xGetTxOutputSpendStatus :: 
         (HasXokenNodeEnv env m, MonadIO m) 
-     => Network 
-     -> String 
+     => String 
      -> Int32 
      -> m (Maybe TxOutputSpendStatus)
-xGetTxOutputSpendStatus net txId outputIndex = do
+xGetTxOutputSpendStatus txId outputIndex = do
     dbe <- getDB
     let conn = keyValDB (dbe)
         str = "SELECT is_output_spent, spending_txid, spending_index, spending_tx_block_height FROM xoken.txid_outputs WHERE txid=? AND idx=?"
@@ -309,7 +308,7 @@ xGetBlocksHeights heights = do
                                               (maybe (-1) fromIntegral txc)
                                               ("")
                                               (maybe "" (coinbaseTxToMessage . fromBlob) cbase)
-                                              (maybe "" (C.unpack . fromBlob) cbase)
+                                              (maybe "" fromBlob cbase)
                                       Left err -> Left err)
                              (iop) of
                         Right x -> return x
@@ -361,10 +360,9 @@ xGetTxHashes hashes = do
 
 getTxOutputsData ::
        (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
-    => Network
-    -> (DT.Text, Int32)
+    => (DT.Text, Int32)
     -> m (((DT.Text, Int32), Int32), Bool, (DT.Text, Int32), Int64)
-getTxOutputsData net (txid, idx) = do
+getTxOutputsData (txid, idx) = do
     dbe <- getDB
     lg <- getLogger
     let conn = keyValDB (dbe)
@@ -400,7 +398,7 @@ xGetOutputsAddress address pgSize mbNomTxInd = do
             case mbNomTxInd of
                 (Just n) -> n
                 Nothing -> maxBound
-        aoStr = "SELECT address,nominal_tx_index,output,is_type_receive,other_address FROM xoken.address_outputs WHERE address=? AND nominal_tx_index<?"
+        aoStr = "SELECT script_hash,nominal_tx_index,output,is_type_receive,other_address FROM xoken.script_hash_outputs WHERE script_hash=? AND nominal_tx_index<?"
         aoQStr =
             aoStr :: Q.QueryString Q.R (DT.Text, Int64) ( DT.Text
                                                         , Int64
@@ -415,7 +413,7 @@ xGetOutputsAddress address pgSize mbNomTxInd = do
             then return []
             else do
                 res <- sequence $ (\(_, _, (txid, idx), _, _) ->
-                    getTxOutputsData net (txid, idx)) <$> iop
+                    getTxOutputsData (txid, idx)) <$> iop
                 return $ ((\((addr, nti, (op_txid, op_txidx), itr, oa), (((bsh, bht), bidx), ios, (oph, opi), val)) -> 
                         AddressOutputs
                             (DT.unpack addr)
@@ -854,9 +852,9 @@ authLoginClient msg net epConn = do
             case rqParams msg of
                 (AuthenticateReq user pass) -> do
                     resp <- login (DT.pack user) (BC.pack pass)
-                    return $ RPCResponse 200 Nothing $ Just $ AuthenticateResp resp
-                ___ -> return $ RPCResponse 404 (Just INVALID_REQUEST) Nothing
-        _____ -> return $ RPCResponse 200 Nothing $ Just $ AuthenticateResp $ AuthResp Nothing 0 0
+                    return $ RPCResponse 200 $ Right $ Just $ AuthenticateResp resp
+                ___ -> return $ RPCResponse 404 $ Left $ RPCError INVALID_REQUEST Nothing
+        _____ -> return $ RPCResponse 200 $ Right $ Just $ AuthenticateResp $ AuthResp Nothing 0 0
 
 
 login :: (MonadIO m, HasXokenNodeEnv env m) => DT.Text -> BC.ByteString -> m AuthResp
@@ -1103,7 +1101,7 @@ goGetResource msg net roles = do
         "TX_SPEND_STATUS" -> do
             case methodParams $ rqParams msg of
                 Just (GetTxOutputSpendStatus txid index) -> do
-                    txss <- xGetTxOutputSpendStatus net txid index
+                    txss <- xGetTxOutputSpendStatus txid index
                     return $ RPCResponse 200 $ Right $ Just $ RespTxOutputSpendStatus txss
                 _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_METHOD Nothing 
