@@ -18,6 +18,7 @@ module Network.Xoken.Node.P2P.BlockSync
     , getScriptHashFromOutpoint
     , sendRequestMessages
     , handleIfAllegoryTx
+    , commitTxPage
     ) where
 
 import Codec.Serialise
@@ -489,6 +490,28 @@ commitTxIdOutputs conn isInsert (txid, idx) blockInfo prevOutpoint inputIndex va
         Right () -> return ()
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: commitTxIdOutputs: " ++ show e
+            throw KeyValueDBInsertException
+
+commitTxPage :: 
+       (HasBitcoinP2P m, HasLogger m, HasDatabaseHandles m, MonadBaseControl IO m, MonadIO m)
+    => [TxHash]
+    -> BlockHash
+    -> Int32
+    -> m ()
+commitTxPage txhash bhash page = do
+    dbe' <- getDB
+    lg <- getLogger
+    let conn = keyValDB $ dbe'
+        txids = Set $ txHashToHex <$> txhash
+        str = "insert INTO xoken.blockhash_txids (block_hash, page_number, txids) values (?, ?, ?)"
+        qstr = str :: Q.QueryString Q.W (Text, Int32, Set Text) ()
+        par = Q.defQueryParams Q.One (blockHashToHex bhash, page, txids)
+    liftIO $ putStrLn $ "COMMIT-TX-PAGE: " ++ show page
+    res <- liftIO $ try $ Q.runClient conn (Q.write qstr par)
+    case res of
+        Right () -> return ()
+        Left (e :: SomeException) -> do
+            liftIO $ err lg $ LG.msg ("Error: INSERTing into 'xoken.blockhash_txids': " ++ show e)
             throw KeyValueDBInsertException
 
 processConfTransaction :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Tx -> BlockHash -> Int -> Int -> m ()
