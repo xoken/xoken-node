@@ -514,7 +514,6 @@ merkleTreeBuilder tque blockHash treeHt = do
                                 liftIO $ atomically $ writeTBQueue txPage txh                             
                                 commitTxPage txHashes blockHash pgn
                             else do
-                                liftIO $ putStrLn $ "Page: " ++ (show pgc)
                                 liftIO $ atomically $ writeTBQueue txPage txh                             
                     Left MerkleSubTreeAlreadyExistsException
                         -- second attempt, after deleting stale TMT nodes
@@ -545,7 +544,6 @@ merkleTreeBuilder tque blockHash treeHt = do
                                         liftIO $ atomically $ writeTBQueue txPage txh                             
                                         commitTxPage txHashes blockHash pgn
                                     else do
-                                        liftIO $ putStrLn $ "Page: " ++ (show pgc)
                                         liftIO $ atomically $ writeTBQueue txPage txh  
                     Left ee -> do
                         err lg $
