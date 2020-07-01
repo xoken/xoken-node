@@ -32,13 +32,13 @@ CREATE TABLE xoken.ep_address_outputs (
     PRIMARY KEY (epoch, address, output)
 );
 
-CREATE TABLE xoken.address_outputs (
-    address text,
+CREATE TABLE xoken.script_hash_outputs (
+    script_hash text,
     nominal_tx_index bigint,
     output frozen<tuple<text, int>>,
     is_type_receive boolean,
     other_address text,
-    PRIMARY KEY (address, nominal_tx_index, output)
+    PRIMARY KEY (script_hash, nominal_tx_index, output)
 ) WITH CLUSTERING ORDER BY (nominal_tx_index DESC);
 
 CREATE TABLE xoken.blocks_by_height (
