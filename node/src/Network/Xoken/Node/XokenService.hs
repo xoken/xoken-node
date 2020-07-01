@@ -992,6 +992,12 @@ goGetResource msg net roles = do
                     blks <- xGetBlocksHeights $ Data.List.map (fromIntegral) hts
                     return $ RPCResponse 200 $ Right $ Just $ RespBlocksByHashes blks
                 _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
+        "HASH->[TXID]" -> do
+            case methodParams $ rqParams mag of
+                Just (GetTxIDsByBlockHash hash pgSize pgNum) ->
+                    txids <- xGetTxIDsByBlockHash (DT.pack hash) pgSize pgNum
+                    return $ RPCResponse 200 $ Right $ Just $ RespTxIDsByBlockHash txids
+                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "TXID->RAWTX" -> do
             case methodParams $ rqParams msg of
                 Just (GetRawTransactionByTxID hs) -> do
