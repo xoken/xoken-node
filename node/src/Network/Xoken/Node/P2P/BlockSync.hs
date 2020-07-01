@@ -408,7 +408,7 @@ fetchBestSyncedBlock conn net = do
                         Nothing -> throw InvalidBlockHashException
                 Nothing -> throw InvalidMetaDataException
 
-commitAddressOutputs ::
+commitScriptHashOutputs ::
         (HasLogger m, MonadIO m)
      => Q.ClientState
      -> Text                    -- address
@@ -420,14 +420,14 @@ commitAddressOutputs ::
      -> Int32                   -- inputIndex
      -> Int64                   -- value
      -> m ()
-commitAddressOutputs conn addr typeRecv otherAddr output blockInfo prevOutpoint inputIndex value = do
+commitScriptHashOutputs conn addr typeRecv otherAddr output blockInfo prevOutpoint inputIndex value = do
     lg <- getLogger
     let blkHeight = fromIntegral $ snd . fst $ blockInfo
         txIndex = fromIntegral $ snd blockInfo
         nominalTxIndex = blkHeight * 1000000000 + txIndex
         txID = fst $ output
         txIndex32 = snd $ output
-        strAddrOuts = "INSERT INTO xoken.address_outputs (address, nominal_tx_index, output, is_type_receive, other_address) VALUES (?,?,?,?,?)"
+        strAddrOuts = "INSERT INTO xoken.script_hash_outputs (script_hash, nominal_tx_index, output, is_type_receive, other_address) VALUES (?,?,?,?,?)"
         qstrAddrOuts =
             strAddrOuts :: Q.QueryString Q.W ( Text
                                              , Int64
@@ -441,7 +441,7 @@ commitAddressOutputs conn addr typeRecv otherAddr output blockInfo prevOutpoint 
             commitTxIdOutputs conn typeRecv output blockInfo prevOutpoint inputIndex value
             return ()
         Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: INSERTing into 'address_outputs': " ++ show e
+            err lg $ LG.msg $ "Error: INSERTing into 'script_hash_outputs': " ++ show e
             throw KeyValueDBInsertException
 
 commitTxIdOutputs ::
@@ -571,9 +571,9 @@ processConfTransaction tx bhash txind blkht = do
              mapM_
                  (\(y, b, j) -> do
                       let sh = txHashToHex $ TxHash $ sha256 (scriptOutput a)
-                      commitAddressOutputs
+                      commitScriptHashOutputs
                           conn              -- connection
-                          sh                -- address
+                          sh                -- scriptHash
                           True              -- isTypeRecv
                           y                 -- otherAddress
                           (txHashToHex $ txHash tx, i)  -- output
@@ -587,7 +587,7 @@ processConfTransaction tx bhash txind blkht = do
         (\(x, a, i) ->
              mapM_
                  (\(y, b, j) -> do
-                      commitAddressOutputs
+                      commitScriptHashOutputs
                           conn
                           x
                           False

@@ -398,7 +398,7 @@ xGetOutputsAddress address pgSize mbNomTxInd = do
             case mbNomTxInd of
                 (Just n) -> n
                 Nothing -> maxBound
-        aoStr = "SELECT address,nominal_tx_index,output,is_type_receive,other_address FROM xoken.address_outputs WHERE address=? AND nominal_tx_index<?"
+        aoStr = "SELECT script_hash,nominal_tx_index,output,is_type_receive,other_address FROM xoken.script_hash_outputs WHERE script_hash=? AND nominal_tx_index<?"
         aoQStr =
             aoStr :: Q.QueryString Q.R (DT.Text, Int64) ( DT.Text
                                                         , Int64
