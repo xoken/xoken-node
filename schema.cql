@@ -34,17 +34,12 @@ CREATE TABLE xoken.ep_address_outputs (
 
 CREATE TABLE xoken.address_outputs (
     address text,
-    output frozen<tuple<text, int>>,
-    block_info frozen<tuple<frozen<tuple<text, int>>, int>>,
     nominal_tx_index bigint,
-    is_block_confirmed boolean,
-    is_output_spent boolean,
+    output frozen<tuple<text, int>>,
     is_type_receive boolean,
     other_address text,
-    prev_outpoint frozen<tuple<text, int>>,
-    value bigint,
     PRIMARY KEY (address, nominal_tx_index, output)
-) WITH CLUSTERING ORDER BY (nominal_tx_index DESC); 
+) WITH CLUSTERING ORDER BY (nominal_tx_index DESC);
 
 CREATE TABLE xoken.blocks_by_height (
     block_height int PRIMARY KEY,
@@ -61,6 +56,20 @@ CREATE TABLE xoken.ep_transactions (
     tx_serialized blob,
     PRIMARY KEY (epoch, tx_id)
 ); 
+
+CREATE TABLE xoken.txid_outputs (
+    txid text,
+    idx int,
+    block_info frozen<tuple<frozen<tuple<text, int>>, int>>,
+    is_output_spent boolean,
+    spending_txid text,
+    spending_index int,
+    spending_tx_block_height int,
+    prev_outpoint frozen<tuple<text, int>>,
+    input_index int,
+    value bigint,
+    PRIMARY KEY(txid, idx)
+ );
 
 CREATE TABLE xoken.user_permission (
     username text PRIMARY KEY,

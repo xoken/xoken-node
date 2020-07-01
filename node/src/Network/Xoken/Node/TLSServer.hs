@@ -86,21 +86,30 @@ handleRPCReqResp epConn format mid version encReq = do
             let body =
                     case format of
                         CBOR ->
-                            serialise $
-                            CBORRPCResponse
-                                (mid)
-                                (rsStatusCode rpcResp)
-                                (show <$> rsStatusMessage rpcResp)
-                                (rsBody rpcResp)
+                            case rsResp rpcResp of
+                                Left (RPCError err rsData) ->
+                                    serialise $
+                                    CBORRPCResponse
+                                        (mid)
+                                        (rsStatusCode rpcResp)
+                                        (Just $ show err)
+                                        Nothing
+                                Right rsBody ->
+                                    serialise $
+                                    CBORRPCResponse
+                                        (mid)
+                                        (rsStatusCode rpcResp)
+                                        Nothing
+                                        (rsBody)
                         JSON ->
-                            case rsStatusMessage rpcResp of
-                                Just err ->
+                            case rsResp rpcResp of
+                                Left (RPCError err rsData) ->
                                     A.encode
                                         (JSONRPCErrorResponse
                                              mid
-                                             (ErrorResponse (getJsonRPCErrorCode err) (show err) Nothing)
+                                             (ErrorResponse (getJsonRPCErrorCode err) (show err) rsData)
                                              (fromJust version))
-                                Nothing -> A.encode (JSONRPCSuccessResponse (fromJust version) (rsBody rpcResp) mid)
+                                Right rsBody -> A.encode (JSONRPCSuccessResponse (fromJust version) (rsBody) mid)
             connSock <- liftIO $ takeMVar (context epConn)
             let prefixbody = LBS.append (DB.encode (fromIntegral (LBS.length body) :: Int32)) body
             NTLS.sendData connSock prefixbody

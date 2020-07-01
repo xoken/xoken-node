@@ -95,6 +95,7 @@ import Network.Xoken.Node.GraphDB
 import Network.Xoken.Node.HTTP.Server
 import Network.Xoken.Node.P2P.BlockSync
 import Network.Xoken.Node.P2P.ChainSync
+import Network.Xoken.Node.P2P.Common
 import Network.Xoken.Node.P2P.PeerManager
 import Network.Xoken.Node.P2P.Types
 import Network.Xoken.Node.P2P.UnconfTxSync
@@ -312,52 +313,13 @@ defaultAdminUser conn = do
         then return ()
         else do
             tm <- liftIO $ getCurrentTime
-            g <- liftIO $ getStdGen
-            let seed = show $ fst (random g :: (Word64, StdGen))
-                passwd = B64.encode $ C.pack $ seed
-                hashedPasswd = encodeHex ((S.encode $ sha256 passwd))
-                tempSessionKey = encodeHex ((S.encode $ sha256 $ B.reverse passwd))
-                str =
-                    "insert INTO xoken.user_permission ( username, password, first_name, last_name, emailid, created_time, permissions, api_quota, api_used, api_expiry_time, session_key, session_key_expiry_time) values (?, ?, ?, ?, ?, ? ,? ,? ,? ,? ,? ,? )"
-                qstr =
-                    str :: Q.QueryString Q.W ( T.Text
-                                             , T.Text
-                                             , T.Text
-                                             , T.Text
-                                             , T.Text
-                                             , UTCTime
-                                             , [T.Text]
-                                             , Int32
-                                             , Int32
-                                             , UTCTime
-                                             , T.Text
-                                             , UTCTime) ()
-                par =
-                    Q.defQueryParams
-                        Q.One
-                        ( "admin"
-                        , hashedPasswd
-                        , "default"
-                        , "user"
-                        , ""
-                        , tm
-                        , ["", ""]
-                        , 100000000
-                        , 0
-                        , (addUTCTime (nominalDay * 365) tm)
-                        , tempSessionKey
-                        , (addUTCTime (nominalDay * 30) tm))
+            usr <- addNewUser conn "admin" "default" "user" "" (Just ["admin"]) (Just 100000000) (Just (addUTCTime (nominalDay * 365) tm))
             putStrLn $ "******************************************************************* "
             putStrLn $ "  Creating default Admin user!"
             putStrLn $ "  Please note down admin password NOW, will not be shown again."
-            putStrLn $ "  Password : " ++ (show passwd)
+            putStrLn $ "  Password : " ++ (aurPassword $ fromJust usr)
             putStrLn $ "******************************************************************* "
-            res1 <- liftIO $ try $ Q.runClient conn (Q.write (qstr) par)
-            case res1 of
-                Right () -> return ()
-                Left (SomeException e) -> do
-                    putStrLn $ "Error: INSERTing into 'user_permission': " ++ show e
-                    throw e
+
 
 makeKeyValDBConn :: IO (Q.ClientState)
 makeKeyValDBConn = do

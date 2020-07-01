@@ -30,6 +30,7 @@ import Data.Default
 import Data.Foldable
 import Data.Functor.Identity
 import Data.Hashable
+import Data.Hashable.Time
 import Data.Int
 import qualified Data.IntMap as I
 import Data.IntMap.Strict (IntMap)
@@ -39,6 +40,7 @@ import Data.String.Conversions
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.Lazy as T.Lazy
+import Data.Time.Clock (UTCTime)
 import Data.Word
 import qualified Database.CQL.IO as Q
 import GHC.Generics
@@ -67,9 +69,15 @@ data RPCMessage
           }
     | RPCResponse
           { rsStatusCode :: Int16
-          , rsStatusMessage :: Maybe RPCErrors
-          , rsBody :: Maybe RPCResponseBody
+          , rsResp :: Either RPCError (Maybe RPCResponseBody)
           }
+    deriving (Show, Generic, Hashable, Eq, Serialise)
+
+data RPCError
+    = RPCError
+        { rsStatusMessage :: RPCErrors
+        , rsErrorData :: Maybe String
+        }
     deriving (Show, Generic, Hashable, Eq, Serialise)
 
 data XRPCRequest
@@ -139,7 +147,16 @@ instance FromJSON RPCReqParams where
         (GeneralReq <$> o .: "sessionKey" <*> o .:? "methodParams")
 
 data RPCReqParams'
-    = GetBlockByHeight
+    = AddUser 
+          { auUsername :: String
+          , auApiExpiryTime :: Maybe UTCTime
+          , auApiQuota :: Maybe Int32
+          , auFirstName :: String
+          , auLastName :: String
+          , auEmail :: String
+          , auRoles :: Maybe [String]
+          } 
+    | GetBlockByHeight
           { gbHeight :: Int
           }
     | GetBlocksByHeight
@@ -199,6 +216,10 @@ data RPCReqParams'
           , gpsaOutputOwner :: String
           , gpsaOutputChange :: String
           }
+    | GetTxOutputSpendStatus
+          { gtssHash :: String
+          , gtssIndex :: Int32
+          }
     deriving (Generic, Show, Hashable, Eq, Serialise, ToJSON)
 
 instance FromJSON RPCReqParams' where
@@ -220,11 +241,18 @@ instance FromJSON RPCReqParams' where
         (GetAllegoryNameBranch <$> o .: "gaName" <*> o .: "gaIsProducer") <|>
         (RelayTx . BL.toStrict . GZ.decompress . B64L.decodeLenient . BL.fromStrict . T.encodeUtf8 <$> o .: "rTx") <|>
         (GetPartiallySignedAllegoryTx <$> o .: "gpsaPaymentInputs" <*> o .: "gpsaName" <*> o .: "gpsaOutputOwner" <*>
-         o .: "gpsaOutputChange")
+         o .: "gpsaOutputChange") <|>
+        (AddUser <$> o .: "username" <*> o .:? "api_expiry_time" <*> o .:? "api_quota" <*>
+         o .: "first_name" <*> o .: "last_name" <*> o .: "email" <*> o .:? "roles") <|>
+        (GetTxOutputSpendStatus <$> o .: "gtssHash" <*> o .: "gtssIndex")
+
 
 data RPCResponseBody
     = AuthenticateResp
           { auth :: AuthResp
+          }
+    | RespAddUser
+          { user :: AddUserResp
           }
     | RespBlockByHeight
           { block :: BlockRecord
@@ -277,10 +305,14 @@ data RPCResponseBody
     | RespPartiallySignedAllegoryTx
           { psaTx :: ByteString
           }
+    | RespTxOutputSpendStatus
+          { spendStatus :: Maybe TxOutputSpendStatus
+          }
     deriving (Generic, Show, Hashable, Eq, Serialise)
 
 instance ToJSON RPCResponseBody where
     toJSON (AuthenticateResp a) = object ["auth" .= a]
+    toJSON (RespAddUser usr) = object ["user" .= usr]
     toJSON (RespBlockByHeight b) = object ["block" .= b]
     toJSON (RespBlocksByHeight bs) = object ["blocks" .= bs]
     toJSON (RespBlockByHash b) = object ["block" .= b]
@@ -299,6 +331,7 @@ instance ToJSON RPCResponseBody where
     toJSON (RespRelayTx rrTx) = object ["rrTx" .= rrTx]
     toJSON (RespPartiallySignedAllegoryTx ps) =
         object ["psaTx" .= (T.decodeUtf8 . BL.toStrict . B64L.encode . GZ.compress . BL.fromStrict $ ps)]
+    toJSON (RespTxOutputSpendStatus ss) = object ["spendStatus" .= ss]
 
 data AuthResp =
     AuthResp
@@ -307,6 +340,32 @@ data AuthResp =
         , callsRemaining :: Int
         }
     deriving (Generic, Show, Hashable, Eq, Serialise, ToJSON)
+
+data AddUserResp = 
+    AddUserResp
+        { aurUsername :: String
+        , aurPassword :: String
+        , aurFirstName :: String
+        , aurLastName :: String
+        , aurEmail :: String
+        , aurRoles :: [String]
+        , aurApiQuota :: Int
+        , aurApiExpiryTime :: UTCTime
+        }
+    deriving (Generic, Show, Hashable, Eq, Serialise)
+
+instance ToJSON AddUserResp where
+    toJSON (AddUserResp uname pwd fname lname email roles apiQuota apiExpTime) =
+        object
+            [ "username" .= uname
+            , "password" .= pwd
+            , "first_name" .= fname
+            , "last_name" .= lname
+            , "email" .= email
+            , "roles" .= roles
+            , "api_quota" .= apiQuota
+            , "api_expiry_time" .= apiExpTime
+            ]
 
 data ChainInfo =
     ChainInfo
@@ -338,9 +397,22 @@ data BlockRecord =
         , rbTxCount :: Int
         , rbGuessedMiner :: String
         , rbCoinbaseMessage :: String
-        , rbCoinbaseTx :: String
+        , rbCoinbaseTx :: C.ByteString
         }
-    deriving (Generic, Show, Hashable, Eq, Serialise, ToJSON)
+    deriving (Generic, Show, Hashable, Eq, Serialise)
+
+instance ToJSON BlockRecord where
+    toJSON (BlockRecord ht hs hdr size ct gm cm cb) =
+        object
+            [ "height" .= ht
+            , "hash" .= hs
+            , "header" .= hdr
+            , "size" .= size
+            , "txCount" .= ct
+            , "guessedMiner" .= gm
+            , "coinbaseMessage" .= cm
+            , "coinbaseTx" .= (T.decodeUtf8 . BL.toStrict . B64L.encode . GZ.compress $ cb)
+            ]
 
 data RawTxRecord =
     RawTxRecord
@@ -366,13 +438,30 @@ data TxRecord =
         }
     deriving (Show, Generic, Hashable, Eq, Serialise, ToJSON)
 
+data TxOutputSpendStatus =
+    TxOutputSpendStatus
+          { isSpent :: Bool
+          , spendingTxID :: Maybe String
+          , spendingTxBlockHt :: Maybe Int32
+          , spendingTxIndex :: Maybe Int32
+          }
+    deriving (Show, Generic, Hashable, Eq, Serialise)
+
+instance ToJSON TxOutputSpendStatus where
+    toJSON (TxOutputSpendStatus tis stxid stxht stxindex) =
+        object
+            [ "isSpent" .= tis
+            , "spendingTxID" .= stxid
+            , "spendingTxBlockHt" .= stxht
+            , "spendingTxIndex" .= stxindex
+            ]
+
 data AddressOutputs =
     AddressOutputs
         { aoAddress :: String
         , aoOutput :: OutPoint'
         , aoBlockInfo :: BlockInfo'
         , aoNominalTxIndex :: Int64
-        , aoIsBlockConfirmed :: Bool
         , aoIsOutputSpent :: Bool
         , aoIsTypeReceive :: Bool
         , aoOtherAddress :: String
@@ -390,7 +479,6 @@ data ScriptOutputs =
         , scOutput :: OutPoint'
         , scBlockInfo :: BlockInfo'
         , scNominalTxIndex :: Int64
-        , scIsBlockConfirmed :: Bool
         , scIsOutputSpent :: Bool
         , scIsTypeReceive :: Bool
         , scOtherAddress :: String
@@ -488,14 +576,12 @@ addressToScriptOutputs AddressOutputs {..} =
         , scOutput = aoOutput
         , scBlockInfo = aoBlockInfo
         , scNominalTxIndex = aoNominalTxIndex
-        , scIsBlockConfirmed = aoIsBlockConfirmed
         , scIsOutputSpent = aoIsOutputSpent
         , scIsTypeReceive = aoIsTypeReceive
         , scOtherAddress = aoOtherAddress
         , scPrevOutpoint = aoPrevOutpoint
         , scValue = aoValue
         }
-
 
 coinbaseTxToMessage :: C.ByteString -> String
 coinbaseTxToMessage s = case C.length (C.pack regex) > 6 of
@@ -507,3 +593,9 @@ coinbaseTxToMessage s = case C.length (C.pack regex) > 6 of
   where r :: String
         r = "\255\255\255\255[\NUL-\255]+"
         regex = ((C.unpack s) =~ r) :: String
+
+        
+validateEmail :: String -> Bool
+validateEmail email = let emailRegex = "^[a-zA-Z0-9+._-]+@[a-zA-Z-]+\\.[a-z]+$" :: String
+                      in (email =~ emailRegex :: Bool) || (null email)
+
