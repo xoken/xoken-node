@@ -1,4 +1,4 @@
-CREATE KEYSPACE xoken WITH replication = {'class': 'SimpleStrategy', 'replication_factor': '3'}  AND durable_writes = true;
+CREATE KEYSPACE xoken WITH replication = {'class': 'SimpleStrategy', 'replication_factor': '1'}  AND durable_writes = true;
 
 CREATE TABLE xoken.misc_store (
     key text PRIMARY KEY,
