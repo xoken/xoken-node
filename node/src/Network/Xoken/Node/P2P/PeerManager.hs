@@ -484,6 +484,8 @@ merkleTreeBuilder tque blockHash treeHt = do
     lg <- getLogger
     dbe <- getDB
     continue <- liftIO $ newIORef True
+    txPage <- liftIO $ atomically $ newTBQueue 100
+    txPageNum <- liftIO $ atomically $ newTVar 1
     tv <- liftIO $ atomically $ newTVar (M.empty, [])
     whileM_ (liftIO $ readIORef continue) $ do
         hcstate <- liftIO $ readTVarIO tv
@@ -503,6 +505,17 @@ merkleTreeBuilder tque blockHash treeHt = do
                 case res of
                     Right (hcs) -> do
                         liftIO $ atomically $ writeTVar tv hcs
+                        pgc <- liftIO $ atomically $ lengthTBQueue txPage
+                        if (fromIntegral pgc) == 100
+                            then do
+                                txHashes <- liftIO $ atomically $ flushTBQueue txPage
+                                pgn <- liftIO $ atomically $ readTVar txPageNum
+                                liftIO $ atomically $ writeTVar txPageNum (pgn + 1)
+                                liftIO $ atomically $ writeTBQueue txPage txh                             
+                                commitTxPage txHashes blockHash pgn
+                            else do
+                                liftIO $ putStrLn $ "Page: " ++ (show pgc)
+                                liftIO $ atomically $ writeTBQueue txPage txh                             
                     Left MerkleSubTreeAlreadyExistsException
                         -- second attempt, after deleting stale TMT nodes
                      -> do
@@ -523,7 +536,17 @@ merkleTreeBuilder tque blockHash treeHt = do
                                 throw e
                             Right (hcs) -> do
                                 liftIO $ atomically $ writeTVar tv hcs
-                                return ()
+                                pgc <- liftIO $ atomically $ lengthTBQueue txPage
+                                if (fromIntegral pgc) == 100
+                                    then do
+                                        txHashes <- liftIO $ atomically $ flushTBQueue txPage
+                                        pgn <- liftIO $ atomically $ readTVar txPageNum
+                                        liftIO $ atomically $ writeTVar txPageNum (pgn + 1)
+                                        liftIO $ atomically $ writeTBQueue txPage txh                             
+                                        commitTxPage txHashes blockHash pgn
+                                    else do
+                                        liftIO $ putStrLn $ "Page: " ++ (show pgc)
+                                        liftIO $ atomically $ writeTBQueue txPage txh  
                     Left ee -> do
                         err lg $
                             LG.msg
@@ -534,6 +557,13 @@ merkleTreeBuilder tque blockHash treeHt = do
                         -- do NOT delete queue here, merely end this thread
                         throw ee
                 when isLast $ do
+                    txHashes <- liftIO $ atomically $ flushTBQueue txPage
+                    if L.null txHashes
+                        then return ()
+                        else do
+                            pgn <- liftIO $ atomically $ readTVar txPageNum
+                            liftIO $ atomically $ writeTVar txPageNum 1
+                            commitTxPage txHashes blockHash pgn
                     liftIO $ writeIORef continue False
                     liftIO $ atomically $ modifyTVar' (merkleQueueMap p2pEnv) (M.delete blockHash)
                     liftIO $ MS.signal (maxTMTBuilderThreadLock p2pEnv)
