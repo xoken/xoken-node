@@ -5,6 +5,7 @@
 
 module Network.Xoken.Node.HTTP.Handler where
 
+import Control.Applicative ((<|>))
 import Arivi.P2P.Config (decodeHex, encodeHex)
 import qualified Control.Error.Util as Extra
 import Control.Exception (SomeException(..), throw, try)
@@ -34,14 +35,14 @@ import Database.CQL.Protocol
 import Network.Xoken.Crypto.Hash
 import Network.Xoken.Node.Data
     ( BlockRecord(..)
+    , RPCReqParams(..)
+    , RPCReqParams'(..)
     , RPCResponseBody(..)
     , RawTxRecord(..)
     , TxRecord(..)
     , addressToScriptOutputs
     , aoAddress
     , coinbaseTxToMessage
-    , RPCReqParams(..)
-    , RPCReqParams'(..)
     )
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.HTTP.Types
@@ -109,9 +110,7 @@ getBlocksByHeight :: Handler App App ()
 getBlocksByHeight = do
     allMap <- getQueryParams
     lg <- getLogger
-    res <-
-        LE.try $
-        xGetBlocksHeights (read . DT.unpack . DTE.decodeUtf8 <$> (fromJust $ Map.lookup "height" allMap))
+    res <- LE.try $ xGetBlocksHeights (read . DT.unpack . DTE.decodeUtf8 <$> (fromJust $ Map.lookup "height" allMap))
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetBlocksHeight: " ++ show e
@@ -198,11 +197,12 @@ getOutputsByAddr GetOutputsByAddress {..} = do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
         Right ops -> do
-            writeBS $ BSL.toStrict $ Aeson.encode $ RespOutputsByAddress $ (\ao -> ao {aoAddress = gaAddrOutputs}) <$> ops
+            writeBS $
+                BSL.toStrict $ Aeson.encode $ RespOutputsByAddress $ (\ao -> ao {aoAddress = gaAddrOutputs}) <$> ops
 getOutputsByAddr _ = throwBadRequest
 
 getOutputsByAddrs :: RPCReqParams' -> Handler App App ()
-getOutputsByAddrs GetOutputsByAddresses{..} = do
+getOutputsByAddrs GetOutputsByAddresses {..} = do
     bp2pEnv <- getBitcoinP2P
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
     lg <- getLogger
@@ -228,7 +228,7 @@ getOutputsByAddrs GetOutputsByAddresses{..} = do
 getOutputsByAddrs _ = throwBadRequest
 
 getOutputsByScriptHash :: RPCReqParams' -> Handler App App ()
-getOutputsByScriptHash GetOutputsByScriptHash{..} = do
+getOutputsByScriptHash GetOutputsByScriptHash {..} = do
     bp2pEnv <- getBitcoinP2P
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
     lg <- getLogger
@@ -242,7 +242,7 @@ getOutputsByScriptHash GetOutputsByScriptHash{..} = do
 getOutputsByScriptHash _ = throwBadRequest
 
 getOutputsByScriptHashes :: RPCReqParams' -> Handler App App ()
-getOutputsByScriptHashes GetOutputsByScriptHashes{..} = do
+getOutputsByScriptHashes GetOutputsByScriptHashes {..} = do
     bp2pEnv <- getBitcoinP2P
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
     lg <- getLogger
@@ -267,14 +267,13 @@ getMNodesByTxID = do
             writeBS $ BSL.toStrict $ Aeson.encode $ RespMerkleBranchByTxID ops
 
 getOutpointsByName :: RPCReqParams' -> Handler App App ()
-getOutpointsByName GetAllegoryNameBranch{..} = do
+getOutpointsByName GetAllegoryNameBranch {..} = do
     res <- LE.try $ xGetAllegoryNameBranch gaName gaIsProducer
     case res of
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
-        Right ops ->
-            writeBS $ BSL.toStrict $ Aeson.encode $ RespAllegoryNameBranch ops
+        Right ops -> writeBS $ BSL.toStrict $ Aeson.encode $ RespAllegoryNameBranch ops
 getOutpointsByName _ = throwBadRequest
 
 getRelayTx :: Handler App App ()
@@ -285,11 +284,10 @@ getRelayTx = do
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
-        Right ops ->
-            writeBS $ BSL.toStrict $ Aeson.encode $ RespRelayTx ops
+        Right ops -> writeBS $ BSL.toStrict $ Aeson.encode $ RespRelayTx ops
 
 getPartiallySignedAllegoryTx :: RPCReqParams' -> Handler App App ()
-getPartiallySignedAllegoryTx GetPartiallySignedAllegoryTx{..} = do
+getPartiallySignedAllegoryTx GetPartiallySignedAllegoryTx {..} = do
     res <- LE.try $ xGetPartiallySignedAllegoryTx gpsaPaymentInputs gpsaName gpsaOutputOwner gpsaOutputChange
     case res of
         Left (e :: SomeException) -> do
@@ -317,12 +315,17 @@ withAuth onSuccess = do
 
 withReq :: Aeson.FromJSON a => (a -> Handler App App ()) -> Handler App App ()
 withReq handler = do
-    bsReq <- readRequestBody (8 * 2048)
-    case Aeson.eitherDecode bsReq of
-        Right r -> handler r
-        Left err -> do
-            modifyResponse $ setResponseStatus 400 "Bad Request"
-            writeBS "400 error"
+    rq <- getRequest
+    let ct = getHeader "content-type" rq <|> (getHeader "Content-Type" rq) <|> (getHeader "Content-type" rq)
+    if ct == Just "application/json"
+        then do
+            bsReq <- readRequestBody (8 * 2048)
+            case Aeson.eitherDecode bsReq of
+                Right r -> handler r
+                Left err -> do
+                    modifyResponse $ setResponseStatus 400 "Bad Request"
+                    writeBS "400 error"
+        else throwBadRequest
 
 parseAuthorizationHeader :: Maybe B.ByteString -> Maybe B.ByteString
 parseAuthorizationHeader bs =
