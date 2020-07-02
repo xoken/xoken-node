@@ -154,41 +154,103 @@ runEpochSwitcher =
                     Left (e :: SomeException) -> do
                         err lg $ LG.msg ("Error: deleting stale epoch Txs: " ++ show e)
                         throw e
-                let str = "DELETE from xoken.ep_address_outputs where epoch = ?"
+                let str = "DELETE from xoken.ep_script_hash_outputs where epoch = ?"
                     qstr = str :: Q.QueryString Q.W (Identity Bool) ()
                     p = Q.defQueryParams Q.One $ Identity (not epoch)
                 res <- liftIO $ try $ Q.runClient conn (Q.write qstr p)
                 case res of
                     Right () -> return ()
                     Left (e :: SomeException) -> do
-                        err lg $ LG.msg ("Error: deleting stale epoch Addr-outputs: " ++ show e)
+                        err lg $ LG.msg ("Error: deleting stale epoch script_hash_outputs: " ++ show e)
+                        throw e
+                let str = "DELETE from xoken.ep_txid_outputs where epoch = ?"
+                    qstr = str :: Q.QueryString Q.W (Identity Bool) ()
+                    p = Q.defQueryParams Q.One $ Identity (not epoch)
+                res <- liftIO $ try $ Q.runClient conn (Q.write qstr p)
+                case res of
+                    Right () -> return ()
+                    Left (e :: SomeException) -> do
+                        err lg $ LG.msg ("Error: deleting stale epoch txid_outputs: " ++ show e)
                         throw e
                 liftIO $ threadDelay (1000000 * 60 * 60)
             else liftIO $ threadDelay (1000000 * 60 * (60 - minute))
         return ()
 
-commitEpochAddressOutputs ::
+commitEpochScriptHashOutputs ::
        (HasLogger m, MonadIO m)
     => Q.ClientState
-    -> Bool
-    -> Text
-    -> Bool
-    -> Maybe Text
-    -> (Text, Int32)
-    -> (Text, Int32)
-    -> Int64
+    -> Bool -- epoch
+    -> Text -- address
+    -> Bool -- isTypeRecv
+    -> Maybe Text -- otherAddr
+    -> (Text, Int32) -- output (txid, index)
+    -> (Text, Int32) -- prevOutpoint (txid, index)
+    -> Int32 -- inputIndex
+    -> Int64 -- value
     -> m ()
-commitEpochAddressOutputs conn epoch addr typeRecv otherAddr output prevOutpoint value = do
+commitEpochScriptHashOutputs conn epoch scriptHash typeRecv otherAddr output prevOutpoint inputIndex value = do
     lg <- getLogger
-    let str =
-            "insert INTO xoken.ep_address_outputs ( epoch , address, is_type_receive,other_address, output,  prev_outpoint, value, is_output_spent ) values (?, ?, ?, ?, ?, ? ,? ,? )"
-        qstr = str :: Q.QueryString Q.W (Bool, Text, Bool, Maybe Text, (Text, Int32), (Text, Int32), Int64, Bool) ()
-        par = Q.defQueryParams Q.One (epoch, addr, typeRecv, otherAddr, output, prevOutpoint, value, False)
-    res1 <- liftIO $ try $ Q.runClient conn (Q.write (qstr) par)
-    case res1 of
+    let txID = fst $ output
+        txIndex32 = snd $ output
+        strAddrOuts =
+            "INSERT INTO xoken.ep_script_hash_outputs (epoch, script_hash, output, is_type_receive, other_address) VALUES (?,?,?,?,?)"
+        qstrAddrOuts = strAddrOuts :: Q.QueryString Q.W (Bool, Text, (Text, Int32), Bool, Maybe Text) ()
+        parAddrOuts = Q.defQueryParams Q.One (epoch, scriptHash, output, typeRecv, otherAddr)
+    resAddrOuts <- liftIO $ try $ Q.runClient conn (Q.write (qstrAddrOuts) parAddrOuts)
+    case resAddrOuts of
+        Right () -> do
+            commitEpochTxIdOutputs conn epoch typeRecv output prevOutpoint inputIndex value
+            return ()
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: INSERTing into 'ep_script_hash_outputs': " ++ show e
+            throw KeyValueDBInsertException
+
+commitEpochTxIdOutputs ::
+       (HasLogger m, MonadIO m)
+    => Q.ClientState
+    -> Bool -- epoch
+    -> Bool -- insert/update switch
+    -> (Text, Int32) -- output (txid, index)
+    -> (Text, Int32) -- prevOutpoint (txid, index)
+    -> Int32 -- input index
+    -> Int64 -- value
+    -> m ()
+commitEpochTxIdOutputs conn epoch isInsert (txid, idx) prevOutpoint inputIndex value = do
+    lg <- getLogger
+    let prevTxId = fst $ prevOutpoint
+        prevIdx = snd $ prevOutpoint
+    res <-
+        liftIO $
+        try $
+        Q.runClient conn $
+        if isInsert
+            then let strTxIdOuts =
+                         "INSERT INTO xoken.ep_txid_outputs (epoch,txid,idx,is_output_spent,spending_txid,spending_index,spending_tx_block_height,prev_outpoint,input_index,value) VALUES (?,?,?,?,?,?,?,?,?,?)"
+                     qstrTxIdOuts =
+                         strTxIdOuts :: Q.QueryString Q.W ( Bool
+                                                          , Text
+                                                          , Int32
+                                                          , Bool
+                                                          , Maybe Text
+                                                          , Maybe Int32
+                                                          , Maybe Int32
+                                                          , (Text, Int32)
+                                                          , Int32
+                                                          , Int64) ()
+                     parTxIdOuts =
+                         Q.defQueryParams
+                             Q.One
+                             (epoch, txid, idx, False, Nothing, Nothing, Nothing, prevOutpoint, inputIndex, value)
+                  in (Q.write qstrTxIdOuts parTxIdOuts)
+            else let strUpdateSpends =
+                         "UPDATE xoken.ep_txid_outputs SET is_output_spent=?,spending_txid=?,spending_index=? WHERE txid=? AND idx=?"
+                     qstrUpdateSpends = strUpdateSpends :: Q.QueryString Q.W (Bool, Text, Int32, Text, Int32) ()
+                     parUpdateSpends = Q.defQueryParams Q.One (True, txid, inputIndex, prevTxId, prevIdx)
+                  in (Q.write qstrUpdateSpends parUpdateSpends)
+    case res of
         Right () -> return ()
         Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: INSERTing into 'ep_address_outputs': " ++ show e
+            err lg $ LG.msg $ "Error: commitEpochTxIdOutputs: " ++ show e
             throw KeyValueDBInsertException
 
 processUnconfTransaction :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Tx -> m ()
@@ -248,23 +310,19 @@ processUnconfTransaction tx = do
                                  res <-
                                      liftIO $
                                      try $
-                                     (sourceAddressFromOutpoint
-                                          conn
-                                          (txSynchronizer bp2pEnv)
-                                          lg
-                                          net
-                                          (prevOutput b)
-                                          (txProcInputDependenciesWait $ nodeConfig bp2pEnv))
+                                     sourceScriptHashFromOutpoint 
+                                         conn
+                                         (txSynchronizer bp2pEnv)
+                                         lg
+                                         net
+                                         (prevOutput b)
+                                         (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
                                  case res of
                                      Right (ma) -> do
                                          case (ma) of
-                                             Just x ->
-                                                 case addrToString net x of
-                                                     Just as -> return $ Just (as, b, c)
-                                                     Nothing -> throw InvalidAddressException
+                                             Just x -> return $ Just (x, b, c)
                                              Nothing -> do
-                                                 liftIO $
-                                                     err lg $ LG.msg $ val "Error: OutpointAddressNotFoundException "
+                                                 liftIO $ err lg $ LG.msg $ val "Error: OutpointAddressNotFoundException "
                                                  return Nothing
                                      Left TxIDNotFoundException -- report and ignore
                                       -> do
@@ -274,15 +332,17 @@ processUnconfTransaction tx = do
     mapM_
         (\(x, a, i) ->
              mapM_
-                 (\(y, b, j) ->
-                      commitEpochAddressOutputs
+                 (\(y, b, j) -> do
+                      let sh = txHashToHex $ TxHash $ sha256 (scriptOutput a)
+                      commitEpochScriptHashOutputs
                           conn
                           epoch
-                          x
+                          sh
                           True
                           y
                           (txHashToHex $ txHash tx, i)
                           (txHashToHex $ outPointHash $ prevOutput b, fromIntegral $ outPointIndex $ prevOutput b)
+                          j
                           (fromIntegral $ outValue a))
                  inAddrs)
         outAddrs
@@ -290,7 +350,7 @@ processUnconfTransaction tx = do
         (\(x, a, i) ->
              mapM_
                  (\(y, b, j) ->
-                      commitEpochAddressOutputs
+                      commitEpochScriptHashOutputs
                           conn
                           epoch
                           x
@@ -298,6 +358,7 @@ processUnconfTransaction tx = do
                           (Just y)
                           (txHashToHex $ txHash tx, i)
                           (txHashToHex $ outPointHash $ prevOutput a, fromIntegral $ outPointIndex $ prevOutput a)
+                          j
                           (fromIntegral $ outValue b))
                  outAddrs)
         (catMaybes lookupInAddrs)
@@ -309,30 +370,30 @@ processUnconfTransaction tx = do
 
 --
 --
-sourceAddressFromOutpoint ::
-       Q.ClientState -> (TVar (M.Map TxHash EV.Event)) -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Address)
-sourceAddressFromOutpoint conn txSync lg net outPoint waitSecs = do
-    res <- liftIO $ try $ getAddressFromOutpoint conn txSync lg net outPoint waitSecs
+sourceScriptHashFromOutpoint ::
+       Q.ClientState -> (TVar (M.Map TxHash EV.Event)) -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Text)
+sourceScriptHashFromOutpoint conn txSync lg net outPoint waitSecs = do
+    res <- liftIO $ try $ getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs
     case res of
         Right (addr) -> do
             case addr of
-                Nothing -> getEpochAddressFromOutpoint conn txSync lg net outPoint waitSecs
+                Nothing -> getEpochScriptHashFromOutpoint conn txSync lg net outPoint waitSecs
                 Just a -> return addr
         Left TxIDNotFoundException -> do
-            getEpochAddressFromOutpoint conn txSync lg net outPoint waitSecs
+            getEpochScriptHashFromOutpoint conn txSync lg net outPoint waitSecs
 
 --
 --
-getEpochAddressFromOutpoint ::
-       Q.ClientState -> (TVar (M.Map TxHash EV.Event)) -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Address)
-getEpochAddressFromOutpoint conn txSync lg net outPoint waitSecs = do
+getEpochScriptHashFromOutpoint ::
+       Q.ClientState -> (TVar (M.Map TxHash EV.Event)) -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Text)
+getEpochScriptHashFromOutpoint conn txSync lg net outPoint waitSecs = do
     let str = "SELECT tx_serialized from xoken.ep_transactions where tx_id = ?"
         qstr = str :: Q.QueryString Q.R (Identity Text) (Identity Blob)
         p = Q.defQueryParams Q.One $ Identity $ txHashToHex $ outPointHash outPoint
     res <- liftIO $ try $ Q.runClient conn (Q.query qstr p)
     case res of
         Left (e :: SomeException) -> do
-            err lg $ LG.msg ("Error: getEpochAddressFromOutpoint: " ++ show e)
+            err lg $ LG.msg ("Error: getEpochScriptHashFromOutpoint: " ++ show e)
             throw e
         Right (iop) -> do
             if L.length iop == 0
@@ -341,16 +402,18 @@ getEpochAddressFromOutpoint conn txSync lg net outPoint waitSecs = do
                         LG.msg ("TxID not found: (waiting for event) " ++ (show $ txHashToHex $ outPointHash outPoint))
                     event <- EV.new
                     liftIO $ atomically $ modifyTVar' (txSync) (M.insert (outPointHash outPoint) event)
-                    isTimeout <- waitTimeout event (1000000 * (fromIntegral waitSecs))
-                    if isTimeout
-                        then throw TxIDNotFoundException
-                        else getEpochAddressFromOutpoint conn txSync lg net outPoint waitSecs -- if signalled, try querying DB again so it succeeds
+                    tofl <- waitTimeout event (1000000 * (fromIntegral waitSecs))
+                    if tofl == False
+                        then do
+                            liftIO $ atomically $ modifyTVar' (txSync) (M.delete (outPointHash outPoint))
+                            debug lg $ LG.msg ("TxIDNotFoundException" ++ (show $ txHashToHex $ outPointHash outPoint))
+                            throw TxIDNotFoundException
+                        else getEpochScriptHashFromOutpoint conn txSync lg net outPoint waitSecs -- if signalled, try querying DB again so it succeeds
                 else do
                     let txbyt = runIdentity $ iop !! 0
                     case runGetLazy (getConfirmedTx) (fromBlob txbyt) of
-                        Left e
-                                -- debug lg $ LG.msg (encodeHex $ BSL.toStrict $ fromBlob txbyt)
-                         -> do
+                        Left e -> do 
+                            debug lg $ LG.msg (encodeHex $ BSL.toStrict $ fromBlob txbyt)
                             throw DBTxParseException
                         Right (txd) -> do
                             case txd of
@@ -359,7 +422,5 @@ getEpochAddressFromOutpoint conn txSync lg net outPoint waitSecs = do
                                         then throw InvalidOutpointException
                                         else do
                                             let output = (txOut tx) !! (fromIntegral $ outPointIndex outPoint)
-                                            case scriptToAddressBS $ scriptOutput output of
-                                                Left e -> return Nothing
-                                                Right os -> return $ Just os
-                                Nothing -> undefined
+                                            return $ Just $ txHashToHex $ TxHash $ sha256 (scriptOutput output)
+                                Nothing -> return Nothing

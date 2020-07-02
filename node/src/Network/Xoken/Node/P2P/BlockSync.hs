@@ -14,7 +14,6 @@ module Network.Xoken.Node.P2P.BlockSync
     , processConfTransaction
     , runEgressBlockSync
     , runPeerSync
-    , getAddressFromOutpoint
     , getScriptHashFromOutpoint
     , sendRequestMessages
     , handleIfAllegoryTx
@@ -637,54 +636,6 @@ processConfTransaction tx bhash txind blkht = do
 --
 --
 --
-getAddressFromOutpoint ::
-       Q.ClientState -> (TVar (M.Map TxHash EV.Event)) -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Address)
-getAddressFromOutpoint conn txSync lg net outPoint waitSecs = do
-    let str = "SELECT tx_serialized from xoken.transactions where tx_id = ?"
-        qstr = str :: Q.QueryString Q.R (Identity Text) (Identity Blob)
-        p = Q.defQueryParams Q.One $ Identity $ txHashToHex $ outPointHash outPoint
-    res <- liftIO $ try $ Q.runClient conn (Q.query qstr p)
-    case res of
-        Left (e :: SomeException) -> do
-            err lg $ LG.msg ("Error: getAddressFromOutpoint: " ++ show e)
-            throw e
-        Right (iop) -> do
-            if L.length iop == 0
-                then do
-                    debug lg $
-                        LG.msg ("TxID not found: (waiting for event) " ++ (show $ txHashToHex $ outPointHash outPoint))
-                    --
-                    event <- EV.new
-                    liftIO $ atomically $ modifyTVar' (txSync) (M.insert (outPointHash outPoint) event)
-                    tofl <- waitTimeout event (1000000 * (fromIntegral waitSecs))
-                    if tofl == False -- False indicates a timeout occurred.
-                        then do
-                            liftIO $ atomically $ modifyTVar' (txSync) (M.delete (outPointHash outPoint))
-                            err lg $ LG.msg ("TxIDNotFoundException" ++ (show $ txHashToHex $ outPointHash outPoint))
-                            throw TxIDNotFoundException
-                        else getAddressFromOutpoint conn txSync lg net outPoint waitSecs -- if being signalled, try again to success
-                    --
-                    return Nothing
-                else do
-                    let txbyt = runIdentity $ iop !! 0
-                    case runGetLazy (getConfirmedTx) (fromBlob txbyt) of
-                        Left e -> do
-                            debug lg $ LG.msg (encodeHex $ BSL.toStrict $ fromBlob txbyt)
-                            throw DBTxParseException
-                        Right (txd) -> do
-                            case txd of
-                                Just tx ->
-                                    if (fromIntegral $ outPointIndex outPoint) > (L.length $ txOut tx)
-                                        then throw InvalidOutpointException
-                                        else do
-                                            let output = (txOut tx) !! (fromIntegral $ outPointIndex outPoint)
-                                            case scriptToAddressBS $ scriptOutput output of
-                                                Left e
-                                                    -- debug lg $ LG.msg ("unable to decode addr: " ++ show e)
-                                                 -> do
-                                                    return Nothing
-                                                Right os -> return $ Just os
-                                Nothing -> return Nothing
 
 getScriptHashFromOutpoint ::
        Q.ClientState -> (TVar (M.Map TxHash EV.Event)) -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Text)
