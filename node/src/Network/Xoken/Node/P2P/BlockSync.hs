@@ -285,35 +285,24 @@ markBestSyncedBlock hash height conn = do
 checkBlocksFullySynced :: (HasLogger m, MonadIO m) => Q.ClientState -> m Bool
 checkBlocksFullySynced conn = do
     lg <- getLogger
-    let str = "SELECT value FROM xoken.misc_store WHERE key=?";
-        qstr = str :: Q.QueryString Q.R (Identity Text) ((Maybe Bool, Int32, Maybe Int64, Text))
-        parBestSynced = Q.defQueryParams Q.One $ Identity (T.pack "best-synced")
-        parBestChainTip = Q.defQueryParams Q.One $ Identity (T.pack "best_chain_tip")
-    resBestSynced <- liftIO $ try $ Q.runClient conn (Q.query (Q.prepared qstr) parBestSynced)
-    case resBestSynced of
-        Right rsBestSynced ->
-            if L.length rsBestSynced == 0
-                then do
-                    --err lg $ LG.msg ("Error: checkFullySynced: missing entry in misc_store?")
-                    throw KeyValueDBInsertException
-                else do
-                    resBestChainTip <- liftIO $ try $ Q.runClient conn (Q.query (Q.prepared qstr) parBestChainTip)
-                    case resBestChainTip of
-                        Right rsBestChainTip ->
-                            if L.length rsBestChainTip == 0
-                                then do
-                                    --err lg $ LG.msg ("Error: checkFullySynced: missing entry in misc_store?")
-                                    throw KeyValueDBInsertException
-                                else do
-                                    let (_, bestSyncedHeight, _, _) = rsBestSynced !! 0
-                                        (_, bestChainTipHeight, _, _) = rsBestChainTip !! 0
-                                    return $ (bestSyncedHeight == bestChainTipHeight)
-                        Left (e :: SomeException) -> do
-                            err lg $ LG.msg ("Error: checkFullySynced while getting best_chain_tip block height: " ++ show e)
-                            throw e
-        Left (e :: SomeException) -> do
-            err lg $ LG.msg ("Error: checkFullySynced while getting best-synced block height: " ++ show e)
-            throw e
+    heights <- sequence $ ((\s -> do
+        let str = "SELECT value FROM xoken.misc_store WHERE key=?"
+            qstr = str :: Q.QueryString Q.R (Identity Text) (Identity (Maybe Bool, Int32, Maybe Int64, Text))
+            par = Q.defQueryParams Q.One $ Identity s
+        res <- liftIO $ try $ Q.runClient conn (Q.query qstr par)
+        case res of
+            Right results ->
+                if L.length results == 0
+                    then do
+                        err lg $ LG.msg $ val $ C.pack $ "checkFullySynced: Empty result set. Missing entry for " ++ T.unpack s ++ "?"
+                        throw KeyValueDBLookupException
+                    else do
+                        let Identity (_, h, _, _) = results !! 0
+                        return h
+            Left (e :: SomeException) -> do
+                err lg $ LG.msg $ "checkFullySynced (" ++ T.unpack s ++ "): " ++ show e
+                throw e) <$>) (T.pack <$> ["best-synced", "best_chain_tip"])
+    return (heights !! 0 == heights !! 1)
 
 getBatchSize n
     | n < 630000 = [1 .. 10]
