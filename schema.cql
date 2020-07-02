@@ -85,3 +85,10 @@ CREATE TABLE xoken.user_permission (
     session_key text,
     session_key_expiry_time timestamp
 ); 
+
+CREATE TABLE xoken.blockhash_txids (
+    block_hash text,
+    page_number int,
+    txids set <text>,
+    PRIMARY KEY((block_hash, page_number))
+);
