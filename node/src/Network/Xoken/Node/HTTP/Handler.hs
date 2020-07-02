@@ -64,6 +64,19 @@ authClient AuthenticateReq {..} = do
         Right ar -> writeBS $ BSL.toStrict $ Aeson.encode $ AuthenticateResp ar
 authClient _ = throwBadRequest
 
+getChainInfo :: Handler App App ()
+getChainInfo = do
+    lg <- getLogger
+    res <- LE.try $ xGetChainInfo
+    case res of
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: xGetChainInfo: " ++ show e
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+        Right (Just ci) -> writeBS $ BSL.toStrict $ Aeson.encode $ RespChainInfo ci
+        Right Nothing -> throwBadRequest
+
+
 getBlockByHash :: Handler App App ()
 getBlockByHash = do
     hash <- getParam "hash"
@@ -180,6 +193,19 @@ getTxByIds = do
                     (\RawTxRecord {..} -> (TxRecord txId txBlockInfo) <$> (Extra.hush $ S.decodeLazy txSerialized)) <$>
                     txs
             writeBS $ BSL.toStrict $ Aeson.encode $ RespTransactionsByTxIDs $ catMaybes rawTxs
+
+getTxOutputSpendStatus :: Handler App App ()
+getTxOutputSpendStatus = do
+    txid <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getParam "txid")
+    index <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getParam "index")
+    lg <- getLogger
+    res <- LE.try $ xGetTxOutputSpendStatus (fromJust txid) (fromJust index)
+    case res of
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: xGetTxHash: " ++ show e
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+        Right txss -> writeBS $ BSL.toStrict $ Aeson.encode $ RespTxOutputSpendStatus txss
 
 getOutputsByAddr :: Handler App App ()
 getOutputsByAddr = do

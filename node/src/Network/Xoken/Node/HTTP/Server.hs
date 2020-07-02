@@ -17,12 +17,14 @@ appInit env =
 apiRoutes :: [(B.ByteString, Handler App App ())]
 apiRoutes =
     [ ("/v1/auth", method POST (withReq authClient))
+    , ("/v1/chain/info/", method GET (withAuth getChainInfo))
     , ("/v1/block/hash/:hash", method GET (withAuth getBlockByHash))
     , ("/v1/block/hashes", method GET (withAuth getBlocksByHash))
     , ("/v1/block/height/:height", method GET (withAuth getBlockByHeight))
     , ("/v1/block/heights", method GET (withAuth getBlocksByHeight))
     , ("/v1/rawtransaction/:id", method GET (withAuth getRawTxById))
     , ("/v1/rawtransactions", method GET (withAuth getRawTxByIds))
+    , ("/v1/transactionSpendStatus/:txid/:index", method GET (withAuth getTxOutputSpendStatus))
     , ("/v1/transaction/:id", method GET (withAuth getTxById))
     , ("/v1/transactions", method GET (withAuth getTxByIds))
     , ("/v1/address/:address", method GET (withAuth getOutputsByAddr))

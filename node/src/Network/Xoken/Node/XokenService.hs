@@ -105,8 +105,8 @@ data EndPointConnection =
         , encodingFormat :: IORef EncodingFormat
         }
 
-xGetChainInfo :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> m (Maybe ChainInfo)
-xGetChainInfo net = do
+xGetChainInfo :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m (Maybe ChainInfo)
+xGetChainInfo = do
     dbe <- getDB
     lg <- getLogger
     let conn = keyValDB $ dbe
@@ -960,7 +960,7 @@ goGetResource msg net roles = do
                                       RPCError INVALID_PARAMS (Just "User lacks permission to create users")
                 _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "CHAIN_INFO" -> do
-            cw <- xGetChainInfo net
+            cw <- xGetChainInfo
             case cw of
                 Just c -> return $ RPCResponse 200 $ Right $ Just $ RespChainInfo c
                 Nothing -> return $ RPCResponse 404 $ Left $ RPCError INVALID_REQUEST Nothing
