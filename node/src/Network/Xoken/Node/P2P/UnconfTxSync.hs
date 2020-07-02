@@ -310,7 +310,7 @@ processUnconfTransaction tx = do
                                  res <-
                                      liftIO $
                                      try $
-                                     sourceAddressFromOutpoint 
+                                     sourceScriptHashFromOutpoint 
                                          conn
                                          (txSynchronizer bp2pEnv)
                                          lg
@@ -320,10 +320,7 @@ processUnconfTransaction tx = do
                                  case res of
                                      Right (ma) -> do
                                          case (ma) of
-                                             Just x ->
-                                                case addrToString net x of 
-                                                    Just as -> return $ Just (as, b, c)
-                                                    Nothing -> throw InvalidAddressException
+                                             Just x -> return $ Just (x, b, c)
                                              Nothing -> do
                                                  liftIO $ err lg $ LG.msg $ val "Error: OutpointAddressNotFoundException "
                                                  return Nothing
@@ -373,30 +370,30 @@ processUnconfTransaction tx = do
 
 --
 --
-sourceAddressFromOutpoint ::
-       Q.ClientState -> (TVar (M.Map TxHash EV.Event)) -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Address)
-sourceAddressFromOutpoint conn txSync lg net outPoint waitSecs = do
-    res <- liftIO $ try $ getAddressFromOutpoint conn txSync lg net outPoint waitSecs
+sourceScriptHashFromOutpoint ::
+       Q.ClientState -> (TVar (M.Map TxHash EV.Event)) -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Text)
+sourceScriptHashFromOutpoint conn txSync lg net outPoint waitSecs = do
+    res <- liftIO $ try $ getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs
     case res of
         Right (addr) -> do
             case addr of
-                Nothing -> getEpochAddressFromOutpoint conn txSync lg net outPoint waitSecs
+                Nothing -> getEpochScriptHashFromOutpoint conn txSync lg net outPoint waitSecs
                 Just a -> return addr
         Left TxIDNotFoundException -> do
-            getEpochAddressFromOutpoint conn txSync lg net outPoint waitSecs
+            getEpochScriptHashFromOutpoint conn txSync lg net outPoint waitSecs
 
 --
 --
-getEpochAddressFromOutpoint ::
-       Q.ClientState -> (TVar (M.Map TxHash EV.Event)) -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Address)
-getEpochAddressFromOutpoint conn txSync lg net outPoint waitSecs = do
+getEpochScriptHashFromOutpoint ::
+       Q.ClientState -> (TVar (M.Map TxHash EV.Event)) -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Text)
+getEpochScriptHashFromOutpoint conn txSync lg net outPoint waitSecs = do
     let str = "SELECT tx_serialized from xoken.ep_transactions where tx_id = ?"
         qstr = str :: Q.QueryString Q.R (Identity Text) (Identity Blob)
         p = Q.defQueryParams Q.One $ Identity $ txHashToHex $ outPointHash outPoint
     res <- liftIO $ try $ Q.runClient conn (Q.query qstr p)
     case res of
         Left (e :: SomeException) -> do
-            err lg $ LG.msg ("Error: getEpochAddressFromOutpoint: " ++ show e)
+            err lg $ LG.msg ("Error: getEpochScriptHashFromOutpoint: " ++ show e)
             throw e
         Right (iop) -> do
             if L.length iop == 0
@@ -411,7 +408,7 @@ getEpochAddressFromOutpoint conn txSync lg net outPoint waitSecs = do
                             liftIO $ atomically $ modifyTVar' (txSync) (M.delete (outPointHash outPoint))
                             debug lg $ LG.msg ("TxIDNotFoundException" ++ (show $ txHashToHex $ outPointHash outPoint))
                             throw TxIDNotFoundException
-                        else getEpochAddressFromOutpoint conn txSync lg net outPoint waitSecs -- if signalled, try querying DB again so it succeeds
+                        else getEpochScriptHashFromOutpoint conn txSync lg net outPoint waitSecs -- if signalled, try querying DB again so it succeeds
                 else do
                     let txbyt = runIdentity $ iop !! 0
                     case runGetLazy (getConfirmedTx) (fromBlob txbyt) of
@@ -425,7 +422,5 @@ getEpochAddressFromOutpoint conn txSync lg net outPoint waitSecs = do
                                         then throw InvalidOutpointException
                                         else do
                                             let output = (txOut tx) !! (fromIntegral $ outPointIndex outPoint)
-                                            case scriptToAddressBS $ scriptOutput output of
-                                                Left e -> return Nothing
-                                                Right os -> return $ Just os
+                                            return $ Just $ txHashToHex $ TxHash $ sha256 (scriptOutput output)
                                 Nothing -> return Nothing
