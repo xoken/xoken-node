@@ -310,7 +310,7 @@ processUnconfTransaction tx = do
                                  res <-
                                      liftIO $
                                      try $
-                                     getScriptHashFromOutpoint
+                                     sourceAddressFromOutpoint 
                                          conn
                                          (txSynchronizer bp2pEnv)
                                          lg
@@ -320,9 +320,12 @@ processUnconfTransaction tx = do
                                  case res of
                                      Right (ma) -> do
                                          case (ma) of
-                                             Just x -> return $ Just (x, b, c)
+                                             Just x ->
+                                                case addrToString net x of 
+                                                    Just as -> return $ Just (as, b, c)
+                                                    Nothing -> throw InvalidAddressException
                                              Nothing -> do
-                                                 liftIO $ err lg $ LG.msg $ val "Error: ScriptHashNotFoundException "
+                                                 liftIO $ err lg $ LG.msg $ val "Error: OutpointAddressNotFoundException "
                                                  return Nothing
                                      Left TxIDNotFoundException -- report and ignore
                                       -> do
@@ -402,16 +405,18 @@ getEpochAddressFromOutpoint conn txSync lg net outPoint waitSecs = do
                         LG.msg ("TxID not found: (waiting for event) " ++ (show $ txHashToHex $ outPointHash outPoint))
                     event <- EV.new
                     liftIO $ atomically $ modifyTVar' (txSync) (M.insert (outPointHash outPoint) event)
-                    isTimeout <- waitTimeout event (1000000 * (fromIntegral waitSecs))
-                    if isTimeout
-                        then throw TxIDNotFoundException
+                    tofl <- waitTimeout event (1000000 * (fromIntegral waitSecs))
+                    if tofl == False
+                        then do
+                            liftIO $ atomically $ modifyTVar' (txSync) (M.delete (outPointHash outPoint))
+                            debug lg $ LG.msg ("TxIDNotFoundException" ++ (show $ txHashToHex $ outPointHash outPoint))
+                            throw TxIDNotFoundException
                         else getEpochAddressFromOutpoint conn txSync lg net outPoint waitSecs -- if signalled, try querying DB again so it succeeds
                 else do
                     let txbyt = runIdentity $ iop !! 0
                     case runGetLazy (getConfirmedTx) (fromBlob txbyt) of
-                        Left e
-                                -- debug lg $ LG.msg (encodeHex $ BSL.toStrict $ fromBlob txbyt)
-                         -> do
+                        Left e -> do 
+                            debug lg $ LG.msg (encodeHex $ BSL.toStrict $ fromBlob txbyt)
                             throw DBTxParseException
                         Right (txd) -> do
                             case txd of
@@ -423,4 +428,4 @@ getEpochAddressFromOutpoint conn txSync lg net outPoint waitSecs = do
                                             case scriptToAddressBS $ scriptOutput output of
                                                 Left e -> return Nothing
                                                 Right os -> return $ Just os
-                                Nothing -> undefined
+                                Nothing -> return Nothing
