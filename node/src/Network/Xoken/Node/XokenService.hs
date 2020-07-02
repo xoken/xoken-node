@@ -319,7 +319,7 @@ xGetBlocksHeights heights = do
             err lg $ LG.msg $ "Error: xGetBlockHeights: " ++ show e
             throw KeyValueDBLookupException
 
-xGetTxIDsByBlockHash :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => DT.Text -> Int32 -> Int32 -> m (Maybe [String])
+xGetTxIDsByBlockHash :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => String -> Int32 -> Int32 -> m (Maybe [String])
 xGetTxIDsByBlockHash hash pgSize pgNum = do
     dbe <- getDB
     lg <- getLogger
@@ -331,7 +331,7 @@ xGetTxIDsByBlockHash hash pgSize pgNum = do
         txTakeFromLast = fromIntegral $ (pgSize + txsToSkip) `mod` 100
         str = "SELECT page_number, txids from xoken.blockhash_txids where block_hash = ? and page_number in ? "
         qstr = str :: Q.QueryString Q.R (DT.Text, [Int32]) (Int32, Set DT.Text)
-        p = Q.defQueryParams Q.One $ (hash, [firstPage..lastPage])
+        p = Q.defQueryParams Q.One $ (DT.pack hash, [firstPage..lastPage])
     res <- liftIO $ try $ Q.runClient conn (Q.query qstr p)
     case res of
         Right iop -> do
@@ -1021,7 +1021,7 @@ goGetResource msg net roles = do
         "HASH->[TXID]" -> do
             case methodParams $ rqParams msg of
                 Just (GetTxIDsByBlockHash hash pgSize pgNum) -> do
-                    txids <- xGetTxIDsByBlockHash (DT.pack hash) pgSize pgNum
+                    txids <- xGetTxIDsByBlockHash hash pgSize pgNum
                     case txids of
                         Just t -> return $ RPCResponse 200 $ Right $ Just $ RespTxIDsByBlockHash t
                         Nothing -> return $ RPCResponse 404 $ Left $ RPCError INVALID_REQUEST Nothing

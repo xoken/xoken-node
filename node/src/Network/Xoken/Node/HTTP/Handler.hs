@@ -194,6 +194,21 @@ getTxByIds = do
                     txs
             writeBS $ BSL.toStrict $ Aeson.encode $ RespTransactionsByTxIDs $ catMaybes rawTxs
 
+getTxIDsByBlockHash :: Handler App App ()
+getTxIDsByBlockHash = do
+    lg <- getLogger
+    hash <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getParam "hash")
+    pgNumber <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getParam "page")
+    pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getParam "size")
+    res <- LE.try $ xGetTxIDsByBlockHash (fromJust hash) (fromMaybe 100 pgSize) (fromMaybe 1 pgNumber)
+    case res of
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: xGetTxIDsByBlockHash: " ++ show e
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+        Right (Just txids) -> writeBS $ BSL.toStrict $ Aeson.encode $ RespTxIDsByBlockHash txids
+        Right Nothing -> throwBadRequest
+
 getTxOutputSpendStatus :: Handler App App ()
 getTxOutputSpendStatus = do
     txid <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getParam "txid")
@@ -202,7 +217,7 @@ getTxOutputSpendStatus = do
     res <- LE.try $ xGetTxOutputSpendStatus (fromJust txid) (fromJust index)
     case res of
         Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: xGetTxHash: " ++ show e
+            err lg $ LG.msg $ "Error: xGetTxOutputSpendStatus: " ++ show e
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
         Right txss -> writeBS $ BSL.toStrict $ Aeson.encode $ RespTxOutputSpendStatus txss
