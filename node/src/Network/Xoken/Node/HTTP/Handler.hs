@@ -5,8 +5,8 @@
 
 module Network.Xoken.Node.HTTP.Handler where
 
-import Control.Applicative ((<|>))
 import Arivi.P2P.Config (decodeHex, encodeHex)
+import Control.Applicative ((<|>))
 import qualified Control.Error.Util as Extra
 import Control.Exception (SomeException(..), throw, try)
 import qualified Control.Exception.Lifted as LE (try)
@@ -79,11 +79,13 @@ getBlockByHash = do
             modifyResponse $ setResponseStatus 400 "Bad Request"
             writeBS "400 error"
 
-getBlocksByHash :: Handler App App ()
-getBlocksByHash = do
-    allMap <- getQueryParams
+getBlocksByHashes :: RPCReqParams' -> Handler App App ()
+getBlocksByHashes GetBlocksByHashes {..} = do
+    bp2pEnv <- getBitcoinP2P
     lg <- getLogger
-    res <- LE.try $ xGetBlocksHashes (DTE.decodeUtf8 <$> (fromJust $ Map.lookup "hash" allMap))
+    let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
+    let shs = map (\x -> DT.pack x) gbBlockHashes
+    res <- LE.try $ xGetBlocksHashes shs
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetBlocksHash: " ++ show e
@@ -106,11 +108,14 @@ getBlockByHeight = do
             modifyResponse $ setResponseStatus 400 "Bad Request"
             writeBS "400 error"
 
-getBlocksByHeight :: Handler App App ()
-getBlocksByHeight = do
+getBlocksByHeights :: RPCReqParams' -> Handler App App ()
+getBlocksByHeights GetBlocksByHeight {..} = do
     allMap <- getQueryParams
     lg <- getLogger
-    res <- LE.try $ xGetBlocksHeights (read . DT.unpack . DTE.decodeUtf8 <$> (fromJust $ Map.lookup "height" allMap))
+    bp2pEnv <- getBitcoinP2P
+    let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
+    let shs = map (\x -> fromIntegral x) gbHeights
+    res <- LE.try $ xGetBlocksHeights shs
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetBlocksHeight: " ++ show e
@@ -133,11 +138,14 @@ getRawTxById = do
             modifyResponse $ setResponseStatus 400 "Bad Request"
             writeBS "400 error"
 
-getRawTxByIds :: Handler App App ()
-getRawTxByIds = do
+getRawTxByIds :: RPCReqParams' -> Handler App App ()
+getRawTxByIds GetRawTransactionsByTxIDs {..} = do
     allMap <- getQueryParams
     lg <- getLogger
-    res <- LE.try $ xGetTxHashes (DTE.decodeUtf8 <$> (fromJust $ Map.lookup "id" allMap))
+    bp2pEnv <- getBitcoinP2P
+    let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
+    let shs = map (\x -> DT.pack x) gtRTxHashes
+    res <- LE.try $ xGetTxHashes shs
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetTxHash: " ++ show e
@@ -165,11 +173,14 @@ getTxById = do
             modifyResponse $ setResponseStatus 400 "Bad Request"
             writeBS "400 error"
 
-getTxByIds :: Handler App App ()
-getTxByIds = do
+getTxByIds :: RPCReqParams' -> Handler App App ()
+getTxByIds GetTransactionsByTxIDs {..} = do
     allMap <- getQueryParams
     lg <- getLogger
-    res <- LE.try $ xGetTxHashes (DTE.decodeUtf8 <$> (fromJust $ Map.lookup "id" allMap))
+    bp2pEnv <- getBitcoinP2P
+    let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
+    let shs = map (\x -> DT.pack x) gtTxHashes
+    res <- LE.try $ xGetTxHashes shs
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetTxHash: " ++ show e
