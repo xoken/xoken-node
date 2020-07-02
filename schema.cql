@@ -20,17 +20,27 @@ CREATE TABLE xoken.blocks_by_hash (
     coinbase_tx blob
 ); 
 
-CREATE TABLE xoken.ep_address_outputs (
+CREATE TABLE xoken.ep_script_hash_outputs (
     epoch boolean,
-    address text,
+    script_hash text,
     output frozen<tuple<text, int>>,
-    is_output_spent boolean,
     is_type_receive boolean,
     other_address text,
+    PRIMARY KEY (epoch, script_hash, output)
+); 
+
+CREATE TABLE xoken.ep_txid_outputs (
+    epoch boolean,
+    txid text,
+    idx int,
+    is_output_spent boolean,
+    spending_txid text,
+    spending_index int,
     prev_outpoint frozen<tuple<text, int>>,
+    input_index int,
     value bigint,
-    PRIMARY KEY (epoch, address, output)
-);
+    PRIMARY KEY(epoch, txid, idx)
+ );
 
 CREATE TABLE xoken.script_hash_outputs (
     script_hash text,
@@ -40,6 +50,20 @@ CREATE TABLE xoken.script_hash_outputs (
     other_address text,
     PRIMARY KEY (script_hash, nominal_tx_index, output)
 ) WITH CLUSTERING ORDER BY (nominal_tx_index DESC);
+
+CREATE TABLE xoken.txid_outputs (
+    txid text,
+    idx int,
+    block_info frozen<tuple<frozen<tuple<text, int>>, int>>,
+    is_output_spent boolean,
+    spending_txid text,
+    spending_index int,
+    spending_tx_block_height int,
+    prev_outpoint frozen<tuple<text, int>>,
+    input_index int,
+    value bigint,
+    PRIMARY KEY(txid, idx)
+ );
 
 CREATE TABLE xoken.blocks_by_height (
     block_height int PRIMARY KEY,
@@ -56,20 +80,6 @@ CREATE TABLE xoken.ep_transactions (
     tx_serialized blob,
     PRIMARY KEY (epoch, tx_id)
 ); 
-
-CREATE TABLE xoken.txid_outputs (
-    txid text,
-    idx int,
-    block_info frozen<tuple<frozen<tuple<text, int>>, int>>,
-    is_output_spent boolean,
-    spending_txid text,
-    spending_index int,
-    spending_tx_block_height int,
-    prev_outpoint frozen<tuple<text, int>>,
-    input_index int,
-    value bigint,
-    PRIMARY KEY(txid, idx)
- );
 
 CREATE TABLE xoken.user_permission (
     username text PRIMARY KEY,
