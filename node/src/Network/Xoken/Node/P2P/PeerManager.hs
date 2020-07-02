@@ -514,7 +514,7 @@ merkleTreeBuilder tque blockHash treeHt = do
                     EX.retry 3 $ updateMerkleSubTrees dbe hcstate (getTxHash txh) Nothing Nothing treeHt 0 isLast
                 case res of
                     Right (hcs) -> do
-                        liftIO $ atomically $ writeTVar tv hcs                            
+                        liftIO $ atomically $ writeTVar tv hcs
                     Left MerkleSubTreeAlreadyExistsException
                         -- second attempt, after deleting stale TMT nodes
                      -> do
@@ -551,7 +551,7 @@ merkleTreeBuilder tque blockHash treeHt = do
                         else do
                             pgn <- liftIO $ atomically $ readTVar txPageNum
                             LA.async $ commitTxPage txHashes blockHash pgn
-                            liftIO $ atomically $ writeTVar txPageNum 1
+                            return ()
                     liftIO $ writeIORef continue False
                     liftIO $ atomically $ modifyTVar' (merkleQueueMap p2pEnv) (M.delete blockHash)
                     liftIO $ MS.signal (maxTMTBuilderThreadLock p2pEnv)
