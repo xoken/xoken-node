@@ -375,8 +375,8 @@ defBitcoinP2P nodeCnf = do
     mq <- newTVarIO M.empty
     ts <- newTVarIO M.empty
     tbt <- MS.new $ maxTMTBuilderThreads nodeCnf
-    pub <- newTVarIO False
-    return $ BitcoinP2P nodeCnf g bp mv hl st ep tc (rpf, rpc) mq ts tbt pub
+    iut <- newTVarIO False
+    return $ BitcoinP2P nodeCnf g bp mv hl st ep tc (rpf, rpc) mq ts tbt iut
 
 initNexa :: IO ()
 initNexa = do

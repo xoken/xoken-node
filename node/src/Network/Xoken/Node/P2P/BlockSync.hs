@@ -285,24 +285,23 @@ markBestSyncedBlock hash height conn = do
 checkBlocksFullySynced :: (HasLogger m, MonadIO m) => Q.ClientState -> m Bool
 checkBlocksFullySynced conn = do
     lg <- getLogger
-    heights <- sequence $ ((\s -> do
-        let str = "SELECT value FROM xoken.misc_store WHERE key=?"
-            qstr = str :: Q.QueryString Q.R (Identity Text) (Identity (Maybe Bool, Int32, Maybe Int64, Text))
-            par = Q.defQueryParams Q.One $ Identity s
-        res <- liftIO $ try $ Q.runClient conn (Q.query qstr par)
-        case res of
-            Right results ->
-                if L.length results == 0
-                    then do
-                        err lg $ LG.msg $ val $ C.pack $ "checkFullySynced: Empty result set. Missing entry for " ++ T.unpack s ++ "?"
-                        throw KeyValueDBLookupException
-                    else do
-                        let Identity (_, h, _, _) = results !! 0
-                        return h
-            Left (e :: SomeException) -> do
-                err lg $ LG.msg $ "checkFullySynced (" ++ T.unpack s ++ "): " ++ show e
-                throw e) <$>) (T.pack <$> ["best-synced", "best_chain_tip"])
-    return (heights !! 0 == heights !! 1)
+    let str = "SELECT value FROM xoken.misc_store WHERE key IN (?,?)"
+        qstr = str :: Q.QueryString Q.R (Text, Text) (Identity (Maybe Bool, Int32, Maybe Int64, Text))
+        par = Q.defQueryParams Q.One $ (T.pack "best-synced", T.pack "best_chain_tip")
+    res <- liftIO $ try $ Q.runClient conn (Q.query qstr par)
+    case res of
+        Right results ->
+            if L.length results /= 2
+                then do
+                    err lg $ LG.msg $ val $ C.pack $ "checkFullySynced: Missing entries best-synced or best_chain_tip"
+                    throw KeyValueDBLookupException
+                else do
+                    let Identity (_, h1, _, _) = results !! 0
+                        Identity (_, h2, _, _) = results !! 1
+                    return (h1 == h2)
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "checkFullySynced: " ++ show e
+            throw e
 
 getBatchSize n
     | n < 630000 = [1 .. 10]
