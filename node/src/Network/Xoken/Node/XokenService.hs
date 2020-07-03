@@ -1132,7 +1132,7 @@ goGetResource msg net roles = do
                             liftIO $ print e
                             return $ RPCResponse 400 $ Left $ RPCError INTERNAL_ERROR Nothing 
                 _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing 
-        "TX_SPEND_STATUS" -> do
+        "OUTPOINT->SPEND_STATUS" -> do
             case methodParams $ rqParams msg of
                 Just (GetTxOutputSpendStatus txid index) -> do
                     txss <- xGetTxOutputSpendStatus txid index

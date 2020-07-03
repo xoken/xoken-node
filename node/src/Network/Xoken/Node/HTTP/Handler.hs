@@ -198,8 +198,8 @@ getTxIDsByBlockHash :: Handler App App ()
 getTxIDsByBlockHash = do
     lg <- getLogger
     hash <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getParam "hash")
-    pgNumber <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getParam "page")
-    pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getParam "size")
+    pgNumber <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagenumber")
+    pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
     res <- LE.try $ xGetTxIDsByBlockHash (fromJust hash) (fromMaybe 100 pgSize) (fromMaybe 1 pgNumber)
     case res of
         Left (e :: SomeException) -> do
@@ -225,8 +225,8 @@ getTxOutputSpendStatus = do
 getOutputsByAddr :: Handler App App ()
 getOutputsByAddr = do
     addr <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getParam "address")
-    pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pageSize")
-    nomTxInd <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "nominalTxInd")
+    pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
+    nomTxInd <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "nominaltxind")
     bp2pEnv <- getBitcoinP2P
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
     lg <- getLogger
@@ -246,11 +246,11 @@ getOutputsByAddr = do
 
 getOutputsByAddrs :: Handler App App ()
 getOutputsByAddrs = do
-    addresses <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "addresses")
+    addresses <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "address")
     case addresses of
         Just (addrs :: [String]) -> do
-            pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pageSize")
-            nomTxInd <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "nominalTxInd")
+            pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
+            nomTxInd <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "nominaltxind")
             bp2pEnv <- getBitcoinP2P
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
             lg <- getLogger
@@ -277,9 +277,9 @@ getOutputsByAddrs = do
 
 getOutputsByScriptHash :: Handler App App ()
 getOutputsByScriptHash = do
-    sh <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getParam "scriptHash")
-    pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pageSize")
-    nomTxInd <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "nominalTxInd")
+    sh <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getParam "scripthash")
+    pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
+    nomTxInd <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "nominaltxind")
     bp2pEnv <- getBitcoinP2P
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
     lg <- getLogger
@@ -293,11 +293,11 @@ getOutputsByScriptHash = do
 
 getOutputsByScriptHashes :: Handler App App ()
 getOutputsByScriptHashes = do
-    shs <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getParam "scriptHashes")
+    shs <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "scripthash")
     case shs of
         Just sh -> do
-            pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pageSize")
-            nomTxInd <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "nominalTxInd")
+            pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
+            nomTxInd <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "nominaltxind")
             bp2pEnv <- getBitcoinP2P
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
             lg <- getLogger
@@ -312,7 +312,7 @@ getOutputsByScriptHashes = do
 
 getMNodesByTxID :: Handler App App ()
 getMNodesByTxID = do
-    txId <- (DT.unpack . DTE.decodeUtf8 . fromJust) <$> getParam "txId"
+    txId <- (DT.unpack . DTE.decodeUtf8 . fromJust) <$> getParam "txid"
     res <- LE.try $ xGetMerkleBranch txId
     case res of
         Left (e :: SomeException) -> do
