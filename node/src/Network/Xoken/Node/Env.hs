@@ -74,6 +74,7 @@ data BitcoinP2P =
         , merkleQueueMap :: !(TVar (M.Map BlockHash (TBQueue (TxHash, Bool))))
         , txSynchronizer :: !(TVar (M.Map TxHash Event))
         , maxTMTBuilderThreadLock :: !(MSem Int)
+        , indexUnconfirmedTx :: !(TVar Bool)
         }
 
 class HasBitcoinP2P m where

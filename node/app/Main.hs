@@ -13,7 +13,6 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE BlockArguments #-}
 
-
 import Arivi.Crypto.Utils.PublicKey.Signature as ACUPS
 import Arivi.Crypto.Utils.PublicKey.Utils
 import Arivi.Crypto.Utils.Random
@@ -44,6 +43,7 @@ import Control.Monad.Except
 import Control.Monad.Logger
 import Control.Monad.Loops
 import Control.Monad.Reader
+import qualified Control.Monad.STM as CMS (atomically)
 import Control.Monad.Trans.Control
 import Control.Monad.Trans.Maybe
 import Data.Aeson.Encoding (encodingToLazyByteString, fromEncoding)
@@ -110,7 +110,7 @@ import System.Exit
 import System.FilePath
 import System.IO.Unsafe
 import qualified System.Logger as LG
-import qualified System.Logger.Class as LG
+import qualified System.Logger.Class as LGC
 import System.Posix.Daemon
 import System.Random
 import Text.Read (readMaybe)
@@ -221,14 +221,13 @@ runThreads config nodeConf bp2p conn lg p2pEnv certPaths = do
     -- start TLS endpoint
     async $ startTLSEndpoint epHandler (endPointTLSListenIP nodeConf) (endPointTLSListenPort nodeConf) certPaths
     -- start HTTP endpoint
-    let snapConfig = Snap.defaultConfig
-            & Snap.setSSLBind (DTE.encodeUtf8 $ DT.pack $ endPointHTTPListenIP nodeConf)
-            & Snap.setSSLPort (fromEnum $ endPointHTTPListenPort nodeConf)
-            & Snap.setSSLKey (certPaths !! 1)
-            & Snap.setSSLCert (head certPaths)
-            & Snap.setSSLChainCert False
-    async $
-        Snap.serveSnaplet snapConfig (appInit xknEnv)
+    let snapConfig =
+            Snap.defaultConfig & Snap.setSSLBind (DTE.encodeUtf8 $ DT.pack $ endPointHTTPListenIP nodeConf) &
+            Snap.setSSLPort (fromEnum $ endPointHTTPListenPort nodeConf) &
+            Snap.setSSLKey (certPaths !! 1) &
+            Snap.setSSLCert (head certPaths) &
+            Snap.setSSLChainCert False
+    async $ Snap.serveSnaplet snapConfig (appInit xknEnv)
     withResource (pool $ graphDB dbh) (`BT.run` initAllegoryRoot genesisTx)
     -- run main workers
     forever $ do
@@ -243,13 +242,34 @@ runThreads config nodeConf bp2p conn lg p2pEnv certPaths = do
                                 withAsync runEgressBlockSync $ \_ -> do
                                     withAsync (handleNewConnectionRequest epHandler) $ \_ -> do
                                         withAsync runPeerSync $ \_ -> do
-                                            withAsync runWatchDog $ \z -> do
-                                                _ <- LA.wait z
-                                                return ())
+                                            withAsync runSyncStatusChecker $ \_ -> do
+                                                withAsync runWatchDog $ \z -> do
+                                                    _ <- LA.wait z
+                                                    return ())
         liftIO $ Q.shutdown conn
         liftIO $ threadDelay (5 * 1000000)
         conn <- makeKeyValDBConn
         return ()
+
+runSyncStatusChecker :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
+runSyncStatusChecker = do
+    lg <- getLogger
+    bp2pEnv <- getBitcoinP2P
+    conn <- keyValDB <$> getDB
+    -- wait 300 seconds before first check
+    liftIO $ threadDelay (300 * 1000000)
+    forever $ do
+        isSynced <- checkBlocksFullySynced conn
+        LG.debug lg $
+            LG.msg $
+            LG.val $
+            C.pack $
+            "Sync Status Checker: All blocks synced? " ++
+            if isSynced
+                then "Yes"
+                else "No"
+        liftIO $ CMS.atomically $ writeTVar (indexUnconfirmedTx bp2pEnv) isSynced
+        liftIO $ threadDelay (60 * 1000000)
 
 runWatchDog :: (HasXokenNodeEnv env m, MonadIO m) => m ()
 runWatchDog = do
@@ -313,13 +333,21 @@ defaultAdminUser conn = do
         then return ()
         else do
             tm <- liftIO $ getCurrentTime
-            usr <- addNewUser conn "admin" "default" "user" "" (Just ["admin"]) (Just 100000000) (Just (addUTCTime (nominalDay * 365) tm))
+            usr <-
+                addNewUser
+                    conn
+                    "admin"
+                    "default"
+                    "user"
+                    ""
+                    (Just ["admin"])
+                    (Just 100000000)
+                    (Just (addUTCTime (nominalDay * 365) tm))
             putStrLn $ "******************************************************************* "
             putStrLn $ "  Creating default Admin user!"
             putStrLn $ "  Please note down admin password NOW, will not be shown again."
             putStrLn $ "  Password : " ++ (aurPassword $ fromJust usr)
             putStrLn $ "******************************************************************* "
-
 
 makeKeyValDBConn :: IO (Q.ClientState)
 makeKeyValDBConn = do
@@ -347,7 +375,8 @@ defBitcoinP2P nodeCnf = do
     mq <- newTVarIO M.empty
     ts <- newTVarIO M.empty
     tbt <- MS.new $ maxTMTBuilderThreads nodeCnf
-    return $ BitcoinP2P nodeCnf g bp mv hl st ep tc (rpf, rpc) mq ts tbt
+    iut <- newTVarIO False
+    return $ BitcoinP2P nodeCnf g bp mv hl st ep tc (rpf, rpc) mq ts tbt iut
 
 initNexa :: IO ()
 initNexa = do

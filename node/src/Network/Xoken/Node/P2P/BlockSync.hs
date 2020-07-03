@@ -13,6 +13,7 @@ module Network.Xoken.Node.P2P.BlockSync
     ( processBlock
     , processConfTransaction
     , runEgressBlockSync
+    , checkBlocksFullySynced
     , runPeerSync
     , getScriptHashFromOutpoint
     , sendRequestMessages
@@ -280,6 +281,27 @@ markBestSyncedBlock hash height conn = do
         Left (e :: SomeException) ->
             err lg $
             LG.msg ("Error: Marking [Best-Synced] blockhash failed: " ++ show e) >> throw KeyValueDBInsertException
+
+checkBlocksFullySynced :: (HasLogger m, MonadIO m) => Q.ClientState -> m Bool
+checkBlocksFullySynced conn = do
+    lg <- getLogger
+    let str = "SELECT value FROM xoken.misc_store WHERE key IN (?,?)"
+        qstr = str :: Q.QueryString Q.R (Text, Text) (Identity (Maybe Bool, Int32, Maybe Int64, Text))
+        par = Q.defQueryParams Q.One $ (T.pack "best-synced", T.pack "best_chain_tip")
+    res <- liftIO $ try $ Q.runClient conn (Q.query qstr par)
+    case res of
+        Right results ->
+            if L.length results /= 2
+                then do
+                    err lg $ LG.msg $ val $ C.pack $ "checkFullySynced: Missing entries best-synced or best_chain_tip"
+                    throw KeyValueDBLookupException
+                else do
+                    let Identity (_, h1, _, _) = results !! 0
+                        Identity (_, h2, _, _) = results !! 1
+                    return (h1 == h2)
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "checkFullySynced: " ++ show e
+            throw e
 
 getBatchSize n
     | n < 630000 = [1 .. 10]

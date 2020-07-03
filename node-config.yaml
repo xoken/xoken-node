@@ -1,7 +1,5 @@
 bitcoinNetwork: bsv
 
-indexUnconfirmedTx: False
-
 logLevel: Debug
 
 logFileName: ./debug.log

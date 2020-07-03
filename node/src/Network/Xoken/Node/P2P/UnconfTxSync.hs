@@ -86,7 +86,8 @@ processTxGetData :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BitcoinPe
 processTxGetData pr txHash = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    if False == (indexUnconfirmedTx $ nodeConfig bp2pEnv)
+    indexUnconfirmedTx <- liftIO $ readTVarIO $ indexUnconfirmedTx bp2pEnv
+    if indexUnconfirmedTx == False
         then return ()
         else do
             let net = bitcoinNetwork $ nodeConfig bp2pEnv
@@ -310,7 +311,7 @@ processUnconfTransaction tx = do
                                  res <-
                                      liftIO $
                                      try $
-                                     sourceScriptHashFromOutpoint 
+                                     sourceScriptHashFromOutpoint
                                          conn
                                          (txSynchronizer bp2pEnv)
                                          lg
@@ -322,7 +323,8 @@ processUnconfTransaction tx = do
                                          case (ma) of
                                              Just x -> return $ Just (x, b, c)
                                              Nothing -> do
-                                                 liftIO $ err lg $ LG.msg $ val "Error: OutpointAddressNotFoundException "
+                                                 liftIO $
+                                                     err lg $ LG.msg $ val "Error: OutpointAddressNotFoundException "
                                                  return Nothing
                                      Left TxIDNotFoundException -- report and ignore
                                       -> do
@@ -412,7 +414,7 @@ getEpochScriptHashFromOutpoint conn txSync lg net outPoint waitSecs = do
                 else do
                     let txbyt = runIdentity $ iop !! 0
                     case runGetLazy (getConfirmedTx) (fromBlob txbyt) of
-                        Left e -> do 
+                        Left e -> do
                             debug lg $ LG.msg (encodeHex $ BSL.toStrict $ fromBlob txbyt)
                             throw DBTxParseException
                         Right (txd) -> do
