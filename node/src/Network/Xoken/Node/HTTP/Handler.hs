@@ -246,7 +246,7 @@ getOutputsByAddr = do
 
 getOutputsByAddrs :: Handler App App ()
 getOutputsByAddrs = do
-    addresses <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "address")
+    addresses <- (fmap $ words . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "address")
     case addresses of
         Just (addrs :: [String]) -> do
             pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
@@ -293,7 +293,7 @@ getOutputsByScriptHash = do
 
 getOutputsByScriptHashes :: Handler App App ()
 getOutputsByScriptHashes = do
-    shs <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "scripthash")
+    shs <- (fmap $ words . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "scripthash")
     case shs of
         Just sh -> do
             pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
