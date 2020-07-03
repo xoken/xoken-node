@@ -489,7 +489,7 @@ commitTxIdOutputs conn isInsert (txid, idx) blockInfo prevOutpoint inputIndex va
             err lg $ LG.msg $ "Error: commitTxIdOutputs: " ++ show e
             throw KeyValueDBInsertException
 
-commitTxPage :: 
+commitTxPage ::
        (HasBitcoinP2P m, HasLogger m, HasDatabaseHandles m, MonadBaseControl IO m, MonadIO m)
     => [TxHash]
     -> BlockHash
@@ -636,7 +636,6 @@ processConfTransaction tx bhash txind blkht = do
 --
 --
 --
-
 getScriptHashFromOutpoint ::
        Q.ClientState -> (TVar (M.Map TxHash EV.Event)) -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Text)
 getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs = do
@@ -719,7 +718,6 @@ handleIfAllegoryTx tx revert = do
                     err lg $ LG.msg $ "error decoding op_return data:" ++ show e
                     throw MessageParsingException
         else do
-            err lg $ LG.msg $ val $ "error: OP_RETURN prefix mismatch"
             return False
   where
     resdb db fn tx al = do
