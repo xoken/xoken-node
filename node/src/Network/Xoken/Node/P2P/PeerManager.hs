@@ -505,9 +505,9 @@ merkleTreeBuilder tque blockHash treeHt = do
                         pgn <- liftIO $ atomically $ readTVar txPageNum
                         LA.async $ commitTxPage txHashes blockHash pgn
                         liftIO $ atomically $ writeTVar txPageNum (pgn + 1)
-                        liftIO $ atomically $ writeTBQueue txPage txh                             
+                        liftIO $ atomically $ writeTBQueue txPage txh
                     else do
-                        liftIO $ atomically $ writeTBQueue txPage txh 
+                        liftIO $ atomically $ writeTBQueue txPage txh
                 res <-
                     LE.try $
                     liftIO $
@@ -556,13 +556,7 @@ merkleTreeBuilder tque blockHash treeHt = do
                     liftIO $ atomically $ modifyTVar' (merkleQueueMap p2pEnv) (M.delete blockHash)
                     liftIO $ MS.signal (maxTMTBuilderThreadLock p2pEnv)
 
-updateBlocks :: (HasLogger m, HasDatabaseHandles m, MonadIO m)
-    => BlockHash
-    -> BlockHeight
-    -> Int
-    -> Int
-    -> Tx
-    -> m ()
+updateBlocks :: (HasLogger m, HasDatabaseHandles m, MonadIO m) => BlockHash -> BlockHeight -> Int -> Int -> Tx -> m ()
 updateBlocks bhash blkht bsize txcount cbase = do
     lg <- getLogger
     dbe' <- getDB
@@ -593,14 +587,14 @@ updateBlocks bhash blkht bsize txcount cbase = do
         Left (e :: SomeException) -> do
             err lg $ LG.msg ("Error: INSERT into 'blocks_by_hash' failed: " ++ show e)
             throw KeyValueDBInsertException
-    res2 <- liftIO $ try $ Q.runClient conn (Q.write (qstr2) par2)  
+    res2 <- liftIO $ try $ Q.runClient conn (Q.write (qstr2) par2)
     case res2 of
         Right () -> do
-            debug lg $ LG.msg $ "Updated blocks_by_height for block_height " ++ show blkht            
+            debug lg $ LG.msg $ "Updated blocks_by_height for block_height " ++ show blkht
             return ()
         Left (e :: SomeException) -> do
             err lg $ LG.msg ("Error: INSERT into 'blocks_by_height' failed: " ++ show e)
-            throw KeyValueDBInsertException     
+            throw KeyValueDBInsertException
 
 readNextMessage ::
        (HasBitcoinP2P m, HasLogger m, HasDatabaseHandles m, MonadBaseControl IO m, MonadIO m)
@@ -780,13 +774,15 @@ messageHandler peer (mm, ingss) = do
                                 atomically $ do
                                     modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress peer))
                                     modifyTVar' (blacklistedPeers bp2pEnv) (M.insert (bpAddress peer) peer)
-                            -- liftIO $ writeIORef continue False
+                            liftIO $ putMVar (headersWriteLock bp2pEnv) True
                             throw InvalidBlocksException
                         Left KeyValueDBInsertException -> do
                             err lg $ LG.msg $ LG.val ("[ERROR] Insert failed. KeyValueDBInsertException")
+                            liftIO $ putMVar (headersWriteLock bp2pEnv) True
                             throw KeyValueDBInsertException
                         Left e -> do
                             err lg $ LG.msg ("[ERROR] Unhandled exception!" ++ show e)
+                            liftIO $ putMVar (headersWriteLock bp2pEnv) True
                             throw e
                     liftIO $ putMVar (headersWriteLock bp2pEnv) True
                     return $ msgType msg
