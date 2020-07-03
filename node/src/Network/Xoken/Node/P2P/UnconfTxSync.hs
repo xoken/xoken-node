@@ -86,7 +86,8 @@ processTxGetData :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BitcoinPe
 processTxGetData pr txHash = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    if False == (indexUnconfirmedTx $ nodeConfig bp2pEnv)
+    indexUnconfirmedTx <- liftIO $ readTVarIO $ indexUnconfirmedTx bp2pEnv
+    if indexUnconfirmedTx == False
         then return ()
         else do
             let net = bitcoinNetwork $ nodeConfig bp2pEnv
