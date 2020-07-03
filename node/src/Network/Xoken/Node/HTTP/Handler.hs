@@ -1,9 +1,11 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE Rank2Types #-}
 
 module Network.Xoken.Node.HTTP.Handler where
 
+import Control.Applicative ((<|>))
 import Arivi.P2P.Config (decodeHex, encodeHex)
 import qualified Control.Error.Util as Extra
 import Control.Exception (SomeException(..), throw, try)
@@ -33,6 +35,8 @@ import Database.CQL.Protocol
 import Network.Xoken.Crypto.Hash
 import Network.Xoken.Node.Data
     ( BlockRecord(..)
+    , RPCReqParams(..)
+    , RPCReqParams'(..)
     , RPCResponseBody(..)
     , RawTxRecord(..)
     , TxRecord(..)
@@ -50,23 +54,28 @@ import System.Logger as LG
 import Text.Read (readMaybe)
 import qualified Xoken.NodeConfig as NC
 
-authClient :: Handler App App ()
-authClient = do
-    rq <- getRequest
-    let allParams = rqPostParams rq
-        user = S.intercalate " " <$> Map.lookup "username" allParams
-        pass = S.intercalate " " <$> Map.lookup "password" allParams
-    if isNothing user || isNothing pass
-        then do
-            modifyResponse $ setResponseStatus 400 "Bad Request"
-            writeBS "400 error"
-        else do
-            resp <- LE.try $ login (DTE.decodeUtf8 $ fromJust user) (fromJust pass)
-            case resp of
-                Left (e :: SomeException) -> do
-                    modifyResponse $ setResponseStatus 500 "Internal Server Error"
-                    writeBS "INTERNAL_SERVER_ERROR"
-                Right ar -> writeBS $ BSL.toStrict $ Aeson.encode $ AuthenticateResp ar
+authClient :: RPCReqParams -> Handler App App ()
+authClient AuthenticateReq {..} = do
+    resp <- LE.try $ login (DT.pack username) (BC.pack password)
+    case resp of
+        Left (e :: SomeException) -> do
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+        Right ar -> writeBS $ BSL.toStrict $ Aeson.encode $ AuthenticateResp ar
+authClient _ = throwBadRequest
+
+getChainInfo :: Handler App App ()
+getChainInfo = do
+    lg <- getLogger
+    res <- LE.try $ xGetChainInfo
+    case res of
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: xGetChainInfo: " ++ show e
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+        Right (Just ci) -> writeBS $ BSL.toStrict $ Aeson.encode $ RespChainInfo ci
+        Right Nothing -> throwBadRequest
+
 
 getBlockByHash :: Handler App App ()
 getBlockByHash = do
@@ -114,9 +123,7 @@ getBlocksByHeight :: Handler App App ()
 getBlocksByHeight = do
     allMap <- getQueryParams
     lg <- getLogger
-    res <-
-        LE.try $
-        xGetBlocksHeights (read . DT.unpack . DTE.decodeUtf8 <$> (fromJust $ Map.lookup "height" allMap))
+    res <- LE.try $ xGetBlocksHeights (read . DT.unpack . DTE.decodeUtf8 <$> (fromJust $ Map.lookup "height" allMap))
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetBlocksHeight: " ++ show e
@@ -187,18 +194,46 @@ getTxByIds = do
                     txs
             writeBS $ BSL.toStrict $ Aeson.encode $ RespTransactionsByTxIDs $ catMaybes rawTxs
 
+getTxIDsByBlockHash :: Handler App App ()
+getTxIDsByBlockHash = do
+    lg <- getLogger
+    hash <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getParam "hash")
+    pgNumber <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagenumber")
+    pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
+    res <- LE.try $ xGetTxIDsByBlockHash (fromJust hash) (fromMaybe 100 pgSize) (fromMaybe 1 pgNumber)
+    case res of
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: xGetTxIDsByBlockHash: " ++ show e
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+        Right (Just txids) -> writeBS $ BSL.toStrict $ Aeson.encode $ RespTxIDsByBlockHash txids
+        Right Nothing -> throwBadRequest
+
+getTxOutputSpendStatus :: Handler App App ()
+getTxOutputSpendStatus = do
+    txid <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getParam "txid")
+    index <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getParam "index")
+    lg <- getLogger
+    res <- LE.try $ xGetTxOutputSpendStatus (fromJust txid) (fromJust index)
+    case res of
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: xGetTxOutputSpendStatus: " ++ show e
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+        Right txss -> writeBS $ BSL.toStrict $ Aeson.encode $ RespTxOutputSpendStatus txss
+
 getOutputsByAddr :: Handler App App ()
 getOutputsByAddr = do
-    addr <- (DT.unpack . DTE.decodeUtf8 . fromJust) <$> getPostParam "addr"
-    psize <- (\p -> readMaybe =<< fmap (DT.unpack . DTE.decodeUtf8) p) <$> getPostParam "psize"
-    nominalTxIndex <- (\p -> readMaybe =<< fmap (DT.unpack . DTE.decodeUtf8) p) <$> getPostParam "nominalTxIndex"
+    addr <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getParam "address")
+    pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
+    nomTxInd <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "nominaltxind")
     bp2pEnv <- getBitcoinP2P
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
     lg <- getLogger
     res <-
         LE.try $
-        case convertToScriptHash net addr of
-            Just o -> xGetOutputsAddress o psize nominalTxIndex
+        case convertToScriptHash net $ fromJust addr of
+            Just o -> xGetOutputsAddress o pgSize nomTxInd
             Nothing -> return []
     case res of
         Left (e :: SomeException) -> do
@@ -206,46 +241,49 @@ getOutputsByAddr = do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
         Right ops -> do
-            writeBS $ BSL.toStrict $ Aeson.encode $ RespOutputsByAddress $ (\ao -> ao {aoAddress = addr}) <$> ops
+            writeBS $
+                BSL.toStrict $ Aeson.encode $ RespOutputsByAddress $ (\ao -> ao {aoAddress = fromJust addr}) <$> ops
 
 getOutputsByAddrs :: Handler App App ()
 getOutputsByAddrs = do
-    allMap <- getPostParams
-    let addrs = (DT.unpack . DTE.decodeUtf8) <$> (fromJust $ Map.lookup "addrs" allMap)
-    pgSize <- (\p -> readMaybe =<< fmap (DT.unpack . DTE.decodeUtf8) p) <$> getPostParam "psize"
-    nomTxInd <- (\p -> readMaybe =<< fmap (DT.unpack . DTE.decodeUtf8) p) <$> getPostParam "nominalTxIndex"
-    bp2pEnv <- getBitcoinP2P
-    let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
-    lg <- getLogger
-    let (shs, shMap) =
-            L.foldl'
-                (\(arr, m) x ->
-                     case convertToScriptHash net x of
-                         Just addr -> (addr : arr, Map.insert addr x m)
-                         Nothing -> (arr, m))
-                ([], Map.empty)
-                addrs
-    res <- LE.try $ xGetOutputsAddresses shs pgSize nomTxInd
-    case res of
-        Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: xGetOutputsAddress: " ++ show e
-            modifyResponse $ setResponseStatus 500 "Internal Server Error"
-            writeBS "INTERNAL_SERVER_ERROR"
-        Right ops -> do
-            writeBS $
-                BSL.toStrict $
-                Aeson.encode $
-                RespOutputsByAddresses $ (\ao -> ao {aoAddress = fromJust $ Map.lookup (aoAddress ao) shMap}) <$> ops
+    addresses <- (fmap $ words . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "address")
+    case addresses of
+        Just (addrs :: [String]) -> do
+            pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
+            nomTxInd <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "nominaltxind")
+            bp2pEnv <- getBitcoinP2P
+            let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
+            lg <- getLogger
+            let (shs, shMap) =
+                    L.foldl'
+                        (\(arr, m) x ->
+                            case convertToScriptHash net x of
+                                Just addr -> (addr : arr, Map.insert addr x m)
+                                Nothing -> (arr, m))
+                        ([], Map.empty)
+                        addrs
+            res <- LE.try $ xGetOutputsAddresses shs pgSize nomTxInd
+            case res of
+                Left (e :: SomeException) -> do
+                    err lg $ LG.msg $ "Error: xGetOutputsAddress: " ++ show e
+                    modifyResponse $ setResponseStatus 500 "Internal Server Error"
+                    writeBS "INTERNAL_SERVER_ERROR"
+                Right ops -> do
+                    writeBS $
+                        BSL.toStrict $
+                        Aeson.encode $
+                        RespOutputsByAddresses $ (\ao -> ao {aoAddress = fromJust $ Map.lookup (aoAddress ao) shMap}) <$> ops
+        Nothing -> throwBadRequest
 
 getOutputsByScriptHash :: Handler App App ()
 getOutputsByScriptHash = do
-    sh <- (DT.unpack . DTE.decodeUtf8 . fromJust) <$> getPostParam "scriptHash"
-    psize <- (\p -> readMaybe =<< fmap (DT.unpack . DTE.decodeUtf8) p) <$> getPostParam "psize"
-    nominalTxIndex <- (\p -> readMaybe =<< fmap (DT.unpack . DTE.decodeUtf8) p) <$> getPostParam "nominalTxIndex"
+    sh <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getParam "scripthash")
+    pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
+    nomTxInd <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "nominaltxind")
     bp2pEnv <- getBitcoinP2P
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
     lg <- getLogger
-    res <- LE.try $ xGetOutputsAddress sh psize nominalTxIndex
+    res <- LE.try $ xGetOutputsAddress (fromJust sh) pgSize nomTxInd
     case res of
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
@@ -255,24 +293,26 @@ getOutputsByScriptHash = do
 
 getOutputsByScriptHashes :: Handler App App ()
 getOutputsByScriptHashes = do
-    allMap <- getPostParams
-    let shs = (DT.unpack . DTE.decodeUtf8) <$> (fromJust $ Map.lookup "scriptHashes" allMap)
-    pgSize <- (\p -> readMaybe =<< fmap (DT.unpack . DTE.decodeUtf8) p) <$> getPostParam "psize"
-    nomTxInd <- (\p -> readMaybe =<< fmap (DT.unpack . DTE.decodeUtf8) p) <$> getPostParam "nominalTxIndex"
-    bp2pEnv <- getBitcoinP2P
-    let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
-    lg <- getLogger
-    res <- LE.try $ xGetOutputsAddresses shs pgSize nomTxInd
-    case res of
-        Left (e :: SomeException) -> do
-            modifyResponse $ setResponseStatus 500 "Internal Server Error"
-            writeBS "INTERNAL_SERVER_ERROR"
-        Right ops -> do
-            writeBS $ BSL.toStrict $ Aeson.encode $ RespOutputsByScriptHashes $ addressToScriptOutputs <$> ops
+    shs <- (fmap $ words . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "scripthash")
+    case shs of
+        Just sh -> do
+            pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
+            nomTxInd <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "nominaltxind")
+            bp2pEnv <- getBitcoinP2P
+            let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
+            lg <- getLogger
+            res <- LE.try $ xGetOutputsAddresses sh pgSize nomTxInd
+            case res of
+                Left (e :: SomeException) -> do
+                    modifyResponse $ setResponseStatus 500 "Internal Server Error"
+                    writeBS "INTERNAL_SERVER_ERROR"
+                Right ops -> do
+                    writeBS $ BSL.toStrict $ Aeson.encode $ RespOutputsByScriptHashes $ addressToScriptOutputs <$> ops
+        Nothing -> throwBadRequest
 
 getMNodesByTxID :: Handler App App ()
 getMNodesByTxID = do
-    txId <- (DT.unpack . DTE.decodeUtf8 . fromJust) <$> getParam "txId"
+    txId <- (DT.unpack . DTE.decodeUtf8 . fromJust) <$> getParam "txid"
     res <- LE.try $ xGetMerkleBranch txId
     case res of
         Left (e :: SomeException) -> do
@@ -283,46 +323,35 @@ getMNodesByTxID = do
 
 getOutpointsByName :: Handler App App ()
 getOutpointsByName = do
-    name <- (DT.unpack . DTE.decodeUtf8 . fromJust) <$> getPostParam "name"
-    isProducer <- (read . DT.unpack . DTE.decodeUtf8 . fromJust) <$> getPostParam "isProducer"
-    res <- LE.try $ xGetAllegoryNameBranch name isProducer
+    name <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getParam "name")
+    isProducer <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "isProducer")
+    res <- LE.try $ xGetAllegoryNameBranch (fromJust name) (fromJust isProducer)
     case res of
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
-        Right ops ->
-            writeBS $ BSL.toStrict $ Aeson.encode $ RespAllegoryNameBranch ops
+        Right ops -> writeBS $ BSL.toStrict $ Aeson.encode $ RespAllegoryNameBranch ops
 
-getRelayTx :: Handler App App ()
-getRelayTx = do
-    tx <- fromJust <$> getParam "tx"
-    res <- LE.try $ xRelayTx tx
+relayTx :: RPCReqParams' -> Handler App App ()
+relayTx RelayTx {..} = do
+    res <- LE.try $ xRelayTx rTx
     case res of
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
-        Right ops ->
-            writeBS $ BSL.toStrict $ Aeson.encode $ RespRelayTx ops
+        Right ops -> writeBS $ BSL.toStrict $ Aeson.encode $ RespRelayTx ops
+getRelayTx _ = throwBadRequest
 
-getPartiallySignedAllegoryTx :: Handler App App ()
-getPartiallySignedAllegoryTx = do
-    allMap <- getPostParams
-    let payipsE = sequence $ (Aeson.eitherDecode . BSL.fromStrict) <$> (fromJust $ Map.lookup "payips" allMap)
-    when (Either.isLeft payipsE) $ do
-        modifyResponse $ setResponseStatus 400 "Bad Request"
-        writeBS "400 error"
-    let payips = Either.fromRight [] payipsE
-    name <- (read . DT.unpack . DTE.decodeUtf8 . fromJust) <$> getPostParam "name"
-    isProducer <- (read . DT.unpack . DTE.decodeUtf8 . fromJust) <$> getPostParam "isProducer"
-    owner <- (DT.unpack . DTE.decodeUtf8 . fromJust) <$> getPostParam "owner"
-    change <- (DT.unpack . DTE.decodeUtf8 . fromJust) <$> getPostParam "change"
-    res <- LE.try $ xGetPartiallySignedAllegoryTx payips (name, isProducer) owner change
+getPartiallySignedAllegoryTx :: RPCReqParams' -> Handler App App ()
+getPartiallySignedAllegoryTx GetPartiallySignedAllegoryTx {..} = do
+    res <- LE.try $ xGetPartiallySignedAllegoryTx gpsaPaymentInputs gpsaName gpsaOutputOwner gpsaOutputChange
     case res of
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
         Right ops -> do
             writeBS $ BSL.toStrict $ Aeson.encode $ RespPartiallySignedAllegoryTx ops
+getPartiallySignedAllegoryTx _ = throwBadRequest
 
 --- |
 -- Helper functions
@@ -333,11 +362,26 @@ withAuth onSuccess = do
     let mh = getHeader "Authorization" rq
     let h = parseAuthorizationHeader mh
     uok <- liftIO $ testAuthHeader env h
+    modifyResponse (setContentType "application/json")
     if uok
         then onSuccess
         else case h of
                  Nothing -> throwChallenge
                  Just _ -> throwDenied
+
+withReq :: Aeson.FromJSON a => (a -> Handler App App ()) -> Handler App App ()
+withReq handler = do
+    rq <- getRequest
+    let ct = getHeader "content-type" rq <|> (getHeader "Content-Type" rq) <|> (getHeader "Content-type" rq)
+    if ct == Just "application/json"
+        then do
+            bsReq <- readRequestBody (8 * 2048)
+            case Aeson.eitherDecode bsReq of
+                Right r -> handler r
+                Left err -> do
+                    modifyResponse $ setResponseStatus 400 "Bad Request"
+                    writeBS "400 error"
+        else throwBadRequest
 
 parseAuthorizationHeader :: Maybe B.ByteString -> Maybe B.ByteString
 parseAuthorizationHeader bs =
@@ -387,3 +431,8 @@ throwDenied :: Handler App App ()
 throwDenied = do
     modifyResponse $ setResponseStatus 403 "Access Denied"
     writeBS "Access Denied"
+
+throwBadRequest :: Handler App App ()
+throwBadRequest = do
+    modifyResponse $ setResponseStatus 400 "Bad Request"
+    writeBS "Bad Request"

@@ -105,8 +105,8 @@ data EndPointConnection =
         , encodingFormat :: IORef EncodingFormat
         }
 
-xGetChainInfo :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Network -> m (Maybe ChainInfo)
-xGetChainInfo net = do
+xGetChainInfo :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m (Maybe ChainInfo)
+xGetChainInfo = do
     dbe <- getDB
     lg <- getLogger
     let conn = keyValDB $ dbe
@@ -319,7 +319,7 @@ xGetBlocksHeights heights = do
             err lg $ LG.msg $ "Error: xGetBlockHeights: " ++ show e
             throw KeyValueDBLookupException
 
-xGetTxIDsByBlockHash :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => DT.Text -> Int32 -> Int32 -> m (Maybe [String])
+xGetTxIDsByBlockHash :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => String -> Int32 -> Int32 -> m (Maybe [String])
 xGetTxIDsByBlockHash hash pgSize pgNum = do
     dbe <- getDB
     lg <- getLogger
@@ -331,7 +331,7 @@ xGetTxIDsByBlockHash hash pgSize pgNum = do
         txTakeFromLast = fromIntegral $ (pgSize + txsToSkip) `mod` 100
         str = "SELECT page_number, txids from xoken.blockhash_txids where block_hash = ? and page_number in ? "
         qstr = str :: Q.QueryString Q.R (DT.Text, [Int32]) (Int32, Set DT.Text)
-        p = Q.defQueryParams Q.One $ (hash, [firstPage..lastPage])
+        p = Q.defQueryParams Q.One $ (DT.pack hash, [firstPage..lastPage])
     res <- liftIO $ try $ Q.runClient conn (Q.query qstr p)
     case res of
         Right iop -> do
@@ -986,7 +986,7 @@ goGetResource msg net roles = do
                                       RPCError INVALID_PARAMS (Just "User lacks permission to create users")
                 _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "CHAIN_INFO" -> do
-            cw <- xGetChainInfo net
+            cw <- xGetChainInfo
             case cw of
                 Just c -> return $ RPCResponse 200 $ Right $ Just $ RespChainInfo c
                 Nothing -> return $ RPCResponse 404 $ Left $ RPCError INVALID_REQUEST Nothing
@@ -1021,7 +1021,7 @@ goGetResource msg net roles = do
         "HASH->[TXID]" -> do
             case methodParams $ rqParams msg of
                 Just (GetTxIDsByBlockHash hash pgSize pgNum) -> do
-                    txids <- xGetTxIDsByBlockHash (DT.pack hash) pgSize pgNum
+                    txids <- xGetTxIDsByBlockHash hash pgSize pgNum
                     case txids of
                         Just t -> return $ RPCResponse 200 $ Right $ Just $ RespTxIDsByBlockHash t
                         Nothing -> return $ RPCResponse 404 $ Left $ RPCError INVALID_REQUEST Nothing
@@ -1132,7 +1132,7 @@ goGetResource msg net roles = do
                             liftIO $ print e
                             return $ RPCResponse 400 $ Left $ RPCError INTERNAL_ERROR Nothing 
                 _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing 
-        "TX_SPEND_STATUS" -> do
+        "OUTPOINT->SPEND_STATUS" -> do
             case methodParams $ rqParams msg of
                 Just (GetTxOutputSpendStatus txid index) -> do
                     txss <- xGetTxOutputSpendStatus txid index
