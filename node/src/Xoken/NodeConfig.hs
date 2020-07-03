@@ -34,7 +34,6 @@ data NodeConfig =
         , endPointTLSListenPort :: PortNumber
         , endPointHTTPListenIP :: String
         , endPointHTTPListenPort :: PortNumber
-        , indexUnconfirmedTx :: Bool
         , allegoryVendorSecretKey :: SecKey
         , maxTxProcThreads :: Int
         , maxBitcoinPeerCount :: Int
