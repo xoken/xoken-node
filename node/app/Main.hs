@@ -46,6 +46,7 @@ import Control.Monad.Loops
 import Control.Monad.Reader
 import Control.Monad.Trans.Control
 import Control.Monad.Trans.Maybe
+import qualified Control.Monad.STM as CMS (atomically)
 import Data.Aeson.Encoding (encodingToLazyByteString, fromEncoding)
 import Data.Bits
 import qualified Data.ByteString as B
@@ -110,7 +111,7 @@ import System.Exit
 import System.FilePath
 import System.IO.Unsafe
 import qualified System.Logger as LG
-import qualified System.Logger.Class as LG
+import qualified System.Logger.Class as LGC
 import System.Posix.Daemon
 import System.Random
 import Text.Read (readMaybe)
@@ -243,13 +244,29 @@ runThreads config nodeConf bp2p conn lg p2pEnv certPaths = do
                                 withAsync runEgressBlockSync $ \_ -> do
                                     withAsync (handleNewConnectionRequest epHandler) $ \_ -> do
                                         withAsync runPeerSync $ \_ -> do
-                                            withAsync runWatchDog $ \z -> do
-                                                _ <- LA.wait z
-                                                return ())
+                                            withAsync runSyncStatusChecker $ \_ -> do
+                                                withAsync runWatchDog $ \z -> do
+                                                    _ <- LA.wait z
+                                                    return ())
         liftIO $ Q.shutdown conn
         liftIO $ threadDelay (5 * 1000000)
         conn <- makeKeyValDBConn
         return ()
+
+runSyncStatusChecker :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
+runSyncStatusChecker = do
+    lg <- getLogger
+    bp2pEnv <- getBitcoinP2P
+    conn <- keyValDB <$> getDB
+    -- wait 300 seconds before first check
+    liftIO $ threadDelay (300 * 1000000)
+    forever $ do
+        isSynced <- checkBlocksFullySynced conn
+        LG.debug lg $ LG.msg $ LG.val $ C.pack $ "Sync Status Checker: All blocks synced? " ++ if isSynced
+            then "Yes"
+            else "No"
+        liftIO $ CMS.atomically $ writeTVar (indexUnconfirmedTx bp2pEnv) isSynced
+        liftIO $ threadDelay (60 * 1000000)
 
 runWatchDog :: (HasXokenNodeEnv env m, MonadIO m) => m ()
 runWatchDog = do
@@ -347,7 +364,8 @@ defBitcoinP2P nodeCnf = do
     mq <- newTVarIO M.empty
     ts <- newTVarIO M.empty
     tbt <- MS.new $ maxTMTBuilderThreads nodeCnf
-    return $ BitcoinP2P nodeCnf g bp mv hl st ep tc (rpf, rpc) mq ts tbt
+    pub <- newTVarIO False
+    return $ BitcoinP2P nodeCnf g bp mv hl st ep tc (rpf, rpc) mq ts tbt pub
 
 initNexa :: IO ()
 initNexa = do
