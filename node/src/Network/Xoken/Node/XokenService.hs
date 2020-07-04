@@ -147,9 +147,15 @@ xGetBlockHash hash = do
     lg <- getLogger
     let conn = keyValDB (dbe)
         str =
-            "SELECT block_hash,block_height,block_header,block_size,tx_count,coinbase_tx from xoken.blocks_by_hash where block_hash = ?"
+            "SELECT block_hash,block_height,block_header,next_block_hash,block_size,tx_count,coinbase_tx from xoken.blocks_by_hash where block_hash = ?"
         qstr =
-            str :: Q.QueryString Q.R (Identity DT.Text) (DT.Text, Int32, DT.Text, Maybe Int32, Maybe Int32, Maybe Blob)
+            str :: Q.QueryString Q.R (Identity DT.Text) ( DT.Text
+                                                        , Int32
+                                                        , DT.Text
+                                                        , Maybe DT.Text
+                                                        , Maybe Int32
+                                                        , Maybe Int32
+                                                        , Maybe Blob)
         p = Q.defQueryParams Q.One $ Identity hash
     res <- LE.try $ Q.runClient conn (Q.query qstr p)
     case res of
@@ -157,7 +163,7 @@ xGetBlockHash hash = do
             if length iop == 0
                 then return Nothing
                 else do
-                    let (hs, ht, hdr, size, txc, cbase) = iop !! 0
+                    let (hs, ht, hdr, nbhs, size, txc, cbase) = iop !! 0
                     case eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 hdr of
                         Right bh ->
                             return $
@@ -166,6 +172,7 @@ xGetBlockHash hash = do
                                 (fromIntegral ht)
                                 (DT.unpack hs)
                                 bh
+                                (maybe "" DT.unpack nbhs)
                                 (maybe (-1) fromIntegral size)
                                 (maybe (-1) fromIntegral txc)
                                 ("")
@@ -184,11 +191,12 @@ xGetBlocksHashes hashes = do
     lg <- getLogger
     let conn = keyValDB (dbe)
         str =
-            "SELECT block_hash,block_height,block_header,block_size,tx_count,coinbase_tx from xoken.blocks_by_hash where block_hash in ?"
+            "SELECT block_hash,block_height,block_header,next_block_hash,block_size,tx_count,coinbase_tx from xoken.blocks_by_hash where block_hash in ?"
         qstr =
             str :: Q.QueryString Q.R (Identity [DT.Text]) ( DT.Text
                                                           , Int32
                                                           , DT.Text
+                                                          , Maybe DT.Text
                                                           , Maybe Int32
                                                           , Maybe Int32
                                                           , Maybe Blob)
@@ -200,7 +208,7 @@ xGetBlocksHashes hashes = do
                 then return []
                 else do
                     case traverse
-                             (\(hs, ht, hdr, size, txc, cbase) ->
+                             (\(hs, ht, hdr, nbhs, size, txc, cbase) ->
                                   case (eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 hdr) of
                                       (Right bh) ->
                                           Right $
@@ -208,6 +216,7 @@ xGetBlocksHashes hashes = do
                                               (fromIntegral ht)
                                               (DT.unpack hs)
                                               bh
+                                              (maybe "" DT.unpack nbhs)
                                               (maybe (-1) fromIntegral size)
                                               (maybe (-1) fromIntegral txc)
                                               ("")
@@ -229,8 +238,14 @@ xGetBlockHeight height = do
     lg <- getLogger
     let conn = keyValDB (dbe)
         str =
-            "SELECT block_hash,block_height,block_header,block_size,tx_count,coinbase_tx from xoken.blocks_by_height where block_height = ?"
-        qstr = str :: Q.QueryString Q.R (Identity Int32) (DT.Text, Int32, DT.Text, Maybe Int32, Maybe Int32, Maybe Blob)
+            "SELECT block_hash,block_height,block_header,next_block_hash,block_size,tx_count,coinbase_tx from xoken.blocks_by_height where block_height = ?"
+        qstr = str :: Q.QueryString Q.R (Identity Int32) ( DT.Text
+                                                         , Int32
+                                                         , DT.Text
+                                                         , Maybe DT.Text
+                                                         , Maybe Int32
+                                                         , Maybe Int32
+                                                         , Maybe Blob)
         p = Q.defQueryParams Q.One $ Identity height
     res <- LE.try $ Q.runClient conn (Q.query qstr p)
     case res of
@@ -238,7 +253,7 @@ xGetBlockHeight height = do
             if length iop == 0
                 then return Nothing
                 else do
-                    let (hs, ht, hdr, size, txc, cbase) = iop !! 0
+                    let (hs, ht, hdr, nbhs, size, txc, cbase) = iop !! 0
                     case eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 hdr of
                         Right bh -> do
                             return $
@@ -247,6 +262,7 @@ xGetBlockHeight height = do
                                     (fromIntegral ht)
                                     (DT.unpack hs)
                                     bh
+                                    (maybe "" DT.unpack nbhs)
                                     (maybe (-1) fromIntegral size)
                                     (maybe (-1) fromIntegral txc)
                                     ("")
@@ -285,9 +301,15 @@ xGetBlocksHeights heights = do
     lg <- getLogger
     let conn = keyValDB (dbe)
         str =
-            "SELECT block_hash,block_height,block_header,block_size,tx_count,coinbase_tx from xoken.blocks_by_height where block_height in ?"
+            "SELECT block_hash,block_height,block_header,next_block_hash,block_size,tx_count,coinbase_tx from xoken.blocks_by_height where block_height in ?"
         qstr =
-            str :: Q.QueryString Q.R (Identity [Int32]) (DT.Text, Int32, DT.Text, Maybe Int32, Maybe Int32, Maybe Blob)
+            str :: Q.QueryString Q.R (Identity [Int32]) ( DT.Text
+                                                        , Int32
+                                                        , DT.Text
+                                                        , Maybe DT.Text
+                                                        , Maybe Int32
+                                                        , Maybe Int32
+                                                        , Maybe Blob)
         p = Q.defQueryParams Q.One $ Identity $ heights
     res <- LE.try $ Q.runClient conn (Q.query qstr p)
     case res of
@@ -296,7 +318,7 @@ xGetBlocksHeights heights = do
                 then return []
                 else do
                     case traverse
-                             (\(hs, ht, hdr, size, txc, cbase) ->
+                             (\(hs, ht, hdr, nbhs, size, txc, cbase) ->
                                   case (eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 hdr) of
                                       (Right bh) ->
                                           Right $
@@ -304,6 +326,7 @@ xGetBlocksHeights heights = do
                                               (fromIntegral ht)
                                               (DT.unpack hs)
                                               bh
+                                              (maybe "" DT.unpack nbhs)
                                               (maybe (-1) fromIntegral size)
                                               (maybe (-1) fromIntegral txc)
                                               ("")

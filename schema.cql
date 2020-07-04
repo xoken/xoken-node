@@ -14,6 +14,7 @@ CREATE TABLE xoken.transactions (
 CREATE TABLE xoken.blocks_by_hash (
     block_hash text PRIMARY KEY,
     block_header text,
+    next_block_hash text,
     block_height int,
     block_size int,
     tx_count int,
@@ -68,6 +69,7 @@ CREATE TABLE xoken.txid_outputs (
 CREATE TABLE xoken.blocks_by_height (
     block_height int PRIMARY KEY,
     block_hash text,
+    next_block_hash text,
     block_header text,
     block_size int,
     tx_count int,
