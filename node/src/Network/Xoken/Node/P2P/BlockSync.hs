@@ -610,7 +610,9 @@ processConfTransaction tx bhash txind blkht = do
              updateTxIdOutputs conn False output bi (prevOutpoint, i))
         (inAddrs)
     --
-    let fees = 0 -- TODO : compute fees here, (total inputs value) - (total outputs value)
+    let ipSum = foldl (+) 0 $ (\(_, _, val) -> val) <$> inputs
+        opSum = foldl (+) 0 $ (\(_, a, _) -> fromIntegral $ outValue a) <$> outAddrs
+        fees = ipSum - opSum
     --
     let str = "insert INTO xoken.transactions ( tx_id, block_info, tx_serialized , inputs, fees) values (?, ?, ?, ?, ?)"
         qstr = str :: Q.QueryString Q.W (Text, ((Text, Int32), Int32), Blob, [((Text, Int32), Int32, Int64)], Int64) ()
