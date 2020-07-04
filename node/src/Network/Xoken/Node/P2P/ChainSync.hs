@@ -261,6 +261,10 @@ processHeaders hdrs = do
                 qstr1 = str1 :: Q.QueryString Q.W (Text, Text, Int32) ()
                 str2 = "insert INTO xoken.blocks_by_height (block_height, block_hash, block_header) values (?, ? , ? )"
                 qstr2 = str2 :: Q.QueryString Q.W (Int32, Text, Text) ()
+                str3 = "UPDATE xoken.blocks_by_hash SET next_block_hash=? where block_height=? ALLOW FILTERING"
+                qstr3 = str3 :: Q.QueryString Q.W (Text, Int32) ()
+                str4 = "UPDATE xoken.blocks_by_height SET next_block_hash=? where block_height=?"
+                qstr4 = str4 :: Q.QueryString Q.W (Text, Int32) ()
             debug lg $ LG.msg $ "indexed " ++ show (L.length indexed)
             liftIO $
                 mapConcurrently_
@@ -269,6 +273,7 @@ processHeaders hdrs = do
                              hdrJson = T.pack $ LC.unpack $ A.encode $ fst $ snd y
                              par1 = Q.defQueryParams Q.One (hdrHash, hdrJson, fst y)
                              par2 = Q.defQueryParams Q.One (fst y, hdrHash, hdrJson)
+                             par34 = Q.defQueryParams Q.One (hdrHash, (fst y) - 1)
                          res1 <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr1) par1)
                          case res1 of
                              Right () -> return ()
@@ -281,7 +286,22 @@ processHeaders hdrs = do
                              Right () -> return ()
                              Left (e :: SomeException) -> do
                                  err lg $ LG.msg ("Error: INSERT into 'blocks_by_height' failed: " ++ show e)
-                                 throw KeyValueDBInsertException)
+                                 throw KeyValueDBInsertException
+                         if fst y > 1
+                             then do
+                                res3 <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr3) par34)
+                                case res3 of
+                                    Right () -> return ()
+                                    Left (e :: SomeException) -> do
+                                        err lg $ LG.msg ("Error: UPDATE next_block_hash into 'blocks_hash' failed: " ++ show e)
+                                        throw KeyValueDBInsertException
+                                res4 <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr3) par34)
+                                case res4 of
+                                    Right () -> return ()
+                                    Left (e :: SomeException) -> do
+                                        err lg $ LG.msg ("Error: UPDATE next_block_hash into 'blocks_height' failed: " ++ show e)
+                                        throw KeyValueDBInsertException
+                             else return ())
                     indexed
             unless (L.null indexed) $ do
                 updateChainWork indexed conn
