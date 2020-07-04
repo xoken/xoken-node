@@ -434,28 +434,23 @@ commitScriptHashOutputs ::
        (HasLogger m, MonadIO m)
     => Q.ClientState
     -> Text -- address
-    -> Bool -- isTypeRecv
     -> (Text, Int32) -- output (txid, index)
     -> ((Text, Int32), Int32) -- blockInfo ((blockHash, blockHeight), blockTxIndex)
     -> m ()
-commitScriptHashOutputs conn sh typeRecv output blockInfo = do
+commitScriptHashOutputs conn sh output blockInfo = do
     lg <- getLogger
-    if typeRecv == True
-        then do
-            let blkHeight = fromIntegral $ snd . fst $ blockInfo
-                txIndex = fromIntegral $ snd blockInfo
-                nominalTxIndex = blkHeight * 1000000000 + txIndex
-                strAddrOuts =
-                    "INSERT INTO xoken.script_hash_outputs (script_hash, nominal_tx_index, output) VALUES (?,?,?,?,?)"
-                qstrAddrOuts = strAddrOuts :: Q.QueryString Q.W (Text, Int64, (Text, Int32)) ()
-                parAddrOuts = Q.defQueryParams Q.One (sh, nominalTxIndex, output)
-            resAddrOuts <- liftIO $ try $ Q.runClient conn (Q.write (qstrAddrOuts) parAddrOuts)
-            case resAddrOuts of
-                Right () -> return ()
-                Left (e :: SomeException) -> do
-                    err lg $ LG.msg $ "Error: INSERTing into 'script_hash_outputs': " ++ show e
-                    throw KeyValueDBInsertException
-        else return ()
+    let blkHeight = fromIntegral $ snd . fst $ blockInfo
+        txIndex = fromIntegral $ snd blockInfo
+        nominalTxIndex = blkHeight * 1000000000 + txIndex
+        strAddrOuts = "INSERT INTO xoken.script_hash_outputs (script_hash, nominal_tx_index, output) VALUES (?,?,?,?,?)"
+        qstrAddrOuts = strAddrOuts :: Q.QueryString Q.W (Text, Int64, (Text, Int32)) ()
+        parAddrOuts = Q.defQueryParams Q.One (sh, nominalTxIndex, output)
+    resAddrOuts <- liftIO $ try $ Q.runClient conn (Q.write (qstrAddrOuts) parAddrOuts)
+    case resAddrOuts of
+        Right () -> return ()
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: INSERTing into 'script_hash_outputs': " ++ show e
+            throw KeyValueDBInsertException
 
 insertTxIdOutputs ::
        (HasLogger m, MonadIO m)
@@ -595,7 +590,6 @@ processConfTransaction tx bhash txind blkht = do
              commitScriptHashOutputs
                  conn -- connection
                  sh -- scriptHash
-                 True -- isTypeRecv
                  output
                  bi
              return ())
@@ -605,8 +599,7 @@ processConfTransaction tx bhash txind blkht = do
              let bi = ((blockHashToHex bhash, fromIntegral blkht), fromIntegral txind)
              let prevOutpoint = (txHashToHex $ outPointHash $ prevOutput a, fromIntegral $ outPointIndex $ prevOutput a)
              let output = (txHashToHex $ txHash tx, i)
-             updateTxIdOutputs conn False output bi (prevOutpoint, i)
-             commitScriptHashOutputs conn (fromJust x) False (txHashToHex $ txHash tx, i) bi)
+             updateTxIdOutputs conn False output bi (prevOutpoint, i))
         (inAddrs)
     eres <- LE.try $ handleIfAllegoryTx tx True
     case eres of
