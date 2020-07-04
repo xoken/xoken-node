@@ -389,7 +389,7 @@ getTxOutputsData (txid, idx) = do
     dbe <- getDB
     lg <- getLogger
     let conn = keyValDB (dbe)
-        toStr = "SELECT block_info,is_output_spent,prev,value FROM xoken.txid_outputs WHERE txid=? AND idx=?"
+        toStr = "SELECT block_info,is_output_spent,inputs,value FROM xoken.txid_outputs WHERE txid=? AND idx=?"
         toQStr =
             toStr :: Q.QueryString Q.R (DT.Text, Int32) ( ((DT.Text, Int32), Int32)
                                                         , Bool
