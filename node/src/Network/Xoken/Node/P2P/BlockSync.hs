@@ -442,7 +442,7 @@ commitScriptHashOutputs conn sh output blockInfo = do
     let blkHeight = fromIntegral $ snd . fst $ blockInfo
         txIndex = fromIntegral $ snd blockInfo
         nominalTxIndex = blkHeight * 1000000000 + txIndex
-        strAddrOuts = "INSERT INTO xoken.script_hash_outputs (script_hash, nominal_tx_index, output) VALUES (?,?,?,?,?)"
+        strAddrOuts = "INSERT INTO xoken.script_hash_outputs (script_hash, nominal_tx_index, output) VALUES (?,?,?)"
         qstrAddrOuts = strAddrOuts :: Q.QueryString Q.W (Text, Int64, (Text, Int32)) ()
         parAddrOuts = Q.defQueryParams Q.One (sh, nominalTxIndex, output)
     resAddrOuts <- liftIO $ try $ Q.runClient conn (Q.write (qstrAddrOuts) parAddrOuts)
