@@ -509,7 +509,7 @@ updateTxIdOutputs conn isInsert (txid, idx) blockInfo (prevOutpoint, inputIndex)
     case res of
         Right () -> return ()
         Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: INSERTing into: txid_outputs " ++ show e
+            err lg $ LG.msg $ "Error: UPDATE'ing into: txid_outputs " ++ show e
             throw KeyValueDBInsertException
 
 commitTxPage ::
