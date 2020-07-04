@@ -474,9 +474,7 @@ data AddressOutputs =
         , aoBlockInfo :: BlockInfo'
         , aoNominalTxIndex :: Int64
         , aoIsOutputSpent :: Bool
---      , aoIsTypeReceive :: Bool
---      , aoOtherAddress :: String
-        , aoPrevOutpoint :: [(OutPoint', Int32)]
+        , aoPrevOutpoint :: [(OutPoint', Int32, Int64)]
         , aoValue :: Int64
         }
     deriving (Show, Generic, Hashable, Eq, Serialise)
@@ -491,9 +489,7 @@ data ScriptOutputs =
         , scBlockInfo :: BlockInfo'
         , scNominalTxIndex :: Int64
         , scIsOutputSpent :: Bool
---      , scIsTypeReceive :: Bool
---      , scOtherAddress :: String
-        , scPrevOutpoint :: [(OutPoint', Int32)]
+        , scPrevOutpoint :: [(OutPoint', Int32, Int64)]
         , scValue :: Int64
         }
     deriving (Show, Generic, Hashable, Eq, Serialise)
