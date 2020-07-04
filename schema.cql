@@ -46,8 +46,6 @@ CREATE TABLE xoken.script_hash_outputs (
     script_hash text,
     nominal_tx_index bigint,
     output frozen<tuple<text, int>>,
-    is_type_receive boolean,
-    other_address text,
     PRIMARY KEY (script_hash, nominal_tx_index, output)
 ) WITH CLUSTERING ORDER BY (nominal_tx_index DESC);
 
@@ -59,8 +57,7 @@ CREATE TABLE xoken.txid_outputs (
     spending_txid text,
     spending_index int,
     spending_tx_block_height int,
-    prev_outpoint frozen<tuple<text, int>>,
-    input_index int,
+    prev set  <frozen<tuple<frozen<tuple<text, int>>, int>>>,
     value bigint,
     PRIMARY KEY(txid, idx)
  );
