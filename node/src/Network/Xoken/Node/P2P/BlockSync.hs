@@ -610,15 +610,18 @@ processConfTransaction tx bhash txind blkht = do
              updateTxIdOutputs conn False output bi (prevOutpoint, i))
         (inAddrs)
     --
-    let str = "insert INTO xoken.transactions ( tx_id, block_info, tx_serialized , inputs) values (?, ?, ?, ?)"
-        qstr = str :: Q.QueryString Q.W (Text, ((Text, Int32), Int32), Blob, [((Text, Int32), Int32, Int64)]) ()
+    let fees = 0 -- TODO : compute fees here, (total inputs value) - (total outputs value)
+    --
+    let str = "insert INTO xoken.transactions ( tx_id, block_info, tx_serialized , inputs, fees) values (?, ?, ?, ?, ?)"
+        qstr = str :: Q.QueryString Q.W (Text, ((Text, Int32), Int32), Blob, [((Text, Int32), Int32, Int64)], Int64) ()
         par =
             Q.defQueryParams
                 Q.One
                 ( txHashToHex $ txHash tx
                 , ((blockHashToHex bhash, fromIntegral txind), fromIntegral blkht)
                 , Blob $ runPutLazy $ putLazyByteString $ S.encodeLazy tx
-                , inputs)
+                , inputs
+                , fees)
     res <- liftIO $ try $ Q.runClient conn (Q.write (qstr) par)
     case res of
         Right () -> return ()

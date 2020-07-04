@@ -10,6 +10,7 @@ CREATE TABLE xoken.transactions (
     block_info frozen<tuple<frozen<tuple<text, int>>, int>>,
     tx_serialized blob,
     inputs set  <frozen<tuple<frozen<tuple<text, int>>, int, bigint>>>,
+    fees bigint
 );
 
 CREATE TABLE xoken.blocks_by_hash (
