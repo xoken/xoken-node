@@ -9,7 +9,7 @@ CREATE TABLE xoken.transactions (
     tx_id text PRIMARY KEY,
     block_info frozen<tuple<frozen<tuple<text, int>>, int>>,
     tx_serialized blob,
-    inputs set  <frozen<tuple<frozen<tuple<text, int>>, int>>>,
+    inputs set  <frozen<tuple<frozen<tuple<text, int>>, int, bigint>>>,
 );
 
 CREATE TABLE xoken.blocks_by_hash (
@@ -58,7 +58,7 @@ CREATE TABLE xoken.txid_outputs (
     spending_txid text,
     spending_index int,
     spending_tx_block_height int,
-    inputs set  <frozen<tuple<frozen<tuple<text, int>>, int>>>,
+    inputs set  <frozen<tuple<frozen<tuple<text, int>>, int, bigint>>>,
     value bigint,
     PRIMARY KEY(txid, idx)
  );

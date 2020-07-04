@@ -47,6 +47,7 @@ import qualified Data.ByteString.Lazy.Char8 as LC
 import Data.ByteString.Short as BSS
 import Data.Function ((&))
 import Data.Functor.Identity
+import qualified Data.HashTable.IO as H
 import Data.Int
 import qualified Data.IntMap as I
 import qualified Data.List as L
@@ -458,7 +459,7 @@ insertTxIdOutputs ::
     -> Bool -- insert/update switch
     -> (Text, Int32) -- output (txid, index)
     -> ((Text, Int32), Int32) -- blockInfo ((blockHash, blockHeight), blockTxIndex)
-    -> [((Text, Int32), Int32)] -- (prevOutpoint, inputIndex)
+    -> [((Text, Int32), Int32, Int64)] -- (prevOutpoint, inputIndex, value)
     -> Int64 -- value
     -> m ()
 insertTxIdOutputs conn isInsert (txid, idx) blockInfo (inputs) value = do
@@ -473,7 +474,7 @@ insertTxIdOutputs conn isInsert (txid, idx) blockInfo (inputs) value = do
                                              , Maybe Text
                                              , Maybe Int32
                                              , Maybe Int32
-                                             , [((Text, Int32), Int32)]
+                                             , [((Text, Int32), Int32, Int64)]
                                              , Int64) ()
         parTxIdOuts = Q.defQueryParams Q.One (txid, idx, blockInfo, False, Nothing, Nothing, Nothing, inputs, value)
     res <- liftIO $ try $ Q.runClient conn $ (Q.write qstrTxIdOuts parTxIdOuts)
@@ -560,13 +561,34 @@ processConfTransaction tx bhash txind blkht = do
                      (txOut tx))
                 (txOut tx)
                 [0 :: Int32 ..]
-    let inputs =
-            map
-                (\(y, b, j) ->
-                     ( (txHashToHex $ outPointHash $ prevOutput b, fromIntegral $ outPointIndex $ prevOutput b)
-                     , j -- (prevOutpoint, inputIndex)
-                      ))
-                inAddrs
+    inputs <-
+        mapM
+            (\(y, b, j)
+                     -- lookup into tx outputs value cache
+              -> do
+                 tuple <- liftIO $ H.lookup (txOutputValuesCache bp2pEnv) (getTxShortHash $ txHash tx)
+                 val <-
+                     case tuple of
+                         Just (ftxh, indexvals) ->
+                             if ftxh == (outPointHash $ prevOutput b)
+                                 then do
+                                     let rr =
+                                             head $
+                                             filter
+                                                 (\x -> fst x == (fromIntegral $ outPointIndex $ prevOutput b))
+                                                 indexvals
+                                     return $ snd $ rr
+                                 else return 0 -- cache miss ; TODO: try read from DB, if that fails then do txSynchronizer with timeout then retry DB
+                         Nothing -> return 0 -- not in cache yet possible out of sequence tx processing ; TODO: wait txSynchronizer with timeout then retry DB
+                 return
+                     ((txHashToHex $ outPointHash $ prevOutput b, fromIntegral $ outPointIndex $ prevOutput b), j, val) -- (prevOutpoint, inputIndex)
+             )
+            inAddrs
+    --
+    -- cache compile output values 
+    let ovs = map (\(o, i) -> (i, fromIntegral $ outValue o)) (zip (txOut tx) [0 :: Int16 ..])
+    liftIO $ H.insert (txOutputValuesCache bp2pEnv) (getTxShortHash $ txHash tx) (txHash tx, ovs)
+    --
     mapM_
         (\(x, a, i) -> do
              let sh = txHashToHex $ TxHash $ sha256 (scriptOutput a)
@@ -589,7 +611,7 @@ processConfTransaction tx bhash txind blkht = do
         (inAddrs)
     --
     let str = "insert INTO xoken.transactions ( tx_id, block_info, tx_serialized , inputs) values (?, ?, ?, ?)"
-        qstr = str :: Q.QueryString Q.W (Text, ((Text, Int32), Int32), Blob, [((Text, Int32), Int32)]) ()
+        qstr = str :: Q.QueryString Q.W (Text, ((Text, Int32), Int32), Blob, [((Text, Int32), Int32, Int64)]) ()
         par =
             Q.defQueryParams
                 Q.One
