@@ -387,16 +387,16 @@ xGetTxHashes hashes = do
 getTxOutputsData ::
        (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
     => (DT.Text, Int32)
-    -> m (((DT.Text, Int32), Int32), Bool, (DT.Text, Int32), Int64)
+    -> m (((DT.Text, Int32), Int32), Bool, [((DT.Text, Int32), Int32)], Int64)
 getTxOutputsData (txid, idx) = do
     dbe <- getDB
     lg <- getLogger
     let conn = keyValDB (dbe)
-        toStr = "SELECT block_info,is_output_spent,prev_outpoint,value FROM xoken.txid_outputs WHERE txid=? AND idx=?"
+        toStr = "SELECT block_info,is_output_spent,prev,value FROM xoken.txid_outputs WHERE txid=? AND idx=?"
         toQStr =
             toStr :: Q.QueryString Q.R (DT.Text, Int32) ( ((DT.Text, Int32), Int32)
                                                         , Bool
-                                                        , (DT.Text, Int32)
+                                                        , [((DT.Text, Int32), Int32)]
                                                         , Int64)
         top = Q.defQueryParams Q.One (txid, idx)
     toRes <- LE.try $ Q.runClient conn (Q.query toQStr top)
@@ -424,13 +424,11 @@ xGetOutputsAddress address pgSize mbNomTxInd = do
             case mbNomTxInd of
                 (Just n) -> n
                 Nothing -> maxBound
-        aoStr = "SELECT script_hash,nominal_tx_index,output,is_type_receive,other_address FROM xoken.script_hash_outputs WHERE script_hash=? AND nominal_tx_index<?"
+        aoStr = "SELECT script_hash,nominal_tx_index,output FROM xoken.script_hash_outputs WHERE script_hash=? AND nominal_tx_index<?"
         aoQStr =
             aoStr :: Q.QueryString Q.R (DT.Text, Int64) ( DT.Text
                                                         , Int64
-                                                        , (DT.Text, Int32)
-                                                        , Bool
-                                                        , Maybe DT.Text)
+                                                        , (DT.Text, Int32))
         aop = Q.defQueryParams Q.One (DT.pack address, nominalTxIndex)
     aoRes <- LE.try $ Q.runClient conn (Q.query aoQStr (aop {pageSize = pgSize}))
     case aoRes of
@@ -438,20 +436,18 @@ xGetOutputsAddress address pgSize mbNomTxInd = do
             if length iop == 0 
             then return []
             else do
-                res <- sequence $ (\(_, _, (txid, idx), _, _) ->
+                res <- sequence $ (\(_, _, (txid, idx)) ->
                     getTxOutputsData (txid, idx)) <$> iop
-                return $ ((\((addr, nti, (op_txid, op_txidx), itr, oa), (((bsh, bht), bidx), ios, (oph, opi), val)) -> 
+                return $ ((\((addr, nti, (op_txid, op_txidx)), (((bsh, bht), bidx), ios, ips, val)) -> 
                         AddressOutputs
                             (DT.unpack addr)
                             (OutPoint' (DT.unpack op_txid) (fromIntegral op_txidx))
                             (BlockInfo' (DT.unpack bsh) (fromIntegral bidx) (fromIntegral bht))
                             nti
                             ios
-                            itr
-                            (if isJust oa
-                                then DT.unpack $ fromJust oa
-                                else "")
-                            (OutPoint' (DT.unpack oph) (fromIntegral opi))
+                            ((\((oph, opi), ii) -> 
+                                (OutPoint' (DT.unpack oph) (fromIntegral opi), fromIntegral ii)) <$>
+                                ips)
                             val) <$>) (zip iop res)
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetOutputsAddress':" ++ show e
