@@ -566,7 +566,11 @@ processConfTransaction tx bhash txind blkht = do
             (\(y, b, j)
                      -- lookup into tx outputs value cache
               -> do
-                 tuple <- liftIO $ H.lookup (txOutputValuesCache bp2pEnv) (getTxShortHash (txHash tx) 20)
+                 tuple <-
+                     liftIO $
+                     H.lookup
+                         (txOutputValuesCache bp2pEnv)
+                         (getTxShortHash (txHash tx) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
                  val <-
                      case tuple of
                          Just (ftxh, indexvals) ->
@@ -579,27 +583,28 @@ processConfTransaction tx bhash txind blkht = do
                                                  indexvals
                                      return $ snd $ rr
                                  else do
-                                     valFromDB <-
-                                         liftIO $
-                                         getSatValuesFromOutpoint
-                                             conn
-                                             (txSynchronizer bp2pEnv)
-                                             lg
-                                             net
-                                             (prevOutput b)
-                                             (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
-                                     return valFromDB
+                                     if (outPointHash nullOutPoint) == (outPointHash $ prevOutput b)
+                                         then return
+                                                  (fromIntegral $ computeSubsidy net $ (fromIntegral blkht :: Word32))
+                                         else liftIO $
+                                              getSatValuesFromOutpoint
+                                                  conn
+                                                  (txSynchronizer bp2pEnv)
+                                                  lg
+                                                  net
+                                                  (prevOutput b)
+                                                  (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
                          Nothing -> do
-                             valFromDB <-
-                                 liftIO $
-                                 getSatValuesFromOutpoint
-                                     conn
-                                     (txSynchronizer bp2pEnv)
-                                     lg
-                                     net
-                                     (prevOutput b)
-                                     (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
-                             return valFromDB
+                             if (outPointHash nullOutPoint) == (outPointHash $ prevOutput b)
+                                 then return (fromIntegral $ computeSubsidy net $ (fromIntegral blkht :: Word32))
+                                 else liftIO $
+                                      getSatValuesFromOutpoint
+                                          conn
+                                          (txSynchronizer bp2pEnv)
+                                          lg
+                                          net
+                                          (prevOutput b)
+                                          (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
                  return
                      ((txHashToHex $ outPointHash $ prevOutput b, fromIntegral $ outPointIndex $ prevOutput b), j, val) -- (prevOutpoint, inputIndex)
              )
@@ -607,7 +612,11 @@ processConfTransaction tx bhash txind blkht = do
     --
     -- cache compile output values 
     let ovs = map (\(o, i) -> (i, fromIntegral $ outValue o)) (zip (txOut tx) [0 :: Int16 ..])
-    liftIO $ H.insert (txOutputValuesCache bp2pEnv) (getTxShortHash (txHash tx) 20) (txHash tx, ovs)
+    liftIO $
+        H.insert
+            (txOutputValuesCache bp2pEnv)
+            (getTxShortHash (txHash tx) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
+            (txHash tx, ovs)
     --
     mapM_
         (\(x, a, i) -> do

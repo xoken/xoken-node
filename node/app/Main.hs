@@ -230,26 +230,25 @@ runThreads config nodeConf bp2p conn lg p2pEnv certPaths = do
     async $ Snap.serveSnaplet snapConfig (appInit xknEnv)
     withResource (pool $ graphDB dbh) (`BT.run` initAllegoryRoot genesisTx)
     -- run main workers
-    forever $ do
-        runFileLoggingT (toS $ Config.logFile config) $
-            runAppM
-                serviceEnv
-                (do initP2P config
-                    bp2pEnv <- getBitcoinP2P
-                    withAsync runEpochSwitcher $ \_ -> do
-                        withAsync setupSeedPeerConnection $ \_ -> do
-                            withAsync runEgressChainSync $ \_ -> do
-                                withAsync runEgressBlockSync $ \_ -> do
-                                    withAsync (handleNewConnectionRequest epHandler) $ \_ -> do
-                                        withAsync runPeerSync $ \_ -> do
-                                            withAsync runSyncStatusChecker $ \_ -> do
-                                                withAsync runWatchDog $ \z -> do
-                                                    _ <- LA.wait z
-                                                    return ())
-        liftIO $ Q.shutdown conn
-        liftIO $ threadDelay (5 * 1000000)
-        conn <- makeKeyValDBConn
-        return ()
+    runFileLoggingT (toS $ Config.logFile config) $
+        runAppM
+            serviceEnv
+            (do initP2P config
+                bp2pEnv <- getBitcoinP2P
+                withAsync runEpochSwitcher $ \_ -> do
+                    withAsync setupSeedPeerConnection $ \_ -> do
+                        withAsync runEgressChainSync $ \_ -> do
+                            withAsync runEgressBlockSync $ \_ -> do
+                                withAsync (handleNewConnectionRequest epHandler) $ \_ -> do
+                                    withAsync runPeerSync $ \_ -> do
+                                        withAsync runSyncStatusChecker $ \_ -> do
+                                            withAsync runWatchDog $ \z -> do
+                                                _ <- LA.wait z
+                                                return ())
+    liftIO $ Q.shutdown conn
+    liftIO $ destroyAllResources $ pool gdbState
+    liftIO $ putStrLn $ "quitting node after irrecoverable DB connection failure"
+    return ()
 
 runSyncStatusChecker :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
 runSyncStatusChecker = do
@@ -399,5 +398,18 @@ initNexa = do
     -- launch node --
     runNode cnf nodeCnf conn bp2p [certFP, keyFP, csrFP]
 
+relaunch :: IO ()
+relaunch =
+    forever $ do
+        let pid = "/tmp/nexa.pid.1"
+        running <- isRunning pid
+        if running
+            then threadDelay (30 * 1000000)
+            else do
+                runDetached (Just pid) (ToFile "nexa.log") initNexa
+                threadDelay (5000000)
+
 main :: IO ()
-main = runDetached (Just "/tmp/nexa.pid") (ToFile "nexa.log") initNexa
+main = do
+    let pid = "/tmp/nexa.pid.0"
+    runDetached (Just pid) (ToFile "nexa.log") relaunch
