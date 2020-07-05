@@ -369,27 +369,44 @@ xGetTxHash :: (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> m (Maybe RawTxRec
 xGetTxHash hash = do
     dbe <- getDB
     let conn = keyValDB (dbe)
-        str = "SELECT tx_id, block_info, tx_serialized from xoken.transactions where tx_id = ?"
-        qstr = str :: Q.QueryString Q.R (Identity DT.Text) (DT.Text, ((DT.Text, Int32), Int32), Blob)
+        str = "SELECT tx_id, block_info, tx_serialized, inputs, fees from xoken.transactions where tx_id = ?"
+        qstr = str :: Q.QueryString Q.R (Identity DT.Text) ( DT.Text
+                                                           , ((DT.Text, Int32), Int32)
+                                                           , Blob
+                                                           , Set ((DT.Text, Int32), Int32, Int64)
+                                                           , Int64)
         p = Q.defQueryParams Q.One $ Identity $ hash
     iop <- Q.runClient conn (Q.query qstr p)
     if length iop == 0
         then return Nothing
         else do
-            let (txid, ((bhash, txind), blkht), sz) = iop !! 0
+            let (txid, ((bhash, txind), blkht), sz, sinps, fees) = iop !! 0
+                inps = DCP.fromSet sinps
             return $
                 Just $
                 RawTxRecord
                     (DT.unpack txid)
                     (BlockInfo' (DT.unpack bhash) (fromIntegral txind) (fromIntegral blkht))
                     (fromBlob sz)
+                    [] -- txOutputs
+                    ((\((outTxId, outTxIndex),inpTxIndex,value) -> TxInput (DT.unpack outTxId)
+                                                                           outTxIndex
+                                                                           inpTxIndex
+                                                                           ""
+                                                                           value
+                                                                           "") <$> inps)
+                    fees
 
 xGetTxHashes :: (HasXokenNodeEnv env m, MonadIO m) => [DT.Text] -> m ([RawTxRecord])
 xGetTxHashes hashes = do
     dbe <- getDB
     let conn = keyValDB (dbe)
-        str = "SELECT tx_id, block_info, tx_serialized from xoken.transactions where tx_id in ?"
-        qstr = str :: Q.QueryString Q.R (Identity [DT.Text]) (DT.Text, ((DT.Text, Int32), Int32), Blob)
+        str = "SELECT tx_id, block_info, tx_serialized, inputs, fees from xoken.transactions where tx_id in ?"
+        qstr = str :: Q.QueryString Q.R (Identity [DT.Text]) ( DT.Text
+                                                           , ((DT.Text, Int32), Int32)
+                                                           , Blob
+                                                           , Set ((DT.Text, Int32), Int32, Int64)
+                                                           , Int64)
         p = Q.defQueryParams Q.One $ Identity $ hashes
     iop <- Q.runClient conn (Q.query qstr p)
     if length iop == 0
@@ -397,11 +414,20 @@ xGetTxHashes hashes = do
         else do
             return $
                 Data.List.map
-                    (\(txid, ((bhash, txind), blkht), sz) ->
-                         RawTxRecord
-                             (DT.unpack txid)
-                             (BlockInfo' (DT.unpack bhash) (fromIntegral txind) (fromIntegral blkht))
-                             (fromBlob sz))
+                    (\(txid, ((bhash, txind), blkht), sz, sinps, fees) ->
+                         let inps = DCP.fromSet sinps
+                         in RawTxRecord
+                                (DT.unpack txid)
+                                (BlockInfo' (DT.unpack bhash) (fromIntegral txind) (fromIntegral blkht))
+                                (fromBlob sz)
+                                [] -- txOutputs
+                                ((\((outTxId, outTxIndex),inpTxIndex,value) -> TxInput (DT.unpack outTxId)
+                                                                                       outTxIndex
+                                                                                       inpTxIndex
+                                                                                       ""
+                                                                                       value
+                                                                                       "") <$> inps)
+                            fees)
                     iop
 
 getTxOutputsData ::
@@ -1051,7 +1077,12 @@ goGetResource msg net roles = do
                                 Right rt ->
                                     return $
                                     RPCResponse 200 $
-                                    Right $ Just $ RespTransactionByTxID (TxRecord txId txBlockInfo rt)
+                                    Right $ Just $ RespTransactionByTxID (TxRecord txId
+                                                                                   txBlockInfo
+                                                                                   rt
+                                                                                   txOutputs
+                                                                                   txInputs
+                                                                                   fees)
                                 Left err -> return $ RPCResponse 400 $ Left $ RPCError INTERNAL_ERROR Nothing
                         Nothing -> return $ RPCResponse 200 $ Right Nothing
                 _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
@@ -1066,8 +1097,13 @@ goGetResource msg net roles = do
                 Just (GetTransactionsByTxIDs hashes) -> do
                     txs <- xGetTxHashes (DT.pack <$> hashes)
                     let rawTxs =
-                            (\RawTxRecord {..} ->
-                                 (TxRecord txId txBlockInfo) <$> (Extra.hush $ S.decodeLazy txSerialized)) <$>
+                            (\RawTxRecord {..} -> 
+                                 (TxRecord txId
+                                           txBlockInfo <$>
+                                           (Extra.hush $ S.decodeLazy txSerialized) <*>
+                                           (pure txOutputs) <*>
+                                           (pure txInputs) <*>
+                                           (pure fees))) <$>
                             txs
                     return $ RPCResponse 200 $ Right $ Just $ RespTransactionsByTxIDs $ catMaybes rawTxs
                 _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
