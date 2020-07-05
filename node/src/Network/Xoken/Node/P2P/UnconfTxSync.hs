@@ -291,7 +291,7 @@ processUnconfTransaction tx = do
                  tuple <-
                      liftIO $
                      H.lookup
-                         (unconfirmedTxOutputValuesCache bp2pEnv)
+                         (txOutputValuesCache bp2pEnv)
                          (getTxShortHash (txHash tx) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
                  val <-
                      case tuple of
@@ -332,7 +332,7 @@ processUnconfTransaction tx = do
     let ovs = map (\(o, i) -> (i, fromIntegral $ outValue o)) (zip (txOut tx) [0 :: Int16 ..])
     liftIO $
         H.insert
-            (unconfirmedTxOutputValuesCache bp2pEnv)
+            (txOutputValuesCache bp2pEnv)
             (getTxShortHash (txHash tx) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
             (txHash tx, ovs)
     --
