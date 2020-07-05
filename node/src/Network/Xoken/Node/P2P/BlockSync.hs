@@ -566,7 +566,11 @@ processConfTransaction tx bhash txind blkht = do
             (\(y, b, j)
                      -- lookup into tx outputs value cache
               -> do
-                 tuple <- liftIO $ H.lookup (txOutputValuesCache bp2pEnv) (getTxShortHash (txHash tx) 20)
+                 tuple <-
+                     liftIO $
+                     H.lookup
+                         (txOutputValuesCache bp2pEnv)
+                         (getTxShortHash (txHash tx) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
                  val <-
                      case tuple of
                          Just (ftxh, indexvals) ->
@@ -607,7 +611,11 @@ processConfTransaction tx bhash txind blkht = do
     --
     -- cache compile output values 
     let ovs = map (\(o, i) -> (i, fromIntegral $ outValue o)) (zip (txOut tx) [0 :: Int16 ..])
-    liftIO $ H.insert (txOutputValuesCache bp2pEnv) (getTxShortHash (txHash tx) 20) (txHash tx, ovs)
+    liftIO $
+        H.insert
+            (txOutputValuesCache bp2pEnv)
+            (getTxShortHash (txHash tx) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
+            (txHash tx, ovs)
     --
     mapM_
         (\(x, a, i) -> do
