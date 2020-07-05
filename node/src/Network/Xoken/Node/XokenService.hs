@@ -433,7 +433,7 @@ xGetTxHashes hashes = do
 getTxOutputsData ::
        (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
     => (DT.Text, Int32)
-    -> m (((DT.Text, Int32), Int32), Bool, Set ((DT.Text, Int32), Int32), Int64)
+    -> m (((DT.Text, Int32), Int32), Bool, Set ((DT.Text, Int32), Int32, Int64), Int64)
 getTxOutputsData (txid, idx) = do
     dbe <- getDB
     lg <- getLogger
@@ -442,7 +442,7 @@ getTxOutputsData (txid, idx) = do
         toQStr =
             toStr :: Q.QueryString Q.R (DT.Text, Int32) ( ((DT.Text, Int32), Int32)
                                                         , Bool
-                                                        , Set ((DT.Text, Int32), Int32)
+                                                        , Set ((DT.Text, Int32), Int32, Int64)
                                                         , Int64)
         top = Q.defQueryParams Q.One (txid, idx)
     toRes <- LE.try $ Q.runClient conn (Q.query toQStr top)
@@ -487,7 +487,7 @@ xGetOutputsAddress address pgSize mbNomTxInd = do
                                   (BlockInfo' (DT.unpack bsh) (fromIntegral bidx) (fromIntegral bht))
                                   nti
                                   ios
-                                  ((\((oph, opi), ii) -> (OutPoint' (DT.unpack oph) (fromIntegral opi), fromIntegral ii)) <$>
+                                  ((\((oph, opi), ii, ov) -> (OutPoint' (DT.unpack oph) (fromIntegral opi), fromIntegral ii, fromIntegral ov)) <$>
                                    (DCP.fromSet ips))
                                   val) <$>)
                             (zip iop res)
