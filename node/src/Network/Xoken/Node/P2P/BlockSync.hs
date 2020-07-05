@@ -578,8 +578,28 @@ processConfTransaction tx bhash txind blkht = do
                                                  (\x -> fst x == (fromIntegral $ outPointIndex $ prevOutput b))
                                                  indexvals
                                      return $ snd $ rr
-                                 else return 0 -- cache miss ; TODO: try read from DB, if that fails then do txSynchronizer with timeout then retry DB
-                         Nothing -> return 0 -- not in cache yet possible out of sequence tx processing ; TODO: wait txSynchronizer with timeout then retry DB
+                                 else do
+                                     valFromDB <-
+                                         liftIO $
+                                         getSatValuesFromOutpoint
+                                             conn
+                                             (txSynchronizer bp2pEnv)
+                                             lg
+                                             net
+                                             (prevOutput b)
+                                             (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
+                                     return valFromDB
+                         Nothing -> do
+                             valFromDB <-
+                                 liftIO $
+                                 getSatValuesFromOutpoint
+                                     conn
+                                     (txSynchronizer bp2pEnv)
+                                     lg
+                                     net
+                                     (prevOutput b)
+                                     (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
+                             return valFromDB
                  return
                      ((txHashToHex $ outPointHash $ prevOutput b, fromIntegral $ outPointIndex $ prevOutput b), j, val) -- (prevOutpoint, inputIndex)
              )
@@ -610,7 +630,9 @@ processConfTransaction tx bhash txind blkht = do
              updateTxIdOutputs conn False output bi (prevOutpoint, i))
         (inAddrs)
     --
-    let fees = 0 -- TODO : compute fees here, (total inputs value) - (total outputs value)
+    let ipSum = foldl (+) 0 $ (\(_, _, val) -> val) <$> inputs
+        opSum = foldl (+) 0 $ (\(_, a, _) -> fromIntegral $ outValue a) <$> outAddrs
+        fees = ipSum - opSum
     --
     let str = "insert INTO xoken.transactions ( tx_id, block_info, tx_serialized , inputs, fees) values (?, ?, ?, ?, ?)"
         qstr = str :: Q.QueryString Q.W (Text, ((Text, Int32), Int32), Blob, [((Text, Int32), Int32, Int64)], Int64) ()
@@ -639,7 +661,37 @@ processConfTransaction tx bhash txind blkht = do
         Just ev -> liftIO $ EV.signal $ ev
         Nothing -> return ()
 
---
+getSatValuesFromOutpoint ::
+       Q.ClientState -> (TVar (M.Map TxHash EV.Event)) -> Logger -> Network -> OutPoint -> Int -> IO (Int64)
+getSatValuesFromOutpoint conn txSync lg net outPoint waitSecs = do
+    let str = "SELECT value FROM xoken.txid_outputs WHERE txid=? AND idx=?"
+        qstr = str :: Q.QueryString Q.R (Text, Int32) (Identity Int64)
+        par = Q.defQueryParams Q.One $ (txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint)
+    res <- liftIO $ try $ Q.runClient conn (Q.query qstr par)
+    case res of
+        Right results -> do
+            if L.length results == 0
+                then do
+                    debug lg $
+                        LG.msg $
+                        "Tx not found: " ++ (show $ txHashToHex $ outPointHash outPoint) ++ "... waiting for event"
+                    event <- EV.new
+                    liftIO $ atomically $ modifyTVar' (txSync) (M.insert (outPointHash outPoint) event)
+                    tofl <- waitTimeout event (1000000 * (fromIntegral waitSecs))
+                    if tofl == False
+                        then do
+                            liftIO $ atomically $ modifyTVar' (txSync) (M.delete (outPointHash outPoint))
+                            debug lg $
+                                LG.msg $ "TxIDNotFoundException: " ++ (show $ txHashToHex $ outPointHash outPoint)
+                            throw TxIDNotFoundException
+                        else getSatValuesFromOutpoint conn txSync lg net outPoint waitSecs
+                else do
+                    let Identity val = head $ results
+                    return $ val
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: getSatValuesFromOutpoint: " ++ show e
+            throw e
+
 --
 --
 --
