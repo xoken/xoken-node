@@ -583,27 +583,28 @@ processConfTransaction tx bhash txind blkht = do
                                                  indexvals
                                      return $ snd $ rr
                                  else do
-                                     valFromDB <-
-                                         liftIO $
-                                         getSatValuesFromOutpoint
-                                             conn
-                                             (txSynchronizer bp2pEnv)
-                                             lg
-                                             net
-                                             (prevOutput b)
-                                             (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
-                                     return valFromDB
+                                     if (outPointHash nullOutPoint) == (outPointHash $ prevOutput b)
+                                         then return
+                                                  (fromIntegral $ computeSubsidy net $ (fromIntegral blkht :: Word32))
+                                         else liftIO $
+                                              getSatValuesFromOutpoint
+                                                  conn
+                                                  (txSynchronizer bp2pEnv)
+                                                  lg
+                                                  net
+                                                  (prevOutput b)
+                                                  (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
                          Nothing -> do
-                             valFromDB <-
-                                 liftIO $
-                                 getSatValuesFromOutpoint
-                                     conn
-                                     (txSynchronizer bp2pEnv)
-                                     lg
-                                     net
-                                     (prevOutput b)
-                                     (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
-                             return valFromDB
+                             if (outPointHash nullOutPoint) == (outPointHash $ prevOutput b)
+                                 then return (fromIntegral $ computeSubsidy net $ (fromIntegral blkht :: Word32))
+                                 else liftIO $
+                                      getSatValuesFromOutpoint
+                                          conn
+                                          (txSynchronizer bp2pEnv)
+                                          lg
+                                          net
+                                          (prevOutput b)
+                                          (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
                  return
                      ((txHashToHex $ outPointHash $ prevOutput b, fromIntegral $ outPointIndex $ prevOutput b), j, val) -- (prevOutpoint, inputIndex)
              )
