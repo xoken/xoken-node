@@ -170,7 +170,12 @@ getTxById = do
             writeBS "INTERNAL_SERVER_ERROR"
         Right (Just RawTxRecord {..}) -> do
             case S.decodeLazy txSerialized of
-                Right rt -> writeBS $ BSL.toStrict $ Aeson.encode $ RespTransactionByTxID (TxRecord txId txBlockInfo rt)
+                Right rt -> writeBS $ BSL.toStrict $ Aeson.encode $ RespTransactionByTxID (TxRecord txId
+                                                                                                    txBlockInfo
+                                                                                                    rt
+                                                                                                    txOutputs
+                                                                                                    txInputs
+                                                                                                    fees)
                 Left err -> do
                     modifyResponse $ setResponseStatus 400 "Bad Request"
                     writeBS "400 error"
@@ -190,7 +195,13 @@ getTxByIds = do
             writeBS "INTERNAL_SERVER_ERROR"
         Right txs -> do
             let rawTxs =
-                    (\RawTxRecord {..} -> (TxRecord txId txBlockInfo) <$> (Extra.hush $ S.decodeLazy txSerialized)) <$>
+                    (\RawTxRecord {..} -> 
+                        TxRecord txId
+                                 txBlockInfo <$>
+                                 (Extra.hush $ S.decodeLazy txSerialized) <*>
+                                 (pure txOutputs) <*>
+                                 (pure txInputs) <*>
+                                 (pure fees)) <$>
                     txs
             writeBS $ BSL.toStrict $ Aeson.encode $ RespTransactionsByTxIDs $ catMaybes rawTxs
 
