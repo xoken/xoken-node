@@ -55,10 +55,12 @@ import Network.Xoken.Constants
 import Network.Xoken.Crypto.Hash
 import Network.Xoken.Network.Common -- (GetData(..), MessageCommand(..), NetworkAddress(..))
 import Network.Xoken.Network.Message
+import Network.Xoken.Node.Data
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.GraphDB
 import Network.Xoken.Node.P2P.Common
 import Network.Xoken.Node.P2P.Types
+import Network.Xoken.Node.XokenService
 import Streamly
 import Streamly.Prelude ((|:), nil)
 import qualified Streamly.Prelude as S
@@ -257,18 +259,26 @@ processHeaders hdrs = do
                                                                  ("Does not match best-block, potential block re-org ")
                                                          return $ zip [(matchBHt + 1) ..] (headersList hdrs) -- potential re-org
                                              Nothing -> throw BlockHashNotFoundException
-            let str1 = "insert INTO xoken.blocks_by_hash (block_hash, block_header, block_height) values (?, ? , ? )"
-                qstr1 = str1 :: Q.QueryString Q.W (Text, Text, Int32) ()
-                str2 = "insert INTO xoken.blocks_by_height (block_height, block_hash, block_header) values (?, ? , ? )"
-                qstr2 = str2 :: Q.QueryString Q.W (Int32, Text, Text) ()
-            debug lg $ LG.msg $ "indexed " ++ show (L.length indexed)
+            let str1 = "insert INTO xoken.blocks_by_hash (block_hash, block_header, block_height, next_block_hash) values (?, ? , ?, ?)"
+                qstr1 = str1 :: Q.QueryString Q.W (Text, Text, Int32, Text) ()
+                str2 = "insert INTO xoken.blocks_by_height (block_height, block_hash, block_header, next_block_hash) values (?, ? , ?, ?)"
+                qstr2 = str2 :: Q.QueryString Q.W (Int32, Text, Text, Text) ()
+                str3 = "UPDATE xoken.blocks_by_hash SET next_block_hash=? where block_hash=?"
+                qstr3 = str3 :: Q.QueryString Q.W (Text, Text) ()
+                str4 = "UPDATE xoken.blocks_by_height SET next_block_hash=? where block_height=?"
+                qstr4 = str4 :: Q.QueryString Q.W (Text, Int32) ()
+                lenIndexed = L.length indexed
+            debug lg $ LG.msg $ "indexed " ++ show (lenIndexed)
             liftIO $
                 mapConcurrently_
-                    (\y -> do
+                    (\(ind,y) -> do
                          let hdrHash = blockHashToHex $ headerHash $ fst $ snd y
+                             nextHdrHash = if ind == (lenIndexed - 1)
+                                              then ""
+                                              else blockHashToHex $ headerHash $ fst $ snd $ (indexed !! (ind + 1))
                              hdrJson = T.pack $ LC.unpack $ A.encode $ fst $ snd y
-                             par1 = Q.defQueryParams Q.One (hdrHash, hdrJson, fst y)
-                             par2 = Q.defQueryParams Q.One (fst y, hdrHash, hdrJson)
+                         let par1 = Q.defQueryParams Q.One (hdrHash, hdrJson, fst y, nextHdrHash)
+                             par2 = Q.defQueryParams Q.One (fst y, hdrHash, hdrJson, nextHdrHash)
                          res1 <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr1) par1)
                          case res1 of
                              Right () -> return ()
@@ -282,8 +292,34 @@ processHeaders hdrs = do
                              Left (e :: SomeException) -> do
                                  err lg $ LG.msg ("Error: INSERT into 'blocks_by_height' failed: " ++ show e)
                                  throw KeyValueDBInsertException)
-                    indexed
+                    (zip [0..] indexed)
             unless (L.null indexed) $ do
+                let height = (fst $ head indexed) - 1
+                if height == 0
+                    then return ()
+                    else do
+                        blk <- xGetBlockHeight height
+                        case blk of
+                            Just b -> do
+                                let nextHdrHash = blockHashToHex $ headerHash $ fst $ snd $ head indexed
+                                    par3 = Q.defQueryParams Q.One (nextHdrHash, T.pack $ rbHash b)
+                                    par4 = Q.defQueryParams Q.One (nextHdrHash, height)
+                                res1 <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr3) par3)
+                                case res1 of
+                                    Right () -> return ()
+                                    Left (e :: SomeException) ->
+                                        liftIO $ do
+                                            err lg $ LG.msg ("Error: UPDATE into 'blocks_by_hash' failed: " ++ show e)
+                                            throw KeyValueDBInsertException
+                                res2 <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr4) par4)
+                                case res2 of
+                                    Right () -> return ()
+                                    Left (e :: SomeException) -> do
+                                        err lg $ LG.msg ("Error: UPDATE into 'blocks_by_height' failed: " ++ show e)
+                                        throw KeyValueDBInsertException
+                            Nothing -> do
+                                err lg $ LG.msg ("Error: SELECT from 'blocks_by_height' for height :" ++ show height)
+                                throw KeyValueDBLookupException
                 updateChainWork indexed conn
                 markBestBlock (blockHashToHex $ headerHash $ fst $ snd $ last $ indexed) (fst $ last indexed) conn
                 liftIO $ putMVar (bestBlockUpdated bp2pEnv) True

@@ -93,13 +93,13 @@ processTxGetData pr txHash = do
             let net = bitcoinNetwork $ nodeConfig bp2pEnv
             debug lg $ LG.msg $ val "processTxGetData - called."
             bp2pEnv <- getBitcoinP2P
-            tuple <- liftIO $ H.lookup (unconfirmedTxCache bp2pEnv) (getTxShortHash $ TxHash txHash)
+            tuple <- liftIO $ H.lookup (unconfirmedTxCache bp2pEnv) (getTxShortHash (TxHash txHash) 16)
             case tuple of
                 Just (st, fh) ->
                     if st == False
                         then do
                             liftIO $ threadDelay (1000000 * 30)
-                            tuple2 <- liftIO $ H.lookup (unconfirmedTxCache bp2pEnv) (getTxShortHash $ TxHash txHash)
+                            tuple2 <- liftIO $ H.lookup (unconfirmedTxCache bp2pEnv) (getTxShortHash (TxHash txHash) 16)
                             case tuple2 of
                                 Just (st2, fh2) ->
                                     if st2 == False
@@ -124,7 +124,7 @@ sendTxGetData pr txHash = do
             case res of
                 Right () ->
                     liftIO $
-                    H.insert (unconfirmedTxCache bp2pEnv) (getTxShortHash $ TxHash txHash) (False, TxHash txHash)
+                    H.insert (unconfirmedTxCache bp2pEnv) (getTxShortHash (TxHash txHash) 16) (False, TxHash txHash)
                 Left (e :: SomeException) -> debug lg $ LG.msg $ "Error, sending out data: " ++ show e
             debug lg $ LG.msg $ "sending out GetData: " ++ show (bpAddress pr)
         Nothing -> err lg $ LG.msg $ val "Error sending, no connections available"
@@ -271,7 +271,7 @@ processUnconfTransaction tx = do
     debug lg $ LG.msg ("processing Unconfirmed Transaction: " ++ show (txHash tx))
     res <- liftIO $ try $ Q.runClient conn (Q.write (qstr) par)
     case res of
-        Right () -> liftIO $ H.insert (unconfirmedTxCache bp2pEnv) (getTxShortHash $ txHash tx) (True, txHash tx)
+        Right () -> liftIO $ H.insert (unconfirmedTxCache bp2pEnv) (getTxShortHash (txHash tx) 16) (True, txHash tx)
         Left (e :: SomeException) -> do
             liftIO $ err lg $ LG.msg ("Error: INSERTing into 'xoken.ep_transactions': " ++ show e)
             throw KeyValueDBInsertException
