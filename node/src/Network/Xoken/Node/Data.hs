@@ -430,17 +430,25 @@ instance ToJSON BlockRecord where
 data RawTxRecord =
     RawTxRecord
         { txId :: String
+        --, size :: Int32 -- number of bytes of serialized tx
         , txBlockInfo :: BlockInfo'
         , txSerialized :: C.ByteString
+        , txOutputs :: [TxOutput]
+        , txInputs :: [TxInput]
+        , fees :: Int64
         }
     deriving (Show, Generic, Hashable, Eq, Serialise)
 
 instance ToJSON RawTxRecord where
-    toJSON (RawTxRecord tId tBI tS) =
+    toJSON (RawTxRecord tId tBI tS txo txi fees) =
         object
             [ "txId" .= tId
+            , "size" .= C.length tS
             , "txBlockInfo" .= tBI
             , "txSerialized" .= (T.decodeUtf8 . BL.toStrict . B64L.encode . GZ.compress $ tS)
+            , "txOutputs" .= txo
+            , "txInputs" .= txi
+            , "fees" .= fees
             ]
 
 data TxRecord =
@@ -448,8 +456,35 @@ data TxRecord =
         { txId :: String
         , txBlockInfo :: BlockInfo'
         , tx :: Tx
+        , txOutputs :: [TxOutput]
+        , txInputs :: [TxInput]
+        , fees :: Int64
         }
     deriving (Show, Generic, Hashable, Eq, Serialise, ToJSON)
+
+data TxInput =
+    TxInput
+        { outpointTxID :: String
+        , outpointIndex :: Int32
+        , txInputIndex :: Int32
+        , address :: String  -- decode will succeed for P2PKH txn 
+        , value :: Int64
+        , unlockingScript :: String  -- scriptSig
+        }
+    deriving (Show, Generic, Hashable, Eq, Serialise, ToJSON)
+
+
+data TxOutput = 
+    TxOutput
+        { outputIndex :: Int16 
+        , address :: String -- decode will succeed for P2PKH txn 
+        , spendingTxId :: Maybe String
+        , spendingTxIdx :: Maybe Int32
+        , isSpent :: Bool 
+        , value :: Int64 
+        , lockingScript :: String  -- Script Pub Key
+        }
+    deriving (Show, Generic, Hashable, Eq, Serialise, ToJSON)    
 
 data TxOutputSpendStatus =
     TxOutputSpendStatus
