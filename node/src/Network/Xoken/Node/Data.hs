@@ -430,7 +430,7 @@ instance ToJSON BlockRecord where
 data RawTxRecord =
     RawTxRecord
         { txId :: String
-        --, size :: Int32 -- number of bytes of serialized tx
+        , size :: Int32
         , txBlockInfo :: BlockInfo'
         , txSerialized :: C.ByteString
         , txOutputs :: [TxOutput]
@@ -440,10 +440,10 @@ data RawTxRecord =
     deriving (Show, Generic, Hashable, Eq, Serialise)
 
 instance ToJSON RawTxRecord where
-    toJSON (RawTxRecord tId tBI tS txo txi fees) =
+    toJSON (RawTxRecord tId sz tBI tS txo txi fees) =
         object
             [ "txId" .= tId
-            , "size" .= C.length tS
+            , "size" .= sz
             , "txBlockInfo" .= tBI
             , "txSerialized" .= (T.decodeUtf8 . BL.toStrict . B64L.encode . GZ.compress $ tS)
             , "txOutputs" .= txo
@@ -454,11 +454,19 @@ instance ToJSON RawTxRecord where
 data TxRecord =
     TxRecord
         { txId :: String
+        , size :: Int32
         , txBlockInfo :: BlockInfo'
-        , tx :: Tx
-        , txOutputs :: [TxOutput]
-        , txInputs :: [TxInput]
+        , tx :: Tx'
         , fees :: Int64
+        }
+    deriving (Show, Generic, Hashable, Eq, Serialise, ToJSON)
+
+data Tx' =
+    Tx' 
+        { txVersion :: Word32
+        , txOuts :: [TxOutput]
+        , txInps :: [TxInput]
+        , txLockTime :: Word32
         }
     deriving (Show, Generic, Hashable, Eq, Serialise, ToJSON)
 
@@ -643,3 +651,13 @@ validateEmail :: String -> Bool
 validateEmail email = let emailRegex = "^[a-zA-Z0-9+._-]+@[a-zA-Z-]+\\.[a-z]+$" :: String
                       in (email =~ emailRegex :: Bool) || (null email)
 
+mergeTxInTxInput :: TxIn -> TxInput -> TxInput
+mergeTxInTxInput (TxIn {..}) txInput = 
+    txInput {unlockingScript = T.unpack $ T.decodeUtf8 scriptInput}
+
+mergeTxOutTxOutput :: TxOut -> TxOutput -> TxOutput
+mergeTxOutTxOutput (TxOut {..}) txOutput = 
+    txOutput {lockingScript = T.unpack $ T.decodeUtf8 scriptOutput} 
+
+txToTx' :: Tx -> [TxOutput] -> [TxInput] -> Tx'
+txToTx' (Tx {..}) txout txin = Tx' txVersion txout txin txLockTime

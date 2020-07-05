@@ -382,19 +382,30 @@ xGetTxHash hash = do
         else do
             let (txid, ((bhash, txind), blkht), sz, sinps, fees) = iop !! 0
                 inps = DCP.fromSet sinps
+                tx = fromJust $ Extra.hush $ S.decodeLazy $ fromBlob sz
+            outs <- getTxOutputsData (txid, txind)
             return $
                 Just $
                 RawTxRecord
                     (DT.unpack txid)
+                    (fromIntegral $ C.length $ fromBlob sz)
                     (BlockInfo' (DT.unpack bhash) (fromIntegral txind) (fromIntegral blkht))
                     (fromBlob sz)
-                    [] -- txOutputs
-                    ((\((outTxId, outTxIndex),inpTxIndex,value) -> TxInput (DT.unpack outTxId)
-                                                                           outTxIndex
-                                                                           inpTxIndex
-                                                                           ""
-                                                                           value
-                                                                           "") <$> inps)
+                    []{-(zipWith mergeTxOutTxOutput (txOut tx) $ (\(_,spent,_,value,sTxId,sTxIdx)
+                                                                -> TxOutput 0
+                                                                            "address"
+                                                                            sTxId
+                                                                            sTxIdx
+                                                                            spent
+                                                                            value
+                                                                            "") <$> outs)-}
+                    (zipWith mergeTxInTxInput (txIn tx) $ (\((outTxId, outTxIndex),inpTxIndex,value)
+                                                                         -> TxInput (DT.unpack outTxId)
+                                                                                    outTxIndex
+                                                                                    inpTxIndex
+                                                                                    "address"
+                                                                                    value
+                                                                                    "") <$> inps)
                     fees
 
 xGetTxHashes :: (HasXokenNodeEnv env m, MonadIO m) => [DT.Text] -> m ([RawTxRecord])
@@ -418,6 +429,7 @@ xGetTxHashes hashes = do
                          let inps = DCP.fromSet sinps
                          in RawTxRecord
                                 (DT.unpack txid)
+                                (fromIntegral $ C.length $ fromBlob sz)
                                 (BlockInfo' (DT.unpack bhash) (fromIntegral txind) (fromIntegral blkht))
                                 (fromBlob sz)
                                 [] -- txOutputs
@@ -433,17 +445,19 @@ xGetTxHashes hashes = do
 getTxOutputsData ::
        (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
     => (DT.Text, Int32)
-    -> m (((DT.Text, Int32), Int32), Bool, Set ((DT.Text, Int32), Int32, Int64), Int64)
+    -> m (((DT.Text, Int32), Int32), Bool, Set ((DT.Text, Int32), Int32, Int64), Int64, Maybe DT.Text, Maybe Int32)
 getTxOutputsData (txid, idx) = do
     dbe <- getDB
     lg <- getLogger
     let conn = keyValDB (dbe)
-        toStr = "SELECT block_info,is_output_spent,inputs,value FROM xoken.txid_outputs WHERE txid=? AND idx=?"
+        toStr = "SELECT block_info,is_output_spent,inputs,value, spending_txid, spending_index FROM xoken.txid_outputs WHERE txid=? AND idx=?"
         toQStr =
             toStr :: Q.QueryString Q.R (DT.Text, Int32) ( ((DT.Text, Int32), Int32)
                                                         , Bool
                                                         , Set ((DT.Text, Int32), Int32, Int64)
-                                                        , Int64)
+                                                        , Int64
+                                                        , Maybe DT.Text
+                                                        , Maybe Int32)
         top = Q.defQueryParams Q.One (txid, idx)
     toRes <- LE.try $ Q.runClient conn (Q.query toQStr top)
     case toRes of
@@ -480,7 +494,7 @@ xGetOutputsAddress address pgSize mbNomTxInd = do
                 else do
                     res <- sequence $ (\(_, _, (txid, idx)) -> getTxOutputsData (txid, idx)) <$> iop
                     return $
-                        ((\((addr, nti, (op_txid, op_txidx)), (((bsh, bht), bidx), ios, ips, val)) ->
+                        ((\((addr, nti, (op_txid, op_txidx)), (((bsh, bht), bidx), ios, ips, val,_,_)) ->
                               AddressOutputs
                                   (DT.unpack addr)
                                   (OutPoint' (DT.unpack op_txid) (fromIntegral op_txidx))
@@ -1078,10 +1092,9 @@ goGetResource msg net roles = do
                                     return $
                                     RPCResponse 200 $
                                     Right $ Just $ RespTransactionByTxID (TxRecord txId
+                                                                                   size
                                                                                    txBlockInfo
-                                                                                   rt
-                                                                                   txOutputs
-                                                                                   txInputs
+                                                                                   (txToTx' rt txOutputs txInputs)
                                                                                    fees)
                                 Left err -> return $ RPCResponse 400 $ Left $ RPCError INTERNAL_ERROR Nothing
                         Nothing -> return $ RPCResponse 200 $ Right Nothing
@@ -1099,10 +1112,10 @@ goGetResource msg net roles = do
                     let rawTxs =
                             (\RawTxRecord {..} -> 
                                  (TxRecord txId
+                                           size
                                            txBlockInfo <$>
-                                           (Extra.hush $ S.decodeLazy txSerialized) <*>
-                                           (pure txOutputs) <*>
-                                           (pure txInputs) <*>
+                                           (txToTx' <$> (Extra.hush $ S.decodeLazy txSerialized) <*>
+                                                        (pure txOutputs) <*> (pure txInputs)) <*>
                                            (pure fees))) <$>
                             txs
                     return $ RPCResponse 200 $ Right $ Just $ RespTransactionsByTxIDs $ catMaybes rawTxs

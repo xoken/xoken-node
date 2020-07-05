@@ -43,6 +43,7 @@ import Network.Xoken.Node.Data
     , addressToScriptOutputs
     , aoAddress
     , coinbaseTxToMessage
+    , txToTx'
     )
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.HTTP.Types
@@ -171,10 +172,9 @@ getTxById = do
         Right (Just RawTxRecord {..}) -> do
             case S.decodeLazy txSerialized of
                 Right rt -> writeBS $ BSL.toStrict $ Aeson.encode $ RespTransactionByTxID (TxRecord txId
+                                                                                                    size
                                                                                                     txBlockInfo
-                                                                                                    rt
-                                                                                                    txOutputs
-                                                                                                    txInputs
+                                                                                                    (txToTx' rt txOutputs txInputs)
                                                                                                     fees)
                 Left err -> do
                     modifyResponse $ setResponseStatus 400 "Bad Request"
@@ -196,12 +196,12 @@ getTxByIds = do
         Right txs -> do
             let rawTxs =
                     (\RawTxRecord {..} -> 
-                        TxRecord txId
-                                 txBlockInfo <$>
-                                 (Extra.hush $ S.decodeLazy txSerialized) <*>
-                                 (pure txOutputs) <*>
-                                 (pure txInputs) <*>
-                                 (pure fees)) <$>
+                         (TxRecord txId
+                                   size
+                                   txBlockInfo <$>
+                                   (txToTx' <$> (Extra.hush $ S.decodeLazy txSerialized) <*>
+                                                (pure txOutputs) <*> (pure txInputs)) <*>
+                                   (pure fees))) <$>
                     txs
             writeBS $ BSL.toStrict $ Aeson.encode $ RespTransactionsByTxIDs $ catMaybes rawTxs
 
