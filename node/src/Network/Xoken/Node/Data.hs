@@ -475,7 +475,7 @@ data TxInput =
         { outpointTxID :: String
         , outpointIndex :: Int32
         , txInputIndex :: Int32
-        , address :: String  -- decode will succeed for P2PKH txn 
+        , address :: Maybe String  -- decode will succeed for P2PKH txn 
         , value :: Int64
         , unlockingScript :: String  -- scriptSig
         }
@@ -485,7 +485,7 @@ data TxInput =
 data TxOutput = 
     TxOutput
         { outputIndex :: Int16 
-        , address :: String -- decode will succeed for P2PKH txn 
+        , address :: Maybe String -- decode will succeed for P2PKH txn 
         , spendingTxId :: Maybe String
         , spendingTxIdx :: Maybe Int32
         , isSpent :: Bool 
@@ -651,13 +651,17 @@ validateEmail :: String -> Bool
 validateEmail email = let emailRegex = "^[a-zA-Z0-9+._-]+@[a-zA-Z-]+\\.[a-z]+$" :: String
                       in (email =~ emailRegex :: Bool) || (null email)
 
-mergeTxInTxInput :: TxIn -> TxInput -> TxInput
-mergeTxInTxInput (TxIn {..}) txInput = 
-    txInput {unlockingScript = T.unpack $ T.decodeUtf8 scriptInput}
+mergeAddrTxInTxInput :: Maybe String -> TxIn -> TxInput -> TxInput
+mergeAddrTxInTxInput addr (TxIn {..}) txInput = 
+    txInput { unlockingScript = T.unpack $ T.decodeUtf8 scriptInput
+            , address = addr
+            }
 
-mergeTxOutTxOutput :: TxOut -> TxOutput -> TxOutput
-mergeTxOutTxOutput (TxOut {..}) txOutput = 
-    txOutput {lockingScript = T.unpack $ T.decodeUtf8 scriptOutput} 
+mergeAddrTxOutTxOutput :: Maybe String -> TxOut -> TxOutput -> TxOutput
+mergeAddrTxOutTxOutput addr (TxOut {..}) txOutput = 
+    txOutput { lockingScript = T.unpack $ T.decodeUtf8 scriptOutput
+             , address = addr
+             }
 
 txToTx' :: Tx -> [TxOutput] -> [TxInput] -> Tx'
 txToTx' (Tx {..}) txout txin = Tx' txVersion txout txin txLockTime

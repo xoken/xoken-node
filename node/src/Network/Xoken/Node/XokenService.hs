@@ -368,7 +368,9 @@ xGetTxIDsByBlockHash hash pgSize pgNum = do
 xGetTxHash :: (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> m (Maybe RawTxRecord)
 xGetTxHash hash = do
     dbe <- getDB
+    bp2pEnv <- getBitcoinP2P
     let conn = keyValDB (dbe)
+        net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
         str = "SELECT tx_id, block_info, tx_serialized, inputs, fees from xoken.transactions where tx_id = ?"
         qstr = str :: Q.QueryString Q.R (Identity DT.Text) ( DT.Text
                                                            , ((DT.Text, Int32), Int32)
@@ -383,6 +385,23 @@ xGetTxHash hash = do
             let (txid, ((bhash, txind), blkht), sz, sinps, fees) = iop !! 0
                 inps = DCP.fromSet sinps
                 tx = fromJust $ Extra.hush $ S.decodeLazy $ fromBlob sz
+                inAddrs =
+                    (fmap (\x -> do
+                            case decodeInputBS net $ scriptInput x of
+                                Left e -> Nothing
+                                Right is ->
+                                    case inputAddress is of
+                                        Just s -> DT.unpack <$> addrToString net s
+                                        Nothing -> Nothing)
+                        (txIn tx))
+                outAddrs =
+                    (catMaybes $
+                        fmap
+                            (\y ->
+                                case scriptToAddressBS $ scriptOutput y of
+                                    Left e -> Nothing
+                                    Right os -> addrToString net os)
+                            (txOut tx))
             outs <- getTxOutputsData (txid, txind)
             return $
                 Just $
@@ -391,7 +410,7 @@ xGetTxHash hash = do
                     (fromIntegral $ C.length $ fromBlob sz)
                     (BlockInfo' (DT.unpack bhash) (fromIntegral txind) (fromIntegral blkht))
                     (fromBlob sz)
-                    []{-(zipWith mergeTxOutTxOutput (txOut tx) $ (\(_,spent,_,value,sTxId,sTxIdx)
+                    []{-(zipWith3 mergeAddrTxOutTxOutput outAddrs (txOut tx) $ (\(_,spent,_,value,sTxId,sTxIdx)
                                                                 -> TxOutput 0
                                                                             "address"
                                                                             sTxId
@@ -399,11 +418,11 @@ xGetTxHash hash = do
                                                                             spent
                                                                             value
                                                                             "") <$> outs)-}
-                    (zipWith mergeTxInTxInput (txIn tx) $ (\((outTxId, outTxIndex),inpTxIndex,value)
+                    (zipWith3 mergeAddrTxInTxInput inAddrs (txIn tx) $ (\((outTxId, outTxIndex),inpTxIndex,value)
                                                                          -> TxInput (DT.unpack outTxId)
                                                                                     outTxIndex
                                                                                     inpTxIndex
-                                                                                    "address"
+                                                                                    Nothing
                                                                                     value
                                                                                     "") <$> inps)
                     fees
@@ -436,7 +455,7 @@ xGetTxHashes hashes = do
                                 ((\((outTxId, outTxIndex),inpTxIndex,value) -> TxInput (DT.unpack outTxId)
                                                                                        outTxIndex
                                                                                        inpTxIndex
-                                                                                       ""
+                                                                                       Nothing
                                                                                        value
                                                                                        "") <$> inps)
                             fees)
