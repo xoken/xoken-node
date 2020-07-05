@@ -23,12 +23,19 @@ CREATE TABLE xoken.blocks_by_hash (
     coinbase_tx blob
 ); 
 
+CREATE TABLE xoken.ep_transactions (
+    epoch boolean,
+    tx_id text,
+    tx_serialized blob,
+    inputs set  <frozen<tuple<frozen<tuple<text, int>>, int, bigint>>>,
+    fees bigint,
+    PRIMARY KEY (epoch, tx_id)
+); 
+
 CREATE TABLE xoken.ep_script_hash_outputs (
     epoch boolean,
     script_hash text,
     output frozen<tuple<text, int>>,
-    is_type_receive boolean,
-    other_address text,
     PRIMARY KEY (epoch, script_hash, output)
 ); 
 
@@ -39,8 +46,7 @@ CREATE TABLE xoken.ep_txid_outputs (
     is_output_spent boolean,
     spending_txid text,
     spending_index int,
-    prev_outpoint frozen<tuple<text, int>>,
-    input_index int,
+    inputs set  <frozen<tuple<frozen<tuple<text, int>>, int, bigint>>>,
     value bigint,
     PRIMARY KEY(epoch, txid, idx)
  );
@@ -73,13 +79,6 @@ CREATE TABLE xoken.blocks_by_height (
     block_size int,
     tx_count int,
     coinbase_tx blob
-); 
-
-CREATE TABLE xoken.ep_transactions (
-    epoch boolean,
-    tx_id text,
-    tx_serialized blob,
-    PRIMARY KEY (epoch, tx_id)
 ); 
 
 CREATE TABLE xoken.user_permission (

@@ -52,6 +52,8 @@ data NodeConfig =
         , allegoryNameUtxoSatoshis :: Int
         , allegoryTxFeeSatsProducerAction :: Int
         , allegoryTxFeeSatsOwnerAction :: Int
+        , txOutputValuesCacheKeyBits :: Int
+        , unconfirmedTxCacheKeyBits :: Int
         }
     deriving (Show, Generic)
 
