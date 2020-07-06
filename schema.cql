@@ -7,7 +7,7 @@ CREATE TABLE xoken.misc_store (
 
 CREATE TABLE xoken.transactions (
     tx_id text PRIMARY KEY,
-    block_info frozen<tuple<frozen<tuple<text, int>>, int>>,
+    block_info frozen<tuple<text, int, int>>,
     tx_serialized blob,
     inputs set  <frozen<tuple<frozen<tuple<text, int>>, int, bigint>>>,
     fees bigint
@@ -42,14 +42,14 @@ CREATE TABLE xoken.ep_script_hash_outputs (
 CREATE TABLE xoken.ep_txid_outputs (
     epoch boolean,
     txid text,
-    idx int,
+    output_index int,
     is_output_spent boolean,
     spending_txid text,
     spending_index int,
     inputs set  <frozen<tuple<frozen<tuple<text, int>>, int, bigint>>>,
     value bigint,
-    PRIMARY KEY(epoch, txid, idx)
- );
+    PRIMARY KEY(epoch, txid, output_index)
+ ) WITH CLUSTERING ORDER BY (output_index ASC);
 
 CREATE TABLE xoken.script_hash_outputs (
     script_hash text,
@@ -60,16 +60,16 @@ CREATE TABLE xoken.script_hash_outputs (
 
 CREATE TABLE xoken.txid_outputs (
     txid text,
-    idx int,
-    block_info frozen<tuple<frozen<tuple<text, int>>, int>>,
+    output_index int,
+    block_info frozen<tuple<text, int, int>>,
     is_output_spent boolean,
     spending_txid text,
     spending_index int,
     spending_tx_block_height int,
     inputs set  <frozen<tuple<frozen<tuple<text, int>>, int, bigint>>>,
     value bigint,
-    PRIMARY KEY(txid, idx)
- );
+    PRIMARY KEY(txid, output_index)
+ ) WITH CLUSTERING ORDER BY (output_index ASC);
 
 CREATE TABLE xoken.blocks_by_height (
     block_height int PRIMARY KEY,

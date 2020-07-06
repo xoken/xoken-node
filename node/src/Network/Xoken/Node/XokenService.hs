@@ -282,7 +282,7 @@ xGetTxOutputSpendStatus txId outputIndex = do
     dbe <- getDB
     let conn = keyValDB (dbe)
         str =
-            "SELECT is_output_spent, spending_txid, spending_index, spending_tx_block_height FROM xoken.txid_outputs WHERE txid=? AND idx=?"
+            "SELECT is_output_spent, spending_txid, spending_index, spending_tx_block_height FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
         qstr = str :: Q.QueryString Q.R (DT.Text, Int32) (Bool, Maybe DT.Text, Maybe Int32, Maybe Int32)
         p = Q.defQueryParams Q.One (DT.pack txId, outputIndex)
     iop <- Q.runClient conn (Q.query qstr p)
@@ -375,7 +375,7 @@ xGetTxHash hash = do
         str = "SELECT tx_id, block_info, tx_serialized, inputs, fees from xoken.transactions where tx_id = ?"
         qstr =
             str :: Q.QueryString Q.R (Identity DT.Text) ( DT.Text
-                                                        , ((DT.Text, Int32), Int32)
+                                                        , (DT.Text, Int32, Int32)
                                                         , Blob
                                                         , Set ((DT.Text, Int32), Int32, Int64)
                                                         , Int64)
@@ -384,7 +384,7 @@ xGetTxHash hash = do
     if length iop == 0
         then return Nothing
         else do
-            let (txid, ((bhash, txind), blkht), sz, sinps, fees) = iop !! 0
+            let (txid, (bhash, blkht, txind), sz, sinps, fees) = iop !! 0
                 inps = L.sortBy (\(_, x, _) (_, y, _) -> compare x y) $ DCP.fromSet sinps
                 tx = fromJust $ Extra.hush $ S.decodeLazy $ fromBlob sz
                 inAddrs =
@@ -410,7 +410,7 @@ xGetTxHash hash = do
                 RawTxRecord
                     (DT.unpack txid)
                     (fromIntegral $ C.length $ fromBlob sz)
-                    (BlockInfo' (DT.unpack bhash) (fromIntegral txind) (fromIntegral blkht))
+                    (BlockInfo' (DT.unpack bhash) (fromIntegral blkht) (fromIntegral txind))
                     (fromBlob sz)
                     (zipWith3 mergeAddrTxOutTxOutput outAddrs (txOut tx) outs)
                     (zipWith3 mergeAddrTxInTxInput inAddrs (txIn tx) $
@@ -428,7 +428,7 @@ xGetTxHashes hashes = do
         str = "SELECT tx_id, block_info, tx_serialized, inputs, fees from xoken.transactions where tx_id in ?"
         qstr =
             str :: Q.QueryString Q.R (Identity [DT.Text]) ( DT.Text
-                                                          , ((DT.Text, Int32), Int32)
+                                                          , (DT.Text, Int32, Int32)
                                                           , Blob
                                                           , Set ((DT.Text, Int32), Int32, Int64)
                                                           , Int64)
@@ -437,7 +437,7 @@ xGetTxHashes hashes = do
     if length iop == 0
         then return []
         else traverse
-                 (\(txid, ((bhash, txind), blkht), sz, sinps, fees) -> do
+                 (\(txid, (bhash, blkht, txind), sz, sinps, fees) -> do
                       let inps = L.sortBy (\(_, x, _) (_, y, _) -> compare x y) $ DCP.fromSet sinps
                           tx = fromJust $ Extra.hush $ S.decodeLazy $ fromBlob sz
                           inAddrs =
@@ -500,18 +500,18 @@ getTxOutputsFromTxId txid = do
 getTxOutputsData ::
        (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
     => (DT.Text, Int32)
-    -> m (((DT.Text, Int32), Int32), Bool, Set ((DT.Text, Int32), Int32, Int64), Int64)
-getTxOutputsData (txid, idx) = do
+    -> m ((DT.Text, Int32, Int32), Bool, Set ((DT.Text, Int32), Int32, Int64), Int64)
+getTxOutputsData (txid, index) = do
     dbe <- getDB
     lg <- getLogger
     let conn = keyValDB (dbe)
-        toStr = "SELECT block_info,is_output_spent,inputs,value FROM xoken.txid_outputs WHERE txid=? AND idx=?"
+        toStr = "SELECT block_info,is_output_spent,inputs,value FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
         toQStr =
-            toStr :: Q.QueryString Q.R (DT.Text, Int32) ( ((DT.Text, Int32), Int32)
+            toStr :: Q.QueryString Q.R (DT.Text, Int32) ( (DT.Text, Int32, Int32)
                                                         , Bool
                                                         , Set ((DT.Text, Int32), Int32, Int64)
                                                         , Int64)
-        top = Q.defQueryParams Q.One (txid, idx)
+        top = Q.defQueryParams Q.One (txid, index)
     toRes <- LE.try $ Q.runClient conn (Q.query toQStr top)
     case toRes of
         Right es -> do
@@ -519,7 +519,7 @@ getTxOutputsData (txid, idx) = do
                 then do
                     err lg $
                         LG.msg $
-                        "Error: getTxOutputsData: No entry in txid_outputs for (txid,idx): " ++ show (txid, idx)
+                        "Error: getTxOutputsData: No entry in txid_outputs for (txid,index): " ++ show (txid, index)
                     throw KeyValueDBLookupException
                 else return (es !! 0)
         Left (e :: SomeException) -> do
@@ -545,13 +545,13 @@ xGetOutputsAddress address pgSize mbNomTxInd = do
             if length iop == 0
                 then return []
                 else do
-                    res <- sequence $ (\(_, _, (txid, idx)) -> getTxOutputsData (txid, idx)) <$> iop
+                    res <- sequence $ (\(_, _, (txid, index)) -> getTxOutputsData (txid, index)) <$> iop
                     return $
-                        ((\((addr, nti, (op_txid, op_txidx)), (((bsh, bht), bidx), ios, ips, val)) ->
+                        ((\((addr, nti, (op_txid, op_txidx)), ((bsh, bht, bidx), ios, ips, val)) ->
                               AddressOutputs
                                   (DT.unpack addr)
                                   (OutPoint' (DT.unpack op_txid) (fromIntegral op_txidx))
-                                  (BlockInfo' (DT.unpack bsh) (fromIntegral bidx) (fromIntegral bht))
+                                  (BlockInfo' (DT.unpack bsh) (fromIntegral bht) (fromIntegral bidx))
                                   nti
                                   ios
                                   ((\((oph, opi), ii, ov) ->
@@ -921,7 +921,7 @@ xRelayTx rawTx = do
                                          "SELECT tx_id, block_info, tx_serialized from xoken.transactions where tx_id = ?"
                                      qstr =
                                          str :: Q.QueryString Q.R (Identity DT.Text) ( DT.Text
-                                                                                     , ((DT.Text, Int32), Int32)
+                                                                                     , (DT.Text, Int32, Int32)
                                                                                      , Blob)
                                      p = Q.defQueryParams Q.One $ Identity $ (txid)
                                  iop <- Q.runClient conn (Q.query qstr p)

@@ -547,8 +547,8 @@ data OutPoint' =
 data BlockInfo' =
     BlockInfo'
         { binfBlockHash :: String
-        , binfTxIndex :: Int32
         , binfBlockHeight :: Int32
+        , binfTxIndex :: Int32
         }
     deriving (Show, Generic, Hashable, Eq, Serialise, ToJSON)
 

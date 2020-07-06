@@ -215,10 +215,10 @@ insertEpochTxIdOutputs ::
     -> [((Text, Int32), Int32, Int64)]
     -> Int64
     -> m ()
-insertEpochTxIdOutputs conn epoch (txid, idx) inputs value = do
+insertEpochTxIdOutputs conn epoch (txid, index) inputs value = do
     lg <- getLogger
     let str =
-            "INSERT INTO xoken.ep_txid_outputs (epoch,txid,idx,is_output_spent,spending_txid,spending_index,inputs,value) VALUES (?,?,?,?,?,?,?,?)"
+            "INSERT INTO xoken.ep_txid_outputs (epoch,txid,output_index,is_output_spent,spending_txid,spending_index,inputs,value) VALUES (?,?,?,?,?,?,?,?)"
         qstr =
             str :: Q.QueryString Q.W ( Bool
                                      , Text
@@ -228,7 +228,7 @@ insertEpochTxIdOutputs conn epoch (txid, idx) inputs value = do
                                      , Maybe Int32
                                      , [((Text, Int32), Int32, Int64)]
                                      , Int64) ()
-        par = Q.defQueryParams Q.One (epoch, txid, idx, False, Nothing, Nothing, inputs, value)
+        par = Q.defQueryParams Q.One (epoch, txid, index, False, Nothing, Nothing, inputs, value)
     res <- liftIO $ try $ Q.runClient conn $ (Q.write qstr par)
     case res of
         Right () -> return ()
@@ -237,12 +237,12 @@ insertEpochTxIdOutputs conn epoch (txid, idx) inputs value = do
             throw KeyValueDBInsertException
 
 updateEpochTxIdOutputs :: (HasLogger m, MonadIO m) => Q.ClientState -> (Text, Int32) -> ((Text, Int32), Int32) -> m ()
-updateEpochTxIdOutputs conn (txid, idx) (prevOutpoint, inputIndex) = do
+updateEpochTxIdOutputs conn (txid, index) (prevOutpoint, inputIndex) = do
     lg <- getLogger
     let prevTxId = fst $ prevOutpoint
         prevIdx = snd $ prevOutpoint
         str =
-            "UPDATE xoken.ep_txid_outputs SET is_output_spent=?,spending_txid=?,spending_index=? WHERE txid=? AND idx=?"
+            "UPDATE xoken.ep_txid_outputs SET is_output_spent=?,spending_txid=?,spending_index=? WHERE txid=? AND output_index=?"
         qstr = str :: Q.QueryString Q.W (Bool, Text, Int32, Text, Int32) ()
         par = Q.defQueryParams Q.One (True, txid, inputIndex, prevTxId, prevIdx)
     res <- liftIO $ try $ Q.runClient conn (Q.write qstr par)
@@ -377,7 +377,7 @@ processUnconfTransaction tx = do
 getSatValuesFromEpochOutpoint ::
        Q.ClientState -> (TVar (M.Map TxHash EV.Event)) -> Logger -> Network -> OutPoint -> Int -> IO (Int64)
 getSatValuesFromEpochOutpoint conn txSync lg net outPoint waitSecs = do
-    let str = "SELECT value FROM xoken.ep_txid_outputs WHERE txid=? AND idx=?"
+    let str = "SELECT value FROM xoken.ep_txid_outputs WHERE txid=? AND output_index=?"
         qstr = str :: Q.QueryString Q.R (Text, Int32) (Identity Int64)
         par = Q.defQueryParams Q.One $ (txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint)
     res <- liftIO $ try $ Q.runClient conn (Q.query qstr par)
