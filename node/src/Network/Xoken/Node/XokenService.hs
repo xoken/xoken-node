@@ -240,13 +240,14 @@ xGetBlockHeight height = do
     let conn = keyValDB (dbe)
         str =
             "SELECT block_hash,block_height,block_header,next_block_hash,block_size,tx_count,coinbase_tx from xoken.blocks_by_height where block_height = ?"
-        qstr = str :: Q.QueryString Q.R (Identity Int32) ( DT.Text
-                                                         , Int32
-                                                         , DT.Text
-                                                         , Maybe DT.Text
-                                                         , Maybe Int32
-                                                         , Maybe Int32
-                                                         , Maybe Blob)
+        qstr =
+            str :: Q.QueryString Q.R (Identity Int32) ( DT.Text
+                                                      , Int32
+                                                      , DT.Text
+                                                      , Maybe DT.Text
+                                                      , Maybe Int32
+                                                      , Maybe Int32
+                                                      , Maybe Blob)
         p = Q.defQueryParams Q.One $ Identity height
     res <- LE.try $ Q.runClient conn (Q.query qstr p)
     case res of
@@ -372,35 +373,37 @@ xGetTxHash hash = do
     let conn = keyValDB (dbe)
         net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
         str = "SELECT tx_id, block_info, tx_serialized, inputs, fees from xoken.transactions where tx_id = ?"
-        qstr = str :: Q.QueryString Q.R (Identity DT.Text) ( DT.Text
-                                                           , ((DT.Text, Int32), Int32)
-                                                           , Blob
-                                                           , Set ((DT.Text, Int32), Int32, Int64)
-                                                           , Int64)
+        qstr =
+            str :: Q.QueryString Q.R (Identity DT.Text) ( DT.Text
+                                                        , ((DT.Text, Int32), Int32)
+                                                        , Blob
+                                                        , Set ((DT.Text, Int32), Int32, Int64)
+                                                        , Int64)
         p = Q.defQueryParams Q.One $ Identity $ hash
     iop <- Q.runClient conn (Q.query qstr p)
     if length iop == 0
         then return Nothing
         else do
             let (txid, ((bhash, txind), blkht), sz, sinps, fees) = iop !! 0
-                inps = L.sortBy (\(_,x,_) (_,y,_) -> compare x y) $ DCP.fromSet sinps
+                inps = L.sortBy (\(_, x, _) (_, y, _) -> compare x y) $ DCP.fromSet sinps
                 tx = fromJust $ Extra.hush $ S.decodeLazy $ fromBlob sz
                 inAddrs =
-                    (fmap (\x -> do
-                            case decodeInputBS net $ scriptInput x of
-                                Left e -> Nothing
-                                Right is ->
-                                    case inputAddress is of
-                                        Just s -> DT.unpack <$> addrToString net s
-                                        Nothing -> Nothing)
-                        (txIn tx))
+                    (fmap
+                         (\x -> do
+                              case decodeInputBS net $ scriptInput x of
+                                  Left e -> Nothing
+                                  Right is ->
+                                      case inputAddress is of
+                                          Just s -> DT.unpack <$> addrToString net s
+                                          Nothing -> Nothing)
+                         (txIn tx))
                 outAddrs =
                     (fmap
-                        (\y ->
-                            case scriptToAddressBS $ scriptOutput y of
-                                Left e -> Nothing
-                                Right os -> DT.unpack <$> addrToString net os)
-                        (txOut tx))
+                         (\y ->
+                              case scriptToAddressBS $ scriptOutput y of
+                                  Left e -> Nothing
+                                  Right os -> DT.unpack <$> addrToString net os)
+                         (txOut tx))
             outs <- getTxOutputsFromTxId txid
             return $
                 Just $
@@ -410,75 +413,86 @@ xGetTxHash hash = do
                     (BlockInfo' (DT.unpack bhash) (fromIntegral txind) (fromIntegral blkht))
                     (fromBlob sz)
                     (zipWith3 mergeAddrTxOutTxOutput outAddrs (txOut tx) outs)
-                    (zipWith3 mergeAddrTxInTxInput inAddrs (txIn tx) $ (\((outTxId, outTxIndex),inpTxIndex,value)
-                                                                         -> TxInput (DT.unpack outTxId)
-                                                                                    outTxIndex
-                                                                                    inpTxIndex
-                                                                                    Nothing
-                                                                                    value
-                                                                                    "") <$> inps)
+                    (zipWith3 mergeAddrTxInTxInput inAddrs (txIn tx) $
+                     (\((outTxId, outTxIndex), inpTxIndex, value) ->
+                          TxInput (DT.unpack outTxId) outTxIndex inpTxIndex Nothing value "") <$>
+                     inps)
                     fees
 
 xGetTxHashes :: (HasXokenNodeEnv env m, MonadIO m) => [DT.Text] -> m ([RawTxRecord])
 xGetTxHashes hashes = do
     dbe <- getDB
+    bp2pEnv <- getBitcoinP2P
     let conn = keyValDB (dbe)
+        net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
         str = "SELECT tx_id, block_info, tx_serialized, inputs, fees from xoken.transactions where tx_id in ?"
-        qstr = str :: Q.QueryString Q.R (Identity [DT.Text]) ( DT.Text
-                                                           , ((DT.Text, Int32), Int32)
-                                                           , Blob
-                                                           , Set ((DT.Text, Int32), Int32, Int64)
-                                                           , Int64)
+        qstr =
+            str :: Q.QueryString Q.R (Identity [DT.Text]) ( DT.Text
+                                                          , ((DT.Text, Int32), Int32)
+                                                          , Blob
+                                                          , Set ((DT.Text, Int32), Int32, Int64)
+                                                          , Int64)
         p = Q.defQueryParams Q.One $ Identity $ hashes
     iop <- Q.runClient conn (Q.query qstr p)
     if length iop == 0
         then return []
-        else do
-            return $
-                Data.List.map
-                    (\(txid, ((bhash, txind), blkht), sz, sinps, fees) ->
-                         let inps = DCP.fromSet sinps
-                         in RawTxRecord
-                                (DT.unpack txid)
-                                (fromIntegral $ C.length $ fromBlob sz)
-                                (BlockInfo' (DT.unpack bhash) (fromIntegral txind) (fromIntegral blkht))
-                                (fromBlob sz)
-                                [] -- txOutputs
-                                ((\((outTxId, outTxIndex),inpTxIndex,value) -> TxInput (DT.unpack outTxId)
-                                                                                       outTxIndex
-                                                                                       inpTxIndex
-                                                                                       Nothing
-                                                                                       value
-                                                                                       "") <$> inps)
-                            fees)
-                    iop
+        else traverse
+                 (\(txid, ((bhash, txind), blkht), sz, sinps, fees) -> do
+                      let inps = L.sortBy (\(_, x, _) (_, y, _) -> compare x y) $ DCP.fromSet sinps
+                          tx = fromJust $ Extra.hush $ S.decodeLazy $ fromBlob sz
+                          inAddrs =
+                              (fmap
+                                   (\x -> do
+                                        case decodeInputBS net $ scriptInput x of
+                                            Left e -> Nothing
+                                            Right is ->
+                                                case inputAddress is of
+                                                    Just s -> DT.unpack <$> addrToString net s
+                                                    Nothing -> Nothing)
+                                   (txIn tx))
+                          outAddrs =
+                              (fmap
+                                   (\y ->
+                                        case scriptToAddressBS $ scriptOutput y of
+                                            Left e -> Nothing
+                                            Right os -> DT.unpack <$> addrToString net os)
+                                   (txOut tx))
+                      outs <- getTxOutputsFromTxId txid
+                      return $
+                          RawTxRecord
+                              (DT.unpack txid)
+                              (fromIntegral $ C.length $ fromBlob sz)
+                              (BlockInfo' (DT.unpack bhash) (fromIntegral txind) (fromIntegral blkht))
+                              (fromBlob sz)
+                              (zipWith3 mergeAddrTxOutTxOutput outAddrs (txOut tx) outs)
+                              (zipWith3 mergeAddrTxInTxInput inAddrs (txIn tx) $
+                               (\((outTxId, outTxIndex), inpTxIndex, value) ->
+                                    TxInput (DT.unpack outTxId) outTxIndex inpTxIndex Nothing value "") <$>
+                               inps)
+                              fees)
+                 iop
 
-getTxOutputsFromTxId ::
-       (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
-    => DT.Text -> m [TxOutput]
+getTxOutputsFromTxId :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => DT.Text -> m [TxOutput]
 getTxOutputsFromTxId txid = do
     dbe <- getDB
     lg <- getLogger
     let conn = keyValDB (dbe)
-        toStr = "SELECT idx,is_output_spent,value,spending_txid,spending_index FROM xoken.txid_outputs WHERE txid=? AND idx=?"
-        toQStr =
-            toStr :: Q.QueryString Q.R (Identity DT.Text) ( Int32
-                                                          , Bool
-                                                          , Int64
-                                                          , Maybe DT.Text
-                                                          , Maybe Int32)
+        toStr =
+            "SELECT idx,is_output_spent,value,spending_txid,spending_index FROM xoken.txid_outputs WHERE txid=? AND idx=?"
+        toQStr = toStr :: Q.QueryString Q.R (Identity DT.Text) (Int32, Bool, Int64, Maybe DT.Text, Maybe Int32)
         par = Q.defQueryParams Q.One (Identity txid)
     res <- LE.try $ Q.runClient conn (Q.query toQStr par)
     case res of
         Right t -> do
             if length t == 0
                 then do
-                    err lg $
-                        LG.msg $
-                        "Error: getTxOutputsData: No entry in txid_outputs for txid: " ++ show txid
+                    err lg $ LG.msg $ "Error: getTxOutputsData: No entry in txid_outputs for txid: " ++ show txid
                     throw KeyValueDBLookupException
                 else do
-                    return $ (\(idx,spent,value,sTxId,sTxIndex) -> TxOutput (fromIntegral idx) Nothing (DT.unpack <$> sTxId) sTxIndex spent value "") <$> t
+                    return $
+                        (\(idx, spent, value, sTxId, sTxIndex) ->
+                             TxOutput (fromIntegral idx) Nothing (DT.unpack <$> sTxId) sTxIndex spent value "") <$>
+                        t
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: getTxOutputsFromTxId: " ++ show e
             throw KeyValueDBLookupException
@@ -540,7 +554,8 @@ xGetOutputsAddress address pgSize mbNomTxInd = do
                                   (BlockInfo' (DT.unpack bsh) (fromIntegral bidx) (fromIntegral bht))
                                   nti
                                   ios
-                                  ((\((oph, opi), ii, ov) -> (OutPoint' (DT.unpack oph) (fromIntegral opi), fromIntegral ii, fromIntegral ov)) <$>
+                                  ((\((oph, opi), ii, ov) ->
+                                        (OutPoint' (DT.unpack oph) (fromIntegral opi), fromIntegral ii, fromIntegral ov)) <$>
                                    (DCP.fromSet ips))
                                   val) <$>)
                             (zip iop res)
@@ -1130,11 +1145,10 @@ goGetResource msg net roles = do
                                 Right rt ->
                                     return $
                                     RPCResponse 200 $
-                                    Right $ Just $ RespTransactionByTxID (TxRecord txId
-                                                                                   size
-                                                                                   txBlockInfo
-                                                                                   (txToTx' rt txOutputs txInputs)
-                                                                                   fees)
+                                    Right $
+                                    Just $
+                                    RespTransactionByTxID
+                                        (TxRecord txId size txBlockInfo (txToTx' rt txOutputs txInputs) fees)
                                 Left err -> return $ RPCResponse 400 $ Left $ RPCError INTERNAL_ERROR Nothing
                         Nothing -> return $ RPCResponse 200 $ Right Nothing
                 _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
@@ -1149,13 +1163,11 @@ goGetResource msg net roles = do
                 Just (GetTransactionsByTxIDs hashes) -> do
                     txs <- xGetTxHashes (DT.pack <$> hashes)
                     let rawTxs =
-                            (\RawTxRecord {..} -> 
-                                 (TxRecord txId
-                                           size
-                                           txBlockInfo <$>
-                                           (txToTx' <$> (Extra.hush $ S.decodeLazy txSerialized) <*>
-                                                        (pure txOutputs) <*> (pure txInputs)) <*>
-                                           (pure fees))) <$>
+                            (\RawTxRecord {..} ->
+                                 (TxRecord txId size txBlockInfo <$>
+                                  (txToTx' <$> (Extra.hush $ S.decodeLazy txSerialized) <*> (pure txOutputs) <*>
+                                   (pure txInputs)) <*>
+                                  (pure fees))) <$>
                             txs
                     return $ RPCResponse 200 $ Right $ Just $ RespTransactionsByTxIDs $ catMaybes rawTxs
                 _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing

@@ -73,8 +73,8 @@ data RPCMessage
           }
     deriving (Show, Generic, Hashable, Eq, Serialise)
 
-data RPCError
-    = RPCError
+data RPCError =
+    RPCError
         { rsStatusMessage :: RPCErrors
         , rsErrorData :: Maybe String
         }
@@ -147,7 +147,7 @@ instance FromJSON RPCReqParams where
         (GeneralReq <$> o .: "sessionKey" <*> o .:? "methodParams")
 
 data RPCReqParams'
-    = AddUser 
+    = AddUser
           { auUsername :: String
           , auApiExpiryTime :: Maybe UTCTime
           , auApiQuota :: Maybe Int32
@@ -155,7 +155,7 @@ data RPCReqParams'
           , auLastName :: String
           , auEmail :: String
           , auRoles :: Maybe [String]
-          } 
+          }
     | GetBlockByHeight
           { gbHeight :: Int
           }
@@ -232,8 +232,7 @@ instance FromJSON RPCReqParams' where
         (GetBlockByHeight <$> o .: "gbHeight") <|> (GetBlocksByHeight <$> o .: "gbHeights") <|>
         (GetBlockByHash <$> o .: "gbBlockHash") <|>
         (GetBlocksByHashes <$> o .: "gbBlockHashes") <|>
-        (GetTxIDsByBlockHash <$> o .: "gtTxBlockHash" <*> o .:? "gtPageSize" .!= 100 <*>
-         o .:? "gtPageNumber" .!= 1) <|>
+        (GetTxIDsByBlockHash <$> o .: "gtTxBlockHash" <*> o .:? "gtPageSize" .!= 100 <*> o .:? "gtPageNumber" .!= 1) <|>
         (GetTransactionByTxID <$> o .: "gtTxHash") <|>
         (GetTransactionsByTxIDs <$> o .: "gtTxHashes") <|>
         (GetRawTransactionByTxID <$> o .: "gtRTxHash") <|>
@@ -249,10 +248,11 @@ instance FromJSON RPCReqParams' where
         (RelayTx . BL.toStrict . GZ.decompress . B64L.decodeLenient . BL.fromStrict . T.encodeUtf8 <$> o .: "rTx") <|>
         (GetPartiallySignedAllegoryTx <$> o .: "gpsaPaymentInputs" <*> o .: "gpsaName" <*> o .: "gpsaOutputOwner" <*>
          o .: "gpsaOutputChange") <|>
-        (AddUser <$> o .: "username" <*> o .:? "api_expiry_time" <*> o .:? "api_quota" <*>
-         o .: "first_name" <*> o .: "last_name" <*> o .: "email" <*> o .:? "roles") <|>
+        (AddUser <$> o .: "username" <*> o .:? "api_expiry_time" <*> o .:? "api_quota" <*> o .: "first_name" <*>
+         o .: "last_name" <*>
+         o .: "email" <*>
+         o .:? "roles") <|>
         (GetTxOutputSpendStatus <$> o .: "gtssHash" <*> o .: "gtssIndex")
-
 
 data RPCResponseBody
     = AuthenticateResp
@@ -352,7 +352,7 @@ data AuthResp =
         }
     deriving (Generic, Show, Hashable, Eq, Serialise, ToJSON)
 
-data AddUserResp = 
+data AddUserResp =
     AddUserResp
         { aurUsername :: String
         , aurPassword :: String
@@ -386,7 +386,8 @@ data ChainInfo =
         , ciHeaders :: Int32
         , ciBlocks :: Int32
         , ciBestBlockHash :: String
-        } deriving (Generic, Show, Hashable, Eq, Serialise)
+        }
+    deriving (Generic, Show, Hashable, Eq, Serialise)
 
 instance ToJSON ChainInfo where
     toJSON (ChainInfo ch cw diff hdr blk hs) =
@@ -462,7 +463,7 @@ data TxRecord =
     deriving (Show, Generic, Hashable, Eq, Serialise, ToJSON)
 
 data Tx' =
-    Tx' 
+    Tx'
         { txVersion :: Word32
         , txOuts :: [TxOutput]
         , txInps :: [TxInput]
@@ -475,42 +476,36 @@ data TxInput =
         { outpointTxID :: String
         , outpointIndex :: Int32
         , txInputIndex :: Int32
-        , address :: Maybe String  -- decode will succeed for P2PKH txn 
+        , address :: Maybe String -- decode will succeed for P2PKH txn 
         , value :: Int64
-        , unlockingScript :: String  -- scriptSig
+        , unlockingScript :: String -- scriptSig
         }
     deriving (Show, Generic, Hashable, Eq, Serialise, ToJSON)
 
-
-data TxOutput = 
+data TxOutput =
     TxOutput
-        { outputIndex :: Int16 
+        { outputIndex :: Int16
         , address :: Maybe String -- decode will succeed for P2PKH txn 
         , spendingTxId :: Maybe String
         , spendingTxIdx :: Maybe Int32
-        , isSpent :: Bool 
-        , value :: Int64 
-        , lockingScript :: String  -- Script Pub Key
+        , isSpent :: Bool
+        , value :: Int64
+        , lockingScript :: String -- Script Pub Key
         }
-    deriving (Show, Generic, Hashable, Eq, Serialise, ToJSON)    
+    deriving (Show, Generic, Hashable, Eq, Serialise, ToJSON)
 
 data TxOutputSpendStatus =
     TxOutputSpendStatus
-          { isSpent :: Bool
-          , spendingTxID :: Maybe String
-          , spendingTxBlockHt :: Maybe Int32
-          , spendingTxIndex :: Maybe Int32
-          }
+        { isSpent :: Bool
+        , spendingTxID :: Maybe String
+        , spendingTxBlockHt :: Maybe Int32
+        , spendingTxIndex :: Maybe Int32
+        }
     deriving (Show, Generic, Hashable, Eq, Serialise)
 
 instance ToJSON TxOutputSpendStatus where
     toJSON (TxOutputSpendStatus tis stxid stxht stxindex) =
-        object
-            [ "isSpent" .= tis
-            , "spendingTxID" .= stxid
-            , "spendingTxBlockHt" .= stxht
-            , "spendingTxIndex" .= stxindex
-            ]
+        object ["isSpent" .= tis, "spendingTxID" .= stxid, "spendingTxBlockHt" .= stxht, "spendingTxIndex" .= stxindex]
 
 data AddressOutputs =
     AddressOutputs
@@ -629,39 +624,38 @@ addressToScriptOutputs AddressOutputs {..} =
         , scBlockInfo = aoBlockInfo
         , scNominalTxIndex = aoNominalTxIndex
         , scIsOutputSpent = aoIsOutputSpent
---        , scIsTypeReceive = aoIsTypeReceive
---        , scOtherAddress = aoOtherAddress
         , scPrevOutpoint = aoPrevOutpoint
         , scValue = aoValue
         }
 
+--        , scIsTypeReceive = aoIsTypeReceive
+--        , scOtherAddress = aoOtherAddress
 coinbaseTxToMessage :: C.ByteString -> String
-coinbaseTxToMessage s = case C.length (C.pack regex) > 6 of
-    True -> let sig = C.drop 4 $ C.pack regex
+coinbaseTxToMessage s =
+    case C.length (C.pack regex) > 6 of
+        True ->
+            let sig = C.drop 4 $ C.pack regex
                 sigLen = fromIntegral . ord . C.head $ sig
                 htLen = fromIntegral . ord . C.head . C.tail $ sig
-            in C.unpack . C.take (sigLen - htLen - 1) . C.drop (htLen+2) $ sig
-    False -> "False"
-  where r :: String
-        r = "\255\255\255\255[\NUL-\255]+"
-        regex = ((C.unpack s) =~ r) :: String
+             in C.unpack . C.take (sigLen - htLen - 1) . C.drop (htLen + 2) $ sig
+        False -> "False"
+  where
+    r :: String
+    r = "\255\255\255\255[\NUL-\255]+"
+    regex = ((C.unpack s) =~ r) :: String
 
-        
 validateEmail :: String -> Bool
-validateEmail email = let emailRegex = "^[a-zA-Z0-9+._-]+@[a-zA-Z-]+\\.[a-z]+$" :: String
-                      in (email =~ emailRegex :: Bool) || (null email)
+validateEmail email =
+    let emailRegex = "^[a-zA-Z0-9+._-]+@[a-zA-Z-]+\\.[a-z]+$" :: String
+     in (email =~ emailRegex :: Bool) || (null email)
 
 mergeAddrTxInTxInput :: Maybe String -> TxIn -> TxInput -> TxInput
-mergeAddrTxInTxInput addr (TxIn {..}) txInput = 
-    txInput { unlockingScript = T.unpack $ T.decodeUtf8 scriptInput
-            , address = addr
-            }
+mergeAddrTxInTxInput addr (TxIn {..}) txInput =
+    txInput {unlockingScript = T.unpack $ T.decodeUtf8 scriptInput, address = addr}
 
 mergeAddrTxOutTxOutput :: Maybe String -> TxOut -> TxOutput -> TxOutput
-mergeAddrTxOutTxOutput addr (TxOut {..}) txOutput = 
-    txOutput { lockingScript = T.unpack $ T.decodeUtf8 scriptOutput
-             , address = addr
-             }
+mergeAddrTxOutTxOutput addr (TxOut {..}) txOutput =
+    txOutput {lockingScript = T.unpack $ T.decodeUtf8 scriptOutput, address = addr}
 
 txToTx' :: Tx -> [TxOutput] -> [TxInput] -> Tx'
 txToTx' (Tx {..}) txout txin = Tx' txVersion txout txin txLockTime
