@@ -404,6 +404,7 @@ data BlockRecord =
         { rbHeight :: Int
         , rbHash :: String
         , rbHeader :: BlockHeader
+        , rbNextBlockHash :: String
         , rbSize :: Int
         , rbTxCount :: Int
         , rbGuessedMiner :: String
@@ -413,11 +414,12 @@ data BlockRecord =
     deriving (Generic, Show, Hashable, Eq, Serialise)
 
 instance ToJSON BlockRecord where
-    toJSON (BlockRecord ht hs hdr size ct gm cm cb) =
+    toJSON (BlockRecord ht hs hdr nbhs size ct gm cm cb) =
         object
             [ "height" .= ht
             , "hash" .= hs
             , "header" .= hdr
+            , "nextBlockHash" .= nbhs
             , "size" .= size
             , "txCount" .= ct
             , "guessedMiner" .= gm
@@ -474,9 +476,7 @@ data AddressOutputs =
         , aoBlockInfo :: BlockInfo'
         , aoNominalTxIndex :: Int64
         , aoIsOutputSpent :: Bool
-        , aoIsTypeReceive :: Bool
-        , aoOtherAddress :: String
-        , aoPrevOutpoint :: OutPoint'
+        , aoPrevOutpoint :: [(OutPoint', Int32, Int64)]
         , aoValue :: Int64
         }
     deriving (Show, Generic, Hashable, Eq, Serialise)
@@ -491,9 +491,7 @@ data ScriptOutputs =
         , scBlockInfo :: BlockInfo'
         , scNominalTxIndex :: Int64
         , scIsOutputSpent :: Bool
-        , scIsTypeReceive :: Bool
-        , scOtherAddress :: String
-        , scPrevOutpoint :: OutPoint'
+        , scPrevOutpoint :: [(OutPoint', Int32, Int64)]
         , scValue :: Int64
         }
     deriving (Show, Generic, Hashable, Eq, Serialise)
@@ -588,8 +586,8 @@ addressToScriptOutputs AddressOutputs {..} =
         , scBlockInfo = aoBlockInfo
         , scNominalTxIndex = aoNominalTxIndex
         , scIsOutputSpent = aoIsOutputSpent
-        , scIsTypeReceive = aoIsTypeReceive
-        , scOtherAddress = aoOtherAddress
+--        , scIsTypeReceive = aoIsTypeReceive
+--        , scOtherAddress = aoOtherAddress
         , scPrevOutpoint = aoPrevOutpoint
         , scValue = aoValue
         }

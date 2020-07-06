@@ -13,8 +13,8 @@ module Network.Xoken.Node.P2P.BlockSync
     ( processBlock
     , processConfTransaction
     , runEgressBlockSync
+    , checkBlocksFullySynced
     , runPeerSync
-    , getAddressFromOutpoint
     , getScriptHashFromOutpoint
     , sendRequestMessages
     , handleIfAllegoryTx
@@ -47,6 +47,7 @@ import qualified Data.ByteString.Lazy.Char8 as LC
 import Data.ByteString.Short as BSS
 import Data.Function ((&))
 import Data.Functor.Identity
+import qualified Data.HashTable.IO as H
 import Data.Int
 import qualified Data.IntMap as I
 import qualified Data.List as L
@@ -282,6 +283,27 @@ markBestSyncedBlock hash height conn = do
             err lg $
             LG.msg ("Error: Marking [Best-Synced] blockhash failed: " ++ show e) >> throw KeyValueDBInsertException
 
+checkBlocksFullySynced :: (HasLogger m, MonadIO m) => Q.ClientState -> m Bool
+checkBlocksFullySynced conn = do
+    lg <- getLogger
+    let str = "SELECT value FROM xoken.misc_store WHERE key IN (?,?)"
+        qstr = str :: Q.QueryString Q.R (Text, Text) (Identity (Maybe Bool, Int32, Maybe Int64, Text))
+        par = Q.defQueryParams Q.One $ (T.pack "best-synced", T.pack "best_chain_tip")
+    res <- liftIO $ try $ Q.runClient conn (Q.query qstr par)
+    case res of
+        Right results ->
+            if L.length results /= 2
+                then do
+                    err lg $ LG.msg $ val $ C.pack $ "checkFullySynced: Missing entries best-synced or best_chain_tip"
+                    throw KeyValueDBLookupException
+                else do
+                    let Identity (_, h1, _, _) = results !! 0
+                        Identity (_, h2, _, _) = results !! 1
+                    return (h1 == h2)
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "checkFullySynced: " ++ show e
+            throw e
+
 getBatchSize n
     | n < 630000 = [1 .. 10]
     | otherwise = [1, 2]
@@ -409,90 +431,84 @@ fetchBestSyncedBlock conn net = do
                         Nothing -> throw InvalidBlockHashException
                 Nothing -> throw InvalidMetaDataException
 
-commitAddressOutputs ::
-        (HasLogger m, MonadIO m)
-     => Q.ClientState
-     -> Text                    -- address
-     -> Bool                    -- isTypeRecv
-     -> Maybe Text              -- otherAddr
-     -> (Text, Int32)           -- output (txid, index)
-     -> ((Text, Int32), Int32)  -- blockInfo ((blockHash, blockHeight), blockTxIndex)
-     -> (Text, Int32)           -- prevOutpoint (txid, index)
-     -> Int32                   -- inputIndex
-     -> Int64                   -- value
-     -> m ()
-commitAddressOutputs conn addr typeRecv otherAddr output blockInfo prevOutpoint inputIndex value = do
+commitScriptHashOutputs ::
+       (HasLogger m, MonadIO m)
+    => Q.ClientState
+    -> Text -- address
+    -> (Text, Int32) -- output (txid, index)
+    -> ((Text, Int32), Int32) -- blockInfo ((blockHash, blockHeight), blockTxIndex)
+    -> m ()
+commitScriptHashOutputs conn sh output blockInfo = do
     lg <- getLogger
     let blkHeight = fromIntegral $ snd . fst $ blockInfo
         txIndex = fromIntegral $ snd blockInfo
         nominalTxIndex = blkHeight * 1000000000 + txIndex
-        txID = fst $ output
-        txIndex32 = snd $ output
-        strAddrOuts = "INSERT INTO xoken.address_outputs (address, nominal_tx_index, output, is_type_receive, other_address) VALUES (?,?,?,?,?)"
-        qstrAddrOuts =
-            strAddrOuts :: Q.QueryString Q.W ( Text
-                                             , Int64
-                                             , (Text, Int32)
-                                             , Bool
-                                             , Maybe Text) ()
-        parAddrOuts = Q.defQueryParams Q.One (addr, nominalTxIndex, output, typeRecv, otherAddr)
+        strAddrOuts = "INSERT INTO xoken.script_hash_outputs (script_hash, nominal_tx_index, output) VALUES (?,?,?)"
+        qstrAddrOuts = strAddrOuts :: Q.QueryString Q.W (Text, Int64, (Text, Int32)) ()
+        parAddrOuts = Q.defQueryParams Q.One (sh, nominalTxIndex, output)
     resAddrOuts <- liftIO $ try $ Q.runClient conn (Q.write (qstrAddrOuts) parAddrOuts)
     case resAddrOuts of
-        Right () -> do
-            commitTxIdOutputs conn typeRecv output blockInfo prevOutpoint inputIndex value
-            return ()
+        Right () -> return ()
         Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: INSERTing into 'address_outputs': " ++ show e
+            err lg $ LG.msg $ "Error: INSERTing into 'script_hash_outputs': " ++ show e
             throw KeyValueDBInsertException
 
-commitTxIdOutputs ::
-        (HasLogger m, MonadIO m)
-     => Q.ClientState
-     -> Bool                    -- insert/update switch
-     -> (Text, Int32)           -- output (txid, index)
-     -> ((Text, Int32), Int32)  -- blockInfo ((blockHash, blockHeight), blockTxIndex)
-     -> (Text, Int32)           -- prevOutpoint (txid, index)
-     -> Int32                   -- input index
-     -> Int64                   -- value
-     -> m ()
-commitTxIdOutputs conn isInsert (txid, idx) blockInfo prevOutpoint inputIndex value = do
+insertTxIdOutputs ::
+       (HasLogger m, MonadIO m)
+    => Q.ClientState
+    -> Bool -- insert/update switch
+    -> (Text, Int32) -- output (txid, index)
+    -> ((Text, Int32), Int32) -- blockInfo ((blockHash, blockHeight), blockTxIndex)
+    -> [((Text, Int32), Int32, Int64)] -- (prevOutpoint, inputIndex, value)
+    -> Int64 -- value
+    -> m ()
+insertTxIdOutputs conn isInsert (txid, idx) blockInfo (inputs) value = do
+    lg <- getLogger
+    let strTxIdOuts =
+            "INSERT INTO xoken.txid_outputs (txid,idx,block_info,is_output_spent,spending_txid,spending_index,spending_tx_block_height,inputs,value) VALUES (?,?,?,?,?,?,?,?,?)"
+        qstrTxIdOuts =
+            strTxIdOuts :: Q.QueryString Q.W ( Text
+                                             , Int32
+                                             , ((Text, Int32), Int32)
+                                             , Bool
+                                             , Maybe Text
+                                             , Maybe Int32
+                                             , Maybe Int32
+                                             , [((Text, Int32), Int32, Int64)]
+                                             , Int64) ()
+        parTxIdOuts = Q.defQueryParams Q.One (txid, idx, blockInfo, False, Nothing, Nothing, Nothing, inputs, value)
+    res <- liftIO $ try $ Q.runClient conn $ (Q.write qstrTxIdOuts parTxIdOuts)
+    case res of
+        Right () -> return ()
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: INSERTing into: txid_outputs " ++ show e
+            throw KeyValueDBInsertException
+
+updateTxIdOutputs ::
+       (HasLogger m, MonadIO m)
+    => Q.ClientState
+    -> Bool -- insert/update switch
+    -> (Text, Int32) -- output (txid, index)
+    -> ((Text, Int32), Int32) -- blockInfo ((blockHash, blockHeight), blockTxIndex)
+    -> ((Text, Int32), Int32) -- (prevOutpoint, inputIndex)
+    -> m ()
+updateTxIdOutputs conn isInsert (txid, idx) blockInfo (prevOutpoint, inputIndex) = do
     lg <- getLogger
     let prevTxId = fst $ prevOutpoint
         prevIdx = snd $ prevOutpoint
         blockHeight = snd $ fst $ blockInfo
-    res <- liftIO $ try $ Q.runClient conn $ if isInsert then
-        let strTxIdOuts = "INSERT INTO xoken.txid_outputs (txid,idx,block_info,is_output_spent,spending_txid,spending_index,spending_tx_block_height,prev_outpoint,input_index,value) VALUES (?,?,?,?,?,?,?,?,?,?)"
-            qstrTxIdOuts =
-                strTxIdOuts :: Q.QueryString Q.W ( Text
-                                                 , Int32
-                                                 , ((Text, Int32), Int32)
-                                                 , Bool
-                                                 , Maybe Text
-                                                 , Maybe Int32
-                                                 , Maybe Int32
-                                                 , (Text, Int32)
-                                                 , Int32
-                                                , Int64) ()
-            parTxIdOuts = Q.defQueryParams Q.One (txid, idx, blockInfo, False, Nothing, Nothing, Nothing, prevOutpoint, inputIndex, value)
-        in (Q.write qstrTxIdOuts parTxIdOuts)
-    else
-        let strUpdateSpends = "UPDATE xoken.txid_outputs SET is_output_spent=?,spending_txid=?,spending_index=?,spending_tx_block_height=? WHERE txid=? AND idx=?"
-            qstrUpdateSpends =
-                strUpdateSpends :: Q.QueryString Q.W ( Bool
-                                                     , Text
-                                                     , Int32
-                                                     , Int32
-                                                     , Text
-                                                     , Int32) ()
-            parUpdateSpends = Q.defQueryParams Q.One (True, txid, inputIndex, blockHeight, prevTxId, prevIdx)
-        in (Q.write qstrUpdateSpends parUpdateSpends)
+        strUpdateSpends =
+            "UPDATE xoken.txid_outputs SET is_output_spent=?,spending_txid=?,spending_index=?,spending_tx_block_height=? WHERE txid=? AND idx=?"
+        qstrUpdateSpends = strUpdateSpends :: Q.QueryString Q.W (Bool, Text, Int32, Int32, Text, Int32) ()
+        parUpdateSpends = Q.defQueryParams Q.One (True, txid, inputIndex, blockHeight, prevTxId, prevIdx)
+    res <- liftIO $ try $ Q.runClient conn (Q.write qstrUpdateSpends parUpdateSpends)
     case res of
         Right () -> return ()
         Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: commitTxIdOutputs: " ++ show e
+            err lg $ LG.msg $ "Error: UPDATE'ing into: txid_outputs " ++ show e
             throw KeyValueDBInsertException
 
-commitTxPage :: 
+commitTxPage ::
        (HasBitcoinP2P m, HasLogger m, HasDatabaseHandles m, MonadBaseControl IO m, MonadIO m)
     => [TxHash]
     -> BlockHash
@@ -520,21 +536,7 @@ processConfTransaction tx bhash txind blkht = do
     lg <- getLogger
     let net = bitcoinNetwork $ nodeConfig bp2pEnv
     let conn = keyValDB $ dbe'
-        str = "insert INTO xoken.transactions ( tx_id, block_info, tx_serialized ) values (?, ?, ?)"
-        qstr = str :: Q.QueryString Q.W (Text, ((Text, Int32), Int32), Blob) ()
-        par =
-            Q.defQueryParams
-                Q.One
-                ( txHashToHex $ txHash tx
-                , ((blockHashToHex bhash, fromIntegral txind), fromIntegral blkht)
-                , Blob $ runPutLazy $ putLazyByteString $ S.encodeLazy tx)
     debug lg $ LG.msg ("processing Transaction: " ++ show (txHash tx))
-    res <- liftIO $ try $ Q.runClient conn (Q.write (qstr) par)
-    case res of
-        Right () -> return ()
-        Left (e :: SomeException) -> do
-            liftIO $ err lg $ LG.msg ("Error: INSERTing into 'xoken.transactions': " ++ show e)
-            throw KeyValueDBInsertException
     --
     let inAddrs =
             zip3
@@ -559,68 +561,105 @@ processConfTransaction tx bhash txind blkht = do
                      (txOut tx))
                 (txOut tx)
                 [0 :: Int32 ..]
-    --
-    lookupInAddrs <-
+    inputs <-
         mapM
-            (\(a, b, c) ->
-                 if (outPointHash nullOutPoint) == (outPointHash $ prevOutput b)
-                     then return Nothing
-                     else do
-                         res <-
-                             liftIO $
-                             try $
-                             getScriptHashFromOutpoint
-                                 conn
-                                 (txSynchronizer bp2pEnv)
-                                 lg
-                                 net
-                                 (prevOutput b)
-                                 (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
-                         case res of
-                             Right (ma) -> do
-                                 case (ma) of
-                                     Just x -> return $ Just (x, b, c)
-                                     Nothing -> do
-                                         liftIO $ err lg $ LG.msg $ val "Error: ScriptHashNotFoundException "
-                                         return Nothing
-                             Left TxIDNotFoundException -- report and ignore
-                              -> do
-                                 err lg $ LG.msg $ val "Error: TxIDNotFoundException"
-                                 return Nothing)
+            (\(y, b, j)
+                     -- lookup into tx outputs value cache
+              -> do
+                 tuple <-
+                     liftIO $
+                     H.lookup
+                         (txOutputValuesCache bp2pEnv)
+                         (getTxShortHash (txHash tx) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
+                 val <-
+                     case tuple of
+                         Just (ftxh, indexvals) ->
+                             if ftxh == (outPointHash $ prevOutput b)
+                                 then do
+                                     let rr =
+                                             head $
+                                             filter
+                                                 (\x -> fst x == (fromIntegral $ outPointIndex $ prevOutput b))
+                                                 indexvals
+                                     return $ snd $ rr
+                                 else do
+                                     if (outPointHash nullOutPoint) == (outPointHash $ prevOutput b)
+                                         then return
+                                                  (fromIntegral $ computeSubsidy net $ (fromIntegral blkht :: Word32))
+                                         else liftIO $
+                                              getSatValuesFromOutpoint
+                                                  conn
+                                                  (txSynchronizer bp2pEnv)
+                                                  lg
+                                                  net
+                                                  (prevOutput b)
+                                                  (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
+                         Nothing -> do
+                             if (outPointHash nullOutPoint) == (outPointHash $ prevOutput b)
+                                 then return (fromIntegral $ computeSubsidy net $ (fromIntegral blkht :: Word32))
+                                 else liftIO $
+                                      getSatValuesFromOutpoint
+                                          conn
+                                          (txSynchronizer bp2pEnv)
+                                          lg
+                                          net
+                                          (prevOutput b)
+                                          (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
+                 return
+                     ((txHashToHex $ outPointHash $ prevOutput b, fromIntegral $ outPointIndex $ prevOutput b), j, val) -- (prevOutpoint, inputIndex)
+             )
             inAddrs
+    --
+    -- cache compile output values 
+    let ovs = map (\(o, i) -> (i, fromIntegral $ outValue o)) (zip (txOut tx) [0 :: Int16 ..])
+    liftIO $
+        H.insert
+            (txOutputValuesCache bp2pEnv)
+            (getTxShortHash (txHash tx) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
+            (txHash tx, ovs)
+    --
     mapM_
-        (\(x, a, i) ->
-             mapM_
-                 (\(y, b, j) -> do
-                      let sh = txHashToHex $ TxHash $ sha256 (scriptOutput a)
-                      commitAddressOutputs
-                          conn              -- connection
-                          sh                -- address
-                          True              -- isTypeRecv
-                          y                 -- otherAddress
-                          (txHashToHex $ txHash tx, i)  -- output
-                          ((blockHashToHex bhash, fromIntegral blkht), fromIntegral txind)  -- blockInfo
-                          (txHashToHex $ outPointHash $ prevOutput b, fromIntegral $ outPointIndex $ prevOutput b)  -- prevOutpoint
-                          j                 -- inputIndex
-                          (fromIntegral $ outValue a))  --value
-                 inAddrs)
+        (\(x, a, i) -> do
+             let sh = txHashToHex $ TxHash $ sha256 (scriptOutput a)
+             let bi = ((blockHashToHex bhash, fromIntegral blkht), fromIntegral txind)
+             let output = (txHashToHex $ txHash tx, i)
+             insertTxIdOutputs conn True output bi inputs (fromIntegral $ outValue a) --value
+             commitScriptHashOutputs
+                 conn -- connection
+                 sh -- scriptHash
+                 output
+                 bi
+             return ())
         outAddrs
     mapM_
-        (\(x, a, i) ->
-             mapM_
-                 (\(y, b, j) -> do
-                      commitAddressOutputs
-                          conn
-                          x
-                          False
-                          (Just y)
-                          (txHashToHex $ txHash tx, i)
-                          ((blockHashToHex bhash, fromIntegral blkht), fromIntegral txind)
-                          (txHashToHex $ outPointHash $ prevOutput a, fromIntegral $ outPointIndex $ prevOutput a)
-                          j 
-                          (fromIntegral $ outValue b))
-                 outAddrs)
-        (catMaybes lookupInAddrs)
+        (\(x, a, i) -> do
+             let bi = ((blockHashToHex bhash, fromIntegral blkht), fromIntegral txind)
+             let prevOutpoint = (txHashToHex $ outPointHash $ prevOutput a, fromIntegral $ outPointIndex $ prevOutput a)
+             let output = (txHashToHex $ txHash tx, i)
+             updateTxIdOutputs conn False output bi (prevOutpoint, i))
+        (inAddrs)
+    --
+    let ipSum = foldl (+) 0 $ (\(_, _, val) -> val) <$> inputs
+        opSum = foldl (+) 0 $ (\(_, a, _) -> fromIntegral $ outValue a) <$> outAddrs
+        fees = ipSum - opSum
+    --
+    let str = "insert INTO xoken.transactions ( tx_id, block_info, tx_serialized , inputs, fees) values (?, ?, ?, ?, ?)"
+        qstr = str :: Q.QueryString Q.W (Text, ((Text, Int32), Int32), Blob, [((Text, Int32), Int32, Int64)], Int64) ()
+        par =
+            Q.defQueryParams
+                Q.One
+                ( txHashToHex $ txHash tx
+                , ((blockHashToHex bhash, fromIntegral txind), fromIntegral blkht)
+                , Blob $ runPutLazy $ putLazyByteString $ S.encodeLazy tx
+                , inputs
+                , fees)
+    res <- liftIO $ try $ Q.runClient conn (Q.write (qstr) par)
+    case res of
+        Right () -> return ()
+        Left (e :: SomeException) -> do
+            liftIO $ err lg $ LG.msg ("Error: INSERTing into 'xoken.transactions': " ++ show e)
+            throw KeyValueDBInsertException
+    --
     eres <- LE.try $ handleIfAllegoryTx tx True
     case eres of
         Right (flg) -> return ()
@@ -631,59 +670,40 @@ processConfTransaction tx bhash txind blkht = do
         Just ev -> liftIO $ EV.signal $ ev
         Nothing -> return ()
 
---
---
---
---
-getAddressFromOutpoint ::
-       Q.ClientState -> (TVar (M.Map TxHash EV.Event)) -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Address)
-getAddressFromOutpoint conn txSync lg net outPoint waitSecs = do
-    let str = "SELECT tx_serialized from xoken.transactions where tx_id = ?"
-        qstr = str :: Q.QueryString Q.R (Identity Text) (Identity Blob)
-        p = Q.defQueryParams Q.One $ Identity $ txHashToHex $ outPointHash outPoint
-    res <- liftIO $ try $ Q.runClient conn (Q.query qstr p)
+getSatValuesFromOutpoint ::
+       Q.ClientState -> (TVar (M.Map TxHash EV.Event)) -> Logger -> Network -> OutPoint -> Int -> IO (Int64)
+getSatValuesFromOutpoint conn txSync lg net outPoint waitSecs = do
+    let str = "SELECT value FROM xoken.txid_outputs WHERE txid=? AND idx=?"
+        qstr = str :: Q.QueryString Q.R (Text, Int32) (Identity Int64)
+        par = Q.defQueryParams Q.One $ (txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint)
+    res <- liftIO $ try $ Q.runClient conn (Q.query qstr par)
     case res of
-        Left (e :: SomeException) -> do
-            err lg $ LG.msg ("Error: getAddressFromOutpoint: " ++ show e)
-            throw e
-        Right (iop) -> do
-            if L.length iop == 0
+        Right results -> do
+            if L.length results == 0
                 then do
                     debug lg $
-                        LG.msg ("TxID not found: (waiting for event) " ++ (show $ txHashToHex $ outPointHash outPoint))
-                    --
+                        LG.msg $
+                        "Tx not found: " ++ (show $ txHashToHex $ outPointHash outPoint) ++ "... waiting for event"
                     event <- EV.new
                     liftIO $ atomically $ modifyTVar' (txSync) (M.insert (outPointHash outPoint) event)
                     tofl <- waitTimeout event (1000000 * (fromIntegral waitSecs))
-                    if tofl == False -- False indicates a timeout occurred.
+                    if tofl == False
                         then do
                             liftIO $ atomically $ modifyTVar' (txSync) (M.delete (outPointHash outPoint))
-                            err lg $ LG.msg ("TxIDNotFoundException" ++ (show $ txHashToHex $ outPointHash outPoint))
+                            debug lg $
+                                LG.msg $ "TxIDNotFoundException: " ++ (show $ txHashToHex $ outPointHash outPoint)
                             throw TxIDNotFoundException
-                        else getAddressFromOutpoint conn txSync lg net outPoint waitSecs -- if being signalled, try again to success
-                    --
-                    return Nothing
+                        else getSatValuesFromOutpoint conn txSync lg net outPoint waitSecs
                 else do
-                    let txbyt = runIdentity $ iop !! 0
-                    case runGetLazy (getConfirmedTx) (fromBlob txbyt) of
-                        Left e -> do
-                            debug lg $ LG.msg (encodeHex $ BSL.toStrict $ fromBlob txbyt)
-                            throw DBTxParseException
-                        Right (txd) -> do
-                            case txd of
-                                Just tx ->
-                                    if (fromIntegral $ outPointIndex outPoint) > (L.length $ txOut tx)
-                                        then throw InvalidOutpointException
-                                        else do
-                                            let output = (txOut tx) !! (fromIntegral $ outPointIndex outPoint)
-                                            case scriptToAddressBS $ scriptOutput output of
-                                                Left e
-                                                    -- debug lg $ LG.msg ("unable to decode addr: " ++ show e)
-                                                 -> do
-                                                    return Nothing
-                                                Right os -> return $ Just os
-                                Nothing -> return Nothing
+                    let Identity val = head $ results
+                    return $ val
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: getSatValuesFromOutpoint: " ++ show e
+            throw e
 
+--
+--
+--
 getScriptHashFromOutpoint ::
        Q.ClientState -> (TVar (M.Map TxHash EV.Event)) -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Text)
 getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs = do
@@ -766,7 +786,6 @@ handleIfAllegoryTx tx revert = do
                     err lg $ LG.msg $ "error decoding op_return data:" ++ show e
                     throw MessageParsingException
         else do
-            err lg $ LG.msg $ val $ "error: OP_RETURN prefix mismatch"
             return False
   where
     resdb db fn tx al = do

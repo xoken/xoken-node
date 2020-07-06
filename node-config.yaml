@@ -1,7 +1,5 @@
 bitcoinNetwork: bsv
 
-indexUnconfirmedTx: False
-
 logLevel: Debug
 
 logFileName: ./debug.log
@@ -53,3 +51,7 @@ allegoryNameUtxoSatoshis: 5555
 allegoryTxFeeSatsProducerAction : 400
 
 allegoryTxFeeSatsOwnerAction : 200
+
+txOutputValuesCacheKeyBits : 20
+
+unconfirmedTxCacheKeyBits : 16

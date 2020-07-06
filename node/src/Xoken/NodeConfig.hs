@@ -34,7 +34,6 @@ data NodeConfig =
         , endPointTLSListenPort :: PortNumber
         , endPointHTTPListenIP :: String
         , endPointHTTPListenPort :: PortNumber
-        , indexUnconfirmedTx :: Bool
         , allegoryVendorSecretKey :: SecKey
         , maxTxProcThreads :: Int
         , maxBitcoinPeerCount :: Int
@@ -53,6 +52,8 @@ data NodeConfig =
         , allegoryNameUtxoSatoshis :: Int
         , allegoryTxFeeSatsProducerAction :: Int
         , allegoryTxFeeSatsOwnerAction :: Int
+        , txOutputValuesCacheKeyBits :: Int
+        , unconfirmedTxCacheKeyBits :: Int
         }
     deriving (Show, Generic)
 

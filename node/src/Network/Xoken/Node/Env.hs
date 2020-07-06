@@ -21,6 +21,7 @@ import Crypto.Secp256k1
 import qualified Data.ByteString.Lazy.Char8 as C
 import qualified Data.HashTable.IO as H
 import Data.Hashable
+import Data.Int
 import qualified Data.Map.Strict as M
 import Data.Time.Clock
 import Data.Word
@@ -70,10 +71,12 @@ data BitcoinP2P =
         , blockSyncStatusMap :: !(TVar (M.Map BlockHash (BlockSyncStatus, BlockHeight)))
         , epochType :: !(TVar Bool)
         , unconfirmedTxCache :: !(HashTable TxShortHash (Bool, TxHash))
+        , txOutputValuesCache :: !(HashTable TxShortHash (TxHash, [(Int16, Int64)]))
         , peerReset :: !(MVar Bool, TVar Int)
         , merkleQueueMap :: !(TVar (M.Map BlockHash (TBQueue (TxHash, Bool))))
         , txSynchronizer :: !(TVar (M.Map TxHash Event))
         , maxTMTBuilderThreadLock :: !(MSem Int)
+        , indexUnconfirmedTx :: !(TVar Bool)
         }
 
 class HasBitcoinP2P m where
