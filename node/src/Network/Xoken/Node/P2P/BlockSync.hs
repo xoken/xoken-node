@@ -440,8 +440,8 @@ commitScriptHashOutputs ::
     -> m ()
 commitScriptHashOutputs conn sh output blockInfo = do
     lg <- getLogger
-    let blkHeight = (\(_, bh, _) -> fromIntegral bh) blockInfo
-        txIndex = (\(_, _, ti) -> fromIntegral ti) blockInfo 
+    let blkHeight = fromIntegral $ snd3 blockInfo
+        txIndex = fromIntegral $ lst3 blockInfo 
         nominalTxIndex = blkHeight * 1000000000 + txIndex
         strAddrOuts = "INSERT INTO xoken.script_hash_outputs (script_hash, nominal_tx_index, output) VALUES (?,?,?)"
         qstrAddrOuts = strAddrOuts :: Q.QueryString Q.W (Text, Int64, (Text, Int32)) ()
@@ -464,7 +464,7 @@ insertTxIdOutputs ::
 insertTxIdOutputs conn (txid, index) blockInfo (inputs) value = do
     lg <- getLogger
     let strTxIdOuts =
-            "INSERT INTO xoken.txid_outputs (txid,indx,block_info,is_output_spent,spending_txid,spending_index,spending_tx_block_height,inputs,value) VALUES (?,?,?,?,?,?,?,?,?)"
+            "INSERT INTO xoken.txid_outputs (txid,output_index,block_info,is_output_spent,spending_txid,spending_index,spending_tx_block_height,inputs,value) VALUES (?,?,?,?,?,?,?,?,?)"
         qstrTxIdOuts =
             strTxIdOuts :: Q.QueryString Q.W ( Text
                                              , Int32
@@ -495,7 +495,7 @@ updateTxIdOutputs conn (txid, index) blockHeight (prevOutpoint, inputIndex) = do
     let prevTxId = fst $ prevOutpoint
         prevIdx = snd $ prevOutpoint
         strUpdateSpends =
-            "UPDATE xoken.txid_outputs SET is_output_spent=?,spending_txid=?,spending_index=?,spending_tx_block_height=? WHERE txid=? AND indx=?"
+            "UPDATE xoken.txid_outputs SET is_output_spent=?,spending_txid=?,spending_index=?,spending_tx_block_height=? WHERE txid=? AND output_index=?"
         qstrUpdateSpends = strUpdateSpends :: Q.QueryString Q.W (Bool, Text, Int32, Int32, Text, Int32) ()
         parUpdateSpends = Q.defQueryParams Q.One (True, txid, inputIndex, blockHeight, prevTxId, prevIdx)
     res <- liftIO $ try $ Q.runClient conn (Q.write qstrUpdateSpends parUpdateSpends)
@@ -652,7 +652,7 @@ processConfTransaction tx bhash txind blkht = do
 getSatValuesFromOutpoint ::
        Q.ClientState -> (TVar (M.Map TxHash EV.Event)) -> Logger -> Network -> OutPoint -> Int -> IO (Int64)
 getSatValuesFromOutpoint conn txSync lg net outPoint waitSecs = do
-    let str = "SELECT value FROM xoken.txid_outputs WHERE txid=? AND indx=?"
+    let str = "SELECT value FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
         qstr = str :: Q.QueryString Q.R (Text, Int32) (Identity Int64)
         par = Q.defQueryParams Q.One $ (txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint)
     res <- liftIO $ try $ Q.runClient conn (Q.query qstr par)
