@@ -445,7 +445,9 @@ instance ToJSON RawTxRecord where
         object
             [ "txId" .= tId
             , "size" .= sz
-            , "txBlockInfo" .= tBI
+            , "txIndex" .= (binfTxIndex tBI)
+            , "blockHash" .= (binfBlockHash tBI)
+            , "blockHeight" .= (binfBlockHeight tBI)
             , "txSerialized" .= (T.decodeUtf8 . BL.toStrict . B64L.encode . GZ.compress $ tS)
             , "txOutputs" .= txo
             , "txInputs" .= txi
@@ -460,7 +462,19 @@ data TxRecord =
         , tx :: Tx'
         , fees :: Int64
         }
-    deriving (Show, Generic, Hashable, Eq, Serialise, ToJSON)
+    deriving (Show, Generic, Hashable, Eq, Serialise)
+
+instance ToJSON TxRecord where
+    toJSON (TxRecord tId sz tBI tx' fees) =
+        object
+            [ "txId" .= tId
+            , "size" .= sz
+            , "txIndex" .= (binfTxIndex tBI)
+            , "blockHash" .= (binfBlockHash tBI)
+            , "blockHeight" .= (binfBlockHeight tBI)
+            , "tx" .= tx'
+            , "fees" .= fees
+            ]
 
 data Tx' =
     Tx'
@@ -478,7 +492,7 @@ data TxInput =
         , txInputIndex :: Int32
         , address :: Maybe String -- decode will succeed for P2PKH txn 
         , value :: Int64
-        , unlockingScript :: String -- scriptSig
+        , unlockingScript :: ByteString -- scriptSig
         }
     deriving (Show, Generic, Hashable, Eq, Serialise, ToJSON)
 
@@ -490,7 +504,7 @@ data TxOutput =
         , spendingTxIdx :: Maybe Int32
         , isSpent :: Bool
         , value :: Int64
-        , lockingScript :: String -- Script Pub Key
+        , lockingScript :: ByteString -- Script Pub Key
         }
     deriving (Show, Generic, Hashable, Eq, Serialise, ToJSON)
 
@@ -520,7 +534,18 @@ data AddressOutputs =
     deriving (Show, Generic, Hashable, Eq, Serialise)
 
 instance ToJSON AddressOutputs where
-    toJSON = genericToJSON (defaultOptions {fieldLabelModifier = drop 2})
+    toJSON (AddressOutputs addr out bi nom ios po val) =
+        object
+            [ "address" .= addr
+            , "output" .= out
+            , "txIndex" .= (binfTxIndex bi)
+            , "blockHash" .= (binfBlockHash bi)
+            , "blockHeight" .= (binfBlockHeight bi)
+            , "nominalTxIndex" .= nom
+            , "isOutputSpent" .= ios
+            , "prevOutpoint" .= po
+            , "value" .= val
+            ]
 
 data ScriptOutputs =
     ScriptOutputs
@@ -535,7 +560,18 @@ data ScriptOutputs =
     deriving (Show, Generic, Hashable, Eq, Serialise)
 
 instance ToJSON ScriptOutputs where
-    toJSON = genericToJSON (defaultOptions {fieldLabelModifier = drop 2})
+    toJSON (ScriptOutputs dh out bi nom ios po val) =
+        object
+            [ "scriptHash" .= dh
+            , "output" .= out
+            , "txIndex" .= (binfTxIndex bi)
+            , "blockHash" .= (binfBlockHash bi)
+            , "blockHeight" .= (binfBlockHeight bi)
+            , "nominalTxIndex" .= nom
+            , "isOutputSpent" .= ios
+            , "prevOutpoint" .= po
+            , "value" .= val
+            ]
 
 data OutPoint' =
     OutPoint'
@@ -650,12 +686,10 @@ validateEmail email =
      in (email =~ emailRegex :: Bool) || (null email)
 
 mergeAddrTxInTxInput :: Maybe String -> TxIn -> TxInput -> TxInput
-mergeAddrTxInTxInput addr (TxIn {..}) txInput =
-    txInput {unlockingScript = T.unpack $ T.decodeUtf8 scriptInput, address = addr}
+mergeAddrTxInTxInput addr (TxIn {..}) txInput = txInput {unlockingScript = scriptInput, address = addr}
 
 mergeAddrTxOutTxOutput :: Maybe String -> TxOut -> TxOutput -> TxOutput
-mergeAddrTxOutTxOutput addr (TxOut {..}) txOutput =
-    txOutput {lockingScript = T.unpack $ T.decodeUtf8 scriptOutput, address = addr}
+mergeAddrTxOutTxOutput addr (TxOut {..}) txOutput = txOutput {lockingScript = scriptOutput, address = addr}
 
 txToTx' :: Tx -> [TxOutput] -> [TxInput] -> Tx'
 txToTx' (Tx {..}) txout txin = Tx' txVersion txout txin txLockTime

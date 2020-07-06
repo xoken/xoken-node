@@ -369,6 +369,7 @@ xGetTxIDsByBlockHash hash pgSize pgNum = do
 xGetTxHash :: (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> m (Maybe RawTxRecord)
 xGetTxHash hash = do
     dbe <- getDB
+    lg <- getLogger
     bp2pEnv <- getBitcoinP2P
     let conn = keyValDB (dbe)
         net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
@@ -380,44 +381,49 @@ xGetTxHash hash = do
                                                         , Set ((DT.Text, Int32), Int32, Int64)
                                                         , Int64)
         p = Q.defQueryParams Q.One $ Identity $ hash
-    iop <- Q.runClient conn (Q.query qstr p)
-    if length iop == 0
-        then return Nothing
-        else do
-            let (txid, (bhash, blkht, txind), sz, sinps, fees) = iop !! 0
-                inps = L.sortBy (\(_, x, _) (_, y, _) -> compare x y) $ DCP.fromSet sinps
-                tx = fromJust $ Extra.hush $ S.decodeLazy $ fromBlob sz
-                inAddrs =
-                    (fmap
-                         (\x -> do
-                              case decodeInputBS net $ scriptInput x of
-                                  Left e -> Nothing
-                                  Right is ->
-                                      case inputAddress is of
-                                          Just s -> DT.unpack <$> addrToString net s
-                                          Nothing -> Nothing)
-                         (txIn tx))
-                outAddrs =
-                    (fmap
-                         (\y ->
-                              case scriptToAddressBS $ scriptOutput y of
-                                  Left e -> Nothing
-                                  Right os -> DT.unpack <$> addrToString net os)
-                         (txOut tx))
-            outs <- getTxOutputsFromTxId txid
-            return $
-                Just $
-                RawTxRecord
-                    (DT.unpack txid)
-                    (fromIntegral $ C.length $ fromBlob sz)
-                    (BlockInfo' (DT.unpack bhash) (fromIntegral blkht) (fromIntegral txind))
-                    (fromBlob sz)
-                    (zipWith3 mergeAddrTxOutTxOutput outAddrs (txOut tx) outs)
-                    (zipWith3 mergeAddrTxInTxInput inAddrs (txIn tx) $
-                     (\((outTxId, outTxIndex), inpTxIndex, value) ->
-                          TxInput (DT.unpack outTxId) outTxIndex inpTxIndex Nothing value "") <$>
-                     inps)
-                    fees
+    res <- LE.try $ Q.runClient conn (Q.query qstr p)
+    case res of
+        Right iop ->
+            if length iop == 0
+                then return Nothing
+                else do
+                    let (txid, (bhash, blkht, txind), sz, sinps, fees) = iop !! 0
+                        inps = L.sortBy (\(_, x, _) (_, y, _) -> compare x y) $ DCP.fromSet sinps
+                    let tx = fromJust $ Extra.hush $ S.decodeLazy $ fromBlob sz
+                    let inAddrs =
+                            (fmap
+                                (\x -> do
+                                    case decodeInputBS net $ scriptInput x of
+                                        Left e -> Nothing
+                                        Right is ->
+                                            case inputAddress is of
+                                                Just s -> DT.unpack <$> addrToString net s
+                                                Nothing -> Nothing)
+                                (txIn tx))
+                        outAddrs =
+                            (fmap
+                                (\y ->
+                                    case scriptToAddressBS $ scriptOutput y of
+                                        Left e -> Nothing
+                                        Right os -> DT.unpack <$> addrToString net os)
+                                (txOut tx))
+                    outs <- getTxOutputsFromTxId txid
+                    return $
+                        Just $
+                        RawTxRecord
+                            (DT.unpack txid)
+                            (fromIntegral $ C.length $ fromBlob sz)
+                            (BlockInfo' (DT.unpack bhash) (fromIntegral blkht) (fromIntegral txind))
+                            (fromBlob sz)
+                            (zipWith3 mergeAddrTxOutTxOutput outAddrs (txOut tx) outs)
+                            (zipWith3 mergeAddrTxInTxInput inAddrs (txIn tx) $
+                            (\((outTxId, outTxIndex), inpTxIndex, value) ->
+                                TxInput (DT.unpack outTxId) outTxIndex inpTxIndex Nothing value "") <$>
+                            inps)
+                            fees
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: xGetTxHash: " ++ show e
+            throw KeyValueDBLookupException
 
 xGetTxHashes :: (HasXokenNodeEnv env m, MonadIO m) => [DT.Text] -> m ([RawTxRecord])
 xGetTxHashes hashes = do
@@ -478,7 +484,7 @@ getTxOutputsFromTxId txid = do
     lg <- getLogger
     let conn = keyValDB (dbe)
         toStr =
-            "SELECT output_index,is_output_spent,value,spending_txid,spending_index FROM xoken.txid_outputs WHERE txid=? "
+            "SELECT output_index,is_output_spent,value,spending_txid,spending_index FROM xoken.txid_outputs WHERE txid=?"
         toQStr = toStr :: Q.QueryString Q.R (Identity DT.Text) (Int32, Bool, Int64, Maybe DT.Text, Maybe Int32)
         par = Q.defQueryParams Q.One (Identity txid)
     res <- LE.try $ Q.runClient conn (Q.query toQStr par)
@@ -486,7 +492,7 @@ getTxOutputsFromTxId txid = do
         Right t -> do
             if length t == 0
                 then do
-                    err lg $ LG.msg $ "Error: getTxOutputsData: No entry in txid_outputs for txid: " ++ show txid
+                    err lg $ LG.msg $ "Error: getTxOutputsFromTxId: No entry in txid_outputs for txid: " ++ show txid
                     throw KeyValueDBLookupException
                 else do
                     return $
