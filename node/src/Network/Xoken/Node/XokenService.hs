@@ -401,7 +401,7 @@ xGetTxHash hash = do
                                 Left e -> Nothing
                                 Right os -> DT.unpack <$> addrToString net os)
                         (txOut tx))
-            outs <- getTxOutputsData (txid, txind)
+            outs <- getTxOutputsFromTxId txid
             return $
                 Just $
                 RawTxRecord
@@ -409,14 +409,7 @@ xGetTxHash hash = do
                     (fromIntegral $ C.length $ fromBlob sz)
                     (BlockInfo' (DT.unpack bhash) (fromIntegral txind) (fromIntegral blkht))
                     (fromBlob sz)
-                    []{-(zipWith3 mergeAddrTxOutTxOutput outAddrs (txOut tx) $ (\(_,spent,_,value,sTxId,sTxIdx)
-                                                                                -> TxOutput 0
-                                                                                            Nothing
-                                                                                            (DT.unpack <$> sTxId)
-                                                                                            sTxIdx
-                                                                                            spent
-                                                                                            value
-                                                                                            "") <$> outs)-}
+                    (zipWith3 mergeAddrTxOutTxOutput outAddrs (txOut tx) outs)
                     (zipWith3 mergeAddrTxInTxInput inAddrs (txIn tx) $ (\((outTxId, outTxIndex),inpTxIndex,value)
                                                                          -> TxInput (DT.unpack outTxId)
                                                                                     outTxIndex
@@ -460,22 +453,50 @@ xGetTxHashes hashes = do
                             fees)
                     iop
 
+getTxOutputsFromTxId ::
+       (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
+    => DT.Text -> m [TxOutput]
+getTxOutputsFromTxId txid = do
+    dbe <- getDB
+    lg <- getLogger
+    let conn = keyValDB (dbe)
+        toStr = "SELECT idx,is_output_spent,value,spending_txid,spending_index FROM xoken.txid_outputs WHERE txid=? AND idx=?"
+        toQStr =
+            toStr :: Q.QueryString Q.R (Identity DT.Text) ( Int32
+                                                          , Bool
+                                                          , Int64
+                                                          , Maybe DT.Text
+                                                          , Maybe Int32)
+        par = Q.defQueryParams Q.One (Identity txid)
+    res <- LE.try $ Q.runClient conn (Q.query toQStr par)
+    case res of
+        Right t -> do
+            if length t == 0
+                then do
+                    err lg $
+                        LG.msg $
+                        "Error: getTxOutputsData: No entry in txid_outputs for txid: " ++ show txid
+                    throw KeyValueDBLookupException
+                else do
+                    return $ (\(idx,spent,value,sTxId,sTxIndex) -> TxOutput (fromIntegral idx) Nothing (DT.unpack <$> sTxId) sTxIndex spent value "") <$> t
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: getTxOutputsFromTxId: " ++ show e
+            throw KeyValueDBLookupException
+
 getTxOutputsData ::
        (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
     => (DT.Text, Int32)
-    -> m (((DT.Text, Int32), Int32), Bool, Set ((DT.Text, Int32), Int32, Int64), Int64, Maybe DT.Text, Maybe Int32)
+    -> m (((DT.Text, Int32), Int32), Bool, Set ((DT.Text, Int32), Int32, Int64), Int64)
 getTxOutputsData (txid, idx) = do
     dbe <- getDB
     lg <- getLogger
     let conn = keyValDB (dbe)
-        toStr = "SELECT block_info,is_output_spent,inputs,value, spending_txid, spending_index FROM xoken.txid_outputs WHERE txid=? AND idx=?"
+        toStr = "SELECT block_info,is_output_spent,inputs,value FROM xoken.txid_outputs WHERE txid=? AND idx=?"
         toQStr =
             toStr :: Q.QueryString Q.R (DT.Text, Int32) ( ((DT.Text, Int32), Int32)
                                                         , Bool
                                                         , Set ((DT.Text, Int32), Int32, Int64)
-                                                        , Int64
-                                                        , Maybe DT.Text
-                                                        , Maybe Int32)
+                                                        , Int64)
         top = Q.defQueryParams Q.One (txid, idx)
     toRes <- LE.try $ Q.runClient conn (Q.query toQStr top)
     case toRes of
@@ -512,7 +533,7 @@ xGetOutputsAddress address pgSize mbNomTxInd = do
                 else do
                     res <- sequence $ (\(_, _, (txid, idx)) -> getTxOutputsData (txid, idx)) <$> iop
                     return $
-                        ((\((addr, nti, (op_txid, op_txidx)), (((bsh, bht), bidx), ios, ips, val,_,_)) ->
+                        ((\((addr, nti, (op_txid, op_txidx)), (((bsh, bht), bidx), ios, ips, val)) ->
                               AddressOutputs
                                   (DT.unpack addr)
                                   (OutPoint' (DT.unpack op_txid) (fromIntegral op_txidx))
