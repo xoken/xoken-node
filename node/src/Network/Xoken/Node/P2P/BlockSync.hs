@@ -441,7 +441,7 @@ commitScriptHashOutputs ::
 commitScriptHashOutputs conn sh output blockInfo = do
     lg <- getLogger
     let blkHeight = fromIntegral $ snd3 blockInfo
-        txIndex = fromIntegral $ lst3 blockInfo 
+        txIndex = fromIntegral $ thd3 blockInfo 
         nominalTxIndex = blkHeight * 1000000000 + txIndex
         strAddrOuts = "INSERT INTO xoken.script_hash_outputs (script_hash, nominal_tx_index, output) VALUES (?,?,?)"
         qstrAddrOuts = strAddrOuts :: Q.QueryString Q.W (Text, Int64, (Text, Int32)) ()
