@@ -383,7 +383,7 @@ xGetTxHash hash = do
         then return Nothing
         else do
             let (txid, ((bhash, txind), blkht), sz, sinps, fees) = iop !! 0
-                inps = DCP.fromSet sinps
+                inps = L.sortBy (\(_,x,_) (_,y,_) -> compare x y) $ DCP.fromSet sinps
                 tx = fromJust $ Extra.hush $ S.decodeLazy $ fromBlob sz
                 inAddrs =
                     (fmap (\x -> do
@@ -395,13 +395,12 @@ xGetTxHash hash = do
                                         Nothing -> Nothing)
                         (txIn tx))
                 outAddrs =
-                    (catMaybes $
-                        fmap
-                            (\y ->
-                                case scriptToAddressBS $ scriptOutput y of
-                                    Left e -> Nothing
-                                    Right os -> addrToString net os)
-                            (txOut tx))
+                    (fmap
+                        (\y ->
+                            case scriptToAddressBS $ scriptOutput y of
+                                Left e -> Nothing
+                                Right os -> DT.unpack <$> addrToString net os)
+                        (txOut tx))
             outs <- getTxOutputsData (txid, txind)
             return $
                 Just $
@@ -411,13 +410,13 @@ xGetTxHash hash = do
                     (BlockInfo' (DT.unpack bhash) (fromIntegral txind) (fromIntegral blkht))
                     (fromBlob sz)
                     []{-(zipWith3 mergeAddrTxOutTxOutput outAddrs (txOut tx) $ (\(_,spent,_,value,sTxId,sTxIdx)
-                                                                -> TxOutput 0
-                                                                            "address"
-                                                                            sTxId
-                                                                            sTxIdx
-                                                                            spent
-                                                                            value
-                                                                            "") <$> outs)-}
+                                                                                -> TxOutput 0
+                                                                                            Nothing
+                                                                                            (DT.unpack <$> sTxId)
+                                                                                            sTxIdx
+                                                                                            spent
+                                                                                            value
+                                                                                            "") <$> outs)-}
                     (zipWith3 mergeAddrTxInTxInput inAddrs (txIn tx) $ (\((outTxId, outTxIndex),inpTxIndex,value)
                                                                          -> TxInput (DT.unpack outTxId)
                                                                                     outTxIndex
