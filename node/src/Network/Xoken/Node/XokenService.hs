@@ -478,7 +478,7 @@ getTxOutputsFromTxId txid = do
     lg <- getLogger
     let conn = keyValDB (dbe)
         toStr =
-            "SELECT output_index,is_output_spent,value,spending_txid,spending_index FROM xoken.txid_outputs WHERE txid=? AND idx=?"
+            "SELECT output_index,is_output_spent,value,spending_txid,spending_index FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
         toQStr = toStr :: Q.QueryString Q.R (Identity DT.Text) (Int32, Bool, Int64, Maybe DT.Text, Maybe Int32)
         par = Q.defQueryParams Q.One (Identity txid)
     res <- LE.try $ Q.runClient conn (Q.query toQStr par)
