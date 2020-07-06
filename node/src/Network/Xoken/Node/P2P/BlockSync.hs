@@ -518,9 +518,9 @@ commitTxPage txhash bhash page = do
     dbe' <- getDB
     lg <- getLogger
     let conn = keyValDB $ dbe'
-        txids = Set $ txHashToHex <$> txhash
+        txids = txHashToHex <$> txhash
         str = "insert INTO xoken.blockhash_txids (block_hash, page_number, txids) values (?, ?, ?)"
-        qstr = str :: Q.QueryString Q.W (Text, Int32, Set Text) ()
+        qstr = str :: Q.QueryString Q.W (Text, Int32, [Text]) ()
         par = Q.defQueryParams Q.One (blockHashToHex bhash, page, txids)
     res <- liftIO $ try $ Q.runClient conn (Q.write qstr par)
     case res of

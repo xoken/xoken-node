@@ -350,12 +350,12 @@ xGetTxIDsByBlockHash hash pgSize pgNum = do
         txDropFromFirst = fromIntegral $ txsToSkip `mod` 100
         txTakeFromLast = fromIntegral $ (pgSize + txsToSkip) `mod` 100
         str = "SELECT page_number, txids from xoken.blockhash_txids where block_hash = ? and page_number in ? "
-        qstr = str :: Q.QueryString Q.R (DT.Text, [Int32]) (Int32, Set DT.Text)
+        qstr = str :: Q.QueryString Q.R (DT.Text, [Int32]) (Int32, [DT.Text])
         p = Q.defQueryParams Q.One $ (DT.pack hash, [firstPage .. lastPage])
     res <- liftIO $ try $ Q.runClient conn (Q.query qstr p)
     case res of
         Right iop -> do
-            case L.sort $ L.map (L.map DT.unpack . DCP.fromSet . snd) iop of
+            case L.map (L.map DT.unpack . snd) iop of
                 [] -> return Nothing
                 [x] -> return $ Just $ L.drop txDropFromFirst $ L.take txTakeFromLast $ x
                 (x:xs) ->
