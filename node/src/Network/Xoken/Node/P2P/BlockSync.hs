@@ -518,9 +518,9 @@ commitTxPage txhash bhash page = do
     dbe' <- getDB
     lg <- getLogger
     let conn = keyValDB $ dbe'
-        txids = Set $ txHashToHex <$> txhash
+        txids = txHashToHex <$> txhash
         str = "insert INTO xoken.blockhash_txids (block_hash, page_number, txids) values (?, ?, ?)"
-        qstr = str :: Q.QueryString Q.W (Text, Int32, Set Text) ()
+        qstr = str :: Q.QueryString Q.W (Text, Int32, [Text]) ()
         par = Q.defQueryParams Q.One (blockHashToHex bhash, page, txids)
     res <- liftIO $ try $ Q.runClient conn (Q.write qstr par)
     case res of
@@ -537,35 +537,13 @@ processConfTransaction tx bhash txind blkht = do
     let net = bitcoinNetwork $ nodeConfig bp2pEnv
     let conn = keyValDB $ dbe'
     debug lg $ LG.msg ("processing Transaction: " ++ show (txHash tx))
+    let inAddrs = zip (txIn tx) [0 :: Int32 ..]
+    let outAddrs = zip (txOut tx) [0 :: Int32 ..]
     --
-    let inAddrs =
-            zip3
-                (map (\x -> do
-                          case decodeInputBS net $ scriptInput x of
-                              Left e -> Nothing
-                              Right is ->
-                                  case inputAddress is of
-                                      Just s -> addrToString net s
-                                      Nothing -> Nothing)
-                     (txIn tx))
-                (txIn tx)
-                [0 :: Int32 ..]
-    let outAddrs =
-            zip3
-                (catMaybes $
-                 map
-                     (\y ->
-                          case scriptToAddressBS $ scriptOutput y of
-                              Left e -> Nothing
-                              Right os -> addrToString net os)
-                     (txOut tx))
-                (txOut tx)
-                [0 :: Int32 ..]
+    -- lookup into tx outputs value cache if cache-miss, fetch from DB
     inputs <-
         mapM
-            (\(y, b, j)
-                     -- lookup into tx outputs value cache
-              -> do
+            (\(b, j) -> do
                  tuple <-
                      liftIO $
                      H.lookup
@@ -606,8 +584,7 @@ processConfTransaction tx bhash txind blkht = do
                                           (prevOutput b)
                                           (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
                  return
-                     ((txHashToHex $ outPointHash $ prevOutput b, fromIntegral $ outPointIndex $ prevOutput b), j, val) -- (prevOutpoint, inputIndex)
-             )
+                     ((txHashToHex $ outPointHash $ prevOutput b, fromIntegral $ outPointIndex $ prevOutput b), j, val))
             inAddrs
     --
     -- cache compile output values 
@@ -618,8 +595,9 @@ processConfTransaction tx bhash txind blkht = do
             (getTxShortHash (txHash tx) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
             (txHash tx, ovs)
     --
+    -- update outputs and scripthash tables
     mapM_
-        (\(x, a, i) -> do
+        (\(a, i) -> do
              let sh = txHashToHex $ TxHash $ sha256 (scriptOutput a)
              let bi = ((blockHashToHex bhash, fromIntegral blkht), fromIntegral txind)
              let output = (txHashToHex $ txHash tx, i)
@@ -632,17 +610,19 @@ processConfTransaction tx bhash txind blkht = do
              return ())
         outAddrs
     mapM_
-        (\(x, a, i) -> do
+        (\(a, i) -> do
              let bi = ((blockHashToHex bhash, fromIntegral blkht), fromIntegral txind)
              let prevOutpoint = (txHashToHex $ outPointHash $ prevOutput a, fromIntegral $ outPointIndex $ prevOutput a)
              let output = (txHashToHex $ txHash tx, i)
              updateTxIdOutputs conn False output bi (prevOutpoint, i))
         (inAddrs)
     --
+    -- calculate Tx fees
     let ipSum = foldl (+) 0 $ (\(_, _, val) -> val) <$> inputs
-        opSum = foldl (+) 0 $ (\(_, a, _) -> fromIntegral $ outValue a) <$> outAddrs
+        opSum = foldl (+) 0 $ (\(a, _) -> fromIntegral $ outValue a) <$> outAddrs
         fees = ipSum - opSum
     --
+    -- persist tx
     let str = "insert INTO xoken.transactions ( tx_id, block_info, tx_serialized , inputs, fees) values (?, ?, ?, ?, ?)"
         qstr = str :: Q.QueryString Q.W (Text, ((Text, Int32), Int32), Blob, [((Text, Int32), Int32, Int64)], Int64) ()
         par =
@@ -660,11 +640,13 @@ processConfTransaction tx bhash txind blkht = do
             liftIO $ err lg $ LG.msg ("Error: INSERTing into 'xoken.transactions': " ++ show e)
             throw KeyValueDBInsertException
     --
+    -- handle allegory
     eres <- LE.try $ handleIfAllegoryTx tx True
     case eres of
         Right (flg) -> return ()
         Left (e :: SomeException) -> err lg $ LG.msg ("Error: " ++ show e)
     --
+    -- signal 'done' event for tx's that were processed out of sequence 
     txSyncMap <- liftIO $ readTVarIO (txSynchronizer bp2pEnv)
     case (M.lookup (txHash tx) txSyncMap) of
         Just ev -> liftIO $ EV.signal $ ev

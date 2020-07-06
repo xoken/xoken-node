@@ -99,6 +99,6 @@ CREATE TABLE xoken.user_permission (
 CREATE TABLE xoken.blockhash_txids (
     block_hash text,
     page_number int,
-    txids set <text>,
+    txids frozen<list<text>>,
     PRIMARY KEY((block_hash, page_number))
 );
