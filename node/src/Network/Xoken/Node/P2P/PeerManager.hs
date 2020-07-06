@@ -827,7 +827,7 @@ messageHandler peer (mm, ingss) = do
                                         processConfTransaction
                                             tx
                                             (biBlockHash bf)
-                                            (binTxProcessed bi)
+                                            ((binTxProcessed bi) - 1)
                                             (fromIntegral $ biBlockHeight bf)
                                     case res of
                                         Right () -> do
