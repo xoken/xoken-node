@@ -305,7 +305,10 @@ checkBlocksFullySynced conn = do
             throw e
 
 getBatchSize n
-    | n < 630000 = [1 .. 10]
+    | n < 200000 = [1 .. 200]
+    | n >= 200000 && n < 400000 = [1 .. 50]
+    | n >= 400000 && n < 500000 = [1 .. 20]
+    | n >= 500000 && n < 600000 = [1 .. 10]
     | otherwise = [1, 2]
 
 getNextBlockToSync :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => UTCTime -> m (Maybe BlockInfo)
@@ -441,7 +444,7 @@ commitScriptHashOutputs ::
 commitScriptHashOutputs conn sh output blockInfo = do
     lg <- getLogger
     let blkHeight = fromIntegral $ snd3 blockInfo
-        txIndex = fromIntegral $ thd3 blockInfo 
+        txIndex = fromIntegral $ thd3 blockInfo
         nominalTxIndex = blkHeight * 1000000000 + txIndex
         strAddrOuts = "INSERT INTO xoken.script_hash_outputs (script_hash, nominal_tx_index, output) VALUES (?,?,?)"
         qstrAddrOuts = strAddrOuts :: Q.QueryString Q.W (Text, Int64, (Text, Int32)) ()
@@ -603,8 +606,7 @@ processConfTransaction tx bhash txind blkht = do
                  conn -- connection
                  sh -- scriptHash
                  output
-                 bi
-             return ())
+                 bi)
         outAddrs
     mapM_
         (\(a, i) -> do
