@@ -683,14 +683,15 @@ processConfTransaction tx bhash txind blkht = do
     --
     trace lg $ LG.msg ("processing Transaction: [handled if Allegory tx] " ++ show (txHash tx))
     -- signal 'done' event for tx's that were processed out of sequence 
-    txSyncMap <- liftIO $ readTVarIO (txSynchronizer bp2pEnv)
+    --
+    txSyncMap <- liftIO $ readMVar (txSynchronizer bp2pEnv)
     case (M.lookup (txHash tx) txSyncMap) of
         Just ev -> liftIO $ EV.signal $ ev
         Nothing -> return ()
     trace lg $ LG.msg ("processing Transaction: [signaled end of processing] " ++ show (txHash tx))
 
 getSatValuesFromOutpoint ::
-       Q.ClientState -> (TVar (M.Map TxHash EV.Event)) -> Logger -> Network -> OutPoint -> Int -> IO (Int64)
+       Q.ClientState -> (MVar (M.Map TxHash EV.Event)) -> Logger -> Network -> OutPoint -> Int -> IO (Int64)
 getSatValuesFromOutpoint conn txSync lg net outPoint waitSecs = do
     let str = "SELECT value FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
         qstr = str :: Q.QueryString Q.R (Text, Int32) (Identity Int64)
@@ -703,12 +704,16 @@ getSatValuesFromOutpoint conn txSync lg net outPoint waitSecs = do
                     debug lg $
                         LG.msg $
                         "Tx not found: " ++ (show $ txHashToHex $ outPointHash outPoint) ++ "... waiting for event"
-                    event <- EV.new
-                    liftIO $ atomically $ modifyTVar' (txSync) (M.insert (outPointHash outPoint) event)
+                    tmap <- liftIO $ takeMVar (txSync)
+                    event <-
+                        case (M.lookup (outPointHash outPoint) tmap) of
+                            Just evt -> return evt
+                            Nothing -> EV.new
+                    liftIO $ putMVar (txSync) (M.insert (outPointHash outPoint) event tmap)
                     tofl <- waitTimeout event (1000000 * (fromIntegral waitSecs))
                     if tofl == False
                         then do
-                            liftIO $ atomically $ modifyTVar' (txSync) (M.delete (outPointHash outPoint))
+                            liftIO $ putMVar (txSync) (M.delete (outPointHash outPoint) tmap)
                             debug lg $
                                 LG.msg $
                                 "TxIDNotFoundException: While querying txid_outputs for (TxID, Index): " ++
@@ -727,7 +732,7 @@ getSatValuesFromOutpoint conn txSync lg net outPoint waitSecs = do
 --
 --
 getScriptHashFromOutpoint ::
-       Q.ClientState -> (TVar (M.Map TxHash EV.Event)) -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Text)
+       Q.ClientState -> (MVar (M.Map TxHash EV.Event)) -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Text)
 getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs = do
     let str = "SELECT tx_serialized from xoken.transactions where tx_id = ?"
         qstr = str :: Q.QueryString Q.R (Identity Text) (Identity Blob)
@@ -743,12 +748,16 @@ getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs = do
                     debug lg $
                         LG.msg ("TxID not found: (waiting for event) " ++ (show $ txHashToHex $ outPointHash outPoint))
                     --
-                    event <- EV.new
-                    liftIO $ atomically $ modifyTVar' (txSync) (M.insert (outPointHash outPoint) event)
+                    tmap <- liftIO $ takeMVar (txSync)
+                    event <-
+                        case (M.lookup (outPointHash outPoint) tmap) of
+                            Just evt -> return evt
+                            Nothing -> EV.new
+                    liftIO $ putMVar (txSync) (M.insert (outPointHash outPoint) event tmap)
                     tofl <- waitTimeout event (1000000 * (fromIntegral waitSecs))
                     if tofl == False -- False indicates a timeout occurred.
                         then do
-                            liftIO $ atomically $ modifyTVar' (txSync) (M.delete (outPointHash outPoint))
+                            liftIO $ putMVar (txSync) (M.delete (outPointHash outPoint) tmap)
                             debug lg $ LG.msg ("TxIDNotFoundException" ++ (show $ txHashToHex $ outPointHash outPoint))
                             throw TxIDNotFoundException
                         else getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs -- if being signalled, try again to success

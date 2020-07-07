@@ -374,7 +374,7 @@ defBitcoinP2P nodeCnf = do
     rpf <- newEmptyMVar
     rpc <- newTVarIO 0
     mq <- newTVarIO M.empty
-    ts <- newTVarIO M.empty
+    ts <- newMVar M.empty
     tbt <- MS.new $ maxTMTBuilderThreads nodeCnf
     iut <- newTVarIO False
     return $ BitcoinP2P nodeCnf g bp mv hl st tl ep tc vc (rpf, rpc) mq ts tbt iut

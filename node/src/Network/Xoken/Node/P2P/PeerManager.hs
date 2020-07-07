@@ -623,7 +623,7 @@ readNextMessage net sock ingss = do
                                 if (binTxIngested blin == 0) -- very first Tx
                                     then do
                                         mv <- liftIO $ takeMVar (blockTxProcessingLeftMap p2pEnv)
-                                        let xm = M.insert (biBlockHash $ bf) ((binTxTotalCount blin) - 1) mv
+                                        let xm = M.insert (biBlockHash $ bf) ((binTxTotalCount blin)) mv
                                         liftIO $ putMVar (blockTxProcessingLeftMap p2pEnv) xm
                                         qq <-
                                             liftIO $
