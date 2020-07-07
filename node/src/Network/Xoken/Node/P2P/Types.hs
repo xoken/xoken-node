@@ -112,7 +112,7 @@ data BlockIngestState =
         { binUnspentBytes :: !B.ByteString
         , binTxPayloadLeft :: !Int
         , binTxTotalCount :: !Int
-        , binTxProcessed :: !Int
+        , binTxIngested :: !Int
         , binBlockSize :: !Int
         , binChecksum :: !CheckSum32
         }

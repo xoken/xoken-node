@@ -620,8 +620,11 @@ readNextMessage net sock ingss = do
                     qe <-
                         case (issBlockInfo iss) of
                             Just bf ->
-                                if (binTxProcessed blin == 0) -- very first Tx
+                                if (binTxIngested blin == 0) -- very first Tx
                                     then do
+                                        mv <- liftIO $ takeMVar (blockTxProcessingLeftMap p2pEnv)
+                                        let xm = M.insert (biBlockHash $ bf) ((binTxTotalCount blin) - 1) mv
+                                        liftIO $ putMVar (blockTxProcessingLeftMap p2pEnv) xm
                                         qq <-
                                             liftIO $
                                             atomically $ newTBQueue $ intToNatural (maxTMTQueueSize $ nodeConfig p2pEnv)
@@ -646,14 +649,14 @@ readNextMessage net sock ingss = do
                                              Just q -> return q
                                              Nothing -> throw MerkleQueueNotFoundException
                             Nothing -> throw MessageParsingException
-                    let isLast = ((binTxTotalCount blin) == (1 + binTxProcessed blin))
+                    let isLast = ((binTxTotalCount blin) == (1 + binTxIngested blin))
                     liftIO $ atomically $ writeTBQueue qe ((txHash t), isLast)
                     let bio =
                             BlockIngestState
                                 { binUnspentBytes = unused
                                 , binTxPayloadLeft = binTxPayloadLeft blin - (txbytLen - B.length unused)
                                 , binTxTotalCount = binTxTotalCount blin
-                                , binTxProcessed = 1 + binTxProcessed blin
+                                , binTxIngested = 1 + binTxIngested blin
                                 , binBlockSize = binBlockSize blin
                                 , binChecksum = binChecksum blin
                                 }
@@ -688,7 +691,7 @@ readNextMessage net sock ingss = do
                                                         { binUnspentBytes = unused
                                                         , binTxPayloadLeft = fromIntegral (len) - (88 - B.length unused)
                                                         , binTxTotalCount = fromIntegral $ txnCount b
-                                                        , binTxProcessed = 0
+                                                        , binTxIngested = 0
                                                         , binBlockSize = fromIntegral $ len
                                                         , binChecksum = cks
                                                         }
@@ -827,20 +830,31 @@ messageHandler peer (mm, ingss) = do
                                         processConfTransaction
                                             tx
                                             (biBlockHash bf)
-                                            ((binTxProcessed bi) - 1)
+                                            ((binTxIngested bi) - 1)
                                             (fromIntegral $ biBlockHeight bf)
                                     case res of
                                         Right () -> do
-                                            if binTxTotalCount bi == binTxProcessed bi
-                                                    -- mark block received
-                                                then do
-                                                    liftIO $
-                                                        atomically $
-                                                        modifyTVar'
-                                                            (blockSyncStatusMap bp2pEnv)
-                                                            (M.insert (biBlockHash bf) $
-                                                             (BlockReceiveComplete, biBlockHeight bf))
-                                                else return ()
+                                            mv <- liftIO $ takeMVar (blockTxProcessingLeftMap bp2pEnv)
+                                            case (M.lookup (biBlockHash bf) mv) of
+                                                Just left -> do
+                                                    if (left - 1) == 0
+                                                            -- mark block received
+                                                        then do
+                                                            liftIO $
+                                                                atomically $
+                                                                modifyTVar'
+                                                                    (blockSyncStatusMap bp2pEnv)
+                                                                    (M.insert (biBlockHash bf) $
+                                                                     (BlockReceiveComplete, biBlockHeight bf))
+                                                            let xm = M.delete (biBlockHash $ bf) mv
+                                                            liftIO $ putMVar (blockTxProcessingLeftMap bp2pEnv) xm
+                                                        else do
+                                                            let xm = M.insert (biBlockHash $ bf) (left - 1) mv
+                                                            liftIO $ putMVar (blockTxProcessingLeftMap bp2pEnv) xm
+                                                Nothing -> do
+                                                    err lg $
+                                                        LG.msg $ val "[ERROR] not found in blockTxProcessingLeftMap"
+                                                    throw BlockHashNotFoundException
                                         Left BlockHashNotFoundException -> return ()
                                         Left EmptyHeadersMessageException -> return ()
                                         Left TxIDNotFoundException -> do
@@ -924,10 +938,10 @@ readNextMessage' peer = do
                                             if (binTxTotalCount ingst - 4) <= 0
                                                 then binTxTotalCount ingst
                                                 else (binTxTotalCount ingst - 4)
-                                    if binTxProcessed ingst == trig
+                                    if binTxIngested ingst == trig
                                         then liftIO $ atomically $ modifyTVar' (bpBlockFetchWindow peer) (\z -> z - 1)
                                         else return ()
-                                    if binTxTotalCount ingst == binTxProcessed ingst
+                                    if binTxTotalCount ingst == binTxIngested ingst
                                             -- debug lg $ LG.msg $ ("DEBUG Block receive complete - " ++ show " ")
                                         then do
                                             liftIO $ atomically $ writeTVar (bpIngressState peer) $ Nothing
@@ -938,7 +952,7 @@ readNextMessage' peer = do
                                                     modifyTVar'
                                                         (blockSyncStatusMap bp2pEnv)
                                                         (M.insert (biBlockHash bi) $
-                                                         ( RecentTxReceiveTime (tm, binTxProcessed ingst)
+                                                         ( RecentTxReceiveTime (tm, binTxIngested ingst)
                                                          , biBlockHeight bi -- track receive progress
                                                           ))
                                 Nothing -> throw InvalidBlockInfoException
