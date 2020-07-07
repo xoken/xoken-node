@@ -582,9 +582,11 @@ processConfTransaction tx bhash txind blkht = do
                                                  Left (e :: SomeException) -> do
                                                      err lg $
                                                          LG.msg $
-                                                         "Error: pCT calling gSVFO for TxID " ++
+                                                         "Error: [pCT calling gSVFO] WHILE Processing TxID " ++
+                                                         show (txHashToHex $ txHash tx) ++
+                                                         ", getting value for dependent input (TxID,Index): (" ++
                                                          show (txHashToHex $ outPointHash (prevOutput b)) ++
-                                                         ": " ++ show e
+                                                         ", " ++ show (outPointIndex $ prevOutput b) ++ ")"
                                                      throw e
                          Nothing -> do
                              if (outPointHash nullOutPoint) == (outPointHash $ prevOutput b)
@@ -605,8 +607,11 @@ processConfTransaction tx bhash txind blkht = do
                                          Left (e :: SomeException) -> do
                                              err lg $
                                                  LG.msg $
-                                                 "Error: pCT calling gSVFO for TxID " ++
-                                                 show (txHashToHex $ outPointHash (prevOutput b)) ++ ": " ++ show e
+                                                 "Error: [pCT calling gSVFO] WHILE Processing TxID " ++
+                                                 show (txHashToHex $ txHash tx) ++
+                                                 ", getting value for dependent input (TxID,Index): (" ++
+                                                 show (txHashToHex $ outPointHash (prevOutput b)) ++
+                                                 ", " ++ show (outPointIndex $ prevOutput b) ++ ")"
                                              throw e
                  return
                      ((txHashToHex $ outPointHash $ prevOutput b, fromIntegral $ outPointIndex $ prevOutput b), j, val))
@@ -705,7 +710,10 @@ getSatValuesFromOutpoint conn txSync lg net outPoint waitSecs = do
                         then do
                             liftIO $ atomically $ modifyTVar' (txSync) (M.delete (outPointHash outPoint))
                             debug lg $
-                                LG.msg $ "TxIDNotFoundException: " ++ (show $ txHashToHex $ outPointHash outPoint)
+                                LG.msg $
+                                "TxIDNotFoundException: While querying txid_outputs for (TxID, Index): " ++
+                                (show $ txHashToHex $ outPointHash outPoint) ++
+                                ", " ++ show (outPointIndex outPoint) ++ ")"
                             throw TxIDNotFoundException
                         else getSatValuesFromOutpoint conn txSync lg net outPoint waitSecs
                 else do
