@@ -49,7 +49,7 @@ CREATE TABLE xoken.ep_txid_outputs (
     inputs set  <frozen<tuple<frozen<tuple<text, int>>, int, bigint>>>,
     value bigint,
     PRIMARY KEY(epoch, txid, output_index)
- ) WITH CLUSTERING ORDER BY (output_index ASC);
+ ) WITH CLUSTERING ORDER BY (txid ASC, output_index ASC);
 
 CREATE TABLE xoken.script_hash_outputs (
     script_hash text,
