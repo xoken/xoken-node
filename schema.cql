@@ -43,6 +43,7 @@ CREATE TABLE xoken.ep_txid_outputs (
     epoch boolean,
     txid text,
     output_index int,
+    script_hash text,
     is_output_spent boolean,
     spending_txid text,
     spending_index int,
@@ -61,6 +62,7 @@ CREATE TABLE xoken.script_hash_outputs (
 CREATE TABLE xoken.txid_outputs (
     txid text,
     output_index int,
+    script_hash text,
     block_info frozen<tuple<text, int, int>>,
     is_output_spent boolean,
     spending_txid text,
