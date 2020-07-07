@@ -464,7 +464,7 @@ insertTxIdOutputs ::
     -> (Text, Int32) -- output (txid, index)
     -> Text
     -> (Text, Int32, Int32) -- blockInfo (blockHash, blockHeight, blockTxIndex)
-    -> [((Text, Int32), Int32, Int64)] -- (prevOutpoint, inputIndex, value)
+    -> [((Text, Int32), Int32, (Text, Int64))] -- (prevOutpoint, inputIndex, value)
     -> Int64 -- value
     -> m ()
 insertTxIdOutputs conn (txid, index) scriptHash blockInfo (inputs) value = do
@@ -480,7 +480,7 @@ insertTxIdOutputs conn (txid, index) scriptHash blockInfo (inputs) value = do
                                              , Maybe Text
                                              , Maybe Int32
                                              , Maybe Int32
-                                             , [((Text, Int32), Int32, Int64)]
+                                             , [((Text, Int32), Int32, (Text, Int64))]
                                              , Int64) ()
         parTxIdOuts =
             Q.defQueryParams Q.One (txid, index, scriptHash, blockInfo, False, Nothing, Nothing, Nothing, inputs, value)
@@ -570,7 +570,8 @@ processConfTransaction tx bhash txind blkht = do
                                  else do
                                      if (outPointHash nullOutPoint) == (outPointHash $ prevOutput b)
                                          then return
-                                                  (fromIntegral $ computeSubsidy net $ (fromIntegral blkht :: Word32))
+                                                  ( ""
+                                                  , fromIntegral $ computeSubsidy net $ (fromIntegral blkht :: Word32))
                                          else do
                                              dbRes <-
                                                  liftIO $
@@ -583,7 +584,7 @@ processConfTransaction tx bhash txind blkht = do
                                                      (prevOutput b)
                                                      (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
                                              case dbRes of
-                                                 Right val -> return $ val
+                                                 Right v -> return $ v
                                                  Left (e :: SomeException) -> do
                                                      err lg $
                                                          LG.msg $
@@ -595,7 +596,7 @@ processConfTransaction tx bhash txind blkht = do
                                                      throw e
                          Nothing -> do
                              if (outPointHash nullOutPoint) == (outPointHash $ prevOutput b)
-                                 then return (fromIntegral $ computeSubsidy net $ (fromIntegral blkht :: Word32))
+                                 then return ("", fromIntegral $ computeSubsidy net $ (fromIntegral blkht :: Word32))
                                  else do
                                      dbRes <-
                                          liftIO $
@@ -608,7 +609,7 @@ processConfTransaction tx bhash txind blkht = do
                                              (prevOutput b)
                                              (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
                                      case dbRes of
-                                         Right val -> return $ val
+                                         Right v -> return $ v
                                          Left (e :: SomeException) -> do
                                              err lg $
                                                  LG.msg $
@@ -624,7 +625,10 @@ processConfTransaction tx bhash txind blkht = do
     trace lg $ LG.msg ("processing Transaction: [got inputs] " ++ show (txHash tx))
     --
     -- cache compile output values 
-    let ovs = map (\(o, i) -> (i, fromIntegral $ outValue o)) (zip (txOut tx) [0 :: Int16 ..])
+    let ovs =
+            map
+                (\(o, i) -> (i, ((txHashToHex $ TxHash $ sha256 (scriptOutput o)), fromIntegral $ outValue o)))
+                (zip (txOut tx) [0 :: Int16 ..])
     liftIO $
         H.insert
             (txOutputValuesCache bp2pEnv)
@@ -648,8 +652,8 @@ processConfTransaction tx bhash txind blkht = do
         outAddrs
     trace lg $ LG.msg ("processing Transaction: [committed scripthash,txid_outputs tables] " ++ show (txHash tx))
     mapM_
-        (\(a, i) -> do
-             let sh = txHashToHex $ TxHash $ sha256 (scriptInput a)
+        (\((a, i), scrhs) -> do
+             let sh = txHashToHex $ TxHash $ sha256 (scriptInput a) -- TODO !!! replace with scrhs
              let bi = (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
              let blockHeight = fromIntegral blkht
              let prevOutpoint = (txHashToHex $ outPointHash $ prevOutput a, fromIntegral $ outPointIndex $ prevOutput a)
@@ -661,18 +665,19 @@ processConfTransaction tx bhash txind blkht = do
                  output
                  bi
                  False)
-        (inAddrs)
+        (zip (inAddrs) (map (\x -> fst $ thd3 x) inputs))
     --
     trace lg $ LG.msg ("processing Transaction: [updated spend info for inputs] " ++ show (txHash tx))
     -- calculate Tx fees
-    let ipSum = foldl (+) 0 $ (\(_, _, val) -> val) <$> inputs
+    let ipSum = foldl (+) 0 $ (\(_, _, (_, val)) -> val) <$> inputs
         opSum = foldl (+) 0 $ (\(a, _) -> fromIntegral $ outValue a) <$> outAddrs
         fees = ipSum - opSum
     --
     trace lg $ LG.msg ("processing Transaction: [calculated fees] " ++ show (txHash tx))
     -- persist tx
     let str = "insert INTO xoken.transactions ( tx_id, block_info, tx_serialized , inputs, fees) values (?, ?, ?, ?, ?)"
-        qstr = str :: Q.QueryString Q.W (Text, (Text, Int32, Int32), Blob, [((Text, Int32), Int32, Int64)], Int64) ()
+        qstr =
+            str :: Q.QueryString Q.W (Text, (Text, Int32, Int32), Blob, [((Text, Int32), Int32, (Text, Int64))], Int64) ()
         par =
             Q.defQueryParams
                 Q.One
@@ -705,10 +710,10 @@ processConfTransaction tx bhash txind blkht = do
     trace lg $ LG.msg ("processing Transaction: [signaled end of processing] " ++ show (txHash tx))
 
 getSatValuesFromOutpoint ::
-       Q.ClientState -> (MVar (M.Map TxHash EV.Event)) -> Logger -> Network -> OutPoint -> Int -> IO (Int64)
+       Q.ClientState -> (MVar (M.Map TxHash EV.Event)) -> Logger -> Network -> OutPoint -> Int -> IO ((Text, Int64))
 getSatValuesFromOutpoint conn txSync lg net outPoint waitSecs = do
-    let str = "SELECT value FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
-        qstr = str :: Q.QueryString Q.R (Text, Int32) (Identity Int64)
+    let str = "SELECT script_hash, value FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
+        qstr = str :: Q.QueryString Q.R (Text, Int32) (Text, Int64)
         par = Q.defQueryParams Q.One $ (txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint)
     res <- liftIO $ try $ Q.runClient conn (Q.query qstr par)
     case res of
@@ -736,8 +741,8 @@ getSatValuesFromOutpoint conn txSync lg net outPoint waitSecs = do
                             throw TxIDNotFoundException
                         else getSatValuesFromOutpoint conn txSync lg net outPoint waitSecs
                 else do
-                    let Identity val = head $ results
-                    return $ val
+                    let (scrHash, val) = head $ results
+                    return $ (scrHash, val)
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: getSatValuesFromOutpoint: " ++ show e
             throw e

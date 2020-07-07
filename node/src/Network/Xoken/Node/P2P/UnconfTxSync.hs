@@ -213,7 +213,7 @@ insertEpochTxIdOutputs ::
     -> Bool
     -> (Text, Int32)
     -> Text
-    -> [((Text, Int32), Int32, Int64)]
+    -> [((Text, Int32), Int32, (Text, Int64))]
     -> Int64
     -> m ()
 insertEpochTxIdOutputs conn epoch (txid, index) scriptHash inputs val = do
@@ -228,7 +228,7 @@ insertEpochTxIdOutputs conn epoch (txid, index) scriptHash inputs val = do
                                      , Bool
                                      , Maybe Text
                                      , Maybe Int32
-                                     , [((Text, Int32), Int32, Int64)]
+                                     , [((Text, Int32), Int32, (Text, Int64))]
                                      , Int64) ()
         par = Q.defQueryParams Q.One (epoch, txid, index, scriptHash, False, Nothing, Nothing, inputs, val)
     res <- liftIO $ try $ Q.runClient conn $ (Q.write qstr par)
@@ -331,7 +331,10 @@ processUnconfTransaction tx = do
                  return
                      ((txHashToHex $ outPointHash $ prevOutput b, fromIntegral $ outPointIndex $ prevOutput b), j, val))
             inAddrs
-    let ovs = map (\(o, i) -> (i, fromIntegral $ outValue o)) (zip (txOut tx) [0 :: Int16 ..])
+    let ovs =
+            map
+                (\(o, i) -> (i, ((txHashToHex $ TxHash $ sha256 (scriptOutput o)), fromIntegral $ outValue o)))
+                (zip (txOut tx) [0 :: Int16 ..])
     liftIO $
         H.insert
             (txOutputValuesCache bp2pEnv)
@@ -354,12 +357,12 @@ processUnconfTransaction tx = do
              return ())
         inAddrs
     --
-    let ipSum = foldl (+) 0 $ (\(_, _, val) -> val) <$> inputs
+    let ipSum = foldl (+) 0 $ (\(_, _, (_, val)) -> val) <$> inputs
         opSum = foldl (+) 0 $ (\(_, a, _) -> fromIntegral $ outValue a) <$> outAddrs
         fees = ipSum - opSum
     --
     let str = "INSERT INTO xoken.ep_transactions (epoch, tx_id, tx_serialized, inputs, fees) values (?, ?, ?, ?, ?)"
-        qstr = str :: Q.QueryString Q.W (Bool, Text, Blob, [((Text, Int32), Int32, Int64)], Int64) ()
+        qstr = str :: Q.QueryString Q.W (Bool, Text, Blob, [((Text, Int32), Int32, (Text, Int64))], Int64) ()
         par =
             Q.defQueryParams
                 Q.One
@@ -377,10 +380,10 @@ processUnconfTransaction tx = do
         Nothing -> return ()
 
 getSatValuesFromEpochOutpoint ::
-       Q.ClientState -> (MVar (M.Map TxHash EV.Event)) -> Logger -> Network -> OutPoint -> Int -> IO (Int64)
+       Q.ClientState -> (MVar (M.Map TxHash EV.Event)) -> Logger -> Network -> OutPoint -> Int -> IO ((Text, Int64))
 getSatValuesFromEpochOutpoint conn txSync lg net outPoint waitSecs = do
     let str = "SELECT script_hash, value FROM xoken.ep_txid_outputs WHERE txid=? AND output_index=?"
-        qstr = str :: Q.QueryString Q.R (Text, Int32) (Identity Int64)
+        qstr = str :: Q.QueryString Q.R (Text, Int32) (Text, Int64)
         par = Q.defQueryParams Q.One $ (txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint)
     res <- liftIO $ try $ Q.runClient conn (Q.query qstr par)
     case res of
@@ -407,8 +410,8 @@ getSatValuesFromEpochOutpoint conn txSync lg net outPoint waitSecs = do
                             throw TxIDNotFoundException
                         else getSatValuesFromEpochOutpoint conn txSync lg net outPoint waitSecs
                 else do
-                    let Identity val = head $ results
-                    return $ val
+                    let (scrHash, val) = head $ results
+                    return $ (scrHash, val)
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: getSatValuesFromEpochOutpoint: " ++ show e
             throw e
