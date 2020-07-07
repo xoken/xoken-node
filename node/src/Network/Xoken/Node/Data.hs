@@ -437,11 +437,12 @@ data RawTxRecord =
         , txOutputs :: [TxOutput]
         , txInputs :: [TxInput]
         , fees :: Int64
+        , txMerkleBranch :: [MerkleBranchNode']
         }
     deriving (Show, Generic, Hashable, Eq, Serialise)
 
 instance ToJSON RawTxRecord where
-    toJSON (RawTxRecord tId sz tBI tS txo txi fees) =
+    toJSON (RawTxRecord tId sz tBI tS txo txi fee mrkl) =
         object
             [ "txId" .= tId
             , "size" .= sz
@@ -451,7 +452,8 @@ instance ToJSON RawTxRecord where
             , "txSerialized" .= (T.decodeUtf8 . BL.toStrict . B64L.encode . GZ.compress $ tS)
             , "txOutputs" .= txo
             , "txInputs" .= txi
-            , "fees" .= fees
+            , "fees" .= fee
+            , "merkleBranch" .= mrkl
             ]
 
 data TxRecord =
@@ -461,11 +463,12 @@ data TxRecord =
         , txBlockInfo :: BlockInfo'
         , tx :: Tx'
         , fees :: Int64
+        , txMerkleBranch :: [MerkleBranchNode']
         }
     deriving (Show, Generic, Hashable, Eq, Serialise)
 
 instance ToJSON TxRecord where
-    toJSON (TxRecord tId sz tBI tx' fees) =
+    toJSON (TxRecord tId sz tBI tx' fee mrkl) =
         object
             [ "txId" .= tId
             , "size" .= sz
@@ -473,7 +476,8 @@ instance ToJSON TxRecord where
             , "blockHash" .= (binfBlockHash tBI)
             , "blockHeight" .= (binfBlockHeight tBI)
             , "tx" .= tx'
-            , "fees" .= fees
+            , "fees" .= fee
+            , "merkleBranch" .= mrkl
             ]
 
 data Tx' =

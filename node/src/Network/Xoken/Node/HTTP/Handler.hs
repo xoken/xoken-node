@@ -175,7 +175,8 @@ getTxById = do
                                                                                                     size
                                                                                                     txBlockInfo
                                                                                                     (txToTx' rt txOutputs txInputs)
-                                                                                                    fees)
+                                                                                                    fees
+                                                                                                    txMerkleBranch)
                 Left err -> do
                     modifyResponse $ setResponseStatus 400 "Bad Request"
                     writeBS "400 error"
@@ -201,7 +202,8 @@ getTxByIds = do
                                    txBlockInfo <$>
                                    (txToTx' <$> (Extra.hush $ S.decodeLazy txSerialized) <*>
                                                 (pure txOutputs) <*> (pure txInputs)) <*>
-                                   (pure fees))) <$>
+                                   (pure fees) <*>
+                                   (pure txMerkleBranch))) <$>
                     txs
             writeBS $ BSL.toStrict $ Aeson.encode $ RespTransactionsByTxIDs $ catMaybes rawTxs
 

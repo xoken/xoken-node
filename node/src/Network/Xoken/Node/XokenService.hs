@@ -26,7 +26,7 @@ import Codec.Serialise
 import Conduit hiding (runResourceT)
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (AsyncCancelled, mapConcurrently, mapConcurrently_, race_)
-import qualified Control.Concurrent.Async.Lifted as LA (async, mapConcurrently, wait)
+import qualified Control.Concurrent.Async.Lifted as LA (async, concurrently, mapConcurrently, wait)
 import Control.Concurrent.MVar
 import Control.Concurrent.STM
 import Control.Concurrent.STM.TVar
@@ -381,9 +381,13 @@ xGetTxHash hash = do
                                                         , Set ((DT.Text, Int32), Int32, Int64)
                                                         , Int64)
         p = Q.defQueryParams Q.One $ Identity $ hash
-    res <- LE.try $ Q.runClient conn (Q.query qstr p)
+    res <-
+        LE.try $
+        LA.concurrently
+            (LA.concurrently (Q.runClient conn (Q.query qstr p)) (getTxOutputsFromTxId hash))
+            (xGetMerkleBranch $ DT.unpack hash)
     case res of
-        Right iop ->
+        Right ((iop, outs), mrkl) ->
             if length iop == 0
                 then return Nothing
                 else do
@@ -392,22 +396,21 @@ xGetTxHash hash = do
                     let tx = fromJust $ Extra.hush $ S.decodeLazy $ fromBlob sz
                     let inAddrs =
                             (fmap
-                                (\x -> do
-                                    case decodeInputBS net $ scriptInput x of
-                                        Left e -> Nothing
-                                        Right is ->
-                                            case inputAddress is of
-                                                Just s -> DT.unpack <$> addrToString net s
-                                                Nothing -> Nothing)
-                                (txIn tx))
+                                 (\x -> do
+                                      case decodeInputBS net $ scriptInput x of
+                                          Left e -> Nothing
+                                          Right is ->
+                                              case inputAddress is of
+                                                  Just s -> DT.unpack <$> addrToString net s
+                                                  Nothing -> Nothing)
+                                 (txIn tx))
                         outAddrs =
                             (fmap
-                                (\y ->
-                                    case scriptToAddressBS $ scriptOutput y of
-                                        Left e -> Nothing
-                                        Right os -> DT.unpack <$> addrToString net os)
-                                (txOut tx))
-                    outs <- getTxOutputsFromTxId txid
+                                 (\y ->
+                                      case scriptToAddressBS $ scriptOutput y of
+                                          Left e -> Nothing
+                                          Right os -> DT.unpack <$> addrToString net os)
+                                 (txOut tx))
                     return $
                         Just $
                         RawTxRecord
@@ -417,10 +420,11 @@ xGetTxHash hash = do
                             (fromBlob sz)
                             (zipWith3 mergeAddrTxOutTxOutput outAddrs (txOut tx) outs)
                             (zipWith3 mergeAddrTxInTxInput inAddrs (txIn tx) $
-                            (\((outTxId, outTxIndex), inpTxIndex, value) ->
-                                TxInput (DT.unpack outTxId) outTxIndex inpTxIndex Nothing value "") <$>
-                            inps)
+                             (\((outTxId, outTxIndex), inpTxIndex, value) ->
+                                  TxInput (DT.unpack outTxId) outTxIndex inpTxIndex Nothing value "") <$>
+                             inps)
                             fees
+                            mrkl
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetTxHash: " ++ show e
             throw KeyValueDBLookupException
@@ -428,6 +432,7 @@ xGetTxHash hash = do
 xGetTxHashes :: (HasXokenNodeEnv env m, MonadIO m) => [DT.Text] -> m ([RawTxRecord])
 xGetTxHashes hashes = do
     dbe <- getDB
+    lg <- getLogger
     bp2pEnv <- getBitcoinP2P
     let conn = keyValDB (dbe)
         net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
@@ -439,44 +444,57 @@ xGetTxHashes hashes = do
                                                           , Set ((DT.Text, Int32), Int32, Int64)
                                                           , Int64)
         p = Q.defQueryParams Q.One $ Identity $ hashes
-    iop <- Q.runClient conn (Q.query qstr p)
-    if length iop == 0
-        then return []
-        else traverse
-                 (\(txid, (bhash, blkht, txind), sz, sinps, fees) -> do
-                      let inps = L.sortBy (\(_, x, _) (_, y, _) -> compare x y) $ DCP.fromSet sinps
-                          tx = fromJust $ Extra.hush $ S.decodeLazy $ fromBlob sz
-                          inAddrs =
-                              (fmap
-                                   (\x -> do
-                                        case decodeInputBS net $ scriptInput x of
-                                            Left e -> Nothing
-                                            Right is ->
-                                                case inputAddress is of
-                                                    Just s -> DT.unpack <$> addrToString net s
-                                                    Nothing -> Nothing)
-                                   (txIn tx))
-                          outAddrs =
-                              (fmap
-                                   (\y ->
-                                        case scriptToAddressBS $ scriptOutput y of
-                                            Left e -> Nothing
-                                            Right os -> DT.unpack <$> addrToString net os)
-                                   (txOut tx))
-                      outs <- getTxOutputsFromTxId txid
-                      return $
-                          RawTxRecord
-                              (DT.unpack txid)
-                              (fromIntegral $ C.length $ fromBlob sz)
-                              (BlockInfo' (DT.unpack bhash) (fromIntegral txind) (fromIntegral blkht))
-                              (fromBlob sz)
-                              (zipWith3 mergeAddrTxOutTxOutput outAddrs (txOut tx) outs)
-                              (zipWith3 mergeAddrTxInTxInput inAddrs (txIn tx) $
-                               (\((outTxId, outTxIndex), inpTxIndex, value) ->
-                                    TxInput (DT.unpack outTxId) outTxIndex inpTxIndex Nothing value "") <$>
-                               inps)
-                              fees)
-                 iop
+    res <- LE.try $ Q.runClient conn (Q.query qstr p)
+    case res of
+        Right iop -> do
+            txRecs <-
+                traverse
+                    (\(txid, (bhash, blkht, txind), sz, sinps, fees) -> do
+                         let inps = L.sortBy (\(_, x, _) (_, y, _) -> compare x y) $ DCP.fromSet sinps
+                             tx = fromJust $ Extra.hush $ S.decodeLazy $ fromBlob sz
+                             inAddrs =
+                                 (fmap
+                                      (\x -> do
+                                           case decodeInputBS net $ scriptInput x of
+                                               Left e -> Nothing
+                                               Right is ->
+                                                   case inputAddress is of
+                                                       Just s -> DT.unpack <$> addrToString net s
+                                                       Nothing -> Nothing)
+                                      (txIn tx))
+                             outAddrs =
+                                 (fmap
+                                      (\y ->
+                                           case scriptToAddressBS $ scriptOutput y of
+                                               Left e -> Nothing
+                                               Right os -> DT.unpack <$> addrToString net os)
+                                      (txOut tx))
+                         res' <-
+                             LE.try $ LA.concurrently (getTxOutputsFromTxId txid) (xGetMerkleBranch $ DT.unpack txid)
+                         case res' of
+                             Right (outs, mrkl) ->
+                                 return $
+                                 Just $
+                                 RawTxRecord
+                                     (DT.unpack txid)
+                                     (fromIntegral $ C.length $ fromBlob sz)
+                                     (BlockInfo' (DT.unpack bhash) (fromIntegral txind) (fromIntegral blkht))
+                                     (fromBlob sz)
+                                     (zipWith3 mergeAddrTxOutTxOutput outAddrs (txOut tx) outs)
+                                     (zipWith3 mergeAddrTxInTxInput inAddrs (txIn tx) $
+                                      (\((outTxId, outTxIndex), inpTxIndex, value) ->
+                                           TxInput (DT.unpack outTxId) outTxIndex inpTxIndex Nothing value "") <$>
+                                      inps)
+                                     fees
+                                     mrkl
+                             Left (e :: SomeException) -> do
+                                 err lg $ LG.msg $ "Error: xGetTxHashes: " ++ show e
+                                 return Nothing)
+                    iop
+            return $ fromMaybe [] (sequence txRecs)
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: xGetTxHashes: " ++ show e
+            throw KeyValueDBLookupException
 
 getTxOutputsFromTxId :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => DT.Text -> m [TxOutput]
 getTxOutputsFromTxId txid = do
@@ -1154,7 +1172,13 @@ goGetResource msg net roles = do
                                     Right $
                                     Just $
                                     RespTransactionByTxID
-                                        (TxRecord txId size txBlockInfo (txToTx' rt txOutputs txInputs) fees)
+                                        (TxRecord
+                                             txId
+                                             size
+                                             txBlockInfo
+                                             (txToTx' rt txOutputs txInputs)
+                                             fees
+                                             txMerkleBranch)
                                 Left err -> return $ RPCResponse 400 $ Left $ RPCError INTERNAL_ERROR Nothing
                         Nothing -> return $ RPCResponse 200 $ Right Nothing
                 _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
@@ -1173,7 +1197,8 @@ goGetResource msg net roles = do
                                  (TxRecord txId size txBlockInfo <$>
                                   (txToTx' <$> (Extra.hush $ S.decodeLazy txSerialized) <*> (pure txOutputs) <*>
                                    (pure txInputs)) <*>
-                                  (pure fees))) <$>
+                                  (pure fees) <*>
+                                  (pure txMerkleBranch))) <$>
                             txs
                     return $ RPCResponse 200 $ Right $ Just $ RespTransactionsByTxIDs $ catMaybes rawTxs
                 _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
