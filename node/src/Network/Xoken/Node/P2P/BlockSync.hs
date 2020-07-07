@@ -542,10 +542,8 @@ processConfTransaction tx bhash txind blkht = do
     let net = bitcoinNetwork $ nodeConfig bp2pEnv
     let conn = keyValDB $ dbe'
     debug lg $ LG.msg ("processing Transaction: " ++ show (txHash tx))
-    trace lg $ LG.msg ("processing Transaction: [begin] " ++ show (txHash tx))
     let inAddrs = zip (txIn tx) [0 :: Int32 ..]
     let outAddrs = zip (txOut tx) [0 :: Int32 ..]
-    trace lg $ LG.msg ("processing Transaction: [got in/out addrs] " ++ show (txHash tx))
     --
     -- lookup into tx outputs value cache if cache-miss, fetch from DB
     inputs <-
@@ -622,20 +620,21 @@ processConfTransaction tx bhash txind blkht = do
                  return
                      ((txHashToHex $ outPointHash $ prevOutput b, fromIntegral $ outPointIndex $ prevOutput b), j, val))
             inAddrs
-    trace lg $ LG.msg ("processing Transaction: [got inputs] " ++ show (txHash tx))
+    trace lg $ LG.msg $ "processing Transaction " ++ show (txHash tx) ++ ": fetched input(s): " ++ show inputs
     --
     -- cache compile output values 
     let ovs =
             map
                 (\(o, i) -> (i, ((txHashToHex $ TxHash $ sha256 (scriptOutput o)), fromIntegral $ outValue o)))
                 (zip (txOut tx) [0 :: Int16 ..])
+    trace lg $ LG.msg $ "processing Transaction " ++ show (txHash tx) ++ ": compiled output value(s): " ++ (show ovs)
     liftIO $
         H.insert
             (txOutputValuesCache bp2pEnv)
             (getTxShortHash (txHash tx) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
             (txHash tx, ovs)
     --
-    trace lg $ LG.msg ("processing Transaction: [added outputvals to cache] " ++ show (txHash tx))
+    trace lg $ LG.msg $ "processing Transaction " ++ show (txHash tx) ++ ": added outputvals to cache"
     -- update outputs and scripthash tables
     mapM_
         (\(a, i) -> do
@@ -650,30 +649,32 @@ processConfTransaction tx bhash txind blkht = do
                  bi
                  True)
         outAddrs
-    trace lg $ LG.msg ("processing Transaction: [committed scripthash,txid_outputs tables] " ++ show (txHash tx))
+    trace lg $ LG.msg $ "processing Transaction " ++ show (txHash tx) ++ ": committed scripthash,txid_outputs tables"
     mapM_
         (\((a, i), scrhs) -> do
-             let sh = scrhs
              let bi = (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
              let blockHeight = fromIntegral blkht
              let prevOutpoint = (txHashToHex $ outPointHash $ prevOutput a, fromIntegral $ outPointIndex $ prevOutput a)
              let output = (txHashToHex $ txHash tx, i)
              updateTxIdOutputs conn output blockHeight (prevOutpoint, i)
-             commitScriptHashOutputs
-                 conn -- connection
-                 sh -- scriptHash
-                 output
-                 bi
-                 False)
+             if scrhs /= "" -- coinbase txns have no sender pov, db won't accept empty key
+             then do
+                commitScriptHashOutputs
+                    conn -- connection
+                    scrhs -- scriptHash
+                    output
+                    bi
+                    False
+             else return())
         (zip (inAddrs) (map (\x -> fst $ thd3 x) inputs))
     --
-    trace lg $ LG.msg ("processing Transaction: [updated spend info for inputs] " ++ show (txHash tx))
+    trace lg $ LG.msg $ "processing Transaction " ++ show (txHash tx) ++ ": updated spend info for inputs"
     -- calculate Tx fees
     let ipSum = foldl (+) 0 $ (\(_, _, (_, val)) -> val) <$> inputs
         opSum = foldl (+) 0 $ (\(a, _) -> fromIntegral $ outValue a) <$> outAddrs
         fees = ipSum - opSum
     --
-    trace lg $ LG.msg ("processing Transaction: [calculated fees] " ++ show (txHash tx))
+    trace lg $ LG.msg $ "processing Transaction " ++ show (txHash tx) ++ ": calculated fees" 
     -- persist tx
     let str = "insert INTO xoken.transactions ( tx_id, block_info, tx_serialized , inputs, fees) values (?, ?, ?, ?, ?)"
         qstr =
@@ -693,21 +694,21 @@ processConfTransaction tx bhash txind blkht = do
             liftIO $ err lg $ LG.msg ("Error: INSERTing into 'xoken.transactions': " ++ show e)
             throw KeyValueDBInsertException
     --
-    trace lg $ LG.msg ("processing Transaction: [persisted tx in db] " ++ show (txHash tx))
+    trace lg $ LG.msg $ "processing Transaction " ++ show (txHash tx) ++ ": persisted in DB" 
     -- handle allegory
     eres <- LE.try $ handleIfAllegoryTx tx True
     case eres of
         Right (flg) -> return ()
         Left (e :: SomeException) -> err lg $ LG.msg ("Error: " ++ show e)
     --
-    trace lg $ LG.msg ("processing Transaction: [handled if Allegory tx] " ++ show (txHash tx))
+    trace lg $ LG.msg $ "processing Transaction " ++ show (txHash tx) ++ ": handled Allegory Tx" 
     -- signal 'done' event for tx's that were processed out of sequence 
     --
     txSyncMap <- liftIO $ readMVar (txSynchronizer bp2pEnv)
     case (M.lookup (txHash tx) txSyncMap) of
         Just ev -> liftIO $ EV.signal $ ev
         Nothing -> return ()
-    trace lg $ LG.msg ("processing Transaction: [signaled end of processing] " ++ show (txHash tx))
+    trace lg $ LG.msg $ "processing Transaction " ++ show (txHash tx) ++ ": end of processing signaled" 
 
 getSatValuesFromOutpoint ::
        Q.ClientState -> (MVar (M.Map TxHash EV.Event)) -> Logger -> Network -> OutPoint -> Int -> IO ((Text, Int64))
