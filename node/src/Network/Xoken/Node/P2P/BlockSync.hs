@@ -448,7 +448,7 @@ commitScriptHashOutputs conn sh output blockInfo isRecv = do
         txIndex = fromIntegral $ thd3 blockInfo
         nominalTxIndex = blkHeight * 1000000000 + txIndex
         strAddrOuts =
-            "INSERT INTO xoken.script_hash_outputs (script_hash, nominal_tx_index, output, is_recv) VALUES (?,?,?)"
+            "INSERT INTO xoken.script_hash_outputs (script_hash, nominal_tx_index, output, is_recv) VALUES (?,?,?,?)"
         qstrAddrOuts = strAddrOuts :: Q.QueryString Q.W (Text, Int64, (Text, Int32), Bool) ()
         parAddrOuts = Q.defQueryParams Q.One (sh, nominalTxIndex, output, isRecv)
     resAddrOuts <- liftIO $ try $ Q.runClient conn (Q.write (qstrAddrOuts) parAddrOuts)
@@ -470,7 +470,7 @@ insertTxIdOutputs ::
 insertTxIdOutputs conn (txid, index) scriptHash blockInfo (inputs) value = do
     lg <- getLogger
     let strTxIdOuts =
-            "INSERT INTO xoken.txid_outputs (txid,output_index,script_hash, block_info,is_output_spent,spending_txid,spending_index,spending_tx_block_height,inputs,value) VALUES (?,?,?,?,?,?,?,?,?)"
+            "INSERT INTO xoken.txid_outputs (txid,output_index,script_hash, block_info,is_output_spent,spending_txid,spending_index,spending_tx_block_height,inputs,value) VALUES (?,?,?,?,?,?,?,?,?,?)"
         qstrTxIdOuts =
             strTxIdOuts :: Q.QueryString Q.W ( Text
                                              , Int32
@@ -653,7 +653,7 @@ processConfTransaction tx bhash txind blkht = do
     trace lg $ LG.msg ("processing Transaction: [committed scripthash,txid_outputs tables] " ++ show (txHash tx))
     mapM_
         (\((a, i), scrhs) -> do
-             let sh = txHashToHex $ TxHash $ sha256 (scriptInput a) -- TODO !!! replace with scrhs
+             let sh = scrhs
              let bi = (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
              let blockHeight = fromIntegral blkht
              let prevOutpoint = (txHashToHex $ outPointHash $ prevOutput a, fromIntegral $ outPointIndex $ prevOutput a)
