@@ -5,8 +5,8 @@
 
 module Network.Xoken.Node.HTTP.Handler where
 
-import Control.Applicative ((<|>))
 import Arivi.P2P.Config (decodeHex, encodeHex)
+import Control.Applicative ((<|>))
 import qualified Control.Error.Util as Extra
 import Control.Exception (SomeException(..), throw, try)
 import qualified Control.Exception.Lifted as LE (try)
@@ -76,7 +76,6 @@ getChainInfo = do
             writeBS "INTERNAL_SERVER_ERROR"
         Right (Just ci) -> writeBS $ BSL.toStrict $ Aeson.encode $ RespChainInfo ci
         Right Nothing -> throwBadRequest
-
 
 getBlockByHash :: Handler App App ()
 getBlockByHash = do
@@ -171,12 +170,12 @@ getTxById = do
             writeBS "INTERNAL_SERVER_ERROR"
         Right (Just RawTxRecord {..}) -> do
             case S.decodeLazy txSerialized of
-                Right rt -> writeBS $ BSL.toStrict $ Aeson.encode $ RespTransactionByTxID (TxRecord txId
-                                                                                                    size
-                                                                                                    txBlockInfo
-                                                                                                    (txToTx' rt txOutputs txInputs)
-                                                                                                    fees
-                                                                                                    txMerkleBranch)
+                Right rt ->
+                    writeBS $
+                    BSL.toStrict $
+                    Aeson.encode $
+                    RespTransactionByTxID
+                        (TxRecord txId size txBlockInfo (txToTx' rt txOutputs txInputs) fees txMerkleBranch)
                 Left err -> do
                     modifyResponse $ setResponseStatus 400 "Bad Request"
                     writeBS "400 error"
@@ -196,14 +195,11 @@ getTxByIds = do
             writeBS "INTERNAL_SERVER_ERROR"
         Right txs -> do
             let rawTxs =
-                    (\RawTxRecord {..} -> 
-                         (TxRecord txId
-                                   size
-                                   txBlockInfo <$>
-                                   (txToTx' <$> (Extra.hush $ S.decodeLazy txSerialized) <*>
-                                                (pure txOutputs) <*> (pure txInputs)) <*>
-                                   (pure fees) <*>
-                                   (pure txMerkleBranch))) <$>
+                    (\RawTxRecord {..} ->
+                         (TxRecord txId size txBlockInfo <$>
+                          (txToTx' <$> (Extra.hush $ S.decodeLazy txSerialized) <*> (pure txOutputs) <*> (pure txInputs)) <*>
+                          (pure fees) <*>
+                          (pure txMerkleBranch))) <$>
                     txs
             writeBS $ BSL.toStrict $ Aeson.encode $ RespTransactionsByTxIDs $ catMaybes rawTxs
 
@@ -219,8 +215,7 @@ getTxIDsByBlockHash = do
             err lg $ LG.msg $ "Error: xGetTxIDsByBlockHash: " ++ show e
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
-        Right (Just txids) -> writeBS $ BSL.toStrict $ Aeson.encode $ RespTxIDsByBlockHash txids
-        Right Nothing -> throwBadRequest
+        Right txids -> writeBS $ BSL.toStrict $ Aeson.encode $ RespTxIDsByBlockHash txids
 
 getTxOutputSpendStatus :: Handler App App ()
 getTxOutputSpendStatus = do
@@ -270,9 +265,9 @@ getOutputsByAddrs = do
             let (shs, shMap) =
                     L.foldl'
                         (\(arr, m) x ->
-                            case convertToScriptHash net x of
-                                Just addr -> (addr : arr, Map.insert addr x m)
-                                Nothing -> (arr, m))
+                             case convertToScriptHash net x of
+                                 Just addr -> (addr : arr, Map.insert addr x m)
+                                 Nothing -> (arr, m))
                         ([], Map.empty)
                         addrs
             res <- LE.try $ xGetOutputsAddresses shs pgSize nomTxInd
@@ -285,7 +280,8 @@ getOutputsByAddrs = do
                     writeBS $
                         BSL.toStrict $
                         Aeson.encode $
-                        RespOutputsByAddresses $ (\ao -> ao {aoAddress = fromJust $ Map.lookup (aoAddress ao) shMap}) <$> ops
+                        RespOutputsByAddresses $
+                        (\ao -> ao {aoAddress = fromJust $ Map.lookup (aoAddress ao) shMap}) <$> ops
         Nothing -> throwBadRequest
 
 getOutputsByScriptHash :: Handler App App ()
@@ -353,6 +349,7 @@ relayTx RelayTx {..} = do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
         Right ops -> writeBS $ BSL.toStrict $ Aeson.encode $ RespRelayTx ops
+
 getRelayTx _ = throwBadRequest
 
 getPartiallySignedAllegoryTx :: RPCReqParams' -> Handler App App ()

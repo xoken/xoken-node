@@ -339,8 +339,7 @@ xGetBlocksHeights heights = do
             err lg $ LG.msg $ "Error: xGetBlockHeights: " ++ show e
             throw KeyValueDBLookupException
 
-xGetTxIDsByBlockHash ::
-       (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => String -> Int32 -> Int32 -> m (Maybe [String])
+xGetTxIDsByBlockHash :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => String -> Int32 -> Int32 -> m [String]
 xGetTxIDsByBlockHash hash pgSize pgNum = do
     dbe <- getDB
     lg <- getLogger
@@ -349,19 +348,13 @@ xGetTxIDsByBlockHash hash pgSize pgNum = do
         firstPage = fromIntegral $ ceiling $ (fromIntegral txsToSkip) / 100
         lastPage = fromIntegral $ ceiling $ (fromIntegral $ txsToSkip + pgSize) / 100
         txDropFromFirst = fromIntegral $ txsToSkip `mod` 100
-        txTakeFromLast = fromIntegral $ (pgSize + txsToSkip) `mod` 100
         str = "SELECT page_number, txids from xoken.blockhash_txids where block_hash = ? and page_number in ? "
         qstr = str :: Q.QueryString Q.R (DT.Text, [Int32]) (Int32, [DT.Text])
         p = Q.defQueryParams Q.One $ (DT.pack hash, [firstPage .. lastPage])
     res <- liftIO $ try $ Q.runClient conn (Q.query qstr p)
     case res of
-        Right iop -> do
-            case L.map (L.map DT.unpack . snd) iop of
-                [] -> return Nothing
-                [x] -> return $ Just $ L.drop txDropFromFirst $ L.take txTakeFromLast $ x
-                (x:xs) ->
-                    return $
-                    Just $ (L.drop txDropFromFirst x) ++ (L.concat $ L.init xs) ++ (L.take txTakeFromLast $ L.last xs)
+        Right iop ->
+            return . L.take (fromIntegral pgSize) . L.drop txDropFromFirst . L.concat $ (fmap DT.unpack . snd) <$> iop
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetTxIDsByBlockHash: " <> show e
             throw KeyValueDBLookupException
@@ -1147,9 +1140,7 @@ goGetResource msg net roles = do
             case methodParams $ rqParams msg of
                 Just (GetTxIDsByBlockHash hash pgSize pgNum) -> do
                     txids <- xGetTxIDsByBlockHash hash pgSize pgNum
-                    case txids of
-                        Just t -> return $ RPCResponse 200 $ Right $ Just $ RespTxIDsByBlockHash t
-                        Nothing -> return $ RPCResponse 404 $ Left $ RPCError INVALID_REQUEST Nothing
+                    return $ RPCResponse 200 $ Right $ Just $ RespTxIDsByBlockHash txids
                 _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "TXID->RAWTX" -> do
             case methodParams $ rqParams msg of

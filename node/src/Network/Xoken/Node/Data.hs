@@ -327,7 +327,7 @@ instance ToJSON RPCResponseBody where
     toJSON (RespBlocksByHeight bs) = object ["blocks" .= bs]
     toJSON (RespBlockByHash b) = object ["block" .= b]
     toJSON (RespBlocksByHashes bs) = object ["blocks" .= bs]
-    toJSON (RespChainInfo cw) = object ["chainwork" .= cw]
+    toJSON (RespChainInfo cw) = object ["chainInfo" .= cw]
     toJSON (RespTxIDsByBlockHash txids) = object ["txids" .= txids]
     toJSON (RespTransactionByTxID tx) = object ["tx" .= tx]
     toJSON (RespTransactionsByTxIDs txs) = object ["txs" .= txs]
