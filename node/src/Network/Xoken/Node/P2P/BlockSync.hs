@@ -375,7 +375,7 @@ getNextBlockToSync tm = do
                 then do
                     let !lelm = last $ L.sortOn (snd . snd) (M.toList sy)
                     liftIO $ atomically $ writeTVar (blockSyncStatusMap bp2pEnv) M.empty
-                    -- debug lg $ LG.msg $ ("DEBUG, marking best synced " ++ show (blockHashToHex $ fst $ lelm))
+                    debug lg $ LG.msg $ ("DEBUG, marking best synced " ++ show (blockHashToHex $ fst $ lelm))
                     markBestSyncedBlock (blockHashToHex $ fst $ lelm) (fromIntegral $ snd $ snd $ lelm) conn
                     return Nothing
                 else if M.size recvTimedOut > 0
@@ -537,8 +537,10 @@ processConfTransaction tx bhash txind blkht = do
     let net = bitcoinNetwork $ nodeConfig bp2pEnv
     let conn = keyValDB $ dbe'
     debug lg $ LG.msg ("processing Transaction: " ++ show (txHash tx))
+    trace lg $ LG.msg ("processing Transaction: [begin] " ++ show (txHash tx))
     let inAddrs = zip (txIn tx) [0 :: Int32 ..]
     let outAddrs = zip (txOut tx) [0 :: Int32 ..]
+    trace lg $ LG.msg ("processing Transaction: [got in/out addrs] " ++ show (txHash tx))
     --
     -- lookup into tx outputs value cache if cache-miss, fetch from DB
     inputs <-
@@ -564,28 +566,52 @@ processConfTransaction tx bhash txind blkht = do
                                      if (outPointHash nullOutPoint) == (outPointHash $ prevOutput b)
                                          then return
                                                   (fromIntegral $ computeSubsidy net $ (fromIntegral blkht :: Word32))
-                                         else liftIO $
-                                              getSatValuesFromOutpoint
-                                                  conn
-                                                  (txSynchronizer bp2pEnv)
-                                                  lg
-                                                  net
-                                                  (prevOutput b)
-                                                  (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
+                                         else do
+                                             dbRes <-
+                                                 liftIO $
+                                                 LE.try $
+                                                 getSatValuesFromOutpoint
+                                                     conn
+                                                     (txSynchronizer bp2pEnv)
+                                                     lg
+                                                     net
+                                                     (prevOutput b)
+                                                     (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
+                                             case dbRes of
+                                                 Right val -> return $ val
+                                                 Left (e :: SomeException) -> do
+                                                     err lg $
+                                                         LG.msg $
+                                                         "Error: pCT calling gSVFO for TxID " ++
+                                                         show (txHashToHex $ outPointHash (prevOutput b)) ++
+                                                         ": " ++ show e
+                                                     throw e
                          Nothing -> do
                              if (outPointHash nullOutPoint) == (outPointHash $ prevOutput b)
                                  then return (fromIntegral $ computeSubsidy net $ (fromIntegral blkht :: Word32))
-                                 else liftIO $
-                                      getSatValuesFromOutpoint
-                                          conn
-                                          (txSynchronizer bp2pEnv)
-                                          lg
-                                          net
-                                          (prevOutput b)
-                                          (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
+                                 else do
+                                     dbRes <-
+                                         liftIO $
+                                         LE.try $
+                                         getSatValuesFromOutpoint
+                                             conn
+                                             (txSynchronizer bp2pEnv)
+                                             lg
+                                             net
+                                             (prevOutput b)
+                                             (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
+                                     case dbRes of
+                                         Right val -> return $ val
+                                         Left (e :: SomeException) -> do
+                                             err lg $
+                                                 LG.msg $
+                                                 "Error: pCT calling gSVFO for TxID " ++
+                                                 show (txHashToHex $ outPointHash (prevOutput b)) ++ ": " ++ show e
+                                             throw e
                  return
                      ((txHashToHex $ outPointHash $ prevOutput b, fromIntegral $ outPointIndex $ prevOutput b), j, val))
             inAddrs
+    trace lg $ LG.msg ("processing Transaction: [got inputs] " ++ show (txHash tx))
     --
     -- cache compile output values 
     let ovs = map (\(o, i) -> (i, fromIntegral $ outValue o)) (zip (txOut tx) [0 :: Int16 ..])
@@ -595,6 +621,7 @@ processConfTransaction tx bhash txind blkht = do
             (getTxShortHash (txHash tx) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
             (txHash tx, ovs)
     --
+    trace lg $ LG.msg ("processing Transaction: [added outputvals to cache] " ++ show (txHash tx))
     -- update outputs and scripthash tables
     mapM_
         (\(a, i) -> do
@@ -608,6 +635,7 @@ processConfTransaction tx bhash txind blkht = do
                  output
                  bi)
         outAddrs
+    trace lg $ LG.msg ("processing Transaction: [committed scripthash,txid_outputs tables] " ++ show (txHash tx))
     mapM_
         (\(a, i) -> do
              let blockHeight = fromIntegral blkht
@@ -616,11 +644,13 @@ processConfTransaction tx bhash txind blkht = do
              updateTxIdOutputs conn output blockHeight (prevOutpoint, i))
         (inAddrs)
     --
+    trace lg $ LG.msg ("processing Transaction: [updated spend info for inputs] " ++ show (txHash tx))
     -- calculate Tx fees
     let ipSum = foldl (+) 0 $ (\(_, _, val) -> val) <$> inputs
         opSum = foldl (+) 0 $ (\(a, _) -> fromIntegral $ outValue a) <$> outAddrs
         fees = ipSum - opSum
     --
+    trace lg $ LG.msg ("processing Transaction: [calculated fees] " ++ show (txHash tx))
     -- persist tx
     let str = "insert INTO xoken.transactions ( tx_id, block_info, tx_serialized , inputs, fees) values (?, ?, ?, ?, ?)"
         qstr = str :: Q.QueryString Q.W (Text, (Text, Int32, Int32), Blob, [((Text, Int32), Int32, Int64)], Int64) ()
@@ -639,17 +669,20 @@ processConfTransaction tx bhash txind blkht = do
             liftIO $ err lg $ LG.msg ("Error: INSERTing into 'xoken.transactions': " ++ show e)
             throw KeyValueDBInsertException
     --
+    trace lg $ LG.msg ("processing Transaction: [persisted tx in db] " ++ show (txHash tx))
     -- handle allegory
     eres <- LE.try $ handleIfAllegoryTx tx True
     case eres of
         Right (flg) -> return ()
         Left (e :: SomeException) -> err lg $ LG.msg ("Error: " ++ show e)
     --
+    trace lg $ LG.msg ("processing Transaction: [handled if Allegory tx] " ++ show (txHash tx))
     -- signal 'done' event for tx's that were processed out of sequence 
     txSyncMap <- liftIO $ readTVarIO (txSynchronizer bp2pEnv)
     case (M.lookup (txHash tx) txSyncMap) of
         Just ev -> liftIO $ EV.signal $ ev
         Nothing -> return ()
+    trace lg $ LG.msg ("processing Transaction: [signaled end of processing] " ++ show (txHash tx))
 
 getSatValuesFromOutpoint ::
        Q.ClientState -> (TVar (M.Map TxHash EV.Event)) -> Logger -> Network -> OutPoint -> Int -> IO (Int64)
