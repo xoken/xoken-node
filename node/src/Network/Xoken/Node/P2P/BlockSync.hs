@@ -335,6 +335,7 @@ getNextBlockToSync tm = do
                     if L.length op == 0
                         then do
                             debug lg $ LG.msg $ val "Synced fully!"
+                            liftIO $ putMVar (blockSyncStatusMap bp2pEnv) sy
                             return (Nothing)
                         else do
                             debug lg $ LG.msg $ val "Reloading cache."
