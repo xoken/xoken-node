@@ -683,10 +683,9 @@ readNextMessage net sock ingss = do
                                     throw MessageParsingException
                                 Right (blk, unused) -> do
                                     case blk of
-                                        Just b
-                                            -- debug lg $
-                                            --     msg ("DefBlock: " ++ show blk ++ " unused: " ++ show (B.length unused))
-                                         -> do
+                                        Just b -> do
+                                            trace lg $
+                                                msg ("DefBlock: " ++ show blk ++ " unused: " ++ show (B.length unused))
                                             let bi =
                                                     BlockIngestState
                                                         { binUnspentBytes = unused
@@ -839,14 +838,14 @@ messageHandler peer (mm, ingss) = do
                                             case (M.lookup (biBlockHash bf) mv) of
                                                 Just left -> do
                                                     if (left - 1) == 0
-                                                            -- mark block received
                                                         then do
-                                                            liftIO $
-                                                                atomically $
-                                                                modifyTVar'
-                                                                    (blockSyncStatusMap bp2pEnv)
-                                                                    (M.insert (biBlockHash bf) $
-                                                                     (BlockReceiveComplete, biBlockHeight bf))
+                                                            sy <- liftIO $ takeMVar (blockSyncStatusMap bp2pEnv)
+                                                            let syu =
+                                                                    M.insert
+                                                                        (biBlockHash bf)
+                                                                        (BlockReceiveComplete, biBlockHeight bf)
+                                                                        sy
+                                                            liftIO $ putMVar (blockSyncStatusMap bp2pEnv) syu
                                                             let xm = M.delete (biBlockHash $ bf) mv
                                                             liftIO $ putMVar (blockTxProcessingLeftMap bp2pEnv) xm
                                                         else do
@@ -919,7 +918,7 @@ readNextMessage' peer = do
                     case msg of
                         Just (MBlock blk) -- setup state
                          -> do
-                            mp <- liftIO $ readTVarIO $ blockSyncStatusMap bp2pEnv
+                            mp <- liftIO $ takeMVar (blockSyncStatusMap bp2pEnv)
                             let hh = headerHash $ defBlockHeader blk
                             let mht = M.lookup hh mp
                             case (mht) of
@@ -928,9 +927,7 @@ readNextMessage' peer = do
                                     debug lg $ LG.msg $ ("InvalidBlockSyncStatusMapException - " ++ show hh)
                                     throw InvalidBlockSyncStatusMapException
                             let iz = Just (IngressStreamState ingst (Just $ BlockInfo hh (snd $ fromJust mht)))
-                                             -- (computeTreeHeight $ binTxTotalCount ingst)
-                                             -- 0
-                                             -- (M.empty, []))
+                            liftIO $ putMVar (blockSyncStatusMap bp2pEnv) mp
                             liftIO $ atomically $ writeTVar (bpIngressState peer) $ iz
                         Just (MConfTx ctx) -> do
                             case issBlockInfo iss of
@@ -949,15 +946,15 @@ readNextMessage' peer = do
                                         then do
                                             liftIO $ atomically $ writeTVar (bpIngressState peer) $ Nothing
                                         else do
-                                            liftIO $
-                                                atomically $ do
-                                                    writeTVar (bpIngressState peer) $ ingressState -- retain state
-                                                    modifyTVar'
-                                                        (blockSyncStatusMap bp2pEnv)
-                                                        (M.insert (biBlockHash bi) $
+                                            mv <- liftIO $ takeMVar (blockSyncStatusMap bp2pEnv)
+                                            let xm =
+                                                    (M.insert
+                                                         (biBlockHash bi)
                                                          ( RecentTxReceiveTime (tm, binTxIngested ingst)
                                                          , biBlockHeight bi -- track receive progress
                                                           ))
+                                                        mv
+                                            liftIO $ putMVar (blockSyncStatusMap bp2pEnv) xm
                                 Nothing -> throw InvalidBlockInfoException
                         otherwise -> throw UnexpectedDuringBlockProcException
                 Nothing -> return ()

@@ -69,7 +69,7 @@ data BitcoinP2P =
         , blacklistedPeers :: !(TVar (M.Map SockAddr BitcoinPeer))
         , bestBlockUpdated :: !(MVar Bool)
         , headersWriteLock :: !(MVar Bool)
-        , blockSyncStatusMap :: !(TVar (M.Map BlockHash (BlockSyncStatus, BlockHeight)))
+        , blockSyncStatusMap :: !(MVar (M.Map BlockHash (BlockSyncStatus, BlockHeight)))
         , blockTxProcessingLeftMap :: !(MVar (M.Map BlockHash Int))
         , epochType :: !(TVar Bool)
         , unconfirmedTxCache :: !(HashTable TxShortHash (Bool, TxHash))

@@ -366,7 +366,7 @@ defBitcoinP2P nodeCnf = do
     bp <- newTVarIO M.empty
     mv <- newMVar True
     hl <- newMVar True
-    st <- newTVarIO M.empty
+    st <- newMVar M.empty
     tl <- newMVar M.empty
     ep <- newTVarIO False
     tc <- H.new
