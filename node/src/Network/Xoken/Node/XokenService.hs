@@ -371,7 +371,7 @@ xGetTxHash hash = do
             str :: Q.QueryString Q.R (Identity DT.Text) ( DT.Text
                                                         , (DT.Text, Int32, Int32)
                                                         , Blob
-                                                        , Set ((DT.Text, Int32), Int32, Int64)
+                                                        , Set ((DT.Text, Int32), Int32, (DT.Text,Int64))
                                                         , Int64)
         p = Q.defQueryParams Q.One $ Identity $ hash
     res <-
@@ -386,17 +386,7 @@ xGetTxHash hash = do
                 else do
                     let (txid, (bhash, blkht, txind), sz, sinps, fees) = iop !! 0
                         inps = L.sortBy (\(_, x, _) (_, y, _) -> compare x y) $ DCP.fromSet sinps
-                    let tx = fromJust $ Extra.hush $ S.decodeLazy $ fromBlob sz
-                    let inAddrs =
-                            (fmap
-                                 (\x -> do
-                                      case decodeInputBS net $ scriptInput x of
-                                          Left e -> Nothing
-                                          Right is ->
-                                              case inputAddress is of
-                                                  Just s -> DT.unpack <$> addrToString net s
-                                                  Nothing -> Nothing)
-                                 (txIn tx))
+                        tx = fromJust $ Extra.hush $ S.decodeLazy $ fromBlob sz
                         outAddrs =
                             (fmap
                                  (\y ->
@@ -411,10 +401,10 @@ xGetTxHash hash = do
                             (fromIntegral $ C.length $ fromBlob sz)
                             (BlockInfo' (DT.unpack bhash) (fromIntegral blkht) (fromIntegral txind))
                             (fromBlob sz)
-                            (zipWith3 mergeAddrTxOutTxOutput outAddrs (txOut tx) outs)
-                            (zipWith3 mergeAddrTxInTxInput inAddrs (txIn tx) $
-                             (\((outTxId, outTxIndex), inpTxIndex, value) ->
-                                  TxInput (DT.unpack outTxId) outTxIndex inpTxIndex Nothing value "") <$>
+                            (zipWith mergeTxOutTxOutput (txOut tx) outs)
+                            (zipWith mergeTxInTxInput (txIn tx) $
+                             (\((outTxId, outTxIndex), inpTxIndex, (addr,value)) ->
+                                  TxInput (DT.unpack outTxId) outTxIndex inpTxIndex (DT.unpack addr) value "") <$>
                              inps)
                             fees
                             mrkl
@@ -434,7 +424,7 @@ xGetTxHashes hashes = do
             str :: Q.QueryString Q.R (Identity [DT.Text]) ( DT.Text
                                                           , (DT.Text, Int32, Int32)
                                                           , Blob
-                                                          , Set ((DT.Text, Int32), Int32, Int64)
+                                                          , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
                                                           , Int64)
         p = Q.defQueryParams Q.One $ Identity $ hashes
     res <- LE.try $ Q.runClient conn (Q.query qstr p)
@@ -445,23 +435,6 @@ xGetTxHashes hashes = do
                     (\(txid, (bhash, blkht, txind), sz, sinps, fees) -> do
                          let inps = L.sortBy (\(_, x, _) (_, y, _) -> compare x y) $ DCP.fromSet sinps
                              tx = fromJust $ Extra.hush $ S.decodeLazy $ fromBlob sz
-                             inAddrs =
-                                 (fmap
-                                      (\x -> do
-                                           case decodeInputBS net $ scriptInput x of
-                                               Left e -> Nothing
-                                               Right is ->
-                                                   case inputAddress is of
-                                                       Just s -> DT.unpack <$> addrToString net s
-                                                       Nothing -> Nothing)
-                                      (txIn tx))
-                             outAddrs =
-                                 (fmap
-                                      (\y ->
-                                           case scriptToAddressBS $ scriptOutput y of
-                                               Left e -> Nothing
-                                               Right os -> DT.unpack <$> addrToString net os)
-                                      (txOut tx))
                          res' <-
                              LE.try $ LA.concurrently (getTxOutputsFromTxId txid) (xGetMerkleBranch $ DT.unpack txid)
                          case res' of
@@ -473,10 +446,10 @@ xGetTxHashes hashes = do
                                      (fromIntegral $ C.length $ fromBlob sz)
                                      (BlockInfo' (DT.unpack bhash) (fromIntegral txind) (fromIntegral blkht))
                                      (fromBlob sz)
-                                     (zipWith3 mergeAddrTxOutTxOutput outAddrs (txOut tx) outs)
-                                     (zipWith3 mergeAddrTxInTxInput inAddrs (txIn tx) $
-                                      (\((outTxId, outTxIndex), inpTxIndex, value) ->
-                                           TxInput (DT.unpack outTxId) outTxIndex inpTxIndex Nothing value "") <$>
+                                     (zipWith mergeTxOutTxOutput (txOut tx) outs)
+                                     (zipWith mergeTxInTxInput (txIn tx) $
+                                      (\((outTxId, outTxIndex), inpTxIndex, (addr,value)) ->
+                                           TxInput (DT.unpack outTxId) outTxIndex inpTxIndex (DT.unpack addr) value "") <$>
                                       inps)
                                      fees
                                      mrkl
@@ -495,8 +468,8 @@ getTxOutputsFromTxId txid = do
     lg <- getLogger
     let conn = keyValDB (dbe)
         toStr =
-            "SELECT output_index,is_output_spent,value,spending_txid,spending_index FROM xoken.txid_outputs WHERE txid=?"
-        toQStr = toStr :: Q.QueryString Q.R (Identity DT.Text) (Int32, Bool, Int64, Maybe DT.Text, Maybe Int32)
+            "SELECT output_index,is_output_spent,value,spending_txid,spending_index,script_hash FROM xoken.txid_outputs WHERE txid=?"
+        toQStr = toStr :: Q.QueryString Q.R (Identity DT.Text) (Int32, Bool, Int64, Maybe DT.Text, Maybe Int32, DT.Text)
         par = Q.defQueryParams Q.One (Identity txid)
     res <- LE.try $ Q.runClient conn (Q.query toQStr par)
     case res of
@@ -507,8 +480,8 @@ getTxOutputsFromTxId txid = do
                     throw KeyValueDBLookupException
                 else do
                     return $
-                        (\(idx, spent, value, sTxId, sTxIndex) ->
-                             TxOutput (fromIntegral idx) Nothing (DT.unpack <$> sTxId) sTxIndex spent value "") <$>
+                        (\(idx, spent, value, sTxId, sTxIndex, addr) ->
+                             TxOutput (fromIntegral idx) (DT.unpack addr) (DT.unpack <$> sTxId) sTxIndex spent value "") <$>
                         t
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: getTxOutputsFromTxId: " ++ show e
