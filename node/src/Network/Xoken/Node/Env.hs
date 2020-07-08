@@ -23,6 +23,7 @@ import qualified Data.HashTable.IO as H
 import Data.Hashable
 import Data.Int
 import qualified Data.Map.Strict as M
+import Data.Text
 import Data.Time.Clock
 import Data.Word
 import qualified Database.CQL.IO as Q
@@ -72,7 +73,7 @@ data BitcoinP2P =
         , blockTxProcessingLeftMap :: !(MVar (M.Map BlockHash Int))
         , epochType :: !(TVar Bool)
         , unconfirmedTxCache :: !(HashTable TxShortHash (Bool, TxHash))
-        , txOutputValuesCache :: !(HashTable TxShortHash (TxHash, [(Int16, Int64)]))
+        , txOutputValuesCache :: !(HashTable TxShortHash (TxHash, [(Int16, (Text, Int64))]))
         , peerReset :: !(MVar Bool, TVar Int)
         , merkleQueueMap :: !(TVar (M.Map BlockHash (TBQueue (TxHash, Bool))))
         , txSynchronizer :: !(MVar (M.Map TxHash Event))

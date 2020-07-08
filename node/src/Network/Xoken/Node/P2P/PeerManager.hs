@@ -625,6 +625,7 @@ readNextMessage net sock ingss = do
                                         mv <- liftIO $ takeMVar (blockTxProcessingLeftMap p2pEnv)
                                         let xm = M.insert (biBlockHash $ bf) ((binTxTotalCount blin)) mv
                                         liftIO $ putMVar (blockTxProcessingLeftMap p2pEnv) xm
+                                        debug lg $ LG.msg $ "blockTxProcessingLeftMap (0th) , block_hash " ++ show iss
                                         qq <-
                                             liftIO $
                                             atomically $ newTBQueue $ intToNatural (maxTMTQueueSize $ nodeConfig p2pEnv)
@@ -853,7 +854,9 @@ messageHandler peer (mm, ingss) = do
                                                             liftIO $ putMVar (blockTxProcessingLeftMap bp2pEnv) xm
                                                 Nothing -> do
                                                     err lg $
-                                                        LG.msg $ val "[ERROR] not found in blockTxProcessingLeftMap"
+                                                        LG.msg $
+                                                        ("[ERROR] not found in blockTxProcessingLeftMap block_hash " ++
+                                                         show iss)
                                                     throw BlockHashNotFoundException
                                         Left BlockHashNotFoundException -> return ()
                                         Left EmptyHeadersMessageException -> return ()
