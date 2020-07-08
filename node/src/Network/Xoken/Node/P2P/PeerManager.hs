@@ -946,6 +946,7 @@ readNextMessage' peer = do
                                         then do
                                             liftIO $ atomically $ writeTVar (bpIngressState peer) $ Nothing
                                         else do
+                                            liftIO $ atomically $ writeTVar (bpIngressState peer) $ ingressState
                                             mv <- liftIO $ takeMVar (blockSyncStatusMap bp2pEnv)
                                             let xm =
                                                     (M.insert
@@ -985,8 +986,6 @@ procTxStream pr = do
                                 (val "[ERROR] Closing peer connection (1) ") +++ (show e) +++ (show $ bpAddress pr)
                             liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
                             closeSocket (bpSocket pr)
-            allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
-            let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
             liftIO $ MSN.signal (bpTxSem pr) 1
         Left (e :: SomeException)
             -- likely peer already closed, and peer's read threads are locked on MVar
