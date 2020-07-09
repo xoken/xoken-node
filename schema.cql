@@ -64,16 +64,13 @@ CREATE TABLE xoken.script_hash_outputs (
 CREATE TABLE xoken.txid_outputs (
     txid text,
     output_index int,
-    script_hash text,
+    address text,
+    is_recv boolean,
     block_info frozen<tuple<text, int, int>>,
-    is_output_spent boolean,
-    spending_txid text,
-    spending_index int,
-    spending_tx_block_height int,
-    inputs set  <frozen<tuple<frozen<tuple<text, int>>, int, frozen<tuple<text, bigint>>>>>,
+    other set <frozen<tuple<frozen<tuple<text, int>>, int, frozen<tuple<text, bigint>>>>>,
     value bigint,
-    PRIMARY KEY(txid, output_index)
- ) WITH CLUSTERING ORDER BY (output_index ASC);
+    PRIMARY KEY(txid, output_index, is_recv)
+) WITH CLUSTERING ORDER BY (output_index asc);
 
 CREATE TABLE xoken.blocks_by_height (
     block_height int PRIMARY KEY,
