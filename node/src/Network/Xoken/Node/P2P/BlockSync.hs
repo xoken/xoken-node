@@ -520,16 +520,16 @@ processConfTransaction tx bhash txind blkht = do
     debug lg $ LG.msg ("processing Transaction: " ++ show (txHash tx))
     let inAddrs = zip (txIn tx) [0 :: Int32 ..]
     let outAddrs =
-                zip3
-                    (catMaybes $
-                     map
-                        (\y ->
-                            case scriptToAddressBS $ scriptOutput y of
-                                Left e -> Nothing
-                                Right os -> addrToString net os)
-                        (txOut tx))
-                    (txOut tx)
-                    [0 :: Int32 ..]
+            zip3
+                (catMaybes $
+                 map
+                     (\y ->
+                          case scriptToAddressBS $ scriptOutput y of
+                              Left e -> Nothing
+                              Right os -> addrToString net os)
+                     (txOut tx))
+                (txOut tx)
+                [0 :: Int32 ..]
     --
     -- lookup into tx outputs value cache if cache-miss, fetch from DB
     inputs <-
@@ -609,10 +609,7 @@ processConfTransaction tx bhash txind blkht = do
     trace lg $ LG.msg $ "processing Transaction " ++ show (txHash tx) ++ ": fetched input(s): " ++ show inputs
     --
     -- cache compile output values 
-    let ovs =
-            map
-                (\(a, o, i) -> (fromIntegral $ i, (a, fromIntegral $ outValue o)))
-                outAddrs
+    let ovs = map (\(a, o, i) -> (fromIntegral $ i, (a, fromIntegral $ outValue o))) outAddrs
     trace lg $ LG.msg $ "processing Transaction " ++ show (txHash tx) ++ ": compiled output value(s): " ++ (show ovs)
     liftIO $
         H.insert
@@ -645,13 +642,8 @@ processConfTransaction tx bhash txind blkht = do
              let spendInfo = (\ov -> ((txHashToHex $ txHash tx, fromIntegral $ fst $ ov), i, snd $ ov)) <$> ovs
              insertTxIdOutputs conn prevOutpoint a False bi spendInfo 0
              case convertToScriptHash net (T.unpack a) of
-                Nothing -> return ()
-                Just sh -> commitScriptHashOutputs
-                                conn
-                                (T.pack sh)
-                                prevOutpoint
-                                bi
-                                False)
+                 Nothing -> return ()
+                 Just sh -> commitScriptHashOutputs conn (T.pack sh) prevOutpoint bi False)
         (zip (inAddrs) (map (\x -> fst $ thd3 x) inputs))
     --
     trace lg $ LG.msg $ "processing Transaction " ++ show (txHash tx) ++ ": updated spend info for inputs"
