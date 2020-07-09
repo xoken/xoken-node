@@ -94,15 +94,6 @@ import System.Random
 import Xoken
 import Xoken.NodeConfig
 
---
--- import Network.Xoken.Crypto.Hash
--- import Network.Xoken.Node.Data
--- import Network.Xoken.Node.Data.Allegory
--- import Network.Xoken.Node.Data.Allegory
--- import Network.Xoken.Node.Env
--- import Network.Xoken.Node.GraphDB
--- import Network.Xoken.Node.P2P.Common
--- import Network.Xoken.Node.P2P.Types
 produceGetDataMessage :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => UTCTime -> m (Maybe Message)
 produceGetDataMessage !tm = do
     lg <- getLogger
@@ -124,7 +115,9 @@ produceGetDataMessage !tm = do
                     return Nothing
         Left (e :: SomeException) -> do
             case fromException e of
-                Just (t :: AsyncCancelled) -> throw e
+                Just (t :: AsyncCancelled) -> do
+                    err lg $ LG.msg ("[ERROR] AsyncCancelled " ++ show e)
+                    throw e
                 otherwise -> do
                     err lg $ LG.msg ("[ERROR] produceGetDataMessage " ++ show e)
                     return Nothing
@@ -307,7 +300,8 @@ getBatchSize n
     | n >= 200000 && n < 400000 = [1 .. 50]
     | n >= 400000 && n < 500000 = [1 .. 20]
     | n >= 500000 && n < 600000 = [1 .. 10]
-    | otherwise = [1, 2]
+    | n >= 600000 && n < 640000 = [1, 2]
+    | otherwise = [1]
 
 getNextBlockToSync :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => UTCTime -> m (Maybe BlockInfo)
 getNextBlockToSync tm = do
@@ -321,7 +315,7 @@ getNextBlockToSync tm = do
         then do
             (hash, ht) <- fetchBestSyncedBlock conn net
             let cacheInd = getBatchSize ht
-            let !bks = map (\x -> ht + x) cacheInd -- cache size of 200
+            let !bks = map (\x -> ht + x) cacheInd
             let str = "SELECT block_height, block_hash from xoken.blocks_by_height where block_height in ?"
                 qstr = str :: Q.QueryString Q.R (Identity [Int32]) ((Int32, T.Text))
                 p = Q.defQueryParams Q.One $ Identity (bks)
@@ -337,19 +331,23 @@ getNextBlockToSync tm = do
                             debug lg $ LG.msg $ val "Synced fully!"
                             liftIO $ putMVar (blockSyncStatusMap bp2pEnv) sy
                             return (Nothing)
-                        else do
-                            debug lg $ LG.msg $ val "Reloading cache."
-                            let !p =
-                                    catMaybes $
-                                    map
-                                        (\x ->
-                                             case (hexToBlockHash $ snd x) of
-                                                 Just h -> Just (h, (RequestQueued, fromIntegral $ fst x))
-                                                 Nothing -> Nothing)
-                                        (op)
-                            liftIO $ putMVar (blockSyncStatusMap bp2pEnv) (M.fromList p)
-                            let e = p !! 0
-                            return (Just $ BlockInfo (fst e) (snd $ snd e))
+                        else if L.length op == (fromIntegral $ last cacheInd)
+                                 then do
+                                     debug lg $ LG.msg $ val "Reloading cache."
+                                     let !p =
+                                             catMaybes $
+                                             map
+                                                 (\x ->
+                                                      case (hexToBlockHash $ snd x) of
+                                                          Just h -> Just (h, (RequestQueued, fromIntegral $ fst x))
+                                                          Nothing -> Nothing)
+                                                 (op)
+                                     liftIO $ putMVar (blockSyncStatusMap bp2pEnv) (M.fromList p)
+                                     let e = p !! 0
+                                     return (Just $ BlockInfo (fst e) (snd $ snd e))
+                                 else do
+                                     debug lg $ LG.msg $ val "Still loading block headers, try again!"
+                                     return (Nothing)
         else do
             let unsent = M.filter (\x -> fst x == RequestQueued) sy
             let sent =
@@ -734,6 +732,7 @@ getSatValuesFromOutpoint conn txSync lg net outPoint waitSecs = do
                     tofl <- waitTimeout event (1000000 * (fromIntegral waitSecs))
                     if tofl == False
                         then do
+                            tmap <- liftIO $ takeMVar (txSync)
                             liftIO $ putMVar (txSync) (M.delete (outPointHash outPoint) tmap)
                             debug lg $
                                 LG.msg $
@@ -778,6 +777,7 @@ getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs = do
                     tofl <- waitTimeout event (1000000 * (fromIntegral waitSecs))
                     if tofl == False -- False indicates a timeout occurred.
                         then do
+                            tmap <- liftIO $ takeMVar (txSync)
                             liftIO $ putMVar (txSync) (M.delete (outPointHash outPoint) tmap)
                             debug lg $ LG.msg ("TxIDNotFoundException" ++ (show $ txHashToHex $ outPointHash outPoint))
                             throw TxIDNotFoundException
