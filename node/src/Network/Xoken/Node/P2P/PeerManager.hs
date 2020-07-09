@@ -673,41 +673,49 @@ readNextMessage net sock ingss = do
                 Left e -> do
                     err lg $ msg ("Error decoding incoming message header: " ++ e)
                     throw MessageParsingException
-                Right (MessageHeader _ cmd len cks) -> do
-                    if cmd == MCBlock
+                Right (MessageHeader headMagic cmd len cks) -> do
+                    if headMagic == getNetworkMagic net
                         then do
-                            byts <- recvAll sock (88) -- 80 byte Block header + VarInt (max 8 bytes) Tx count
-                            case runGetState (getDeflatedBlock) byts 0 of
-                                Left e -> do
-                                    err lg $ msg ("Error, unexpected message header: " ++ e)
-                                    throw MessageParsingException
-                                Right (blk, unused) -> do
-                                    case blk of
-                                        Just b -> do
-                                            trace lg $
-                                                msg ("DefBlock: " ++ show blk ++ " unused: " ++ show (B.length unused))
-                                            let bi =
-                                                    BlockIngestState
-                                                        { binUnspentBytes = unused
-                                                        , binTxPayloadLeft = fromIntegral (len) - (88 - B.length unused)
-                                                        , binTxTotalCount = fromIntegral $ txnCount b
-                                                        , binTxIngested = 0
-                                                        , binBlockSize = fromIntegral $ len
-                                                        , binChecksum = cks
-                                                        }
-                                            return (Just $ MBlock b, Just $ IngressStreamState bi Nothing)
-                                        Nothing -> throw DeflatedBlockParseException
+                            if cmd == MCBlock
+                                then do
+                                    byts <- recvAll sock (88) -- 80 byte Block header + VarInt (max 8 bytes) Tx count
+                                    case runGetState (getDeflatedBlock) byts 0 of
+                                        Left e -> do
+                                            err lg $ msg ("Error, unexpected message header: " ++ e)
+                                            throw MessageParsingException
+                                        Right (blk, unused) -> do
+                                            case blk of
+                                                Just b -> do
+                                                    trace lg $
+                                                        msg
+                                                            ("DefBlock: " ++
+                                                             show blk ++ " unused: " ++ show (B.length unused))
+                                                    let bi =
+                                                            BlockIngestState
+                                                                { binUnspentBytes = unused
+                                                                , binTxPayloadLeft =
+                                                                      fromIntegral (len) - (88 - B.length unused)
+                                                                , binTxTotalCount = fromIntegral $ txnCount b
+                                                                , binTxIngested = 0
+                                                                , binBlockSize = fromIntegral $ len
+                                                                , binChecksum = cks
+                                                                }
+                                                    return (Just $ MBlock b, Just $ IngressStreamState bi Nothing)
+                                                Nothing -> throw DeflatedBlockParseException
+                                else do
+                                    byts <-
+                                        if len == 0
+                                            then return hdr
+                                            else do
+                                                b <- recvAll sock (fromIntegral len)
+                                                return (hdr `B.append` b)
+                                    case runGet (getMessage net) byts of
+                                        Left e -> throw MessageParsingException
+                                        Right msg -> do
+                                            return (Just msg, Nothing)
                         else do
-                            byts <-
-                                if len == 0
-                                    then return hdr
-                                    else do
-                                        b <- recvAll sock (fromIntegral len)
-                                        return (hdr `B.append` b)
-                            case runGet (getMessage net) byts of
-                                Left e -> throw MessageParsingException
-                                Right msg -> do
-                                    return (Just msg, Nothing)
+                            err lg $ msg ("Error, network magic mismatch!: " ++ (show headMagic))
+                            throw NetworkMagicMismatchException
 
 --
 doVersionHandshake ::
@@ -855,8 +863,9 @@ messageHandler peer (mm, ingss) = do
                                                     err lg $
                                                         LG.msg $
                                                         ("[ERROR] not found in blockTxProcessingLeftMap block_hash " ++
-                                                         show iss)
-                                                    throw BlockHashNotFoundException
+                                                         (show $ biBlockHash bf))
+                                                    liftIO $ putMVar (blockTxProcessingLeftMap bp2pEnv) mv
+                                                    -- throw BlockHashNotFoundException
                                         Left BlockHashNotFoundException -> return ()
                                         Left EmptyHeadersMessageException -> return ()
                                         Left TxIDNotFoundException -> do
@@ -1022,7 +1031,7 @@ handleIncomingMessages pr = do
             Just _ -> return ()
             Nothing -> liftIO $ writeIORef continue False
     -- catch all --
-    err lg $ LG.msg $ (val "[ERROR] Closing peer connection - cleanup")
+    debug lg $ LG.msg $ (val "Closing peer connection - cleanup")
     liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
     case (bpSocket pr) of
         Just sock -> liftIO $ Network.Socket.close sock
