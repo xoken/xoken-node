@@ -106,6 +106,7 @@ data PeerMessageException
     | ConfirmedTxParseException
     | PeerSocketNotConnectedException
     | ZeroLengthSocketReadException
+    | NetworkMagicMismatchException
     deriving (Show)
 
 instance Exception PeerMessageException
@@ -206,7 +207,16 @@ generateSessionKey = do
         sdb = B64.encode $ C.pack $ seed
     return $ encodeHex ((S.encode $ sha256 $ B.reverse sdb))
 
-addNewUser :: Q.ClientState -> T.Text -> T.Text -> T.Text -> T.Text -> Maybe [String] -> Maybe Int32 -> Maybe UTCTime -> IO (Maybe AddUserResp)
+addNewUser ::
+       Q.ClientState
+    -> T.Text
+    -> T.Text
+    -> T.Text
+    -> T.Text
+    -> Maybe [String]
+    -> Maybe Int32
+    -> Maybe UTCTime
+    -> IO (Maybe AddUserResp)
 addNewUser conn uname fname lname email roles api_quota api_expiry_time = do
     let qstr =
             " SELECT password from xoken.user_permission where username = ? " :: Q.QueryString Q.R (Identity T.Text) (Identity T.Text)
@@ -255,14 +265,17 @@ addNewUser conn uname fname lname email roles api_quota api_expiry_time = do
             case res1 of
                 Right () -> do
                     putStrLn $ "Added user: " ++ (T.unpack uname)
-                    return $ Just $ AddUserResp (T.unpack uname)
-                                                (C.unpack passwd)
-                                                (T.unpack fname)
-                                                (T.unpack lname)
-                                                (T.unpack email)
-                                                (fromMaybe ["read"] roles)
-                                                (fromIntegral $ fromMaybe 10000 api_quota)
-                                                (fromMaybe (addUTCTime (nominalDay * 365) tm) api_expiry_time)
+                    return $
+                        Just $
+                        AddUserResp
+                            (T.unpack uname)
+                            (C.unpack passwd)
+                            (T.unpack fname)
+                            (T.unpack lname)
+                            (T.unpack email)
+                            (fromMaybe ["read"] roles)
+                            (fromIntegral $ fromMaybe 10000 api_quota)
+                            (fromMaybe (addUTCTime (nominalDay * 365) tm) api_expiry_time)
                 Left (SomeException e) -> do
                     putStrLn $ "Error: INSERTing into 'user_permission': " ++ show e
                     throw e
@@ -281,11 +294,10 @@ calculateChainWork blks conn = do
                 then return 0
                 else do
                     case traverse
-                             (\(ht,hdr) ->
-                                    case (A.eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 hdr) of
-                                        (Right bh) -> Right $ bh
-                                        Left err -> Left err
-                                        )
+                             (\(ht, hdr) ->
+                                  case (A.eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 hdr) of
+                                      (Right bh) -> Right $ bh
+                                      Left err -> Left err)
                              (iop) of
                         Right hdrs -> return $ foldr (\x y -> y + (convertBitsToBlockWork $ blockBits $ x)) 0 hdrs
                         Left err -> do
