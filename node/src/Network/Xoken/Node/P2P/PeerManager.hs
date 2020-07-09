@@ -863,7 +863,7 @@ messageHandler peer (mm, ingss) = do
                                                     err lg $
                                                         LG.msg $
                                                         ("[ERROR] not found in blockTxProcessingLeftMap block_hash " ++
-                                                         show iss)
+                                                         (show $ biBlockHash bf))
                                                     liftIO $ putMVar (blockTxProcessingLeftMap bp2pEnv) mv
                                                     -- throw BlockHashNotFoundException
                                         Left BlockHashNotFoundException -> return ()
