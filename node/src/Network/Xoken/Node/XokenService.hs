@@ -345,8 +345,8 @@ xGetTxIDsByBlockHash hash pgSize pgNum = do
     lg <- getLogger
     let conn = keyValDB $ dbe
         txsToSkip = pgSize * (pgNum - 1)
-        firstPage = fromIntegral $ ceiling $ (fromIntegral txsToSkip) / 100
-        lastPage = fromIntegral $ ceiling $ (fromIntegral $ txsToSkip + pgSize) / 100
+        firstPage = (+1) $ fromIntegral $ floor $ (fromIntegral txsToSkip) / 100
+        lastPage = (+1) $ fromIntegral $ floor $ (fromIntegral $ txsToSkip + pgSize) / 100
         txDropFromFirst = fromIntegral $ txsToSkip `mod` 100
         str = "SELECT page_number, txids from xoken.blockhash_txids where block_hash = ? and page_number in ? "
         qstr = str :: Q.QueryString Q.R (DT.Text, [Int32]) (Int32, [DT.Text])
