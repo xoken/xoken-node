@@ -991,7 +991,7 @@ readNextMessage' peer = do
                             case (mht) of
                                 Just x -> return ()
                                 Nothing -> do
-                                    debug lg $ LG.msg $ ("InvalidBlockSyncStatusMapException - " ++ show hh)
+                                    err lg $ LG.msg $ ("InvalidBlockSyncStatusMapException - " ++ show hh)
                                     throw InvalidBlockSyncStatusMapException
                             let iz = Just (IngressStreamState ingst (Just $ BlockInfo hh (snd $ fromJust mht)))
                             liftIO $ atomically $ writeTVar (bpIngressState peer) $ iz
