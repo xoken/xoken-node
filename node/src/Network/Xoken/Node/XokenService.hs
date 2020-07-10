@@ -553,8 +553,8 @@ xGetOutputsAddress address pgSize mbNomTxInd = do
                 (Just n) -> n
                 Nothing -> maxBound
         aoStr =
-            "SELECT script_hash,nominal_tx_index,output FROM xoken.script_hash_outputs WHERE script_hash=? AND nominal_tx_index<?"
-        aoQStr = aoStr :: Q.QueryString Q.R (DT.Text, Int64) (DT.Text, Int64, (DT.Text, Int32))
+            "SELECT script_hash,nominal_tx_index,output,is_recv FROM xoken.script_hash_outputs WHERE script_hash=? AND nominal_tx_index<?"
+        aoQStr = aoStr :: Q.QueryString Q.R (DT.Text, Int64) (DT.Text, Int64, (DT.Text, Int32), Bool)
         aop = Q.defQueryParams Q.One (DT.pack address, nominalTxIndex)
     aoRes <- LE.try $ Q.runClient conn (Q.query aoQStr (aop {pageSize = pgSize}))
     case aoRes of
@@ -562,9 +562,12 @@ xGetOutputsAddress address pgSize mbNomTxInd = do
             if length iop == 0
                 then return []
                 else do
-                    res <- sequence $ (\(_, _, (txid, index)) -> getTxOutputsData (txid, index)) <$> iop
+                    res <- sequence $ (\(_, _, (txid, index), isRecv) ->
+                        if isRecv
+                            then getTxOutputsData (txid, index)
+                            else getTxOutputsData (txid, index)) <$> iop -- TODO: getTxOutDataForSenders
                     return $
-                        ((\((addr, nti, (op_txid, op_txidx)), ((bsh, bht, bidx), ios, ips, val)) ->
+                        ((\((addr, nti, (op_txid, op_txidx), isRecv), ((bsh, bht, bidx), ios, ips, val)) ->
                               AddressOutputs
                                   (DT.unpack addr)
                                   (OutPoint' (DT.unpack op_txid) (fromIntegral op_txidx))
