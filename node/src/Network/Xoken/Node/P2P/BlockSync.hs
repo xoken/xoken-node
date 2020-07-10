@@ -521,8 +521,7 @@ processConfTransaction tx bhash txind blkht = do
     let inAddrs = zip (txIn tx) [0 :: Int32 ..]
     let outAddrs =
             zip3
-                (map
-                     (\y ->
+                (map (\y ->
                           case scriptToAddressBS $ scriptOutput y of
                               Left e -> Nothing
                               Right os -> addrToString net os)
@@ -579,7 +578,9 @@ processConfTransaction tx bhash txind blkht = do
                                                      throw e
                          Nothing -> do
                              if (outPointHash nullOutPoint) == (outPointHash $ prevOutput b)
-                                 then return (Nothing :: Maybe Text, fromIntegral $ computeSubsidy net $ (fromIntegral blkht :: Word32))
+                                 then return
+                                          ( Nothing :: Maybe Text
+                                          , fromIntegral $ computeSubsidy net $ (fromIntegral blkht :: Word32))
                                  else do
                                      dbRes <-
                                          liftIO $
@@ -640,10 +641,10 @@ processConfTransaction tx bhash txind blkht = do
              let spendInfo = (\ov -> ((txHashToHex $ txHash tx, fromIntegral $ fst $ ov), i, snd $ ov)) <$> ovs
              insertTxIdOutputs conn prevOutpoint a False bi spendInfo 0
              if a == Nothing
-                then return ()
-                else case convertToScriptHash net (T.unpack $ fromJust a) of
-                    Nothing -> return ()
-                    Just sh -> commitScriptHashOutputs conn (T.pack sh) prevOutpoint bi False)
+                 then return ()
+                 else case convertToScriptHash net (T.unpack $ fromJust a) of
+                          Nothing -> return ()
+                          Just sh -> commitScriptHashOutputs conn (T.pack sh) prevOutpoint bi False)
         (zip (inAddrs) (map (\x -> fst $ thd3 x) inputs))
     --
     trace lg $ LG.msg $ "processing Transaction " ++ show (txHash tx) ++ ": updated spend info for inputs"
@@ -656,7 +657,11 @@ processConfTransaction tx bhash txind blkht = do
     -- persist tx
     let str = "insert INTO xoken.transactions ( tx_id, block_info, tx_serialized , inputs, fees) values (?, ?, ?, ?, ?)"
         qstr =
-            str :: Q.QueryString Q.W (Text, (Text, Int32, Int32), Blob, [((Text, Int32), Int32, (Maybe Text, Int64))], Int64) ()
+            str :: Q.QueryString Q.W ( Text
+                                     , (Text, Int32, Int32)
+                                     , Blob
+                                     , [((Text, Int32), Int32, (Maybe Text, Int64))]
+                                     , Int64) ()
         par =
             Q.defQueryParams
                 Q.One
@@ -689,7 +694,13 @@ processConfTransaction tx bhash txind blkht = do
     trace lg $ LG.msg $ "processing Transaction " ++ show (txHash tx) ++ ": end of processing signaled"
 
 getSatValuesFromOutpoint ::
-       Q.ClientState -> (MVar (M.Map TxHash EV.Event)) -> Logger -> Network -> OutPoint -> Int -> IO ((Maybe Text, Int64))
+       Q.ClientState
+    -> (MVar (M.Map TxHash EV.Event))
+    -> Logger
+    -> Network
+    -> OutPoint
+    -> Int
+    -> IO ((Maybe Text, Int64))
 getSatValuesFromOutpoint conn txSync lg net outPoint waitSecs = do
     let str = "SELECT address, value FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
         qstr = str :: Q.QueryString Q.R (Text, Int32) (Maybe Text, Int64)
