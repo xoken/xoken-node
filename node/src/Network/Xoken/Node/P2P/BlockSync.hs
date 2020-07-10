@@ -478,12 +478,12 @@ insertTxIdOutputs conn (txid, outputIndex) address isRecv blockInfo other value 
                                      , Int32
                                      , Text
                                      , Bool
-                                     , Maybe (Text, Int32, Int32)
-                                     , Maybe [((Text, Int32), Int32, (Text, Int64))]
+                                     , (Text, Int32, Int32)
+                                     , [((Text, Int32), Int32, (Text, Int64))]
                                      , Int64) ()
-        parRecvPoV = Q.defQueryParams Q.One (txid, outputIndex, address, isRecv, (Just blockInfo), (Just other), value)
-    resRecvPoV <- liftIO $ try $ Q.runClient conn $ (Q.write qstr parRecvPoV)
-    case resRecvPoV of
+        par = Q.defQueryParams Q.One (txid, outputIndex, address, isRecv, blockInfo, other, value)
+    res <- liftIO $ try $ Q.runClient conn $ (Q.write qstr par)
+    case res of
         Right () -> return ()
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: INSERTing into: txid_outputs " ++ show e
