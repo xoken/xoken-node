@@ -985,15 +985,15 @@ readNextMessage' peer = do
                         Just (MBlock blk) -- setup state
                          -> do
                             mp <- liftIO $ takeMVar (blockSyncStatusMap bp2pEnv)
+                            liftIO $ putMVar (blockSyncStatusMap bp2pEnv) mp
                             let hh = headerHash $ defBlockHeader blk
                             let mht = M.lookup hh mp
                             case (mht) of
                                 Just x -> return ()
                                 Nothing -> do
-                                    debug lg $ LG.msg $ ("InvalidBlockSyncStatusMapException - " ++ show hh)
+                                    err lg $ LG.msg $ ("InvalidBlockSyncStatusMapException - " ++ show hh)
                                     throw InvalidBlockSyncStatusMapException
                             let iz = Just (IngressStreamState ingst (Just $ BlockInfo hh (snd $ fromJust mht)))
-                            liftIO $ putMVar (blockSyncStatusMap bp2pEnv) mp
                             liftIO $ atomically $ writeTVar (bpIngressState peer) $ iz
                         Just (MConfTx ctx) -> do
                             case issBlockInfo iss of
