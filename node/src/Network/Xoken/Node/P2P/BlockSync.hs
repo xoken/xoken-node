@@ -274,7 +274,7 @@ markBestSyncedBlock hash height conn = do
             err lg $
             LG.msg ("Error: Marking [Best-Synced] blockhash failed: " ++ show e) >> throw KeyValueDBInsertException
 
-checkBlocksFullySynced :: (HasLogger m, MonadIO m) => Q.ClientState -> m Bool
+checkBlocksFullySynced :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Q.ClientState -> m Bool
 checkBlocksFullySynced conn = do
     lg <- getLogger
     let str = "SELECT value FROM xoken.misc_store WHERE key IN (?,?)"
@@ -285,15 +285,19 @@ checkBlocksFullySynced conn = do
         Right results ->
             if L.length results /= 2
                 then do
-                    err lg $ LG.msg $ val $ C.pack $ "checkFullySynced: Missing entries best-synced or best_chain_tip"
-                    throw KeyValueDBLookupException
+                    debug lg $
+                        LG.msg $
+                        val $
+                        C.pack $
+                        "checkBlocksFullySynced: misc_store missing entries for best-synced, best_chain_top or both"
+                    return False
                 else do
                     let Identity (_, h1, _, _) = results !! 0
                         Identity (_, h2, _, _) = results !! 1
                     return (h1 == h2)
         Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "checkFullySynced: " ++ show e
-            throw e
+            debug lg $ LG.msg $ "checkBlocksFullySynced: error while querying DB: " ++ show e
+            return False
 
 getBatchSize n
     | n < 180000 = [1 .. 16]
