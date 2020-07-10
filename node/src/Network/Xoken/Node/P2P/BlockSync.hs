@@ -296,11 +296,10 @@ checkBlocksFullySynced conn = do
             throw e
 
 getBatchSize n
-    | n < 200000 = [1 .. 200]
-    | n >= 200000 && n < 400000 = [1 .. 50]
-    | n >= 400000 && n < 500000 = [1 .. 20]
-    | n >= 500000 && n < 600000 = [1 .. 10]
-    | n >= 600000 && n < 640000 = [1, 2]
+    | n < 180000 = [1 .. 16]
+    | n >= 180000 && n < 400000 = [1 .. 8]
+    | n >= 400000 && n < 500000 = [1 .. 4]
+    | n >= 500000 && n < 640000 = [1 .. 2]
     | otherwise = [1]
 
 getNextBlockToSync :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => UTCTime -> m (Maybe BlockInfo)

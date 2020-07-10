@@ -95,6 +95,7 @@ data BlockSyncException
     | DBInsertTimeOutException
     | MerkleTreeInvalidException
     | MerkleQueueNotFoundException
+    | BlockAlreadySyncedException
     deriving (Show)
 
 instance Exception BlockSyncException

@@ -70,7 +70,7 @@ data BitcoinP2P =
         , bestBlockUpdated :: !(MVar Bool)
         , headersWriteLock :: !(MVar Bool)
         , blockSyncStatusMap :: !(MVar (M.Map BlockHash (BlockSyncStatus, BlockHeight)))
-        , blockTxProcessingLeftMap :: !(MVar (M.Map BlockHash Int))
+        , blockTxProcessingLeftMap :: !(MVar (M.Map BlockHash [Bool]))
         , epochType :: !(TVar Bool)
         , unconfirmedTxCache :: !(HashTable TxShortHash (Bool, TxHash))
         , txOutputValuesCache :: !(HashTable TxShortHash (TxHash, [(Int16, (Text, Int64))]))

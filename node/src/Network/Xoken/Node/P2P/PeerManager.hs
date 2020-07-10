@@ -623,9 +623,16 @@ readNextMessage net sock ingss = do
                                 if (binTxIngested blin == 0) -- very first Tx
                                     then do
                                         mv <- liftIO $ takeMVar (blockTxProcessingLeftMap p2pEnv)
-                                        let xm = M.insert (biBlockHash $ bf) ((binTxTotalCount blin)) mv
-                                        liftIO $ putMVar (blockTxProcessingLeftMap p2pEnv) xm
-                                        debug lg $ LG.msg $ "blockTxProcessingLeftMap (0th) , block_hash " ++ show iss
+                                        case (M.lookup (biBlockHash $ bf) mv) of
+                                            Just v -> do
+                                                debug lg $ msg ("Block already under sync: " ++ (show $ biBlockHash bf))
+                                                liftIO $ putMVar (blockTxProcessingLeftMap p2pEnv) mv
+                                            Nothing -> do
+                                                let ar = map (\_ -> False) [1 .. (binTxTotalCount blin)]
+                                                let xm = M.insert (biBlockHash $ bf) (ar) mv
+                                                liftIO $ putMVar (blockTxProcessingLeftMap p2pEnv) xm
+                                                debug lg $
+                                                    LG.msg $ "blockTxProcessingLeftMap (init), block_hash " ++ show iss
                                         qq <-
                                             liftIO $
                                             atomically $ newTBQueue $ intToNatural (maxTMTQueueSize $ nodeConfig p2pEnv)
@@ -833,49 +840,99 @@ messageHandler peer (mm, ingss) = do
                             let binfo = issBlockInfo iss
                             case binfo of
                                 Just bf -> do
-                                    res <-
-                                        LE.try $
-                                        processConfTransaction
-                                            tx
-                                            (biBlockHash bf)
-                                            ((binTxIngested bi) - 1)
-                                            (fromIntegral $ biBlockHeight bf)
-                                    case res of
-                                        Right () -> do
-                                            mv <- liftIO $ takeMVar (blockTxProcessingLeftMap bp2pEnv)
+                                    ma <- liftIO $ takeMVar (blockTxProcessingLeftMap bp2pEnv)
+                                    let skip =
+                                            case (M.lookup (biBlockHash bf) ma) of
+                                                Just lfa -> (lfa !! (binTxIngested bi - 1))
+                                                Nothing -> False
+                                    liftIO $ putMVar (blockTxProcessingLeftMap bp2pEnv) ma
+                                    if skip
+                                        then do
+                                            debug lg $
+                                                LG.msg $
+                                                ("Tx already processed, block: " ++
+                                                 (show $ biBlockHash bf) ++ ", tx-index: " ++ show (binTxIngested bi))
+                                            return ()
+                                        else do
+                                            tm <- liftIO $ getCurrentTime
+                                            mv <- liftIO $ takeMVar (blockSyncStatusMap bp2pEnv)
                                             case (M.lookup (biBlockHash bf) mv) of
-                                                Just left -> do
-                                                    if (left - 1) == 0
+                                                Just (st, _) ->
+                                                    if st == BlockReceiveComplete
                                                         then do
-                                                            sy <- liftIO $ takeMVar (blockSyncStatusMap bp2pEnv)
-                                                            let syu =
-                                                                    M.insert
-                                                                        (biBlockHash bf)
-                                                                        (BlockReceiveComplete, biBlockHeight bf)
-                                                                        sy
-                                                            liftIO $ putMVar (blockSyncStatusMap bp2pEnv) syu
-                                                            let xm = M.delete (biBlockHash $ bf) mv
-                                                            liftIO $ putMVar (blockTxProcessingLeftMap bp2pEnv) xm
-                                                        else do
-                                                            let xm = M.insert (biBlockHash $ bf) (left - 1) mv
-                                                            liftIO $ putMVar (blockTxProcessingLeftMap bp2pEnv) xm
+                                                            liftIO $ putMVar (blockSyncStatusMap bp2pEnv) mv
+                                                            throw BlockAlreadySyncedException
+                                                        else return ()
                                                 Nothing -> do
-                                                    err lg $
-                                                        LG.msg $
-                                                        ("[ERROR] not found in blockTxProcessingLeftMap block_hash " ++
-                                                         (show $ biBlockHash bf))
-                                                    liftIO $ putMVar (blockTxProcessingLeftMap bp2pEnv) mv
-                                                    -- throw BlockHashNotFoundException
-                                        Left BlockHashNotFoundException -> return ()
-                                        Left EmptyHeadersMessageException -> return ()
-                                        Left TxIDNotFoundException -> do
-                                            throw TxIDNotFoundException
-                                        Left KeyValueDBInsertException -> do
-                                            err lg $ LG.msg $ val "[ERROR] KeyValueDBInsertException"
-                                            throw KeyValueDBInsertException
-                                        Left e -> do
-                                            err lg $ LG.msg ("[ERROR] Unhandled exception!" ++ show e)
-                                            throw e
+                                                    liftIO $ putMVar (blockSyncStatusMap bp2pEnv) mv
+                                                    throw UnexpectedDuringBlockProcException
+                                            let xm =
+                                                    (M.insert
+                                                         (biBlockHash bf)
+                                                         ( RecentTxReceiveTime (tm, binTxIngested bi)
+                                                         , biBlockHeight bf -- track receive progress
+                                                          ))
+                                                        mv
+                                            liftIO $ putMVar (blockSyncStatusMap bp2pEnv) xm
+                                            --
+                                            res <-
+                                                LE.try $
+                                                processConfTransaction
+                                                    tx
+                                                    (biBlockHash bf)
+                                                    ((binTxIngested bi) - 1)
+                                                    (fromIntegral $ biBlockHeight bf)
+                                            case res of
+                                                Right () -> do
+                                                    mv <- liftIO $ takeMVar (blockTxProcessingLeftMap bp2pEnv)
+                                                    case (M.lookup (biBlockHash bf) mv) of
+                                                        Just lefta -> do
+                                                            trace lg $
+                                                                LG.msg $
+                                                                ("Tx processed, block: " ++
+                                                                 (show $ biBlockHash bf) ++
+                                                                 ", tx-index: " ++ show (binTxIngested bi))
+                                                            let !fs =
+                                                                    take ((binTxIngested bi) - 1) lefta ++
+                                                                    [True] ++ (drop (binTxIngested bi) lefta)
+                                                            let xm = M.insert (biBlockHash $ bf) (fs) mv
+                                                            liftIO $ putMVar (blockTxProcessingLeftMap bp2pEnv) xm
+                                                            if (all (== True) fs)
+                                                                then do
+                                                                    sy <- liftIO $ takeMVar (blockSyncStatusMap bp2pEnv)
+                                                                    let syu =
+                                                                            M.insert
+                                                                                (biBlockHash bf)
+                                                                                (BlockReceiveComplete, biBlockHeight bf)
+                                                                                sy
+                                                                    liftIO $ putMVar (blockSyncStatusMap bp2pEnv) syu
+                                                                    mv <-
+                                                                        liftIO $
+                                                                        takeMVar (blockTxProcessingLeftMap bp2pEnv)
+                                                                    let xm = M.delete (biBlockHash $ bf) mv
+                                                                    liftIO $
+                                                                        putMVar (blockTxProcessingLeftMap bp2pEnv) xm
+                                                                    debug lg $
+                                                                        LG.msg $
+                                                                        ("DONE!, block: " ++ (show $ biBlockHash bf))
+                                                                else return ()
+                                                        Nothing -> do
+                                                            err lg $
+                                                                LG.msg $
+                                                                ("[ERROR] not found in blockTxProcessingLeftMap block_hash " ++
+                                                                 (show $ biBlockHash bf))
+                                                            liftIO $ putMVar (blockTxProcessingLeftMap bp2pEnv) mv
+                                                            -- throw BlockHashNotFoundException
+                                                Left BlockHashNotFoundException -> return ()
+                                                Left EmptyHeadersMessageException -> return ()
+                                                Left TxIDNotFoundException -> do
+                                                    throw TxIDNotFoundException
+                                                Left KeyValueDBInsertException -> do
+                                                    err lg $ LG.msg $ val "[ERROR] KeyValueDBInsertException"
+                                                    throw KeyValueDBInsertException
+                                                Left e -> do
+                                                    err lg $ LG.msg ("[ERROR] Unhandled exception!" ++ show e)
+                                                    throw e
                                     return $ msgType msg
                                 Nothing -> throw InvalidStreamStateException
                         Nothing -> do
@@ -954,17 +1011,7 @@ readNextMessage' peer = do
                                             -- debug lg $ LG.msg $ ("DEBUG Block receive complete - " ++ show " ")
                                         then do
                                             liftIO $ atomically $ writeTVar (bpIngressState peer) $ Nothing
-                                        else do
-                                            liftIO $ atomically $ writeTVar (bpIngressState peer) $ ingressState
-                                            mv <- liftIO $ takeMVar (blockSyncStatusMap bp2pEnv)
-                                            let xm =
-                                                    (M.insert
-                                                         (biBlockHash bi)
-                                                         ( RecentTxReceiveTime (tm, binTxIngested ingst)
-                                                         , biBlockHeight bi -- track receive progress
-                                                          ))
-                                                        mv
-                                            liftIO $ putMVar (blockSyncStatusMap bp2pEnv) xm
+                                        else liftIO $ atomically $ writeTVar (bpIngressState peer) $ ingressState
                                 Nothing -> throw InvalidBlockInfoException
                         otherwise -> throw UnexpectedDuringBlockProcException
                 Nothing -> return ()
