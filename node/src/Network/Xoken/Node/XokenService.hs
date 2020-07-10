@@ -281,9 +281,11 @@ xGetTxOutputSpendStatus :: (HasXokenNodeEnv env m, MonadIO m) => String -> Int32
 xGetTxOutputSpendStatus txId outputIndex = do
     dbe <- getDB
     let conn = keyValDB (dbe)
-        str =
-            "SELECT is_recv, block_info, other FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
-        qstr = str :: Q.QueryString Q.R (DT.Text, Int32) (Bool, (DT.Text, Int32, Int32), Set ((DT.Text, Int32), Int32, (Maybe DT.Text, Int64)))
+        str = "SELECT is_recv, block_info, other FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
+        qstr =
+            str :: Q.QueryString Q.R (DT.Text, Int32) ( Bool
+                                                      , (DT.Text, Int32, Int32)
+                                                      , Set ((DT.Text, Int32), Int32, (Maybe DT.Text, Int64)))
         p = Q.defQueryParams Q.One (DT.pack txId, outputIndex)
     iop <- Q.runClient conn (Q.query qstr p)
     if length iop == 0
@@ -292,10 +294,16 @@ xGetTxOutputSpendStatus txId outputIndex = do
             if L.length iop == 1
                 then return $ Just $ TxOutputSpendStatus False Nothing Nothing Nothing
                 else do
-                    let siop = L.sortBy (\(x,_,_) (y,_,_) -> compare x y) iop
-                        (_,(_,spendingTxBlkHeight,_), other) = siop !! 0
-                        ((spendingTxID,_),spendingTxIndex,_) = head $ DCP.fromSet other
-                    return $ Just $ TxOutputSpendStatus True (Just $ DT.unpack spendingTxID) (Just spendingTxBlkHeight) (Just spendingTxIndex)
+                    let siop = L.sortBy (\(x, _, _) (y, _, _) -> compare x y) iop
+                        (_, (_, spendingTxBlkHeight, _), other) = siop !! 0
+                        ((spendingTxID, _), spendingTxIndex, _) = head $ DCP.fromSet other
+                    return $
+                        Just $
+                        TxOutputSpendStatus
+                            True
+                            (Just $ DT.unpack spendingTxID)
+                            (Just spendingTxBlkHeight)
+                            (Just spendingTxIndex)
 
 xGetBlocksHeights :: (HasXokenNodeEnv env m, MonadIO m) => [Int32] -> m ([BlockRecord])
 xGetBlocksHeights heights = do
@@ -447,7 +455,13 @@ xGetTxHashes hashes = do
                                      (zipWith mergeTxOutTxOutput (txOut tx) outs)
                                      (zipWith mergeTxInTxInput (txIn tx) $
                                       (\((outTxId, outTxIndex), inpTxIndex, (addr, value)) ->
-                                           TxInput (DT.unpack outTxId) outTxIndex inpTxIndex (DT.unpack <$> addr) value "") <$>
+                                           TxInput
+                                               (DT.unpack outTxId)
+                                               outTxIndex
+                                               inpTxIndex
+                                               (DT.unpack <$> addr)
+                                               value
+                                               "") <$>
                                       inps)
                                      fees
                                      mrkl
@@ -468,11 +482,11 @@ getTxOutputsFromTxId txid = do
         toStr = "SELECT output_index,block_info,is_recv,other,value,address FROM xoken.txid_outputs WHERE txid=?"
         toQStr =
             toStr :: Q.QueryString Q.R (Identity DT.Text) ( Int32
-                                                        , (DT.Text, Int32, Int32)
-                                                        , Bool
-                                                        , Set ((DT.Text, Int32), Int32, (Maybe DT.Text, Int64))
-                                                        , Int64
-                                                        , Maybe DT.Text)
+                                                          , (DT.Text, Int32, Int32)
+                                                          , Bool
+                                                          , Set ((DT.Text, Int32), Int32, (Maybe DT.Text, Int64))
+                                                          , Int64
+                                                          , Maybe DT.Text)
         par = Q.defQueryParams Q.One (Identity txid)
     res <- LE.try $ Q.runClient conn (Q.query toQStr par)
     case res of
@@ -496,7 +510,7 @@ getTxOutputsFromTxId txid = do
                                              , idx1
                                              , (bif1, recv1, oth1, val1, addr1)
                                              , Just (bif2, recv2, oth2, val2, addr2))) <$>
-                                txg
+                            txg
                     return $ txOutputDataToOutput <$> txOutData
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: getTxOutputsFromTxId: " ++ show e

@@ -719,7 +719,8 @@ mergeAddrTxOutTxOutput addr (TxOut {..}) txOutput = txOutput {lockingScript = sc
 txToTx' :: Tx -> [TxOutput] -> [TxInput] -> Tx'
 txToTx' (Tx {..}) txout txin = Tx' txVersion txout txin txLockTime
 
-type TxIdOutputs = ((T.Text, Int32, Int32), Bool, Set ((T.Text, Int32), Int32, (Maybe T.Text, Int64)), Int64, Maybe T.Text)
+type TxIdOutputs
+     = ((T.Text, Int32, Int32), Bool, Set ((T.Text, Int32), Int32, (Maybe T.Text, Int64)), Int64, Maybe T.Text)
 
 genTxOutputData :: (T.Text, Int32, TxIdOutputs, Maybe TxIdOutputs) -> TxOutputData
 genTxOutputData (txId, txIndex, ((hs, ht, ind), _, inps, val, addr), Nothing) =
@@ -737,7 +738,8 @@ genTxOutputData (txId, txIndex, ((hs, ht, ind), _, inps, val, addr), Just ((shs,
         (Just $ DCP.fromSet oth)
 
 txOutputDataToOutput :: TxOutputData -> TxOutput
-txOutputDataToOutput (TxOutputData {..}) = TxOutput txind (T.unpack <$> address) spendingId spendingIndex isSpent value ""
+txOutputDataToOutput (TxOutputData {..}) =
+    TxOutput txind (T.unpack <$> address) spendingId spendingIndex isSpent value ""
   where
     (spendingId, spendingIndex) =
         case spendInfo of
