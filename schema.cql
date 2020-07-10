@@ -37,20 +37,18 @@ CREATE TABLE xoken.ep_script_hash_outputs (
     script_hash text,
     output frozen<tuple<text, int>>,
     is_recv boolean,
-    PRIMARY KEY (epoch, script_hash, output)
+    PRIMARY KEY (epoch, script_hash, output, is_recv)
 ); 
 
 CREATE TABLE xoken.ep_txid_outputs (
     epoch boolean,
     txid text,
     output_index int,
-    script_hash text,
-    is_output_spent boolean,
-    spending_txid text,
-    spending_index int,
-    inputs set  <frozen<tuple<frozen<tuple<text, int>>, int, frozen<tuple<text, bigint>>>>>,
+    address text,
+    is_recv boolean,
+    other set  <frozen<tuple<frozen<tuple<text, int>>, int, frozen<tuple<text, bigint>>>>>,
     value bigint,
-    PRIMARY KEY(epoch, txid, output_index)
+    PRIMARY KEY(epoch, txid, output_index, is_recv)
  ) WITH CLUSTERING ORDER BY (txid ASC, output_index ASC);
 
 CREATE TABLE xoken.script_hash_outputs (
@@ -58,22 +56,19 @@ CREATE TABLE xoken.script_hash_outputs (
     nominal_tx_index bigint,
     output frozen<tuple<text, int>>,
     is_recv boolean,
-    PRIMARY KEY (script_hash, nominal_tx_index, output)
+    PRIMARY KEY (script_hash, nominal_tx_index, output, is_recv)
 ) WITH CLUSTERING ORDER BY (nominal_tx_index DESC);
 
 CREATE TABLE xoken.txid_outputs (
     txid text,
     output_index int,
-    script_hash text,
+    address text,
+    is_recv boolean,
     block_info frozen<tuple<text, int, int>>,
-    is_output_spent boolean,
-    spending_txid text,
-    spending_index int,
-    spending_tx_block_height int,
-    inputs set  <frozen<tuple<frozen<tuple<text, int>>, int, frozen<tuple<text, bigint>>>>>,
+    other set <frozen<tuple<frozen<tuple<text, int>>, int, frozen<tuple<text, bigint>>>>>,
     value bigint,
-    PRIMARY KEY(txid, output_index)
- ) WITH CLUSTERING ORDER BY (output_index ASC);
+    PRIMARY KEY(txid, output_index, is_recv)
+) WITH CLUSTERING ORDER BY (output_index asc);
 
 CREATE TABLE xoken.blocks_by_height (
     block_height int PRIMARY KEY,
