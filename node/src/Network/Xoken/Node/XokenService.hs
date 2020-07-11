@@ -450,7 +450,7 @@ xGetTxHashes hashes = do
                                  RawTxRecord
                                      (DT.unpack txid)
                                      (fromIntegral $ C.length $ fromBlob sz)
-                                     (BlockInfo' (DT.unpack bhash) (fromIntegral txind) (fromIntegral blkht))
+                                     (BlockInfo' (DT.unpack bhash) (fromIntegral blkht) (fromIntegral txind))
                                      (fromBlob sz)
                                      (zipWith mergeTxOutTxOutput (txOut tx) outs)
                                      (zipWith mergeTxInTxInput (txIn tx) $
