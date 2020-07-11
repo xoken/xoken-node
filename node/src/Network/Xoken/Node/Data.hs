@@ -542,7 +542,8 @@ instance ToJSON AddressOutputs where
     toJSON (AddressOutputs addr out bi nom ios po val) =
         object
             [ "address" .= addr
-            , "output" .= out
+            , "outputTxHash" .= (opTxHash out)
+            , "outputIndex" .= (opIndex out)
             , "txIndex" .= (binfTxIndex bi)
             , "blockHash" .= (binfBlockHash bi)
             , "blockHeight" .= (binfBlockHeight bi)
@@ -568,7 +569,8 @@ instance ToJSON ScriptOutputs where
     toJSON (ScriptOutputs dh out bi nom ios po val) =
         object
             [ "scriptHash" .= dh
-            , "output" .= out
+            , "outputTxHash" .= (opTxHash out)
+            , "outputIndex" .= (opIndex out)
             , "txIndex" .= (binfTxIndex bi)
             , "blockHash" .= (binfBlockHash bi)
             , "blockHeight" .= (binfBlockHeight bi)
