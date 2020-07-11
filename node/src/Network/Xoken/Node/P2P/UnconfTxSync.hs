@@ -220,15 +220,35 @@ insertEpochTxIdOutputs ::
 insertEpochTxIdOutputs conn epoch (txid, outputIndex) address isRecv other value = do
     lg <- getLogger
     let str =
-            "INSERT INTO xoken.ep_txid_outputs (epoch,txid,output_index,address,is_recv,other,value) VALUES (?,?,?,?,?,?,?)"
+            "INSERT INTO xoken.ep_txid_outputs (epoch,txid,output_index,address,is_recv,is_spent,other,value) VALUES (?,?,?,?,?,?,?,?)"
         qstr =
-            str :: Q.QueryString Q.W (Bool, Text, Int32, Text, Bool, [((Text, Int32), Int32, (Text, Int64))], Int64) ()
-        par = Q.defQueryParams Q.One (epoch, txid, outputIndex, address, isRecv, other, value)
+            str :: Q.QueryString Q.W ( Bool
+                                     , Text
+                                     , Int32
+                                     , Text
+                                     , Bool
+                                     , Bool
+                                     , [((Text, Int32), Int32, (Text, Int64))]
+                                     , Int64) ()
+        par = Q.defQueryParams Q.One (epoch, txid, outputIndex, address, isRecv, not isRecv, other, value)
     res <- liftIO $ try $ Q.runClient conn $ (Q.write qstr par)
     case res of
         Right () -> return ()
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: INSERTing into ep_txid_outputs: " ++ show e
+            throw KeyValueDBInsertException
+
+setEpochTxIdOutputsSpentFlag :: (HasLogger m, MonadIO m) => Q.ClientState -> (Text, Int32) -> m ()
+setEpochTxIdOutputsSpentFlag conn (txid, outputIndex) = do
+    lg <- getLogger
+    let str = "UPDATE xoken.ep_txid_outputs SET is_spent=? WHERE txid=? AND output_index=? AND is_spent=?"
+        qstr = str :: Q.QueryString Q.W (Bool, Text, Int32, Bool) ()
+        par = Q.defQueryParams Q.One (True, txid, outputIndex, False)
+    res <- liftIO $ try $ Q.runClient conn $ (Q.write qstr par)
+    case res of
+        Right () -> return ()
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: UPDATE'ing ep_txid_outputs: " ++ show e
             throw KeyValueDBInsertException
 
 processUnconfTransaction :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Tx -> m ()
@@ -318,7 +338,8 @@ processUnconfTransaction tx = do
              let prevOutpoint = (txHashToHex $ outPointHash $ prevOutput o, fromIntegral $ outPointIndex $ prevOutput o)
              let output = (txHashToHex $ txHash tx, i)
              let spendInfo = (\ov -> ((txHashToHex $ txHash tx, fromIntegral $ fst ov), i, snd $ ov)) <$> ovs
-             insertEpochTxIdOutputs conn epoch prevOutpoint a False spendInfo 0)
+             insertEpochTxIdOutputs conn epoch prevOutpoint a False spendInfo 0
+             setEpochTxIdOutputsSpentFlag conn prevOutpoint)
         (zip inAddrs (map (\x -> fst $ thd3 x) inputs))
     --
     let ipSum = foldl (+) 0 $ (\(_, _, (_, val)) -> val) <$> inputs

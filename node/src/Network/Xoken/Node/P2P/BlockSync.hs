@@ -472,29 +472,43 @@ insertTxIdOutputs ::
     => Q.ClientState
     -> (Text, Int32) -- (txid, output_index)
     -> Text -- address
-    -> Bool -- is_recv
-    -> (Text, Int32, Int32) -- block_info (blockHash, blockHeight, blockTxIndex) {spender's block info}
-    -> [((Text, Int32), Int32, (Text, Int64))] -- (prevOutpoint, inputIndex, value) {spender's info}
+    -> Bool -- isRecv
+    -> (Text, Int32, Int32) -- blockInfo (blockHash, blockHeight, blockTxIndex) {spender's block info}
+    -> [((Text, Int32), Int32, (Text, Int64))] -- other (prevOutpoint, inputIndex, value) {spender's info}
     -> Int64 -- value
     -> m ()
 insertTxIdOutputs conn (txid, outputIndex) address isRecv blockInfo other value = do
     lg <- getLogger
     let str =
-            "INSERT INTO xoken.txid_outputs (txid,output_index,address,is_recv,block_info,other,value) VALUES (?,?,?,?,?,?,?)"
+            "INSERT INTO xoken.txid_outputs (txid,output_index,address,is_recv,is_spent,block_info,other,value) VALUES (?,?,?,?,?,?,?,?)"
         qstr =
             str :: Q.QueryString Q.W ( Text
                                      , Int32
                                      , Text
                                      , Bool
+                                     , Bool
                                      , (Text, Int32, Int32)
                                      , [((Text, Int32), Int32, (Text, Int64))]
                                      , Int64) ()
-        par = Q.defQueryParams Q.One (txid, outputIndex, address, isRecv, blockInfo, other, value)
+        par = Q.defQueryParams Q.One (txid, outputIndex, address, isRecv, not isRecv, blockInfo, other, value)
     res <- liftIO $ try $ Q.runClient conn $ (Q.write qstr par)
     case res of
         Right () -> return ()
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: INSERTing into: txid_outputs " ++ show e
+            throw KeyValueDBInsertException
+
+setTxIdOutputsSpentFlag :: (HasLogger m, MonadIO m) => Q.ClientState -> (Text, Int32) -> m ()
+setTxIdOutputsSpentFlag conn (txid, outputIndex) = do
+    lg <- getLogger
+    let str = "UPDATE xoken.txid_outputs SET is_spent=? WHERE txid=? AND output_index=? AND is_spent=?"
+        qstr = str :: Q.QueryString Q.W (Bool, Text, Int32, Bool) ()
+        par = Q.defQueryParams Q.One (True, txid, outputIndex, False)
+    res <- liftIO $ try $ Q.runClient conn $ (Q.write qstr par)
+    case res of
+        Right () -> return ()
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: UPDATE'ing txid_outputs: " ++ show e
             throw KeyValueDBInsertException
 
 commitTxPage ::
@@ -650,7 +664,8 @@ processConfTransaction tx bhash txind blkht = do
              let blockHeight = fromIntegral blkht
              let prevOutpoint = (txHashToHex $ outPointHash $ prevOutput o, fromIntegral $ outPointIndex $ prevOutput o)
              let spendInfo = (\ov -> ((txHashToHex $ txHash tx, fromIntegral $ fst $ ov), i, snd $ ov)) <$> ovs
-             insertTxIdOutputs conn prevOutpoint a False bi spendInfo 0)
+             insertTxIdOutputs conn prevOutpoint a False bi spendInfo 0
+             setTxIdOutputsSpentFlag conn prevOutpoint)
         (zip (inAddrs) (map (\x -> fst $ thd3 x) inputs))
     --
     trace lg $ LG.msg $ "processing Transaction " ++ show (txHash tx) ++ ": updated spend info for inputs"
@@ -661,7 +676,7 @@ processConfTransaction tx bhash txind blkht = do
     --
     trace lg $ LG.msg $ "processing Transaction " ++ show (txHash tx) ++ ": calculated fees"
     -- persist tx
-    let str = "insert INTO xoken.transactions ( tx_id, block_info, tx_serialized , inputs, fees) values (?, ?, ?, ?, ?)"
+    let str = "insert INTO xoken.transactions (tx_id, block_info, tx_serialized , inputs, fees) values (?, ?, ?, ?, ?)"
         qstr =
             str :: Q.QueryString Q.W (Text, (Text, Int32, Int32), Blob, [((Text, Int32), Int32, (Text, Int64))], Int64) ()
         par =
