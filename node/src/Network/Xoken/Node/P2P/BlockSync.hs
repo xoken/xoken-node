@@ -299,11 +299,20 @@ checkBlocksFullySynced conn = do
             err lg $ LG.msg $ "checkBlocksFullySynced: error while querying DB: " ++ show e
             return False
 
-getBatchSize n
-    | n < 180000 = [1 .. 16]
-    | n >= 180000 && n < 400000 = [1 .. 8]
-    | n >= 400000 && n < 500000 = [1 .. 4]
-    | n >= 500000 && n < 640000 = [1 .. 2]
+getBatchSize :: Int32 -> Int32 -> [Int32]
+getBatchSize peerCount n
+    | n < 180000 =
+        if peerCount > 16
+            then [1 .. 16]
+            else [1 .. peerCount]
+    | n >= 180000 && n < 500000 =
+        if peerCount > 4
+            then [1 .. 4]
+            else [1 .. peerCount]
+    | n >= 500000 && n < 640000 =
+        if peerCount > 2
+            then [1 .. 2]
+            else [1 .. peerCount]
     | otherwise = [1]
 
 getNextBlockToSync :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => UTCTime -> m (Maybe BlockInfo)
@@ -317,7 +326,7 @@ getNextBlockToSync tm = do
     if M.size sy == 0
         then do
             (hash, ht) <- fetchBestSyncedBlock conn net
-            let cacheInd = getBatchSize ht
+            let cacheInd = getBatchSize (fromIntegral $ maxBitcoinPeerCount $ nodeConfig bp2pEnv) ht
             let !bks = map (\x -> ht + x) cacheInd
             let str = "SELECT block_height, block_hash from xoken.blocks_by_height where block_height in ?"
                 qstr = str :: Q.QueryString Q.R (Identity [Int32]) ((Int32, T.Text))
