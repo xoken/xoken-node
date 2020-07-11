@@ -473,10 +473,10 @@ insertTxIdOutputs ::
        (HasLogger m, MonadIO m)
     => Q.ClientState
     -> (Text, Int32) -- (txid, output_index)
-    -> Maybe Text -- address
+    -> Text -- address
     -> Bool -- is_recv
     -> (Text, Int32, Int32) -- block_info (blockHash, blockHeight, blockTxIndex) {spender's block info}
-    -> [((Text, Int32), Int32, (Maybe Text, Int64))] -- (prevOutpoint, inputIndex, value) {spender's info}
+    -> [((Text, Int32), Int32, (Text, Int64))] -- (prevOutpoint, inputIndex, value) {spender's info}
     -> Int64 -- value
     -> m ()
 insertTxIdOutputs conn (txid, outputIndex) address isRecv blockInfo other value = do
@@ -486,10 +486,10 @@ insertTxIdOutputs conn (txid, outputIndex) address isRecv blockInfo other value 
         qstr =
             str :: Q.QueryString Q.W ( Text
                                      , Int32
-                                     , Maybe Text
+                                     , Text
                                      , Bool
                                      , (Text, Int32, Int32)
-                                     , [((Text, Int32), Int32, (Maybe Text, Int64))]
+                                     , [((Text, Int32), Int32, (Text, Int64))]
                                      , Int64) ()
         par = Q.defQueryParams Q.One (txid, outputIndex, address, isRecv, blockInfo, other, value)
     res <- liftIO $ try $ Q.runClient conn $ (Q.write qstr par)
@@ -533,8 +533,11 @@ processConfTransaction tx bhash txind blkht = do
             zip3
                 (map (\y ->
                           case scriptToAddressBS $ scriptOutput y of
-                              Left e -> Nothing
-                              Right os -> addrToString net os)
+                              Left e -> "" -- avoid null values in Cassandra wherever possible
+                              Right os ->
+                                  case addrToString net os of
+                                      Nothing -> ""
+                                      Just addr -> addr)
                      (txOut tx))
                 (txOut tx)
                 [0 :: Int32 ..]
@@ -563,7 +566,7 @@ processConfTransaction tx bhash txind blkht = do
                                  else do
                                      if (outPointHash nullOutPoint) == (outPointHash $ prevOutput b)
                                          then return
-                                                  ( Nothing :: Maybe Text
+                                                  ( ""
                                                   , fromIntegral $ computeSubsidy net $ (fromIntegral blkht :: Word32))
                                          else do
                                              trace lg $ LG.msg $ C.pack $ "txOutputValuesCache: cache-miss"
@@ -590,9 +593,7 @@ processConfTransaction tx bhash txind blkht = do
                                                      throw e
                          Nothing -> do
                              if (outPointHash nullOutPoint) == (outPointHash $ prevOutput b)
-                                 then return
-                                          ( Nothing :: Maybe Text
-                                          , fromIntegral $ computeSubsidy net $ (fromIntegral blkht :: Word32))
+                                 then return ("", fromIntegral $ computeSubsidy net $ (fromIntegral blkht :: Word32))
                                  else do
                                      trace lg $ LG.msg $ C.pack $ "txOutputValuesCache: cache-miss"
                                      dbRes <-
@@ -653,9 +654,9 @@ processConfTransaction tx bhash txind blkht = do
              let prevOutpoint = (txHashToHex $ outPointHash $ prevOutput o, fromIntegral $ outPointIndex $ prevOutput o)
              let spendInfo = (\ov -> ((txHashToHex $ txHash tx, fromIntegral $ fst $ ov), i, snd $ ov)) <$> ovs
              insertTxIdOutputs conn prevOutpoint a False bi spendInfo 0
-             if a == Nothing
+             if a == ""
                  then return ()
-                 else case convertToScriptHash net (T.unpack $ fromJust a) of
+                 else case convertToScriptHash net (T.unpack a) of
                           Nothing -> return ()
                           Just sh -> commitScriptHashOutputs conn (T.pack sh) prevOutpoint bi False)
         (zip (inAddrs) (map (\x -> fst $ thd3 x) inputs))
@@ -670,11 +671,7 @@ processConfTransaction tx bhash txind blkht = do
     -- persist tx
     let str = "insert INTO xoken.transactions ( tx_id, block_info, tx_serialized , inputs, fees) values (?, ?, ?, ?, ?)"
         qstr =
-            str :: Q.QueryString Q.W ( Text
-                                     , (Text, Int32, Int32)
-                                     , Blob
-                                     , [((Text, Int32), Int32, (Maybe Text, Int64))]
-                                     , Int64) ()
+            str :: Q.QueryString Q.W (Text, (Text, Int32, Int32), Blob, [((Text, Int32), Int32, (Text, Int64))], Int64) ()
         par =
             Q.defQueryParams
                 Q.One
@@ -707,16 +704,10 @@ processConfTransaction tx bhash txind blkht = do
     trace lg $ LG.msg $ "processing Transaction " ++ show (txHash tx) ++ ": end of processing signaled"
 
 getSatValuesFromOutpoint ::
-       Q.ClientState
-    -> (MVar (M.Map TxHash EV.Event))
-    -> Logger
-    -> Network
-    -> OutPoint
-    -> Int
-    -> IO ((Maybe Text, Int64))
+       Q.ClientState -> (MVar (M.Map TxHash EV.Event)) -> Logger -> Network -> OutPoint -> Int -> IO ((Text, Int64))
 getSatValuesFromOutpoint conn txSync lg net outPoint waitSecs = do
     let str = "SELECT address, value FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
-        qstr = str :: Q.QueryString Q.R (Text, Int32) (Maybe Text, Int64)
+        qstr = str :: Q.QueryString Q.R (Text, Int32) (Text, Int64)
         par = Q.defQueryParams Q.One $ (txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint)
     res <- liftIO $ try $ Q.runClient conn (Q.query qstr par)
     case res of
@@ -745,8 +736,8 @@ getSatValuesFromOutpoint conn txSync lg net outPoint waitSecs = do
                             throw TxIDNotFoundException
                         else getSatValuesFromOutpoint conn txSync lg net outPoint waitSecs
                 else do
-                    let (scrHash, val) = head $ results
-                    return $ (scrHash, val)
+                    let (addr, val) = head $ results
+                    return $ (addr, val)
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: getSatValuesFromOutpoint: " ++ show e
             throw e

@@ -213,9 +213,9 @@ insertEpochTxIdOutputs ::
     => Q.ClientState
     -> Bool
     -> (Text, Int32)
-    -> Maybe Text
+    -> Text
     -> Bool
-    -> [((Text, Int32), Int32, (Maybe Text, Int64))]
+    -> [((Text, Int32), Int32, (Text, Int64))]
     -> Int64
     -> m ()
 insertEpochTxIdOutputs conn epoch (txid, outputIndex) address isRecv other value = do
@@ -223,13 +223,7 @@ insertEpochTxIdOutputs conn epoch (txid, outputIndex) address isRecv other value
     let str =
             "INSERT INTO xoken.ep_txid_outputs (epoch,txid,output_index,address,is_recv,other,value) VALUES (?,?,?,?,?,?,?)"
         qstr =
-            str :: Q.QueryString Q.W ( Bool
-                                     , Text
-                                     , Int32
-                                     , Maybe Text
-                                     , Bool
-                                     , [((Text, Int32), Int32, (Maybe Text, Int64))]
-                                     , Int64) ()
+            str :: Q.QueryString Q.W (Bool, Text, Int32, Text, Bool, [((Text, Int32), Int32, (Text, Int64))], Int64) ()
         par = Q.defQueryParams Q.One (epoch, txid, outputIndex, address, isRecv, other, value)
     res <- liftIO $ try $ Q.runClient conn $ (Q.write qstr par)
     case res of
@@ -253,8 +247,11 @@ processUnconfTransaction tx = do
             zip3
                 (map (\y ->
                           case scriptToAddressBS $ scriptOutput y of
-                              Left e -> Nothing
-                              Right os -> addrToString net os)
+                              Left e -> ""
+                              Right os ->
+                                  case addrToString net os of
+                                      Nothing -> ""
+                                      Just addr -> addr)
                      (txOut tx))
                 (txOut tx)
                 [0 :: Int32 ..]
@@ -323,9 +320,9 @@ processUnconfTransaction tx = do
              let output = (txHashToHex $ txHash tx, i)
              let spendInfo = (\ov -> ((txHashToHex $ txHash tx, fromIntegral $ fst ov), i, snd $ ov)) <$> ovs
              insertEpochTxIdOutputs conn epoch prevOutpoint a False spendInfo 0
-             if a == Nothing
+             if a == ""
                  then return ()
-                 else case convertToScriptHash net (T.unpack $ fromJust a) of
+                 else case convertToScriptHash net (T.unpack a) of
                           Nothing -> return ()
                           Just sh -> commitEpochScriptHashOutputs conn epoch (T.pack sh) prevOutpoint False)
         (zip inAddrs (map (\x -> fst $ thd3 x) inputs))
@@ -335,7 +332,7 @@ processUnconfTransaction tx = do
         fees = ipSum - opSum
     --
     let str = "INSERT INTO xoken.ep_transactions (epoch, tx_id, tx_serialized, inputs, fees) values (?, ?, ?, ?, ?)"
-        qstr = str :: Q.QueryString Q.W (Bool, Text, Blob, [((Text, Int32), Int32, (Maybe Text, Int64))], Int64) ()
+        qstr = str :: Q.QueryString Q.W (Bool, Text, Blob, [((Text, Int32), Int32, (Text, Int64))], Int64) ()
         par =
             Q.defQueryParams
                 Q.One
@@ -353,16 +350,10 @@ processUnconfTransaction tx = do
         Nothing -> return ()
 
 getSatValuesFromEpochOutpoint ::
-       Q.ClientState
-    -> (MVar (M.Map TxHash EV.Event))
-    -> Logger
-    -> Network
-    -> OutPoint
-    -> Int
-    -> IO ((Maybe Text, Int64))
+       Q.ClientState -> (MVar (M.Map TxHash EV.Event)) -> Logger -> Network -> OutPoint -> Int -> IO ((Text, Int64))
 getSatValuesFromEpochOutpoint conn txSync lg net outPoint waitSecs = do
     let str = "SELECT address, value FROM xoken.ep_txid_outputs WHERE txid=? AND output_index=?"
-        qstr = str :: Q.QueryString Q.R (Text, Int32) (Maybe Text, Int64)
+        qstr = str :: Q.QueryString Q.R (Text, Int32) (Text, Int64)
         par = Q.defQueryParams Q.One $ (txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint)
     res <- liftIO $ try $ Q.runClient conn (Q.query qstr par)
     case res of
@@ -389,8 +380,8 @@ getSatValuesFromEpochOutpoint conn txSync lg net outPoint waitSecs = do
                             throw TxIDNotFoundException
                         else getSatValuesFromEpochOutpoint conn txSync lg net outPoint waitSecs
                 else do
-                    let (scrHash, val) = head $ results
-                    return $ (scrHash, val)
+                    let (addr, val) = head $ results
+                    return $ (addr, val)
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: getSatValuesFromEpochOutpoint: " ++ show e
             throw e
