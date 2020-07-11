@@ -552,11 +552,8 @@ processConfTransaction tx bhash txind blkht = do
                      case tuple of
                          Just (ftxh, indexvals) ->
                              if ftxh == (outPointHash $ prevOutput b)
-                                     -- record a cache hit
                                  then do
-                                     liftIO $
-                                         atomically $
-                                         modifyTVar' (outValsCacheRecord bp2pEnv) (\(ht, ms) -> (ht + 1, ms))
+                                     trace lg $ LG.msg $ C.pack $ "txOutputValuesCache: cache-hit"
                                      let rr =
                                              head $
                                              filter
@@ -568,11 +565,8 @@ processConfTransaction tx bhash txind blkht = do
                                          then return
                                                   ( Nothing :: Maybe Text
                                                   , fromIntegral $ computeSubsidy net $ (fromIntegral blkht :: Word32))
-                                             -- record a cache miss
                                          else do
-                                             liftIO $
-                                                 atomically $
-                                                 modifyTVar' (outValsCacheRecord bp2pEnv) (\(ht, ms) -> (ht, ms + 1))
+                                             trace lg $ LG.msg $ C.pack $ "txOutputValuesCache: cache-miss"
                                              dbRes <-
                                                  liftIO $
                                                  LE.try $
@@ -599,11 +593,8 @@ processConfTransaction tx bhash txind blkht = do
                                  then return
                                           ( Nothing :: Maybe Text
                                           , fromIntegral $ computeSubsidy net $ (fromIntegral blkht :: Word32))
-                                     -- record a cache miss
                                  else do
-                                     liftIO $
-                                         atomically $
-                                         modifyTVar' (outValsCacheRecord bp2pEnv) (\(ht, ms) -> (ht, ms + 1))
+                                     trace lg $ LG.msg $ C.pack $ "txOutputValuesCache: cache-miss"
                                      dbRes <-
                                          liftIO $
                                          LE.try $
