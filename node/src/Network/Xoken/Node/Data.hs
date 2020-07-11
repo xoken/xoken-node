@@ -505,9 +505,7 @@ data TxOutput =
     TxOutput
         { outputIndex :: Int32
         , address :: Maybe String -- decode will succeed for P2PKH txn 
-        , spendingTxId :: Maybe String
-        , spendingTxIdx :: Maybe Int32
-        , isSpent :: Bool
+        , txSpendInfo :: Maybe SpendInfo
         , value :: Int64
         , lockingScript :: ByteString -- Script Pub Key
         }
@@ -532,7 +530,7 @@ data AddressOutputs =
         , aoOutput :: OutPoint'
         , aoBlockInfo :: BlockInfo'
         , aoNominalTxIndex :: Int64
-        , aoIsOutputSpent :: Bool
+        , aoSpendInfo :: Maybe SpendInfo
         , aoPrevOutpoint :: [(OutPoint', Int32, Int64)]
         , aoValue :: Int64
         }
@@ -548,7 +546,7 @@ instance ToJSON AddressOutputs where
             , "blockHash" .= (binfBlockHash bi)
             , "blockHeight" .= (binfBlockHeight bi)
             , "nominalTxIndex" .= nom
-            , "isOutputSpent" .= ios
+            , "spendInfo" .= ios
             , "prevOutpoint" .= po
             , "value" .= val
             ]
@@ -559,7 +557,7 @@ data ScriptOutputs =
         , scOutput :: OutPoint'
         , scBlockInfo :: BlockInfo'
         , scNominalTxIndex :: Int64
-        , scIsOutputSpent :: Bool
+        , scSpendInfo :: Maybe SpendInfo
         , scPrevOutpoint :: [(OutPoint', Int32, Int64)]
         , scValue :: Int64
         }
@@ -575,7 +573,7 @@ instance ToJSON ScriptOutputs where
             , "blockHash" .= (binfBlockHash bi)
             , "blockHeight" .= (binfBlockHeight bi)
             , "nominalTxIndex" .= nom
-            , "isOutputSpent" .= ios
+            , "spendInfo" .= ios
             , "prevOutpoint" .= po
             , "value" .= val
             ]
@@ -608,17 +606,42 @@ data PubNotifyMessage =
         }
     deriving (Show, Generic, Eq, Serialise)
 
+data SpendInfo =
+    SpendInfo
+        { spendingTxId :: String
+        , spendindTxIdx :: Int32
+        , spendingBlockInfo :: BlockInfo'
+        , spendInfo' :: [SpendInfo']
+        }
+    deriving (Show, Generic, Hashable, Eq, Serialise)
+
+instance ToJSON SpendInfo where
+    toJSON (SpendInfo stid stidx bi si) =
+        object
+            [ "spendingTxId" .= stid
+            , "spendingTxIndex" .= stidx
+            , "spendingBlockHash" .= (binfBlockHash bi)
+            , "spendingBlockHeight" .= (binfBlockHeight bi)
+            , "spendData" .= si
+            ]
+
+data SpendInfo' =
+    SpendInfo'
+        { spendingOutputIndex :: Int32
+        , outputAddress :: Maybe T.Text
+        , value :: Int64
+        }
+    deriving (Show, Generic, Hashable, Eq, Serialise, ToJSON)
+
 data TxOutputData =
     TxOutputData
         { txid :: T.Text
         , txind :: Int32
-        , isSpent :: Bool
         , address :: Maybe T.Text
         , value :: Int64
         , blockInfo :: BlockInfo'
         , inputs :: [((T.Text, Int32), Int32, (Maybe T.Text, Int64))]
-        , spendBlockInfo :: Maybe BlockInfo'
-        , spendInfo :: Maybe [((T.Text, Int32), Int32, (Maybe T.Text, Int64))]
+        , spendInfo :: Maybe SpendInfo
         }
     deriving (Show, Generic, Eq, Serialise)
 
@@ -680,7 +703,7 @@ addressToScriptOutputs AddressOutputs {..} =
         , scOutput = aoOutput
         , scBlockInfo = aoBlockInfo
         , scNominalTxIndex = aoNominalTxIndex
-        , scIsOutputSpent = aoIsOutputSpent
+        , scSpendInfo = aoSpendInfo
         , scPrevOutpoint = aoPrevOutpoint
         , scValue = aoValue
         }
@@ -726,24 +749,19 @@ type TxIdOutputs
 
 genTxOutputData :: (T.Text, Int32, TxIdOutputs, Maybe TxIdOutputs) -> TxOutputData
 genTxOutputData (txId, txIndex, ((hs, ht, ind), _, inps, val, addr), Nothing) =
-    TxOutputData txId txIndex False addr val (BlockInfo' (T.unpack hs) ht ind) (DCP.fromSet inps) Nothing Nothing
+    TxOutputData txId txIndex addr val (BlockInfo' (T.unpack hs) ht ind) (DCP.fromSet inps) Nothing
 genTxOutputData (txId, txIndex, ((hs, ht, ind), _, inps, val, addr), Just ((shs, sht, sind), _, oth, _, _)) =
-    TxOutputData
-        txId
-        txIndex
-        True
-        addr
-        val
-        (BlockInfo' (T.unpack hs) ht ind)
-        (DCP.fromSet inps)
-        (Just $ (BlockInfo' (T.unpack shs) sht sind))
-        (Just $ DCP.fromSet oth)
+    let other = DCP.fromSet oth
+        ((stid, _), stidx, _) = head $ other
+        si = (\((_, soi), _, (ad, vl)) -> SpendInfo' soi ad vl) <$> other
+     in TxOutputData
+            txId
+            txIndex
+            addr
+            val
+            (BlockInfo' (T.unpack hs) ht ind)
+            (DCP.fromSet inps)
+            (Just $ SpendInfo (T.unpack stid) stidx (BlockInfo' (T.unpack shs) sht sind) si)
 
 txOutputDataToOutput :: TxOutputData -> TxOutput
-txOutputDataToOutput (TxOutputData {..}) =
-    TxOutput txind (T.unpack <$> address) spendingId spendingIndex isSpent value ""
-  where
-    (spendingId, spendingIndex) =
-        case spendInfo of
-            Just (((sid, _), sidx, _):xs) -> (Just $ T.unpack sid, Just sidx)
-            _ -> (Nothing, Nothing)
+txOutputDataToOutput (TxOutputData {..}) = TxOutput txind (T.unpack <$> address) spendInfo value ""

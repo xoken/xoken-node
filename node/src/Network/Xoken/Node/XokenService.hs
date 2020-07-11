@@ -569,13 +569,13 @@ xGetOutputsAddress address pgSize mbNomTxInd = do
                 else do
                     res <- sequence $ (\(_, _, (txid, index)) -> getTxOutputsData (txid, index)) <$> iop
                     return $
-                        ((\((addr, nti, (op_txid, op_txidx)), TxOutputData _ _ ios _ val bi ips _ _) ->
+                        ((\((addr, nti, (op_txid, op_txidx)), TxOutputData _ _ _ val bi ips si) ->
                               AddressOutputs
                                   (DT.unpack addr)
                                   (OutPoint' (DT.unpack op_txid) (fromIntegral op_txidx))
                                   bi
                                   nti
-                                  ios
+                                  si
                                   ((\((oph, opi), ii, (_, ov)) ->
                                         (OutPoint' (DT.unpack oph) (fromIntegral opi), fromIntegral ii, fromIntegral ov)) <$>
                                    ips)
