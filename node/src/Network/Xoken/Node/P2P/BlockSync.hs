@@ -446,12 +446,7 @@ fetchBestSyncedBlock conn net = do
                 Nothing -> throw InvalidMetaDataException
 
 commitScriptHashOutputs ::
-       (HasLogger m, MonadIO m)
-    => Q.ClientState
-    -> Text -- address
-    -> (Text, Int32) -- output (txid, index)
-    -> (Text, Int32, Int32) -- blockInfo (blockHash, blockHeight, blockTxIndex)
-    -> m ()
+       (HasLogger m, MonadIO m) => Q.ClientState -> Text -> (Text, Int32) -> (Text, Int32, Int32) -> m ()
 commitScriptHashOutputs conn sh output blockInfo = do
     lg <- getLogger
     let blkHeight = fromIntegral $ snd3 blockInfo
@@ -470,45 +465,31 @@ commitScriptHashOutputs conn sh output blockInfo = do
 insertTxIdOutputs ::
        (HasLogger m, MonadIO m)
     => Q.ClientState
-    -> (Text, Int32) -- (txid, output_index)
-    -> Text -- address
-    -> Bool -- isRecv
-    -> (Text, Int32, Int32) -- blockInfo (blockHash, blockHeight, blockTxIndex) {spender's block info}
-    -> [((Text, Int32), Int32, (Text, Int64))] -- other (prevOutpoint, inputIndex, value) {spender's info}
-    -> Int64 -- value
+    -> (Text, Int32)
+    -> Text
+    -> Bool
+    -> (Text, Int32, Int32)
+    -> [((Text, Int32), Int32, (Text, Int64))]
+    -> Int64
     -> m ()
 insertTxIdOutputs conn (txid, outputIndex) address isRecv blockInfo other value = do
     lg <- getLogger
     let str =
-            "INSERT INTO xoken.txid_outputs (txid,output_index,address,is_recv,is_spent,block_info,other,value) VALUES (?,?,?,?,?,?,?,?)"
+            "INSERT INTO xoken.txid_outputs (txid,output_index,address,is_recv,block_info,other,value) VALUES (?,?,?,?,?,?,?)"
         qstr =
             str :: Q.QueryString Q.W ( Text
                                      , Int32
                                      , Text
                                      , Bool
-                                     , Bool
                                      , (Text, Int32, Int32)
                                      , [((Text, Int32), Int32, (Text, Int64))]
                                      , Int64) ()
-        par = Q.defQueryParams Q.One (txid, outputIndex, address, isRecv, not isRecv, blockInfo, other, value)
+        par = Q.defQueryParams Q.One (txid, outputIndex, address, isRecv, blockInfo, other, value)
     res <- liftIO $ try $ Q.runClient conn $ (Q.write qstr par)
     case res of
         Right () -> return ()
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: INSERTing into: txid_outputs " ++ show e
-            throw KeyValueDBInsertException
-
-setTxIdOutputsSpentFlag :: (HasLogger m, MonadIO m) => Q.ClientState -> (Text, Int32) -> m ()
-setTxIdOutputsSpentFlag conn (txid, outputIndex) = do
-    lg <- getLogger
-    let str = "UPDATE xoken.txid_outputs SET is_spent=? WHERE txid=? AND output_index=? AND is_spent=?"
-        qstr = str :: Q.QueryString Q.W (Bool, Text, Int32, Bool) ()
-        par = Q.defQueryParams Q.One (True, txid, outputIndex, False)
-    res <- liftIO $ try $ Q.runClient conn $ (Q.write qstr par)
-    case res of
-        Right () -> return ()
-        Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: UPDATE'ing txid_outputs: " ++ show e
             throw KeyValueDBInsertException
 
 commitTxPage ::
@@ -539,7 +520,7 @@ processConfTransaction tx bhash txind blkht = do
     lg <- getLogger
     let net = bitcoinNetwork $ nodeConfig bp2pEnv
     let conn = keyValDB $ dbe'
-    debug lg $ LG.msg ("processing Transaction: " ++ show (txHash tx))
+    debug lg $ LG.msg $ "processing Transaction " ++ show (txHash tx) ++ ": started"
     let inAddrs = zip (txIn tx) [0 :: Int32 ..]
     let outAddrs =
             zip3
@@ -664,8 +645,7 @@ processConfTransaction tx bhash txind blkht = do
              let blockHeight = fromIntegral blkht
              let prevOutpoint = (txHashToHex $ outPointHash $ prevOutput o, fromIntegral $ outPointIndex $ prevOutput o)
              let spendInfo = (\ov -> ((txHashToHex $ txHash tx, fromIntegral $ fst $ ov), i, snd $ ov)) <$> ovs
-             insertTxIdOutputs conn prevOutpoint a False bi spendInfo 0
-             setTxIdOutputsSpentFlag conn prevOutpoint)
+             insertTxIdOutputs conn prevOutpoint a False bi spendInfo 0)
         (zip (inAddrs) (map (\x -> fst $ thd3 x) inputs))
     --
     trace lg $ LG.msg $ "processing Transaction " ++ show (txHash tx) ++ ": updated spend info for inputs"

@@ -45,10 +45,9 @@ CREATE TABLE xoken.ep_txid_outputs (
     output_index int,
     address text,
     is_recv boolean,
-    is_spent boolean,
     other set  <frozen<tuple<frozen<tuple<text, int>>, int, frozen<tuple<text, bigint>>>>>,
     value bigint,
-    PRIMARY KEY(epoch, txid, output_index, is_recv, is_spent)
+    PRIMARY KEY(epoch, txid, output_index, is_recv)
  ) WITH CLUSTERING ORDER BY (txid ASC, output_index ASC);
 
 CREATE TABLE xoken.script_hash_outputs (
@@ -63,11 +62,11 @@ CREATE TABLE xoken.txid_outputs (
     output_index int,
     address text,
     is_recv boolean,
-    is_spent boolean,
+    boolean,
     block_info frozen<tuple<text, int, int>>,
     other set <frozen<tuple<frozen<tuple<text, int>>, int, frozen<tuple<text, bigint>>>>>,
     value bigint,
-    PRIMARY KEY(txid, output_index, is_recv, is_spent)
+    PRIMARY KEY(txid, output_index, is_recv)
 ) WITH CLUSTERING ORDER BY (output_index asc);
 
 CREATE TABLE xoken.blocks_by_height (
