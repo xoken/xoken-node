@@ -552,9 +552,11 @@ processConfTransaction tx bhash txind blkht = do
                      case tuple of
                          Just (ftxh, indexvals) ->
                              if ftxh == (outPointHash $ prevOutput b)
-                                 then do
                                      -- record a cache hit
-                                     liftIO $ atomically $ modifyTVar' (outValsCacheRecord bp2pEnv) (\(ht, ms) -> (ht+1, ms))
+                                 then do
+                                     liftIO $
+                                         atomically $
+                                         modifyTVar' (outValsCacheRecord bp2pEnv) (\(ht, ms) -> (ht + 1, ms))
                                      let rr =
                                              head $
                                              filter
@@ -566,9 +568,11 @@ processConfTransaction tx bhash txind blkht = do
                                          then return
                                                   ( Nothing :: Maybe Text
                                                   , fromIntegral $ computeSubsidy net $ (fromIntegral blkht :: Word32))
-                                         else do
                                              -- record a cache miss
-                                             liftIO $ atomically $ modifyTVar' (outValsCacheRecord bp2pEnv) (\(ht, ms) -> (ht, ms+1))
+                                         else do
+                                             liftIO $
+                                                 atomically $
+                                                 modifyTVar' (outValsCacheRecord bp2pEnv) (\(ht, ms) -> (ht, ms + 1))
                                              dbRes <-
                                                  liftIO $
                                                  LE.try $
@@ -595,9 +599,11 @@ processConfTransaction tx bhash txind blkht = do
                                  then return
                                           ( Nothing :: Maybe Text
                                           , fromIntegral $ computeSubsidy net $ (fromIntegral blkht :: Word32))
-                                 else do
                                      -- record a cache miss
-                                     liftIO $ atomically $ modifyTVar' (outValsCacheRecord bp2pEnv) (\(ht, ms) -> (ht, ms+1))
+                                 else do
+                                     liftIO $
+                                         atomically $
+                                         modifyTVar' (outValsCacheRecord bp2pEnv) (\(ht, ms) -> (ht, ms + 1))
                                      dbRes <-
                                          liftIO $
                                          LE.try $
