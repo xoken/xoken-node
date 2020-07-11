@@ -36,8 +36,7 @@ CREATE TABLE xoken.ep_script_hash_outputs (
     epoch boolean,
     script_hash text,
     output frozen<tuple<text, int>>,
-    is_recv boolean,
-    PRIMARY KEY (epoch, script_hash, output, is_recv)
+    PRIMARY KEY (epoch, script_hash, output)
 ); 
 
 CREATE TABLE xoken.ep_txid_outputs (
@@ -55,8 +54,7 @@ CREATE TABLE xoken.script_hash_outputs (
     script_hash text,
     nominal_tx_index bigint,
     output frozen<tuple<text, int>>,
-    is_recv boolean,
-    PRIMARY KEY (script_hash, nominal_tx_index, output, is_recv)
+    PRIMARY KEY (script_hash, nominal_tx_index, output)
 ) WITH CLUSTERING ORDER BY (nominal_tx_index DESC);
 
 CREATE TABLE xoken.txid_outputs (

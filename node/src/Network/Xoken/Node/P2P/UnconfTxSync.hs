@@ -194,13 +194,12 @@ commitEpochScriptHashOutputs ::
     -> Bool -- epoch
     -> Text -- scriptHash
     -> (Text, Int32) -- output (txid, index)
-    -> Bool -- isRecv
     -> m ()
-commitEpochScriptHashOutputs conn epoch sh output isRecv = do
+commitEpochScriptHashOutputs conn epoch sh output = do
     lg <- getLogger
-    let strAddrOuts = "INSERT INTO xoken.ep_script_hash_outputs (epoch, script_hash, output, is_recv) VALUES (?,?,?,?)"
-        qstrAddrOuts = strAddrOuts :: Q.QueryString Q.W (Bool, Text, (Text, Int32), Bool) ()
-        parAddrOuts = Q.defQueryParams Q.One (epoch, sh, output, isRecv)
+    let strAddrOuts = "INSERT INTO xoken.ep_script_hash_outputs (epoch, script_hash, output) VALUES (?,?,?)"
+        qstrAddrOuts = strAddrOuts :: Q.QueryString Q.W (Bool, Text, (Text, Int32)) ()
+        parAddrOuts = Q.defQueryParams Q.One (epoch, sh, output)
     resAddrOuts <- liftIO $ try $ Q.runClient conn (Q.write (qstrAddrOuts) parAddrOuts)
     case resAddrOuts of
         Right () -> return ()
@@ -311,7 +310,7 @@ processUnconfTransaction tx = do
              let sh = txHashToHex $ TxHash $ sha256 (scriptOutput o)
              let output = (txHashToHex $ txHash tx, i)
              insertEpochTxIdOutputs conn epoch output a True inputs (fromIntegral $ outValue o)
-             commitEpochScriptHashOutputs conn epoch sh output True
+             commitEpochScriptHashOutputs conn epoch sh output
              return ())
         outAddrs
     mapM_
@@ -319,12 +318,7 @@ processUnconfTransaction tx = do
              let prevOutpoint = (txHashToHex $ outPointHash $ prevOutput o, fromIntegral $ outPointIndex $ prevOutput o)
              let output = (txHashToHex $ txHash tx, i)
              let spendInfo = (\ov -> ((txHashToHex $ txHash tx, fromIntegral $ fst ov), i, snd $ ov)) <$> ovs
-             insertEpochTxIdOutputs conn epoch prevOutpoint a False spendInfo 0
-             if a == ""
-                 then return ()
-                 else case convertToScriptHash net (T.unpack a) of
-                          Nothing -> return ()
-                          Just sh -> commitEpochScriptHashOutputs conn epoch (T.pack sh) prevOutpoint False)
+             insertEpochTxIdOutputs conn epoch prevOutpoint a False spendInfo 0)
         (zip inAddrs (map (\x -> fst $ thd3 x) inputs))
     --
     let ipSum = foldl (+) 0 $ (\(_, _, (_, val)) -> val) <$> inputs

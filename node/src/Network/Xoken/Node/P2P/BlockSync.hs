@@ -451,17 +451,15 @@ commitScriptHashOutputs ::
     -> Text -- address
     -> (Text, Int32) -- output (txid, index)
     -> (Text, Int32, Int32) -- blockInfo (blockHash, blockHeight, blockTxIndex)
-    -> Bool
     -> m ()
-commitScriptHashOutputs conn sh output blockInfo isRecv = do
+commitScriptHashOutputs conn sh output blockInfo = do
     lg <- getLogger
     let blkHeight = fromIntegral $ snd3 blockInfo
         txIndex = fromIntegral $ thd3 blockInfo
         nominalTxIndex = blkHeight * 1000000000 + txIndex
-        strAddrOuts =
-            "INSERT INTO xoken.script_hash_outputs (script_hash, nominal_tx_index, output, is_recv) VALUES (?,?,?,?)"
-        qstrAddrOuts = strAddrOuts :: Q.QueryString Q.W (Text, Int64, (Text, Int32), Bool) ()
-        parAddrOuts = Q.defQueryParams Q.One (sh, nominalTxIndex, output, isRecv)
+        strAddrOuts = "INSERT INTO xoken.script_hash_outputs (script_hash, nominal_tx_index, output) VALUES (?,?,?)"
+        qstrAddrOuts = strAddrOuts :: Q.QueryString Q.W (Text, Int64, (Text, Int32)) ()
+        parAddrOuts = Q.defQueryParams Q.One (sh, nominalTxIndex, output)
     resAddrOuts <- liftIO $ try $ Q.runClient conn (Q.write (qstrAddrOuts) parAddrOuts)
     case resAddrOuts of
         Right () -> return ()
@@ -643,8 +641,7 @@ processConfTransaction tx bhash txind blkht = do
                  conn -- connection
                  sh -- scriptHash
                  output
-                 bi
-                 True)
+                 bi)
         outAddrs
     trace lg $ LG.msg $ "processing Transaction " ++ show (txHash tx) ++ ": committed scripthash,txid_outputs tables"
     mapM_
@@ -653,12 +650,7 @@ processConfTransaction tx bhash txind blkht = do
              let blockHeight = fromIntegral blkht
              let prevOutpoint = (txHashToHex $ outPointHash $ prevOutput o, fromIntegral $ outPointIndex $ prevOutput o)
              let spendInfo = (\ov -> ((txHashToHex $ txHash tx, fromIntegral $ fst $ ov), i, snd $ ov)) <$> ovs
-             insertTxIdOutputs conn prevOutpoint a False bi spendInfo 0
-             if a == ""
-                 then return ()
-                 else case convertToScriptHash net (T.unpack a) of
-                          Nothing -> return ()
-                          Just sh -> commitScriptHashOutputs conn (T.pack sh) prevOutpoint bi False)
+             insertTxIdOutputs conn prevOutpoint a False bi spendInfo 0)
         (zip (inAddrs) (map (\x -> fst $ thd3 x) inputs))
     --
     trace lg $ LG.msg $ "processing Transaction " ++ show (txHash tx) ++ ": updated spend info for inputs"
