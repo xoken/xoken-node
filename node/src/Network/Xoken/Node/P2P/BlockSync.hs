@@ -547,7 +547,7 @@ processConfTransaction tx bhash txind blkht = do
                      liftIO $
                      H.lookup
                          (txOutputValuesCache bp2pEnv)
-                         (getTxShortHash (txHash tx) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
+                         (getTxShortHash (outPointHash $ prevOutput b) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
                  val <-
                      case tuple of
                          Just (ftxh, indexvals) ->
