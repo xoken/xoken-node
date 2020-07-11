@@ -62,7 +62,6 @@ CREATE TABLE xoken.txid_outputs (
     output_index int,
     address text,
     is_recv boolean,
-    boolean,
     block_info frozen<tuple<text, int, int>>,
     other set <frozen<tuple<frozen<tuple<text, int>>, int, frozen<tuple<text, bigint>>>>>,
     value bigint,
