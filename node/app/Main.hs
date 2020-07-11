@@ -242,9 +242,10 @@ runThreads config nodeConf bp2p conn lg p2pEnv certPaths = do
                                 withAsync (handleNewConnectionRequest epHandler) $ \_ -> do
                                     withAsync runPeerSync $ \_ -> do
                                         withAsync runSyncStatusChecker $ \_ -> do
-                                            withAsync runWatchDog $ \z -> do
-                                                _ <- LA.wait z
-                                                return ())
+                                            withAsync outputValsCacheRecordsLogger $ \_ -> do
+                                                withAsync runWatchDog $ \z -> do
+                                                    _ <- LA.wait z
+                                                    return ())
     liftIO $ Q.shutdown conn
     liftIO $ destroyAllResources $ pool gdbState
     liftIO $ putStrLn $ "quitting node after irrecoverable DB connection failure"
@@ -269,6 +270,15 @@ runSyncStatusChecker = do
                 else "No"
         liftIO $ CMS.atomically $ writeTVar (indexUnconfirmedTx bp2pEnv) isSynced
         liftIO $ threadDelay (60 * 1000000)
+
+outputValsCacheRecordsLogger :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
+outputValsCacheRecordsLogger = do
+    lg <- getLogger
+    bp2pEnv <- getBitcoinP2P
+    forever $ do
+        (hits, miss) <- liftIO $ readTVarIO $ outValsCacheRecord bp2pEnv
+        LG.trace lg $ LG.msg $ "OutputValues Cache Hits: " ++ (show hits) ++ ", Misses: " ++ (show miss)
+        liftIO $ threadDelay (120 * 1000000)
 
 runWatchDog :: (HasXokenNodeEnv env m, MonadIO m) => m ()
 runWatchDog = do
@@ -371,13 +381,14 @@ defBitcoinP2P nodeCnf = do
     ep <- newTVarIO False
     tc <- H.new
     vc <- H.new
+    cr <- newTVarIO (0,0)
     rpf <- newEmptyMVar
     rpc <- newTVarIO 0
     mq <- newTVarIO M.empty
     ts <- newMVar M.empty
     tbt <- MS.new $ maxTMTBuilderThreads nodeCnf
     iut <- newTVarIO False
-    return $ BitcoinP2P nodeCnf g bp mv hl st tl ep tc vc (rpf, rpc) mq ts tbt iut
+    return $ BitcoinP2P nodeCnf g bp mv hl st tl ep tc vc cr (rpf, rpc) mq ts tbt iut
 
 initNexa :: IO ()
 initNexa = do

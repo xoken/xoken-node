@@ -553,6 +553,8 @@ processConfTransaction tx bhash txind blkht = do
                          Just (ftxh, indexvals) ->
                              if ftxh == (outPointHash $ prevOutput b)
                                  then do
+                                     -- record a cache hit
+                                     liftIO $ atomically $ modifyTVar' (outValsCacheRecord bp2pEnv) (\(ht, ms) -> (ht+1, ms))
                                      let rr =
                                              head $
                                              filter
@@ -565,6 +567,8 @@ processConfTransaction tx bhash txind blkht = do
                                                   ( Nothing :: Maybe Text
                                                   , fromIntegral $ computeSubsidy net $ (fromIntegral blkht :: Word32))
                                          else do
+                                             -- record a cache miss
+                                             liftIO $ atomically $ modifyTVar' (outValsCacheRecord bp2pEnv) (\(ht, ms) -> (ht, ms+1))
                                              dbRes <-
                                                  liftIO $
                                                  LE.try $
@@ -592,6 +596,8 @@ processConfTransaction tx bhash txind blkht = do
                                           ( Nothing :: Maybe Text
                                           , fromIntegral $ computeSubsidy net $ (fromIntegral blkht :: Word32))
                                  else do
+                                     -- record a cache miss
+                                     liftIO $ atomically $ modifyTVar' (outValsCacheRecord bp2pEnv) (\(ht, ms) -> (ht, ms+1))
                                      dbRes <-
                                          liftIO $
                                          LE.try $
