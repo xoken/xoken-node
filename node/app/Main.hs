@@ -242,9 +242,9 @@ runThreads config nodeConf bp2p conn lg p2pEnv certPaths = do
                                 withAsync (handleNewConnectionRequest epHandler) $ \_ -> do
                                     withAsync runPeerSync $ \_ -> do
                                         withAsync runSyncStatusChecker $ \_ -> do
-                                                withAsync runWatchDog $ \z -> do
-                                                    _ <- LA.wait z
-                                                    return ())
+                                            withAsync runWatchDog $ \z -> do
+                                                _ <- LA.wait z
+                                                return ())
     liftIO $ Q.shutdown conn
     liftIO $ destroyAllResources $ pool gdbState
     liftIO $ putStrLn $ "quitting node after irrecoverable DB connection failure"
