@@ -553,6 +553,7 @@ processConfTransaction tx bhash txind blkht = do
                          Just (ftxh, indexvals) ->
                              if ftxh == (outPointHash $ prevOutput b)
                                  then do
+                                     trace lg $ LG.msg $ C.pack $ "txOutputValuesCache: cache-hit"
                                      let rr =
                                              head $
                                              filter
@@ -565,6 +566,7 @@ processConfTransaction tx bhash txind blkht = do
                                                   ( Nothing :: Maybe Text
                                                   , fromIntegral $ computeSubsidy net $ (fromIntegral blkht :: Word32))
                                          else do
+                                             trace lg $ LG.msg $ C.pack $ "txOutputValuesCache: cache-miss"
                                              dbRes <-
                                                  liftIO $
                                                  LE.try $
@@ -592,6 +594,7 @@ processConfTransaction tx bhash txind blkht = do
                                           ( Nothing :: Maybe Text
                                           , fromIntegral $ computeSubsidy net $ (fromIntegral blkht :: Word32))
                                  else do
+                                     trace lg $ LG.msg $ C.pack $ "txOutputValuesCache: cache-miss"
                                      dbRes <-
                                          liftIO $
                                          LE.try $
