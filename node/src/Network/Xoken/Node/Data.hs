@@ -43,6 +43,7 @@ import qualified Data.Text.Lazy as T.Lazy
 import Data.Time.Clock (UTCTime)
 import Data.Word
 import qualified Database.CQL.IO as Q
+import Database.CQL.Protocol as DCP
 import GHC.Generics
 import Network.Socket (SockAddr(SockAddrUnix))
 import Paths_xoken_node as P
@@ -502,7 +503,7 @@ data TxInput =
 
 data TxOutput =
     TxOutput
-        { outputIndex :: Int16
+        { outputIndex :: Int32
         , address :: Maybe String -- decode will succeed for P2PKH txn 
         , spendingTxId :: Maybe String
         , spendingTxIdx :: Maybe Int32
@@ -605,6 +606,20 @@ data PubNotifyMessage =
         }
     deriving (Show, Generic, Eq, Serialise)
 
+data TxOutputData =
+    TxOutputData
+        { txid :: T.Text
+        , txind :: Int32
+        , isSpent :: Bool
+        , address :: Maybe T.Text
+        , value :: Int64
+        , blockInfo :: BlockInfo'
+        , inputs :: [((T.Text, Int32), Int32, (Maybe T.Text, Int64))]
+        , spendBlockInfo :: Maybe BlockInfo'
+        , spendInfo :: Maybe [((T.Text, Int32), Int32, (Maybe T.Text, Int64))]
+        }
+    deriving (Show, Generic, Eq, Serialise)
+
 -- Internal message posting --
 data XDataReq
     = XDataRPCReq
@@ -689,11 +704,44 @@ validateEmail email =
     let emailRegex = "^[a-zA-Z0-9+._-]+@[a-zA-Z-]+\\.[a-z]+$" :: String
      in (email =~ emailRegex :: Bool) || (null email)
 
-mergeAddrTxInTxInput :: Maybe String -> TxIn -> TxInput -> TxInput
-mergeAddrTxInTxInput addr (TxIn {..}) txInput = txInput {unlockingScript = scriptInput, address = addr}
+mergeTxInTxInput :: TxIn -> TxInput -> TxInput
+mergeTxInTxInput (TxIn {..}) txInput = txInput {unlockingScript = scriptInput}
 
-mergeAddrTxOutTxOutput :: Maybe String -> TxOut -> TxOutput -> TxOutput
-mergeAddrTxOutTxOutput addr (TxOut {..}) txOutput = txOutput {lockingScript = scriptOutput, address = addr}
+mergeTxOutTxOutput :: TxOut -> TxOutput -> TxOutput
+mergeTxOutTxOutput (TxOut {..}) txOutput = txOutput {lockingScript = scriptOutput}
+
+mergeAddrTxInTxInput :: String -> TxIn -> TxInput -> TxInput
+mergeAddrTxInTxInput addr (TxIn {..}) txInput = txInput {unlockingScript = scriptInput, address = Just addr}
+
+mergeAddrTxOutTxOutput :: String -> TxOut -> TxOutput -> TxOutput
+mergeAddrTxOutTxOutput addr (TxOut {..}) txOutput = txOutput {lockingScript = scriptOutput, address = Just addr}
 
 txToTx' :: Tx -> [TxOutput] -> [TxInput] -> Tx'
 txToTx' (Tx {..}) txout txin = Tx' txVersion txout txin txLockTime
+
+type TxIdOutputs
+     = ((T.Text, Int32, Int32), Bool, Set ((T.Text, Int32), Int32, (Maybe T.Text, Int64)), Int64, Maybe T.Text)
+
+genTxOutputData :: (T.Text, Int32, TxIdOutputs, Maybe TxIdOutputs) -> TxOutputData
+genTxOutputData (txId, txIndex, ((hs, ht, ind), _, inps, val, addr), Nothing) =
+    TxOutputData txId txIndex False addr val (BlockInfo' (T.unpack hs) ht ind) (DCP.fromSet inps) Nothing Nothing
+genTxOutputData (txId, txIndex, ((hs, ht, ind), _, inps, val, addr), Just ((shs, sht, sind), _, oth, _, _)) =
+    TxOutputData
+        txId
+        txIndex
+        True
+        addr
+        val
+        (BlockInfo' (T.unpack hs) ht ind)
+        (DCP.fromSet inps)
+        (Just $ (BlockInfo' (T.unpack shs) sht sind))
+        (Just $ DCP.fromSet oth)
+
+txOutputDataToOutput :: TxOutputData -> TxOutput
+txOutputDataToOutput (TxOutputData {..}) =
+    TxOutput txind (T.unpack <$> address) spendingId spendingIndex isSpent value ""
+  where
+    (spendingId, spendingIndex) =
+        case spendInfo of
+            Just (((sid, _), sidx, _):xs) -> (Just $ T.unpack sid, Just sidx)
+            _ -> (Nothing, Nothing)
