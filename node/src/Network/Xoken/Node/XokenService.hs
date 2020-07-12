@@ -285,7 +285,7 @@ xGetTxOutputSpendStatus txId outputIndex = do
         qstr =
             str :: Q.QueryString Q.R (DT.Text, Int32) ( Bool
                                                       , (DT.Text, Int32, Int32)
-                                                      , Set ((DT.Text, Int32), Int32, (Maybe DT.Text, Int64)))
+                                                      , Set ((DT.Text, Int32), Int32, (DT.Text, Int64)))
         p = Q.defQueryParams Q.One (DT.pack txId, outputIndex)
     iop <- Q.runClient conn (Q.query qstr p)
     if length iop == 0
@@ -384,7 +384,7 @@ xGetTxHash hash = do
             str :: Q.QueryString Q.R (Identity DT.Text) ( DT.Text
                                                         , (DT.Text, Int32, Int32)
                                                         , Blob
-                                                        , Set ((DT.Text, Int32), Int32, (Maybe DT.Text, Int64))
+                                                        , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
                                                         , Int64)
         p = Q.defQueryParams Q.One $ Identity $ hash
     res <-
@@ -410,7 +410,7 @@ xGetTxHash hash = do
                             (zipWith mergeTxOutTxOutput (txOut tx) outs)
                             (zipWith mergeTxInTxInput (txIn tx) $
                              (\((outTxId, outTxIndex), inpTxIndex, (addr, value)) ->
-                                  TxInput (DT.unpack outTxId) outTxIndex inpTxIndex (DT.unpack <$> addr) value "") <$>
+                                  TxInput (DT.unpack outTxId) outTxIndex inpTxIndex (DT.unpack addr) value "") <$>
                              inps)
                             fees
                             mrkl
@@ -430,7 +430,7 @@ xGetTxHashes hashes = do
             str :: Q.QueryString Q.R (Identity [DT.Text]) ( DT.Text
                                                           , (DT.Text, Int32, Int32)
                                                           , Blob
-                                                          , Set ((DT.Text, Int32), Int32, (Maybe DT.Text, Int64))
+                                                          , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
                                                           , Int64)
         p = Q.defQueryParams Q.One $ Identity $ hashes
     res <- LE.try $ Q.runClient conn (Q.query qstr p)
@@ -459,7 +459,7 @@ xGetTxHashes hashes = do
                                                (DT.unpack outTxId)
                                                outTxIndex
                                                inpTxIndex
-                                               (DT.unpack <$> addr)
+                                               (DT.unpack addr)
                                                value
                                                "") <$>
                                       inps)
@@ -484,9 +484,9 @@ getTxOutputsFromTxId txid = do
             toStr :: Q.QueryString Q.R (Identity DT.Text) ( Int32
                                                           , (DT.Text, Int32, Int32)
                                                           , Bool
-                                                          , Set ((DT.Text, Int32), Int32, (Maybe DT.Text, Int64))
+                                                          , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
                                                           , Int64
-                                                          , Maybe DT.Text)
+                                                          , DT.Text)
         par = Q.defQueryParams Q.One (Identity txid)
     res <- LE.try $ Q.runClient conn (Q.query toQStr par)
     case res of
@@ -525,9 +525,9 @@ getTxOutputsData (txid, index) = do
         toQStr =
             toStr :: Q.QueryString Q.R (DT.Text, Int32) ( (DT.Text, Int32, Int32)
                                                         , Bool
-                                                        , Set ((DT.Text, Int32), Int32, (Maybe DT.Text, Int64))
+                                                        , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
                                                         , Int64
-                                                        , Maybe DT.Text)
+                                                        , DT.Text)
         top = Q.defQueryParams Q.One (txid, index)
     toRes <- LE.try $ Q.runClient conn (Q.query toQStr top)
     case toRes of

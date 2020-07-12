@@ -495,7 +495,7 @@ data TxInput =
         { outpointTxID :: String
         , outpointIndex :: Int32
         , txInputIndex :: Int32
-        , address :: Maybe String -- decode will succeed for P2PKH txn 
+        , address :: String -- decode will succeed for P2PKH txn 
         , value :: Int64
         , unlockingScript :: ByteString -- scriptSig
         }
@@ -504,7 +504,7 @@ data TxInput =
 data TxOutput =
     TxOutput
         { outputIndex :: Int32
-        , address :: Maybe String -- decode will succeed for P2PKH txn 
+        , address :: String -- decode will succeed for P2PKH txn 
         , txSpendInfo :: Maybe SpendInfo
         , value :: Int64
         , lockingScript :: ByteString -- Script Pub Key
@@ -628,7 +628,7 @@ instance ToJSON SpendInfo where
 data SpendInfo' =
     SpendInfo'
         { spendingOutputIndex :: Int32
-        , outputAddress :: Maybe T.Text
+        , outputAddress :: T.Text
         , value :: Int64
         }
     deriving (Show, Generic, Hashable, Eq, Serialise, ToJSON)
@@ -637,10 +637,10 @@ data TxOutputData =
     TxOutputData
         { txid :: T.Text
         , txind :: Int32
-        , address :: Maybe T.Text
+        , address :: T.Text
         , value :: Int64
         , blockInfo :: BlockInfo'
-        , inputs :: [((T.Text, Int32), Int32, (Maybe T.Text, Int64))]
+        , inputs :: [((T.Text, Int32), Int32, (T.Text, Int64))]
         , spendInfo :: Maybe SpendInfo
         }
     deriving (Show, Generic, Eq, Serialise)
@@ -736,16 +736,16 @@ mergeTxOutTxOutput :: TxOut -> TxOutput -> TxOutput
 mergeTxOutTxOutput (TxOut {..}) txOutput = txOutput {lockingScript = scriptOutput}
 
 mergeAddrTxInTxInput :: String -> TxIn -> TxInput -> TxInput
-mergeAddrTxInTxInput addr (TxIn {..}) txInput = txInput {unlockingScript = scriptInput, address = Just addr}
+mergeAddrTxInTxInput addr (TxIn {..}) txInput = txInput {unlockingScript = scriptInput, address = addr}
 
 mergeAddrTxOutTxOutput :: String -> TxOut -> TxOutput -> TxOutput
-mergeAddrTxOutTxOutput addr (TxOut {..}) txOutput = txOutput {lockingScript = scriptOutput, address = Just addr}
+mergeAddrTxOutTxOutput addr (TxOut {..}) txOutput = txOutput {lockingScript = scriptOutput, address = addr}
 
 txToTx' :: Tx -> [TxOutput] -> [TxInput] -> Tx'
 txToTx' (Tx {..}) txout txin = Tx' txVersion txout txin txLockTime
 
 type TxIdOutputs
-     = ((T.Text, Int32, Int32), Bool, Set ((T.Text, Int32), Int32, (Maybe T.Text, Int64)), Int64, Maybe T.Text)
+     = ((T.Text, Int32, Int32), Bool, Set ((T.Text, Int32), Int32, (T.Text, Int64)), Int64, T.Text)
 
 genTxOutputData :: (T.Text, Int32, TxIdOutputs, Maybe TxIdOutputs) -> TxOutputData
 genTxOutputData (txId, txIndex, ((hs, ht, ind), _, inps, val, addr), Nothing) =
@@ -764,4 +764,4 @@ genTxOutputData (txId, txIndex, ((hs, ht, ind), _, inps, val, addr), Just ((shs,
             (Just $ SpendInfo (T.unpack stid) stidx (BlockInfo' (T.unpack shs) sht sind) si)
 
 txOutputDataToOutput :: TxOutputData -> TxOutput
-txOutputDataToOutput (TxOutputData {..}) = TxOutput txind (T.unpack <$> address) spendInfo value ""
+txOutputDataToOutput (TxOutputData {..}) = TxOutput txind (T.unpack address) spendInfo value ""
