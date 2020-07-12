@@ -307,3 +307,6 @@ calculateChainWork blks conn = do
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetBlockHeights: " ++ show e
             throw KeyValueDBLookupException
+
+stripScriptHash :: ((Text, Int32), Int32, (Text, Text, Int64)) -> ((Text, Int32), Int32, (Text, Int64))
+stripScriptHash (op, ii, (addr, scriptHash, satValue)) = (op, ii, (addr, satValue))

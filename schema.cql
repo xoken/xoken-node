@@ -36,15 +36,22 @@ CREATE TABLE xoken.ep_script_hash_outputs (
     epoch boolean,
     script_hash text,
     output frozen<tuple<text, int>>,
-    is_recv boolean,
-    PRIMARY KEY (epoch, script_hash, output, is_recv)
+    PRIMARY KEY (epoch, script_hash, output)
 ); 
+
+CREATE TABLE xoken.ep_script_hash_unspent_outputs (
+    epoch boolean,
+    script_hash text,
+    output frozen<tuple<text, int>>,
+    PRIMARY KEY (epoch, script_hash, output)
+);
 
 CREATE TABLE xoken.ep_txid_outputs (
     epoch boolean,
     txid text,
     output_index int,
     address text,
+    script_hash text,
     is_recv boolean,
     other set  <frozen<tuple<frozen<tuple<text, int>>, int, frozen<tuple<text, bigint>>>>>,
     value bigint,
@@ -55,14 +62,20 @@ CREATE TABLE xoken.script_hash_outputs (
     script_hash text,
     nominal_tx_index bigint,
     output frozen<tuple<text, int>>,
-    is_recv boolean,
-    PRIMARY KEY (script_hash, nominal_tx_index, output, is_recv)
+    PRIMARY KEY (script_hash, nominal_tx_index, output)
 ) WITH CLUSTERING ORDER BY (nominal_tx_index DESC);
+
+CREATE TABLE xoken.script_hash_unspent_outputs (
+    script_hash text,
+    output frozen<tuple<text, int>>,
+    PRIMARY KEY (script_hash, output)
+);
 
 CREATE TABLE xoken.txid_outputs (
     txid text,
     output_index int,
     address text,
+    script_hash text,
     is_recv boolean,
     block_info frozen<tuple<text, int, int>>,
     other set <frozen<tuple<frozen<tuple<text, int>>, int, frozen<tuple<text, bigint>>>>>,
