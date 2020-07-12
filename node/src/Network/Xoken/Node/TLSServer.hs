@@ -88,19 +88,9 @@ handleRPCReqResp epConn format mid version encReq = do
                         CBOR ->
                             case rsResp rpcResp of
                                 Left (RPCError err rsData) ->
-                                    serialise $
-                                    CBORRPCResponse
-                                        (mid)
-                                        (rsStatusCode rpcResp)
-                                        (Just $ show err)
-                                        Nothing
+                                    serialise $ CBORRPCResponse (mid) (rsStatusCode rpcResp) (Just $ show err) Nothing
                                 Right rsBody ->
-                                    serialise $
-                                    CBORRPCResponse
-                                        (mid)
-                                        (rsStatusCode rpcResp)
-                                        Nothing
-                                        (rsBody)
+                                    serialise $ CBORRPCResponse (mid) (rsStatusCode rpcResp) Nothing (rsBody)
                         JSON ->
                             case rsResp rpcResp of
                                 Left (RPCError err rsData) ->
@@ -191,12 +181,12 @@ handleConnection :: EndPointConnection -> TLS.Context -> IO ()
 handleConnection epConn context = do
     continue <- liftIO $ newIORef True
     whileM_ (liftIO $ readIORef continue) $ do
-        res <- try $ TLS.recv context
+        res <- try $ recvTLSMessage context True 0
         case res of
             Right r ->
-                case r of
-                    Just l -> enqueueRequest epConn (LBS.fromStrict l)
-                    Nothing -> putStrLn "Payload read error"
+                if B.null r
+                    then return ()
+                    else enqueueRequest epConn (LBS.fromStrict r)
             Left (e :: IOException) -> do
                 putStrLn "Connection closed."
                 atomically $ writeTQueue (requestQueue epConn) XCloseConnection
@@ -219,3 +209,35 @@ startTLSEndpoint handler listenIP listenPort [certFilePath, keyFilePath, certSto
         Left err -> do
             putStrLn $ "Unable to read credentials from file"
             P.error "BadCredentialFile"
+
+recvTLSMessage :: TLS.Context -> Bool -> Int -> IO (B.ByteString)
+recvTLSMessage context prefixFlag remLen = do
+    res <- try $ TLS.recv context
+    case res of
+        Right r ->
+            case r of
+                Just m -> do
+                    if prefixFlag == True
+                        then do
+                            let pre = fromIntegral $ fromBytes (B.take 4 m)
+                            if B.length m == pre + 4
+                                then do
+                                    return $ B.drop 4 m
+                                else do
+                                    cumu <- recvTLSMessage context False (pre - (B.length m - 4))
+                                    return $ B.append (B.drop 4 m) cumu
+                        else if B.length m == remLen
+                                 then do
+                                     return m
+                                 else do
+                                     cumu <- recvTLSMessage context False (remLen - (B.length m))
+                                     return $ B.append m cumu
+                Nothing -> do
+                    if prefixFlag == True
+                        then return B.empty
+                        else do
+                            putStrLn "Payload read error"
+                            throw ZeroLengthSocketReadException
+        Left (e :: IOException) -> do
+            putStrLn "Connection closed."
+            throw e

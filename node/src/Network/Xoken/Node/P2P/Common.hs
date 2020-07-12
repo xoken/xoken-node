@@ -21,6 +21,7 @@ import Control.Monad.Reader
 import Control.Monad.STM
 import Control.Monad.State.Strict
 import qualified Data.Aeson as A (decode, eitherDecode, encode)
+import Data.Bits
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Base16 as B16
 import Data.ByteString.Base64 as B64
@@ -310,3 +311,8 @@ calculateChainWork blks conn = do
 
 stripScriptHash :: ((Text, Int32), Int32, (Text, Text, Int64)) -> ((Text, Int32), Int32, (Text, Int64))
 stripScriptHash (op, ii, (addr, scriptHash, satValue)) = (op, ii, (addr, satValue))
+
+fromBytes :: B.ByteString -> Integer
+fromBytes = B.foldl' f 0
+  where
+    f a b = a `shiftL` 8 .|. fromIntegral b
