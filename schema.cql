@@ -114,3 +114,8 @@ CREATE TABLE xoken.blockhash_txids (
     txids frozen<list<text>>,
     PRIMARY KEY((block_hash, page_number))
 );
+
+CREATE TABLE xoken.ex_address_scripthash (
+    address text PRIMARY KEY,
+    script_hash text
+);
