@@ -1271,7 +1271,6 @@ goGetResource msg net roles = do
         "[ADDR]->[OUTPUT]" -> do
             case methodParams $ rqParams msg of
                 Just (GetOutputsByAddresses addrs pgSize cursor) -> do
---                    ops <- xGetOutputsAddresses addrs pgSize cursor
                     ops <- runManyInputsFor xGetOutputsAddress addrs pgSize cursor
                     return $
                         RPCResponse 200 $
@@ -1288,7 +1287,6 @@ goGetResource msg net roles = do
         "[SCRIPTHASH]->[OUTPUT]" -> do
             case methodParams $ rqParams msg of
                 Just (GetOutputsByScriptHashes shs pgSize nomTxInd) -> do
---                    ops <- xGetOutputsScriptHashes shs pgSize nomTxInd
                     ops <- runManyInputsFor xGetOutputsScriptHash shs pgSize nomTxInd
                     return $
                         RPCResponse 200 $

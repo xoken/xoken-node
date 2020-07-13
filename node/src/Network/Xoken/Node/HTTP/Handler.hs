@@ -233,11 +233,11 @@ getOutputsByAddr :: Handler App App ()
 getOutputsByAddr = do
     addr <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getParam "address")
     pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
-    nomTxInd <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "nominaltxind")
+    cursor <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
     bp2pEnv <- getBitcoinP2P
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
     lg <- getLogger
-    res <- LE.try $ xGetOutputsAddress (fromJust addr) pgSize nomTxInd
+    res <- LE.try $ xGetOutputsAddress (fromJust addr) pgSize cursor 
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetOutputsAddress: " ++ show e
@@ -253,11 +253,11 @@ getOutputsByAddrs = do
     case addresses of
         Just (addrs :: [String]) -> do
             pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
-            nomTxInd <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "nominaltxind")
+            cursor <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
             bp2pEnv <- getBitcoinP2P
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
             lg <- getLogger
-            res <- LE.try $ runManyInputsFor xGetOutputsAddress addrs pgSize nomTxInd
+            res <- LE.try $ runManyInputsFor xGetOutputsAddress addrs pgSize cursor
             case res of
                 Left (e :: SomeException) -> do
                     err lg $ LG.msg $ "Error: xGetOutputsAddresses: " ++ show e
@@ -273,11 +273,11 @@ getOutputsByScriptHash :: Handler App App ()
 getOutputsByScriptHash = do
     sh <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getParam "scripthash")
     pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
-    nomTxInd <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "nominaltxind")
+    cursor <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
     bp2pEnv <- getBitcoinP2P
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
     lg <- getLogger
-    res <- LE.try $ xGetOutputsScriptHash (fromJust sh) pgSize nomTxInd
+    res <- LE.try $ xGetOutputsScriptHash (fromJust sh) pgSize cursor
     case res of
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
@@ -292,11 +292,11 @@ getOutputsByScriptHashes = do
     case shs of
         Just sh -> do
             pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
-            nomTxInd <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "nominaltxind")
+            cursor <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
             bp2pEnv <- getBitcoinP2P
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
             lg <- getLogger
-            res <- LE.try $ runManyInputsFor xGetOutputsScriptHash sh pgSize nomTxInd
+            res <- LE.try $ runManyInputsFor xGetOutputsScriptHash sh pgSize cursor
             case res of
                 Left (e :: SomeException) -> do
                     modifyResponse $ setResponseStatus 500 "Internal Server Error"
