@@ -667,13 +667,15 @@ processConfTransaction tx bhash txind blkht = do
              let sh = txHashToHex $ TxHash $ sha256 (scriptOutput o)
              let bi = (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
              let output = (txHashToHex $ txHash tx, i)
-             insertTxIdOutputs conn output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o)
-             commitScriptHashOutputs
-                 conn -- connection
-                 sh -- scriptHash
-                 output
-                 bi
-             commitScriptHashUnspentOutputs conn sh output)
+             concurrently_
+                 (insertTxIdOutputs conn output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o))
+                 (concurrently_
+                      (commitScriptHashOutputs
+                           conn -- connection
+                           sh -- scriptHash
+                           output
+                           bi)
+                      (commitScriptHashUnspentOutputs conn sh output)))
         outAddrs
     trace lg $ LG.msg $ "processing Transaction " ++ show (txHash tx) ++ ": committed scripthash,txid_outputs tables"
     mapM_
