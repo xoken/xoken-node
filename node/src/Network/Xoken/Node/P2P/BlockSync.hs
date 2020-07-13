@@ -24,7 +24,7 @@ module Network.Xoken.Node.P2P.BlockSync
 import Codec.Serialise
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (AsyncCancelled, mapConcurrently, mapConcurrently_, race_)
-import Control.Concurrent.Async.Lifted as LA (async)
+import Control.Concurrent.Async.Lifted as LA (async, concurrently_)
 import Control.Concurrent.Event as EV
 import Control.Concurrent.MVar
 import Control.Concurrent.QSem
@@ -667,13 +667,15 @@ processConfTransaction tx bhash txind blkht = do
              let sh = txHashToHex $ TxHash $ sha256 (scriptOutput o)
              let bi = (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
              let output = (txHashToHex $ txHash tx, i)
-             insertTxIdOutputs conn output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o)
-             commitScriptHashOutputs
-                 conn -- connection
-                 sh -- scriptHash
-                 output
-                 bi
-             commitScriptHashUnspentOutputs conn sh output)
+             concurrently_
+                 (insertTxIdOutputs conn output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o))
+                 (concurrently_
+                      (commitScriptHashOutputs
+                           conn -- connection
+                           sh -- scriptHash
+                           output
+                           bi)
+                      (commitScriptHashUnspentOutputs conn sh output)))
         outAddrs
     trace lg $ LG.msg $ "processing Transaction " ++ show (txHash tx) ++ ": committed scripthash,txid_outputs tables"
     mapM_
@@ -685,8 +687,9 @@ processConfTransaction tx bhash txind blkht = do
              if a == "" || sh == "" -- likely coinbase txns
                  then return ()
                  else do
-                     insertTxIdOutputs conn prevOutpoint a sh False bi (stripScriptHash <$> spendInfo) 0
-                     deleteScriptHashUnspentOutputs conn sh prevOutpoint)
+                     concurrently_
+                         (insertTxIdOutputs conn prevOutpoint a sh False bi (stripScriptHash <$> spendInfo) 0)
+                         (deleteScriptHashUnspentOutputs conn sh prevOutpoint))
         (zip (inAddrs) (map (\x -> (fst3 $ thd3 x, snd3 $ thd3 $ x)) inputs))
     --
     trace lg $ LG.msg $ "processing Transaction " ++ show (txHash tx) ++ ": updated spend info for inputs"
