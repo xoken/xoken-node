@@ -701,20 +701,6 @@ getJsonRPCErrorCode err =
         INTERNAL_ERROR -> -32603
         PARSE_ERROR -> -32700
 
-addressToScriptOutputs :: AddressOutputs -> ScriptOutputs
-addressToScriptOutputs AddressOutputs {..} =
-    ScriptOutputs
-        { scScriptHash = aoAddress
-        , scOutput = aoOutput
-        , scBlockInfo = aoBlockInfo
-        , scSpendInfo = aoSpendInfo
-        , scPrevOutpoint = aoPrevOutpoint
-        , scValue = aoValue
-        }
-
---        , scNominalTxIndex = aoNominalTxIndex
---        , scIsTypeReceive = aoIsTypeReceive
---        , scOtherAddress = aoOtherAddress
 coinbaseTxToMessage :: C.ByteString -> String
 coinbaseTxToMessage s =
     case C.length (C.pack regex) > 6 of

@@ -670,12 +670,22 @@ processConfTransaction tx bhash txind blkht = do
              concurrently_
                  (insertTxIdOutputs conn output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o))
                  (concurrently_
-                      (commitScriptHashOutputs
-                           conn -- connection
-                           sh -- scriptHash
-                           output
-                           bi)
-                      (commitScriptHashUnspentOutputs conn sh output)))
+                      (concurrently_
+                           (commitScriptHashOutputs
+                                conn -- connection
+                                sh -- scriptHash
+                                output
+                                bi)
+                           (commitScriptHashUnspentOutputs conn sh output))
+                      (case decodeOutputBS $ scriptOutput o of
+                           (Right so) ->
+                               if isPayPK so
+                                   then do
+                                       concurrently_
+                                           (commitScriptHashOutputs conn a output bi)
+                                           (commitScriptHashUnspentOutputs conn a output)
+                                   else return ()
+                           (Left e) -> return ())))
         outAddrs
     trace lg $ LG.msg $ "processing Transaction " ++ show (txHash tx) ++ ": committed scripthash,txid_outputs tables"
     mapM_
@@ -689,7 +699,9 @@ processConfTransaction tx bhash txind blkht = do
                  else do
                      concurrently_
                          (insertTxIdOutputs conn prevOutpoint a sh False bi (stripScriptHash <$> spendInfo) 0)
-                         (deleteScriptHashUnspentOutputs conn sh prevOutpoint))
+                         (concurrently_
+                              (deleteScriptHashUnspentOutputs conn sh prevOutpoint)
+                              (deleteScriptHashUnspentOutputs conn a prevOutpoint)))
         (zip (inAddrs) (map (\x -> (fst3 $ thd3 x, snd3 $ thd3 $ x)) inputs))
     --
     trace lg $ LG.msg $ "processing Transaction " ++ show (txHash tx) ++ ": updated spend info for inputs"
