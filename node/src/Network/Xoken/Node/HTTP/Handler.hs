@@ -242,11 +242,11 @@ getOutputsByAddr = do
     res <-
         LE.try $
         case convertToScriptHash net $ fromJust addr of
-            Just o -> xGetOutputsByScriptHash o pgSize nomTxInd
+            Just o -> xGetOutputsAddress o pgSize nomTxInd
             Nothing -> return []
     case res of
         Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: xGetOutputsByScriptHash: " ++ show e
+            err lg $ LG.msg $ "Error: xGetOutputsAddress: " ++ show e
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
         Right ops -> do
@@ -275,7 +275,7 @@ getOutputsByAddrs = do
                                  Nothing -> (arr, m))
                         ([], Map.empty)
                         addrs
-            res <- LE.try $ xGetOutputsByScriptHashes shs pgSize nomTxInd
+            res <- LE.try $ xGetOutputsAddresses shs pgSize nomTxInd
             case res of
                 Left (e :: SomeException) -> do
                     err lg $ LG.msg $ "Error: xGetOutputsAddress: " ++ show e
@@ -299,7 +299,7 @@ getOutputsByScriptHash = do
     bp2pEnv <- getBitcoinP2P
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
     lg <- getLogger
-    res <- LE.try $ xGetOutputsByScriptHash (fromJust sh) pgSize nomTxInd
+    res <- LE.try $ xGetOutputsAddress (fromJust sh) pgSize nomTxInd
     case res of
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
@@ -319,7 +319,7 @@ getOutputsByScriptHashes = do
             bp2pEnv <- getBitcoinP2P
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
             lg <- getLogger
-            res <- LE.try $ xGetOutputsByScriptHashes sh pgSize nomTxInd
+            res <- LE.try $ xGetOutputsAddresses sh pgSize nomTxInd
             case res of
                 Left (e :: SomeException) -> do
                     modifyResponse $ setResponseStatus 500 "Internal Server Error"

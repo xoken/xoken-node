@@ -543,13 +543,13 @@ getTxOutputsData (txid, index) = do
             err lg $ LG.msg $ "Error: getTxOutputsData: " ++ show e
             throw KeyValueDBLookupException
 
-xGetOutputsByScriptHash ::
+xGetOutputsAddress ::
        (HasXokenNodeEnv env m, MonadIO m)
     => String
     -> Maybe Int32
     -> Maybe Int64
     -> m ([ResultsWithCursor AddressOutputs Int64])
-xGetOutputsByScriptHash scriptHash pgSize mbNomTxInd = do
+xGetOutputsAddress scriptHash pgSize mbNomTxInd = do
     dbe <- getDB
     lg <- getLogger
     let conn = keyValDB (dbe)
@@ -585,7 +585,7 @@ xGetOutputsByScriptHash scriptHash pgSize mbNomTxInd = do
                                   nti) <$>)
                             (zip iop res)
         Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: xGetOutputsByScriptHash':" ++ show e
+            err lg $ LG.msg $ "Error: xGetOutputsAddress':" ++ show e
             throw KeyValueDBLookupException
 
 getNextCursor :: [ResultsWithCursor r c] -> Maybe c
@@ -594,16 +594,16 @@ getNextCursor aos =
     let nextNomTxIndex = cur $ last aos
      in Just nextNomTxIndex
 
-xGetOutputsByScriptHashes ::
+xGetOutputsAddresses ::
        (HasXokenNodeEnv env m, MonadIO m)
     => [String]
     -> Maybe Int32
     -> Maybe Int64
     -> m ([ResultsWithCursor AddressOutputs Int64])
-xGetOutputsByScriptHashes addresses pgSize mbNomTxInd = do
+xGetOutputsAddresses addresses pgSize mbNomTxInd = do
     dbe <- getDB
     lg <- getLogger
-    listOfAddresses <- LA.mapConcurrently (\a -> xGetOutputsByScriptHash a pgSize mbNomTxInd) addresses
+    listOfAddresses <- LA.mapConcurrently (\a -> xGetOutputsAddress a pgSize mbNomTxInd) addresses
     let pageSize =
             fromIntegral $
             if isJust pgSize
@@ -1216,7 +1216,7 @@ goGetResource msg net roles = do
                 Just (GetOutputsByAddress addr psize cursor) -> do
                     ops <-
                         case convertToScriptHash net addr of
-                            Just o -> xGetOutputsByScriptHash o psize cursor
+                            Just o -> xGetOutputsAddress o psize cursor
                             Nothing -> return []
                     return $
                         RPCResponse 200 $
@@ -1237,7 +1237,7 @@ goGetResource msg net roles = do
                                          Nothing -> (arr, m))
                                 ([], M.empty)
                                 addrs
-                    ops <- xGetOutputsByScriptHashes shs pgSize cursor
+                    ops <- xGetOutputsAddresses shs pgSize cursor
                     return $
                         RPCResponse 200 $
                         Right $
@@ -1252,7 +1252,7 @@ goGetResource msg net roles = do
                 Just (GetOutputsByScriptHash sh pgSize nomTxInd) -> do
                     ops <-
                         L.map addressToScriptOutputs <$>
-                        (fromResultsWithCursor <$> xGetOutputsByScriptHash (sh) pgSize nomTxInd)
+                        (fromResultsWithCursor <$> xGetOutputsAddress (sh) pgSize nomTxInd)
                     return $ RPCResponse 200 $ Right $ Just $ RespOutputsByScriptHash ops
                 _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "[SCRIPTHASH]->[OUTPUT]" -> do
@@ -1260,7 +1260,7 @@ goGetResource msg net roles = do
                 Just (GetOutputsByScriptHashes shs pgSize nomTxInd) -> do
                     ops <-
                         L.map addressToScriptOutputs <$>
-                        (fromResultsWithCursor <$> xGetOutputsByScriptHashes shs pgSize nomTxInd)
+                        (fromResultsWithCursor <$> xGetOutputsAddresses shs pgSize nomTxInd)
                     return $ RPCResponse 200 $ Right $ Just $ RespOutputsByScriptHashes ops
                 _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "TXID->[MNODE]" -> do
