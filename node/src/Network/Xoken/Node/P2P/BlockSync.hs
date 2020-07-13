@@ -520,6 +520,26 @@ insertTxIdOutputs conn (txid, outputIndex) address scriptHash isRecv blockInfo o
             err lg $ LG.msg $ "Error: INSERTing into: txid_outputs " ++ show e
             throw KeyValueDBInsertException
 
+commitExAddrScriptHash ::
+       (HasLogger m, MonadIO m)
+    => Q.ClientState
+    -> Text
+    -> Text
+    -> m ()
+commitExAddrScriptHash conn address scriptHash = do
+    lg <- getLogger
+    let str =
+            "INSERT INTO xoken.ex_address_scripthash (address,script_hash) VALUES (?,?)"
+        qstr =
+            str :: Q.QueryString Q.W (Text, Text) ()
+        par = Q.defQueryParams Q.One (address, scriptHash)
+    res <- liftIO $ try $ Q.runClient conn $ (Q.write qstr par)
+    case res of
+        Right () -> return ()
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: INSERTing into: ex_address_scripthash " ++ show e
+            throw KeyValueDBInsertException
+
 commitTxPage ::
        (HasBitcoinP2P m, HasLogger m, HasDatabaseHandles m, MonadBaseControl IO m, MonadIO m)
     => [TxHash]
@@ -673,7 +693,12 @@ processConfTransaction tx bhash txind blkht = do
                  sh -- scriptHash
                  output
                  bi
-             commitScriptHashUnspentOutputs conn sh output)
+             commitScriptHashUnspentOutputs conn sh output
+             case decodeOutputBS $ scriptOutput o of
+                 (Right so) -> if isPayPK so
+                                   then commitExAddrScriptHash conn a sh
+                                   else return()
+                 (Left e) -> return ())
         outAddrs
     trace lg $ LG.msg $ "processing Transaction " ++ show (txHash tx) ++ ": committed scripthash,txid_outputs tables"
     mapM_
