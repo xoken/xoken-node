@@ -189,7 +189,7 @@ data RPCReqParams'
     | GetOutputsByAddress
           { gaAddrOutputs :: String
           , gaPageSize :: Maybe Int32
-          , gaNominalTxIndex :: Maybe Int64
+          , gaCursor :: Maybe Int64
           }
     | GetOutputsByAddresses
           { gasAddrOutputs :: [String]
@@ -238,7 +238,7 @@ instance FromJSON RPCReqParams' where
         (GetTransactionsByTxIDs <$> o .: "gtTxHashes") <|>
         (GetRawTransactionByTxID <$> o .: "gtRTxHash") <|>
         (GetRawTransactionsByTxIDs <$> o .: "gtRTxHashes") <|>
-        (GetOutputsByAddress <$> o .: "gaAddrOutputs" <*> o .:? "gaPageSize" <*> o .:? "gaNominalTxIndex") <|>
+        (GetOutputsByAddress <$> o .: "gaAddrOutputs" <*> o .:? "gaPageSize" <*> o .:? "gaCursor") <|>
         (GetOutputsByAddresses <$> o .: "gasAddrOutputs" <*> o .:? "gasPageSize" <*> o .:? "gasNominalTxIndex") <|>
         (GetOutputsByScriptHash <$> o .: "gaScriptHashOutputs" <*> o .:? "gaScriptHashPageSize" <*>
          o .:? "gaScriptHashNominalTxIndex") <|>
@@ -293,10 +293,12 @@ data RPCResponseBody
           { rawTxs :: [RawTxRecord]
           }
     | RespOutputsByAddress
-          { saddressOutputs :: [AddressOutputs]
+          { nextCursor :: Maybe Int64
+          , saddressOutputs :: [AddressOutputs]
           }
     | RespOutputsByAddresses
-          { maddressOutputs :: [AddressOutputs]
+          { nextCursor :: Maybe Int64
+          , maddressOutputs :: [AddressOutputs]
           }
     | RespOutputsByScriptHash
           { sscriptOutputs :: [ScriptOutputs]
@@ -334,8 +336,8 @@ instance ToJSON RPCResponseBody where
     toJSON (RespTransactionsByTxIDs txs) = object ["txs" .= txs]
     toJSON (RespRawTransactionByTxID tx) = object ["rawTx" .= tx]
     toJSON (RespRawTransactionsByTxIDs txs) = object ["rawTxs" .= txs]
-    toJSON (RespOutputsByAddress sa) = object ["saddressOutputs" .= sa]
-    toJSON (RespOutputsByAddresses ma) = object ["maddressOutputs" .= ma]
+    toJSON (RespOutputsByAddress nc sa) = object ["nextCursor" .= nc, "saddressOutputs" .= sa]
+    toJSON (RespOutputsByAddresses nc ma) = object ["nextCursor" .= nc, "maddressOutputs" .= ma]
     toJSON (RespOutputsByScriptHash sa) = object ["sscriptOutputs" .= sa]
     toJSON (RespOutputsByScriptHashes ma) = object ["mscriptOutputs" .= ma]
     toJSON (RespMerkleBranchByTxID mb) = object ["merkleBranch" .= mb]
@@ -524,12 +526,18 @@ instance ToJSON TxOutputSpendStatus where
     toJSON (TxOutputSpendStatus tis stxid stxht stxindex) =
         object ["isSpent" .= tis, "spendingTxID" .= stxid, "spendingTxBlockHt" .= stxht, "spendingTxIndex" .= stxindex]
 
+data ResultsWithCursor r c =
+    ResultsWithCursor
+        { res :: r
+        , cur :: c
+        }
+    deriving (Show, Generic, Hashable, Eq, Serialise)
+
 data AddressOutputs =
     AddressOutputs
         { aoAddress :: String
         , aoOutput :: OutPoint'
         , aoBlockInfo :: BlockInfo'
-        , aoNominalTxIndex :: Int64
         , aoSpendInfo :: Maybe SpendInfo
         , aoPrevOutpoint :: [(OutPoint', Int32, Int64)]
         , aoValue :: Int64
@@ -537,7 +545,7 @@ data AddressOutputs =
     deriving (Show, Generic, Hashable, Eq, Serialise)
 
 instance ToJSON AddressOutputs where
-    toJSON (AddressOutputs addr out bi nom ios po val) =
+    toJSON (AddressOutputs addr out bi ios po val) =
         object
             [ "address" .= addr
             , "outputTxHash" .= (opTxHash out)
@@ -545,7 +553,6 @@ instance ToJSON AddressOutputs where
             , "txIndex" .= (binfTxIndex bi)
             , "blockHash" .= (binfBlockHash bi)
             , "blockHeight" .= (binfBlockHeight bi)
-            , "nominalTxIndex" .= nom
             , "spendInfo" .= ios
             , "prevOutpoint" .= po
             , "value" .= val
@@ -556,7 +563,6 @@ data ScriptOutputs =
         { scScriptHash :: String
         , scOutput :: OutPoint'
         , scBlockInfo :: BlockInfo'
-        , scNominalTxIndex :: Int64
         , scSpendInfo :: Maybe SpendInfo
         , scPrevOutpoint :: [(OutPoint', Int32, Int64)]
         , scValue :: Int64
@@ -564,7 +570,7 @@ data ScriptOutputs =
     deriving (Show, Generic, Hashable, Eq, Serialise)
 
 instance ToJSON ScriptOutputs where
-    toJSON (ScriptOutputs dh out bi nom ios po val) =
+    toJSON (ScriptOutputs dh out bi ios po val) =
         object
             [ "scriptHash" .= dh
             , "outputTxHash" .= (opTxHash out)
@@ -572,7 +578,6 @@ instance ToJSON ScriptOutputs where
             , "txIndex" .= (binfTxIndex bi)
             , "blockHash" .= (binfBlockHash bi)
             , "blockHeight" .= (binfBlockHeight bi)
-            , "nominalTxIndex" .= nom
             , "spendInfo" .= ios
             , "prevOutpoint" .= po
             , "value" .= val
@@ -702,12 +707,12 @@ addressToScriptOutputs AddressOutputs {..} =
         { scScriptHash = aoAddress
         , scOutput = aoOutput
         , scBlockInfo = aoBlockInfo
-        , scNominalTxIndex = aoNominalTxIndex
         , scSpendInfo = aoSpendInfo
         , scPrevOutpoint = aoPrevOutpoint
         , scValue = aoValue
         }
 
+--        , scNominalTxIndex = aoNominalTxIndex
 --        , scIsTypeReceive = aoIsTypeReceive
 --        , scOtherAddress = aoOtherAddress
 coinbaseTxToMessage :: C.ByteString -> String
@@ -744,8 +749,7 @@ mergeAddrTxOutTxOutput addr (TxOut {..}) txOutput = txOutput {lockingScript = sc
 txToTx' :: Tx -> [TxOutput] -> [TxInput] -> Tx'
 txToTx' (Tx {..}) txout txin = Tx' txVersion txout txin txLockTime
 
-type TxIdOutputs
-     = ((T.Text, Int32, Int32), Bool, Set ((T.Text, Int32), Int32, (T.Text, Int64)), Int64, T.Text)
+type TxIdOutputs = ((T.Text, Int32, Int32), Bool, Set ((T.Text, Int32), Int32, (T.Text, Int64)), Int64, T.Text)
 
 genTxOutputData :: (T.Text, Int32, TxIdOutputs, Maybe TxIdOutputs) -> TxOutputData
 genTxOutputData (txId, txIndex, ((hs, ht, ind), _, inps, val, addr), Nothing) =
@@ -765,3 +769,6 @@ genTxOutputData (txId, txIndex, ((hs, ht, ind), _, inps, val, addr), Just ((shs,
 
 txOutputDataToOutput :: TxOutputData -> TxOutput
 txOutputDataToOutput (TxOutputData {..}) = TxOutput txind (T.unpack address) spendInfo value ""
+
+fromResultsWithCursor :: [ResultsWithCursor r c] -> [r]
+fromResultsWithCursor = ((\(ResultsWithCursor res cur) -> res) <$>)

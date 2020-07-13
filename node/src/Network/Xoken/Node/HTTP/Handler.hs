@@ -43,6 +43,7 @@ import Network.Xoken.Node.Data
     , addressToScriptOutputs
     , aoAddress
     , coinbaseTxToMessage
+    , fromResultsWithCursor
     , txToTx'
     )
 import Network.Xoken.Node.Env
@@ -241,16 +242,20 @@ getOutputsByAddr = do
     res <-
         LE.try $
         case convertToScriptHash net $ fromJust addr of
-            Just o -> xGetOutputsAddress o pgSize nomTxInd
+            Just o -> xGetOutputsByScriptHash o pgSize nomTxInd
             Nothing -> return []
     case res of
         Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: xGetOutputsAddress: " ++ show e
+            err lg $ LG.msg $ "Error: xGetOutputsByScriptHash: " ++ show e
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
         Right ops -> do
             writeBS $
-                BSL.toStrict $ Aeson.encode $ RespOutputsByAddress $ (\ao -> ao {aoAddress = fromJust addr}) <$> ops
+                BSL.toStrict $
+                Aeson.encode $
+                RespOutputsByAddress
+                    (getNextCursor ops)
+                    ((\ao -> ao {aoAddress = fromJust addr}) <$> fromResultsWithCursor ops)
 
 getOutputsByAddrs :: Handler App App ()
 getOutputsByAddrs = do
@@ -270,7 +275,7 @@ getOutputsByAddrs = do
                                  Nothing -> (arr, m))
                         ([], Map.empty)
                         addrs
-            res <- LE.try $ xGetOutputsAddresses shs pgSize nomTxInd
+            res <- LE.try $ xGetOutputsByScriptHashes shs pgSize nomTxInd
             case res of
                 Left (e :: SomeException) -> do
                     err lg $ LG.msg $ "Error: xGetOutputsAddress: " ++ show e
@@ -280,8 +285,10 @@ getOutputsByAddrs = do
                     writeBS $
                         BSL.toStrict $
                         Aeson.encode $
-                        RespOutputsByAddresses $
-                        (\ao -> ao {aoAddress = fromJust $ Map.lookup (aoAddress ao) shMap}) <$> ops
+                        RespOutputsByAddresses
+                            (getNextCursor ops)
+                            ((\ao -> ao {aoAddress = fromJust $ Map.lookup (aoAddress ao) shMap}) <$>
+                             (fromResultsWithCursor ops))
         Nothing -> throwBadRequest
 
 getOutputsByScriptHash :: Handler App App ()
@@ -292,13 +299,15 @@ getOutputsByScriptHash = do
     bp2pEnv <- getBitcoinP2P
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
     lg <- getLogger
-    res <- LE.try $ xGetOutputsAddress (fromJust sh) pgSize nomTxInd
+    res <- LE.try $ xGetOutputsByScriptHash (fromJust sh) pgSize nomTxInd
     case res of
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
         Right ops -> do
-            writeBS $ BSL.toStrict $ Aeson.encode $ RespOutputsByScriptHash $ addressToScriptOutputs <$> ops
+            writeBS $
+                BSL.toStrict $
+                Aeson.encode $ RespOutputsByScriptHash $ addressToScriptOutputs <$> fromResultsWithCursor ops
 
 getOutputsByScriptHashes :: Handler App App ()
 getOutputsByScriptHashes = do
@@ -310,13 +319,15 @@ getOutputsByScriptHashes = do
             bp2pEnv <- getBitcoinP2P
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
             lg <- getLogger
-            res <- LE.try $ xGetOutputsAddresses sh pgSize nomTxInd
+            res <- LE.try $ xGetOutputsByScriptHashes sh pgSize nomTxInd
             case res of
                 Left (e :: SomeException) -> do
                     modifyResponse $ setResponseStatus 500 "Internal Server Error"
                     writeBS "INTERNAL_SERVER_ERROR"
                 Right ops -> do
-                    writeBS $ BSL.toStrict $ Aeson.encode $ RespOutputsByScriptHashes $ addressToScriptOutputs <$> ops
+                    writeBS $
+                        BSL.toStrict $
+                        Aeson.encode $ RespOutputsByScriptHashes $ addressToScriptOutputs <$> fromResultsWithCursor ops
         Nothing -> throwBadRequest
 
 getMNodesByTxID :: Handler App App ()
