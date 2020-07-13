@@ -554,25 +554,22 @@ xGetOutputsAddress address pgSize mbNomTxInd = do
                 (Just n) -> n
                 Nothing -> maxBound
         sh = convertToScriptHash net address
-        aoStr =
+        str =
             "SELECT nominal_tx_index,output FROM xoken.script_hash_outputs WHERE script_hash=? AND nominal_tx_index<?"
-        aoQStr = aoStr :: Q.QueryString Q.R (DT.Text, Int64) (Int64, (DT.Text, Int32))
+        qstr = str :: Q.QueryString Q.R (DT.Text, Int64) (Int64, (DT.Text, Int32))
         aop = Q.defQueryParams Q.One (DT.pack address, nominalTxIndex)
-        shStr =
-            "SELECT nominal_tx_index,output FROM xoken.script_hash_outputs WHERE script_hash=? AND nominal_tx_index<?"
-        shQStr = aoStr :: Q.QueryString Q.R (DT.Text, Int64) (Int64, (DT.Text, Int32))
         shp = Q.defQueryParams Q.One (maybe "" DT.pack sh, nominalTxIndex)
     res <-
         LE.try $
         LA.concurrently
             (case sh of
                  Nothing -> return []
-                 Just s -> Q.runClient conn (Q.query shQStr (shp {pageSize = pgSize})))
+                 Just s -> Q.runClient conn (Q.query qstr (shp {pageSize = pgSize})))
             (case address of
                  ('3':_) -> return []
-                 _ -> Q.runClient conn (Q.query aoQStr (aop {pageSize = pgSize})))
+                 _ -> Q.runClient conn (Q.query qstr (aop {pageSize = pgSize})))
     case res of
-        Right (sop, aop) -> do
+        Right (sr, ar) -> do
             let iops =
                     fmap head $
                     L.groupBy (\(x, _) (y, _) -> x == y) $
@@ -581,7 +578,7 @@ xGetOutputsAddress address pgSize mbNomTxInd = do
                              if x < y
                                  then GT
                                  else LT)
-                        (sop ++ aop)
+                        (sr ++ ar)
                 iop =
                     case pgSize of
                         Nothing -> iops
