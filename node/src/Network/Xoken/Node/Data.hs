@@ -301,10 +301,12 @@ data RPCResponseBody
           , maddressOutputs :: [AddressOutputs]
           }
     | RespOutputsByScriptHash
-          { sscriptOutputs :: [ScriptOutputs]
+          { nextCursor :: Maybe Int64
+          , sscriptOutputs :: [ScriptOutputs]
           }
     | RespOutputsByScriptHashes
-          { mscriptOutputs :: [ScriptOutputs]
+          { nextCursor :: Maybe Int64
+          , mscriptOutputs :: [ScriptOutputs]
           }
     | RespMerkleBranchByTxID
           { merkleBranch :: [MerkleBranchNode']
@@ -338,8 +340,8 @@ instance ToJSON RPCResponseBody where
     toJSON (RespRawTransactionsByTxIDs txs) = object ["rawTxs" .= txs]
     toJSON (RespOutputsByAddress nc sa) = object ["nextCursor" .= nc, "saddressOutputs" .= sa]
     toJSON (RespOutputsByAddresses nc ma) = object ["nextCursor" .= nc, "maddressOutputs" .= ma]
-    toJSON (RespOutputsByScriptHash sa) = object ["sscriptOutputs" .= sa]
-    toJSON (RespOutputsByScriptHashes ma) = object ["mscriptOutputs" .= ma]
+    toJSON (RespOutputsByScriptHash nc sa) = object ["nextCursor" .= nc, "sscriptOutputs" .= sa]
+    toJSON (RespOutputsByScriptHashes nc ma) = object ["nextCursor" .= nc, "mscriptOutputs" .= ma]
     toJSON (RespMerkleBranchByTxID mb) = object ["merkleBranch" .= mb]
     toJSON (RespAllegoryNameBranch nb) = object ["nameBranch" .= nb]
     toJSON (RespRelayTx rrTx) = object ["rrTx" .= rrTx]
@@ -526,12 +528,21 @@ instance ToJSON TxOutputSpendStatus where
     toJSON (TxOutputSpendStatus tis stxid stxht stxindex) =
         object ["isSpent" .= tis, "spendingTxID" .= stxid, "spendingTxBlockHt" .= stxht, "spendingTxIndex" .= stxindex]
 
-data ResultsWithCursor r c =
-    ResultsWithCursor
+data ResultWithCursor r c =
+    ResultWithCursor
         { res :: r
         , cur :: c
         }
     deriving (Show, Generic, Hashable, Eq, Serialise)
+
+instance (Ord c, Eq r) => Ord (ResultWithCursor r c) where
+    compare rc1 rc2
+        | c1 < c2 = GT
+        | c1 > c2 = LT
+        | otherwise = EQ
+      where
+        c1 = cur rc1
+        c2 = cur rc2
 
 data AddressOutputs =
     AddressOutputs
@@ -756,5 +767,5 @@ genTxOutputData (txId, txIndex, ((hs, ht, ind), _, inps, val, addr), Just ((shs,
 txOutputDataToOutput :: TxOutputData -> TxOutput
 txOutputDataToOutput (TxOutputData {..}) = TxOutput txind (T.unpack address) spendInfo value ""
 
-fromResultsWithCursor :: [ResultsWithCursor r c] -> [r]
-fromResultsWithCursor = ((\(ResultsWithCursor res cur) -> res) <$>)
+fromResultWithCursor :: ResultWithCursor r c -> r
+fromResultWithCursor = (\(ResultWithCursor res cur) -> res)

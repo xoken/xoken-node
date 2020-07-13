@@ -41,7 +41,7 @@ import Network.Xoken.Node.Data
     , RawTxRecord(..)
     , TxRecord(..)
     , coinbaseTxToMessage
-    , fromResultsWithCursor
+    , fromResultWithCursor
     , txToTx'
     )
 import Network.Xoken.Node.Env
@@ -245,11 +245,7 @@ getOutputsByAddr = do
             writeBS "INTERNAL_SERVER_ERROR"
         Right ops -> do
             writeBS $
-                BSL.toStrict $
-                Aeson.encode $
-                RespOutputsByAddress
-                    (getNextCursor ops)
-                    (fromResultsWithCursor ops)
+                BSL.toStrict $ Aeson.encode $ RespOutputsByAddress (getNextCursor ops) (fromResultWithCursor <$> ops)
 
 getOutputsByAddrs :: Handler App App ()
 getOutputsByAddrs = do
@@ -270,10 +266,7 @@ getOutputsByAddrs = do
                 Right ops -> do
                     writeBS $
                         BSL.toStrict $
-                        Aeson.encode $
-                        RespOutputsByAddresses
-                            (getNextCursor ops)
-                            (fromResultsWithCursor ops)
+                        Aeson.encode $ RespOutputsByAddresses (getNextCursor ops) (fromResultWithCursor <$> ops)
         Nothing -> throwBadRequest
 
 getOutputsByScriptHash :: Handler App App ()
@@ -291,8 +284,7 @@ getOutputsByScriptHash = do
             writeBS "INTERNAL_SERVER_ERROR"
         Right ops -> do
             writeBS $
-                BSL.toStrict $
-                Aeson.encode $ (fromResultsWithCursor ops)
+                BSL.toStrict $ Aeson.encode $ RespOutputsByScriptHash (getNextCursor ops) (fromResultWithCursor <$> ops)
 
 getOutputsByScriptHashes :: Handler App App ()
 getOutputsByScriptHashes = do
@@ -312,7 +304,7 @@ getOutputsByScriptHashes = do
                 Right ops -> do
                     writeBS $
                         BSL.toStrict $
-                        Aeson.encode $ (fromResultsWithCursor ops)
+                        Aeson.encode $ RespOutputsByScriptHashes (getNextCursor ops) (fromResultWithCursor <$> ops)
         Nothing -> throwBadRequest
 
 getMNodesByTxID :: Handler App App ()

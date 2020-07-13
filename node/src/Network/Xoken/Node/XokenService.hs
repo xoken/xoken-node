@@ -548,7 +548,7 @@ xGetOutputsAddress ::
     => String
     -> Maybe Int32
     -> Maybe Int64
-    -> m ([ResultsWithCursor AddressOutputs Int64])
+    -> m ([ResultWithCursor AddressOutputs Int64])
 xGetOutputsAddress address pgSize mbNomTxInd = do
     dbe <- getDB
     lg <- getLogger
@@ -560,8 +560,7 @@ xGetOutputsAddress address pgSize mbNomTxInd = do
                 (Just n) -> n
                 Nothing -> maxBound
         sh = convertToScriptHash net address
-        str =
-            "SELECT nominal_tx_index,output FROM xoken.script_hash_outputs WHERE script_hash=? AND nominal_tx_index<?"
+        str = "SELECT nominal_tx_index,output FROM xoken.script_hash_outputs WHERE script_hash=? AND nominal_tx_index<?"
         qstr = str :: Q.QueryString Q.R (DT.Text, Int64) (Int64, (DT.Text, Int32))
         aop = Q.defQueryParams Q.One (DT.pack address, nominalTxIndex)
         shp = Q.defQueryParams Q.One (maybe "" DT.pack sh, nominalTxIndex)
@@ -595,24 +594,30 @@ xGetOutputsAddress address pgSize mbNomTxInd = do
                     res' <- sequence $ (\(_, (txid, index)) -> getTxOutputsData (txid, index)) <$> iop
                     return $
                         ((\((nti, (op_txid, op_txidx)), TxOutputData _ _ _ val bi ips si) ->
-                              ResultsWithCursor
-                                    (AddressOutputs
-                                        (address)
-                                        (OutPoint' (DT.unpack op_txid) (fromIntegral op_txidx))
-                                        bi
-                                        si
-                                        ((\((oph, opi), ii, (_, ov)) ->
-                                            (OutPoint' (DT.unpack oph) (fromIntegral opi), fromIntegral ii, fromIntegral ov)) <$>
+                              ResultWithCursor
+                                  (AddressOutputs
+                                       (address)
+                                       (OutPoint' (DT.unpack op_txid) (fromIntegral op_txidx))
+                                       bi
+                                       si
+                                       ((\((oph, opi), ii, (_, ov)) ->
+                                             ( OutPoint' (DT.unpack oph) (fromIntegral opi)
+                                             , fromIntegral ii
+                                             , fromIntegral ov)) <$>
                                         ips)
-                                        val)
-                                    nti) <$>)
+                                       val)
+                                  nti) <$>)
                             (zip iop res')
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetOutputsAddress':" ++ show e
             throw KeyValueDBLookupException
 
 xGetOutputsScriptHash ::
-       (HasXokenNodeEnv env m, MonadIO m) => String -> Maybe Int32 -> Maybe Int64 -> m ([ResultsWithCursor ScriptOutputs Int64])
+       (HasXokenNodeEnv env m, MonadIO m)
+    => String
+    -> Maybe Int32
+    -> Maybe Int64
+    -> m ([ResultWithCursor ScriptOutputs Int64])
 xGetOutputsScriptHash scriptHash pgSize mbNomTxInd = do
     dbe <- getDB
     lg <- getLogger
@@ -634,23 +639,25 @@ xGetOutputsScriptHash scriptHash pgSize mbNomTxInd = do
                     res <- sequence $ (\(_, _, (txid, index)) -> getTxOutputsData (txid, index)) <$> iop
                     return $
                         ((\((addr, nti, (op_txid, op_txidx)), TxOutputData _ _ _ val bi ips si) ->
-                              ResultsWithCursor
-                                    (ScriptOutputs
-                                        (DT.unpack addr)
-                                        (OutPoint' (DT.unpack op_txid) (fromIntegral op_txidx))
-                                        bi
-                                        si
-                                        ((\((oph, opi), ii, (_, ov)) ->
-                                            (OutPoint' (DT.unpack oph) (fromIntegral opi), fromIntegral ii, fromIntegral ov)) <$>
+                              ResultWithCursor
+                                  (ScriptOutputs
+                                       (DT.unpack addr)
+                                       (OutPoint' (DT.unpack op_txid) (fromIntegral op_txidx))
+                                       bi
+                                       si
+                                       ((\((oph, opi), ii, (_, ov)) ->
+                                             ( OutPoint' (DT.unpack oph) (fromIntegral opi)
+                                             , fromIntegral ii
+                                             , fromIntegral ov)) <$>
                                         ips)
-                                        val)
-                                    nti) <$>)
+                                       val)
+                                  nti) <$>)
                             (zip iop res)
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetOutputsScriptHash':" ++ show e
             throw KeyValueDBLookupException
 
-getNextCursor :: [ResultsWithCursor r c] -> Maybe c
+getNextCursor :: [ResultWithCursor r c] -> Maybe c
 getNextCursor [] = Nothing
 getNextCursor aos =
     let nextNomTxIndex = cur $ last aos
@@ -661,7 +668,7 @@ xGetOutputsAddresses ::
     => [String]
     -> Maybe Int32
     -> Maybe Int64
-    -> m ([ResultsWithCursor AddressOutputs Int64])
+    -> m ([ResultWithCursor AddressOutputs Int64])
 xGetOutputsAddresses addresses pgSize mbNomTxInd = do
     dbe <- getDB
     lg <- getLogger
@@ -671,18 +678,14 @@ xGetOutputsAddresses addresses pgSize mbNomTxInd = do
             if isJust pgSize
                 then fromJust pgSize
                 else maxBound
-        sortAddressOutputs :: (Ord c) => ResultsWithCursor r c -> ResultsWithCursor r c -> Ordering
-        sortAddressOutputs ao1 ao2
-            | ao1n < ao2n = GT
-            | ao1n > ao2n = LT
-            | otherwise = EQ
-          where
-            ao1n = cur ao1
-            ao2n = cur ao2
-    return $ (L.take pageSize . sortBy sortAddressOutputs . concat $ listOfAddresses)
+    return $ (L.take pageSize . sort . concat $ listOfAddresses)
 
 xGetOutputsScriptHashes ::
-       (HasXokenNodeEnv env m, MonadIO m) => [String] -> Maybe Int32 -> Maybe Int64 -> m ([ResultsWithCursor ScriptOutputs Int64])
+       (HasXokenNodeEnv env m, MonadIO m)
+    => [String]
+    -> Maybe Int32
+    -> Maybe Int64
+    -> m ([ResultWithCursor ScriptOutputs Int64])
 xGetOutputsScriptHashes shs pgSize mbNomTxInd = do
     dbe <- getDB
     lg <- getLogger
@@ -692,15 +695,7 @@ xGetOutputsScriptHashes shs pgSize mbNomTxInd = do
             if isJust pgSize
                 then fromJust pgSize
                 else maxBound
-        sortAddressOutputs :: (Ord c) => ResultsWithCursor r c -> ResultsWithCursor r c -> Ordering
-        sortAddressOutputs ao1 ao2
-            | ao1n < ao2n = GT
-            | ao1n > ao2n = LT
-            | otherwise = EQ
-          where
-            ao1n = cur ao1
-            ao2n = cur ao2
-    return $ (L.take pageSize . sortBy sortAddressOutputs . concat $ listOfAddresses)
+    return $ (L.take pageSize . sort . concat $ listOfAddresses)
 
 xGetMerkleBranch :: (HasXokenNodeEnv env m, MonadIO m) => String -> m ([MerkleBranchNode'])
 xGetMerkleBranch txid = do
@@ -1300,11 +1295,7 @@ goGetResource msg net roles = do
                     ops <- xGetOutputsAddress addr psize cursor
                     return $
                         RPCResponse 200 $
-                        Right $
-                        Just $
-                        RespOutputsByAddress
-                            (getNextCursor ops)
-                            ((\ao -> ao {aoAddress = addr}) <$> fromResultsWithCursor ops)
+                        Right $ Just $ RespOutputsByAddress (getNextCursor ops) (fromResultWithCursor <$> ops)
                 _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "[ADDR]->[OUTPUT]" -> do
             case methodParams $ rqParams msg of
@@ -1312,23 +1303,23 @@ goGetResource msg net roles = do
                     ops <- xGetOutputsAddresses addrs pgSize cursor
                     return $
                         RPCResponse 200 $
-                        Right $
-                        Just $
-                        RespOutputsByAddresses
-                            (getNextCursor ops)
-                            (fromResultsWithCursor ops)
+                        Right $ Just $ RespOutputsByAddresses (getNextCursor ops) (fromResultWithCursor <$> ops)
                 _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "SCRIPTHASH->[OUTPUT]" -> do
             case methodParams $ rqParams msg of
                 Just (GetOutputsByScriptHash sh pgSize nomTxInd) -> do
                     ops <- xGetOutputsScriptHash (sh) pgSize nomTxInd
-                    return $ RPCResponse 200 $ Right $ Just $ RespOutputsByScriptHash (fromResultsWithCursor ops)
+                    return $
+                        RPCResponse 200 $
+                        Right $ Just $ RespOutputsByScriptHash (getNextCursor ops) (fromResultWithCursor <$> ops)
                 _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "[SCRIPTHASH]->[OUTPUT]" -> do
             case methodParams $ rqParams msg of
                 Just (GetOutputsByScriptHashes shs pgSize nomTxInd) -> do
                     ops <- xGetOutputsScriptHashes shs pgSize nomTxInd
-                    return $ RPCResponse 200 $ Right $ Just $ RespOutputsByScriptHashes (fromResultsWithCursor ops)
+                    return $
+                        RPCResponse 200 $
+                        Right $ Just $ RespOutputsByScriptHashes (getNextCursor ops) (fromResultWithCursor <$> ops)
                 _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "TXID->[MNODE]" -> do
             case methodParams $ rqParams msg of
