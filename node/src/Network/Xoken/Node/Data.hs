@@ -696,20 +696,6 @@ getJsonRPCErrorCode err =
         INTERNAL_ERROR -> -32603
         PARSE_ERROR -> -32700
 
-addressToScriptOutputs :: AddressOutputs -> ScriptOutputs
-addressToScriptOutputs AddressOutputs {..} =
-    ScriptOutputs
-        { scScriptHash = aoAddress
-        , scOutput = aoOutput
-        , scBlockInfo = aoBlockInfo
-        , scNominalTxIndex = aoNominalTxIndex
-        , scSpendInfo = aoSpendInfo
-        , scPrevOutpoint = aoPrevOutpoint
-        , scValue = aoValue
-        }
-
---        , scIsTypeReceive = aoIsTypeReceive
---        , scOtherAddress = aoOtherAddress
 coinbaseTxToMessage :: C.ByteString -> String
 coinbaseTxToMessage s =
     case C.length (C.pack regex) > 6 of
@@ -744,8 +730,7 @@ mergeAddrTxOutTxOutput addr (TxOut {..}) txOutput = txOutput {lockingScript = sc
 txToTx' :: Tx -> [TxOutput] -> [TxInput] -> Tx'
 txToTx' (Tx {..}) txout txin = Tx' txVersion txout txin txLockTime
 
-type TxIdOutputs
-     = ((T.Text, Int32, Int32), Bool, Set ((T.Text, Int32), Int32, (T.Text, Int64)), Int64, T.Text)
+type TxIdOutputs = ((T.Text, Int32, Int32), Bool, Set ((T.Text, Int32), Int32, (T.Text, Int64)), Int64, T.Text)
 
 genTxOutputData :: (T.Text, Int32, TxIdOutputs, Maybe TxIdOutputs) -> TxOutputData
 genTxOutputData (txId, txIndex, ((hs, ht, ind), _, inps, val, addr), Nothing) =
