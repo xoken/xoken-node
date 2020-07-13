@@ -657,45 +657,16 @@ xGetOutputsScriptHash scriptHash pgSize mbNomTxInd = do
             err lg $ LG.msg $ "Error: xGetOutputsScriptHash':" ++ show e
             throw KeyValueDBLookupException
 
-getNextCursor :: [ResultWithCursor r c] -> Maybe c
-getNextCursor [] = Nothing
-getNextCursor aos =
-    let nextNomTxIndex = cur $ last aos
-     in Just nextNomTxIndex
-
-xGetOutputsAddresses ::
-       (HasXokenNodeEnv env m, MonadIO m)
-    => [String]
-    -> Maybe Int32
-    -> Maybe Int64
-    -> m ([ResultWithCursor AddressOutputs Int64])
-xGetOutputsAddresses addresses pgSize mbNomTxInd = do
-    dbe <- getDB
-    lg <- getLogger
-    listOfAddresses <- LA.mapConcurrently (\a -> xGetOutputsAddress a pgSize mbNomTxInd) addresses
-    let pageSize =
-            fromIntegral $
-            if isJust pgSize
-                then fromJust pgSize
-                else maxBound
-    return $ (L.take pageSize . sort . concat $ listOfAddresses)
-
-xGetOutputsScriptHashes ::
-       (HasXokenNodeEnv env m, MonadIO m)
-    => [String]
-    -> Maybe Int32
-    -> Maybe Int64
-    -> m ([ResultWithCursor ScriptOutputs Int64])
-xGetOutputsScriptHashes shs pgSize mbNomTxInd = do
-    dbe <- getDB
-    lg <- getLogger
-    listOfAddresses <- LA.mapConcurrently (\a -> xGetOutputsScriptHash a pgSize mbNomTxInd) shs
-    let pageSize =
-            fromIntegral $
-            if isJust pgSize
-                then fromJust pgSize
-                else maxBound
-    return $ (L.take pageSize . sort . concat $ listOfAddresses)
+runManyInputsFor ::
+       (HasXokenNodeEnv env m, MonadIO m, Ord c, Eq r, Integral p, Bounded p)
+    => (i -> Maybe p -> Maybe c -> m ([ResultWithCursor r c]))
+    -> [i]
+    -> Maybe p
+    -> Maybe c
+    -> m ([ResultWithCursor r c])
+runManyInputsFor fx inputs pgSize cursor = do
+    li <- LA.mapConcurrently (\input -> fx input pgSize cursor) inputs
+    return $ (L.take (fromMaybePageSize pgSize) . sort . concat $ li)
 
 xGetMerkleBranch :: (HasXokenNodeEnv env m, MonadIO m) => String -> m ([MerkleBranchNode'])
 xGetMerkleBranch txid = do
@@ -1300,7 +1271,8 @@ goGetResource msg net roles = do
         "[ADDR]->[OUTPUT]" -> do
             case methodParams $ rqParams msg of
                 Just (GetOutputsByAddresses addrs pgSize cursor) -> do
-                    ops <- xGetOutputsAddresses addrs pgSize cursor
+--                    ops <- xGetOutputsAddresses addrs pgSize cursor
+                    ops <- runManyInputsFor xGetOutputsAddress addrs pgSize cursor
                     return $
                         RPCResponse 200 $
                         Right $ Just $ RespOutputsByAddresses (getNextCursor ops) (fromResultWithCursor <$> ops)
@@ -1316,7 +1288,8 @@ goGetResource msg net roles = do
         "[SCRIPTHASH]->[OUTPUT]" -> do
             case methodParams $ rqParams msg of
                 Just (GetOutputsByScriptHashes shs pgSize nomTxInd) -> do
-                    ops <- xGetOutputsScriptHashes shs pgSize nomTxInd
+--                    ops <- xGetOutputsScriptHashes shs pgSize nomTxInd
+                    ops <- runManyInputsFor xGetOutputsScriptHash shs pgSize nomTxInd
                     return $
                         RPCResponse 200 $
                         Right $ Just $ RespOutputsByScriptHashes (getNextCursor ops) (fromResultWithCursor <$> ops)
@@ -1361,3 +1334,16 @@ convertToScriptHash :: Network -> String -> Maybe String
 convertToScriptHash net s = do
     let addr = stringToAddr net (DT.pack s)
     (DT.unpack . txHashToHex . TxHash . sha256 . addressToScriptBS) <$> addr
+
+getNextCursor :: [ResultWithCursor r c] -> Maybe c
+getNextCursor [] = Nothing
+getNextCursor aos =
+    let nextCursor = cur $ last aos
+     in Just nextCursor
+
+fromMaybePageSize :: (Integral p, Bounded p) => Maybe p -> Int
+fromMaybePageSize mps =
+    fromIntegral $
+    case mps of
+        Just ps -> ps
+        Nothing -> maxBound
