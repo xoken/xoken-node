@@ -1495,7 +1495,8 @@ encodeNTI :: Maybe Int64 -> Maybe String
 encodeNTI mbNTI = show <$> mbNTI
 
 decodeNTI :: Maybe String -> Maybe Int64
-decodeNTI mbCur = read <$> mbCur
+decodeNTI Nothing = Nothing
+decodeNTI (Just nti) = readMaybe nti :: Maybe Int64
 
 encodeOP :: Maybe (DT.Text, Int32) -> Maybe String
 encodeOP Nothing = Nothing

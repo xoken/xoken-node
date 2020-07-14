@@ -233,7 +233,7 @@ getOutputsByAddr :: Handler App App ()
 getOutputsByAddr = do
     addr <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getParam "address")
     pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
-    cursor <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
+    cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
     bp2pEnv <- getBitcoinP2P
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
     lg <- getLogger
@@ -254,7 +254,7 @@ getOutputsByAddrs = do
     case addresses of
         Just (addrs :: [String]) -> do
             pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
-            cursor <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
+            cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
             bp2pEnv <- getBitcoinP2P
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
             lg <- getLogger
@@ -275,7 +275,7 @@ getOutputsByScriptHash :: Handler App App ()
 getOutputsByScriptHash = do
     sh <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getParam "scripthash")
     pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
-    cursor <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
+    cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
     bp2pEnv <- getBitcoinP2P
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
     lg <- getLogger
@@ -295,7 +295,7 @@ getOutputsByScriptHashes = do
     case shs of
         Just sh -> do
             pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
-            cursor <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
+            cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
             bp2pEnv <- getBitcoinP2P
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
             lg <- getLogger
@@ -313,12 +313,12 @@ getOutputsByScriptHashes = do
 
 getUTXOsByAddr :: Handler App App ()
 getUTXOsByAddr = do
+    lg <- getLogger
     addr <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getParam "address")
     pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
-    cursor <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
+    cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
     bp2pEnv <- getBitcoinP2P
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
-    lg <- getLogger
     res <- LE.try $ xGetUTXOsAddress (fromJust addr) pgSize (decodeOP cursor)
     case res of
         Left (e :: SomeException) -> do
@@ -336,7 +336,7 @@ getUTXOsByAddrs = do
     case addresses of
         Just (addrs :: [String]) -> do
             pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
-            cursor <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
+            cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
             bp2pEnv <- getBitcoinP2P
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
             lg <- getLogger
@@ -357,7 +357,7 @@ getUTXOsByScriptHash :: Handler App App ()
 getUTXOsByScriptHash = do
     sh <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getParam "scripthash")
     pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
-    cursor <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
+    cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
     bp2pEnv <- getBitcoinP2P
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
     lg <- getLogger
@@ -377,7 +377,7 @@ getUTXOsByScriptHashes = do
     case shs of
         Just sh -> do
             pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
-            cursor <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
+            cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
             bp2pEnv <- getBitcoinP2P
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
             lg <- getLogger
