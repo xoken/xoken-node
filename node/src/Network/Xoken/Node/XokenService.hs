@@ -1408,6 +1408,41 @@ goGetResource msg net roles = do
                         Right $
                         Just $ RespOutputsByScriptHashes (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
                 _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
+        "ADDR->[UTXO]" -> do
+            case methodParams $ rqParams msg of
+                Just (GetUTXOsByAddress addr psize cursor) -> do
+                    ops <- xGetUTXOsAddress addr psize (decodeOP cursor)
+                    return $
+                        RPCResponse 200 $
+                        Right $ Just $ RespUTXOsByAddress (encodeOP $ getNextCursor ops) (fromResultWithCursor <$> ops)
+                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
+        "[ADDR]->[UTXO]" -> do
+            case methodParams $ rqParams msg of
+                Just (GetUTXOsByAddresses addrs pgSize cursor) -> do
+                    ops <- runWithManyInputs xGetUTXOsAddress addrs pgSize (decodeOP cursor)
+                    return $
+                        RPCResponse 200 $
+                        Right $
+                        Just $ RespUTXOsByAddresses (encodeOP $ getNextCursor ops) (fromResultWithCursor <$> ops)
+                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
+        "SCRIPTHASH->[UTXO]" -> do
+            case methodParams $ rqParams msg of
+                Just (GetUTXOsByScriptHash sh pgSize cursor) -> do
+                    ops <- xGetUTXOsScriptHash sh pgSize (decodeOP cursor)
+                    return $
+                        RPCResponse 200 $
+                        Right $
+                        Just $ RespUTXOsByScriptHash (encodeOP $ getNextCursor ops) (fromResultWithCursor <$> ops)
+                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
+        "[SCRIPTHASH]->[UTXO]" -> do
+            case methodParams $ rqParams msg of
+                Just (GetUTXOsByScriptHashes shs pgSize cursor) -> do
+                    ops <- runWithManyInputs xGetUTXOsScriptHash shs pgSize (decodeOP cursor)
+                    return $
+                        RPCResponse 200 $
+                        Right $
+                        Just $ RespUTXOsByScriptHashes (encodeOP $ getNextCursor ops) (fromResultWithCursor <$> ops)
+                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "TXID->[MNODE]" -> do
             case methodParams $ rqParams msg of
                 Just (GetMerkleBranchByTxID txid) -> do
@@ -1467,15 +1502,15 @@ encodeNTI :: Maybe Int64 -> Maybe Base58
 encodeNTI Nothing = Nothing
 encodeNTI (Just nti) = Just $ encodeBase58 $ integerToBS $ fromIntegral nti
 
-encodeOutput :: Maybe (DT.Text, Int32) -> Maybe Base58
-encodeOutput Nothing = Nothing
-encodeOutput (Just op) = Just $ encodeBase58 serOp
+encodeOP :: Maybe (DT.Text, Int32) -> Maybe Base58
+encodeOP Nothing = Nothing
+encodeOP (Just op) = Just $ encodeBase58 serOp
   where
     serOp = DS.encode $ (\(txid, index) -> (DT.unpack txid, index)) op
 
-decodeOutput :: Maybe Base58 -> Maybe (DT.Text, Int32)
-decodeOutput Nothing = Nothing
-decodeOutput (Just c) =
+decodeOP :: Maybe Base58 -> Maybe (DT.Text, Int32)
+decodeOP Nothing = Nothing
+decodeOP (Just c) =
     case decodeBase58 c of
         Just so ->
             case DS.decode so of

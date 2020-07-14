@@ -311,6 +311,88 @@ getOutputsByScriptHashes = do
                         RespOutputsByScriptHashes (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
         Nothing -> throwBadRequest
 
+getUTXOsByAddr :: Handler App App ()
+getUTXOsByAddr = do
+    addr <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getParam "address")
+    pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
+    cursor <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
+    bp2pEnv <- getBitcoinP2P
+    let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
+    lg <- getLogger
+    res <- LE.try $ xGetUTXOsAddress (fromJust addr) pgSize (decodeOP cursor)
+    case res of
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: xGetUTXOsAddress: " ++ show e
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+        Right ops -> do
+            writeBS $
+                BSL.toStrict $
+                Aeson.encode $ RespUTXOsByAddress (encodeOP $ getNextCursor ops) (fromResultWithCursor <$> ops)
+
+getUTXOsByAddrs :: Handler App App ()
+getUTXOsByAddrs = do
+    addresses <- (fmap $ words . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "address")
+    case addresses of
+        Just (addrs :: [String]) -> do
+            pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
+            cursor <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
+            bp2pEnv <- getBitcoinP2P
+            let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
+            lg <- getLogger
+            res <- LE.try $ runWithManyInputs xGetUTXOsAddress addrs pgSize (decodeOP cursor)
+            case res of
+                Left (e :: SomeException) -> do
+                    err lg $ LG.msg $ "Error: xGetUTXOsAddress: " ++ show e
+                    modifyResponse $ setResponseStatus 500 "Internal Server Error"
+                    writeBS "INTERNAL_SERVER_ERROR"
+                Right ops -> do
+                    writeBS $
+                        BSL.toStrict $
+                        Aeson.encode $
+                        RespUTXOsByAddresses (encodeOP $ getNextCursor ops) (fromResultWithCursor <$> ops)
+        Nothing -> throwBadRequest
+
+getUTXOsByScriptHash :: Handler App App ()
+getUTXOsByScriptHash = do
+    sh <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getParam "scripthash")
+    pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
+    cursor <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
+    bp2pEnv <- getBitcoinP2P
+    let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
+    lg <- getLogger
+    res <- LE.try $ xGetUTXOsScriptHash (fromJust sh) pgSize (decodeOP cursor)
+    case res of
+        Left (e :: SomeException) -> do
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+        Right ops -> do
+            writeBS $
+                BSL.toStrict $
+                Aeson.encode $ RespUTXOsByScriptHash (encodeOP $ getNextCursor ops) (fromResultWithCursor <$> ops)
+
+getUTXOsByScriptHashes :: Handler App App ()
+getUTXOsByScriptHashes = do
+    shs <- (fmap $ words . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "scripthash")
+    case shs of
+        Just sh -> do
+            pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
+            cursor <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
+            bp2pEnv <- getBitcoinP2P
+            let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
+            lg <- getLogger
+            res <- LE.try $ runWithManyInputs xGetUTXOsScriptHash sh pgSize (decodeOP cursor)
+            case res of
+                Left (e :: SomeException) -> do
+                    modifyResponse $ setResponseStatus 500 "Internal Server Error"
+                    writeBS "INTERNAL_SERVER_ERROR"
+                Right ops -> do
+                    writeBS $
+                        BSL.toStrict $
+                        Aeson.encode $
+                        RespUTXOsByScriptHashes (encodeOP $ getNextCursor ops) (fromResultWithCursor <$> ops)
+        Nothing -> throwBadRequest
+
 getMNodesByTxID :: Handler App App ()
 getMNodesByTxID = do
     txId <- (DT.unpack . DTE.decodeUtf8 . fromJust) <$> getParam "txid"

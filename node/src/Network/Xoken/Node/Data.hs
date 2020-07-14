@@ -217,6 +217,16 @@ data RPCReqParams'
           , guScriptHashPageSize :: Maybe Int32
           , guScriptHashCursor :: Maybe Base58
           }
+    | GetUTXOsByAddresses
+          { guasAddrOutputs :: [String]
+          , guasPageSize :: Maybe Int32
+          , guasCursor :: Maybe Base58
+          }
+    | GetUTXOsByScriptHashes
+          { gusScriptHashOutputs :: [String]
+          , gusScriptHashPageSize :: Maybe Int32
+          , gusScriptHashCursor :: Maybe Base58
+          }
     | GetMerkleBranchByTxID
           { gmbMerkleBranch :: String
           }
@@ -256,8 +266,11 @@ instance FromJSON RPCReqParams' where
         (GetOutputsByScriptHashes <$> o .: "gasScriptHashOutputs" <*> o .:? "gasScriptHashPageSize" <*>
          o .:? "gasScriptHashCursor") <|>
         (GetUTXOsByAddress <$> o .: "guaAddrOutputs" <*> o .:? "guaPageSize" <*> o .:? "guaCursor") <|>
+        (GetUTXOsByAddresses <$> o .: "guasAddrOutputs" <*> o .:? "guasPageSize" <*> o .:? "guasCursor") <|>
         (GetUTXOsByScriptHash <$> o .: "guScriptHashOutputs" <*> o .:? "guScriptHashPageSize" <*>
          o .:? "guScriptHashCursor") <|>
+        (GetUTXOsByScriptHashes <$> o .: "gusScriptHashOutputs" <*> o .:? "gusScriptHashPageSize" <*>
+         o .:? "gusScriptHashCursor") <|>
         (GetMerkleBranchByTxID <$> o .: "gmbMerkleBranch") <|>
         (GetAllegoryNameBranch <$> o .: "gaName" <*> o .: "gaIsProducer") <|>
         (RelayTx . BL.toStrict . GZ.decompress . B64L.decodeLenient . BL.fromStrict . T.encodeUtf8 <$> o .: "rTx") <|>
@@ -322,6 +335,22 @@ data RPCResponseBody
           { nextCursor :: Maybe Base58
           , mscriptOutputs :: [ScriptOutputs]
           }
+    | RespUTXOsByAddress
+          { nextCursor :: Maybe Base58
+          , saddressUTXOs :: [AddressOutputs]
+          }
+    | RespUTXOsByAddresses
+          { nextCursor :: Maybe Base58
+          , maddressUTXOs :: [AddressOutputs]
+          }
+    | RespUTXOsByScriptHash
+          { nextCursor :: Maybe Base58
+          , sscriptUTXOs :: [ScriptOutputs]
+          }
+    | RespUTXOsByScriptHashes
+          { nextCursor :: Maybe Base58
+          , mscriptUTXOs :: [ScriptOutputs]
+          }
     | RespMerkleBranchByTxID
           { merkleBranch :: [MerkleBranchNode']
           }
@@ -356,6 +385,10 @@ instance ToJSON RPCResponseBody where
     toJSON (RespOutputsByAddresses nc ma) = object ["nextCursor" .= nc, "maddressOutputs" .= ma]
     toJSON (RespOutputsByScriptHash nc sa) = object ["nextCursor" .= nc, "sscriptOutputs" .= sa]
     toJSON (RespOutputsByScriptHashes nc ma) = object ["nextCursor" .= nc, "mscriptOutputs" .= ma]
+    toJSON (RespUTXOsByAddress nc sa) = object ["nextCursor" .= nc, "saddressUTXOs" .= sa]
+    toJSON (RespUTXOsByAddresses nc ma) = object ["nextCursor" .= nc, "maddressUTXOs" .= ma]
+    toJSON (RespUTXOsByScriptHash nc sa) = object ["nextCursor" .= nc, "sscriptUTXOs" .= sa]
+    toJSON (RespUTXOsByScriptHashes nc ma) = object ["nextCursor" .= nc, "mscriptUTXOs" .= ma]
     toJSON (RespMerkleBranchByTxID mb) = object ["merkleBranch" .= mb]
     toJSON (RespAllegoryNameBranch nb) = object ["nameBranch" .= nb]
     toJSON (RespRelayTx rrTx) = object ["rrTx" .= rrTx]
