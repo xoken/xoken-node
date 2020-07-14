@@ -438,7 +438,13 @@ data BlockHeader' =
         , blockBits' :: Word32
         , bhNonce' :: Word32
         }
-    deriving (Generic, Show, Hashable, Eq, Serialise, FromJSON)
+    deriving (Generic, Show, Hashable, Eq, Serialise)
+
+instance FromJSON BlockHeader' where
+    parseJSON (Object o) =
+        (BlockHeader' <$> o .: "blockVersion" <*> o .: "prevBlock" <*> o .: "merkleRoot" <*> o .: "blockTimestamp" <*>
+         o .: "blockBits" <*>
+         o .: "bhNonce")
 
 instance ToJSON BlockHeader' where
     toJSON (BlockHeader' v pb mr ts bb bn) =
@@ -774,5 +780,5 @@ txOutputDataToOutput :: TxOutputData -> TxOutput
 txOutputDataToOutput (TxOutputData {..}) = TxOutput txind (T.unpack address) spendInfo value ""
 
 reverse2 :: String -> String
-reverse2 (x:y:xs) = reverse2 xs ++ [x,y]
+reverse2 (x:y:xs) = reverse2 xs ++ [x, y]
 reverse2 x = x
