@@ -230,7 +230,7 @@ addNewUser conn uname fname lname email roles api_quota api_expiry_time = do
         else do
             g <- liftIO $ newStdGen
             let seed = show $ fst (random g :: (Word64, StdGen))
-                passwd = B64.encode $ C.pack $ seed
+                passwd = B.init $ B.init $ B64.encode $ C.pack $ seed
                 hashedPasswd = encodeHex ((S.encode $ sha256 passwd))
                 tempSessionKey = encodeHex ((S.encode $ sha256 $ B.reverse passwd))
                 str =
