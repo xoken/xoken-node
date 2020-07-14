@@ -134,7 +134,7 @@ xGetChainInfo = do
                                 ChainInfo
                                     "main"
                                     (showHex (lagCW + (read . DT.unpack $ chainwork)) "")
-                                    (convertBitsToDifficulty . blockBits . rbHeader $ b)
+                                    (convertBitsToDifficulty . blockBits' . rbHeader $ b)
                                     (headers)
                                     (blocks)
                                     (rbHash b)
