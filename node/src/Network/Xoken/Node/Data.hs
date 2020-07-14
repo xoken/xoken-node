@@ -45,6 +45,7 @@ import Data.Word
 import qualified Database.CQL.IO as Q
 import Database.CQL.Protocol as DCP
 import GHC.Generics
+import Network.Xoken.Address.Base58
 import Network.Socket (SockAddr(SockAddrUnix))
 import Paths_xoken_node as P
 import Prelude as P
@@ -189,22 +190,22 @@ data RPCReqParams'
     | GetOutputsByAddress
           { gaAddrOutputs :: String
           , gaPageSize :: Maybe Int32
-          , gaCursor :: Maybe Int64
+          , gaCursor :: Maybe Base58
           }
     | GetOutputsByAddresses
           { gasAddrOutputs :: [String]
           , gasPageSize :: Maybe Int32
-          , gasCursor :: Maybe Int64
+          , gasCursor :: Maybe Base58
           }
     | GetOutputsByScriptHash
           { gaScriptHashOutputs :: String
           , gaScriptHashPageSize :: Maybe Int32
-          , gaScriptHashCursor :: Maybe Int64
+          , gaScriptHashCursor :: Maybe Base58
           }
     | GetOutputsByScriptHashes
           { gasScriptHashOutputs :: [String]
           , gasScriptHashPageSize :: Maybe Int32
-          , gasScriptHashCursor :: Maybe Int64
+          , gasScriptHashCursor :: Maybe Base58
           }
     | GetMerkleBranchByTxID
           { gmbMerkleBranch :: String
@@ -293,19 +294,19 @@ data RPCResponseBody
           { rawTxs :: [RawTxRecord]
           }
     | RespOutputsByAddress
-          { nextCursor :: Maybe Int64
+          { nextCursor :: Maybe Base58
           , saddressOutputs :: [AddressOutputs]
           }
     | RespOutputsByAddresses
-          { nextCursor :: Maybe Int64
+          { nextCursor :: Maybe Base58
           , maddressOutputs :: [AddressOutputs]
           }
     | RespOutputsByScriptHash
-          { nextCursor :: Maybe Int64
+          { nextCursor :: Maybe Base58
           , sscriptOutputs :: [ScriptOutputs]
           }
     | RespOutputsByScriptHashes
-          { nextCursor :: Maybe Int64
+          { nextCursor :: Maybe Base58
           , mscriptOutputs :: [ScriptOutputs]
           }
     | RespMerkleBranchByTxID

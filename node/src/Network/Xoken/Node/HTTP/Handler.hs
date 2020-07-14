@@ -237,7 +237,7 @@ getOutputsByAddr = do
     bp2pEnv <- getBitcoinP2P
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
     lg <- getLogger
-    res <- LE.try $ xGetOutputsAddress (fromJust addr) pgSize cursor 
+    res <- LE.try $ xGetOutputsAddress (fromJust addr) pgSize (decodeNTI cursor)
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetOutputsAddress: " ++ show e
@@ -245,7 +245,8 @@ getOutputsByAddr = do
             writeBS "INTERNAL_SERVER_ERROR"
         Right ops -> do
             writeBS $
-                BSL.toStrict $ Aeson.encode $ RespOutputsByAddress (getNextCursor ops) (fromResultWithCursor <$> ops)
+                BSL.toStrict $
+                Aeson.encode $ RespOutputsByAddress (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
 
 getOutputsByAddrs :: Handler App App ()
 getOutputsByAddrs = do
@@ -257,7 +258,7 @@ getOutputsByAddrs = do
             bp2pEnv <- getBitcoinP2P
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
             lg <- getLogger
-            res <- LE.try $ runWithManyInputs xGetOutputsAddress addrs pgSize cursor
+            res <- LE.try $ runWithManyInputs xGetOutputsAddress addrs pgSize (decodeNTI cursor)
             case res of
                 Left (e :: SomeException) -> do
                     err lg $ LG.msg $ "Error: xGetOutputsAddresses: " ++ show e
@@ -266,7 +267,8 @@ getOutputsByAddrs = do
                 Right ops -> do
                     writeBS $
                         BSL.toStrict $
-                        Aeson.encode $ RespOutputsByAddresses (getNextCursor ops) (fromResultWithCursor <$> ops)
+                        Aeson.encode $
+                        RespOutputsByAddresses (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
         Nothing -> throwBadRequest
 
 getOutputsByScriptHash :: Handler App App ()
@@ -277,14 +279,15 @@ getOutputsByScriptHash = do
     bp2pEnv <- getBitcoinP2P
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
     lg <- getLogger
-    res <- LE.try $ xGetOutputsScriptHash (fromJust sh) pgSize cursor
+    res <- LE.try $ xGetOutputsScriptHash (fromJust sh) pgSize (decodeNTI cursor)
     case res of
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
         Right ops -> do
             writeBS $
-                BSL.toStrict $ Aeson.encode $ RespOutputsByScriptHash (getNextCursor ops) (fromResultWithCursor <$> ops)
+                BSL.toStrict $
+                Aeson.encode $ RespOutputsByScriptHash (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
 
 getOutputsByScriptHashes :: Handler App App ()
 getOutputsByScriptHashes = do
@@ -296,7 +299,7 @@ getOutputsByScriptHashes = do
             bp2pEnv <- getBitcoinP2P
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
             lg <- getLogger
-            res <- LE.try $ runWithManyInputs xGetOutputsScriptHash sh pgSize cursor
+            res <- LE.try $ runWithManyInputs xGetOutputsScriptHash sh pgSize (decodeNTI cursor)
             case res of
                 Left (e :: SomeException) -> do
                     modifyResponse $ setResponseStatus 500 "Internal Server Error"
@@ -304,7 +307,8 @@ getOutputsByScriptHashes = do
                 Right ops -> do
                     writeBS $
                         BSL.toStrict $
-                        Aeson.encode $ RespOutputsByScriptHashes (getNextCursor ops) (fromResultWithCursor <$> ops)
+                        Aeson.encode $
+                        RespOutputsByScriptHashes (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
         Nothing -> throwBadRequest
 
 getMNodesByTxID :: Handler App App ()

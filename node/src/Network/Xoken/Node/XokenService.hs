@@ -87,6 +87,7 @@ import Network.Xoken.Node.GraphDB
 import Network.Xoken.Node.P2P.BlockSync
 import Network.Xoken.Node.P2P.Common
 import Network.Xoken.Node.P2P.Types
+import Network.Xoken.Util (bsToInteger, integerToBS)
 import Numeric (showHex)
 import System.Logger as LG
 import System.Logger.Message
@@ -1268,34 +1269,38 @@ goGetResource msg net roles = do
         "ADDR->[OUTPUT]" -> do
             case methodParams $ rqParams msg of
                 Just (GetOutputsByAddress addr psize cursor) -> do
-                    ops <- xGetOutputsAddress addr psize cursor
+                    ops <- xGetOutputsAddress addr psize (decodeNTI cursor)
                     return $
                         RPCResponse 200 $
-                        Right $ Just $ RespOutputsByAddress (getNextCursor ops) (fromResultWithCursor <$> ops)
+                        Right $
+                        Just $ RespOutputsByAddress (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
                 _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "[ADDR]->[OUTPUT]" -> do
             case methodParams $ rqParams msg of
                 Just (GetOutputsByAddresses addrs pgSize cursor) -> do
-                    ops <- runWithManyInputs xGetOutputsAddress addrs pgSize cursor
+                    ops <- runWithManyInputs xGetOutputsAddress addrs pgSize (decodeNTI cursor)
                     return $
                         RPCResponse 200 $
-                        Right $ Just $ RespOutputsByAddresses (getNextCursor ops) (fromResultWithCursor <$> ops)
+                        Right $
+                        Just $ RespOutputsByAddresses (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
                 _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "SCRIPTHASH->[OUTPUT]" -> do
             case methodParams $ rqParams msg of
                 Just (GetOutputsByScriptHash sh pgSize cursor) -> do
-                    ops <- xGetOutputsScriptHash sh pgSize cursor
+                    ops <- xGetOutputsScriptHash sh pgSize (decodeNTI cursor)
                     return $
                         RPCResponse 200 $
-                        Right $ Just $ RespOutputsByScriptHash (getNextCursor ops) (fromResultWithCursor <$> ops)
+                        Right $
+                        Just $ RespOutputsByScriptHash (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
                 _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "[SCRIPTHASH]->[OUTPUT]" -> do
             case methodParams $ rqParams msg of
                 Just (GetOutputsByScriptHashes shs pgSize cursor) -> do
-                    ops <- runWithManyInputs xGetOutputsScriptHash shs pgSize cursor
+                    ops <- runWithManyInputs xGetOutputsScriptHash shs pgSize (decodeNTI cursor)
                     return $
                         RPCResponse 200 $
-                        Right $ Just $ RespOutputsByScriptHashes (getNextCursor ops) (fromResultWithCursor <$> ops)
+                        Right $
+                        Just $ RespOutputsByScriptHashes (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
                 _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "TXID->[MNODE]" -> do
             case methodParams $ rqParams msg of
@@ -1343,3 +1348,14 @@ getNextCursor [] = Nothing
 getNextCursor aos =
     let nextCursor = cur $ last aos
      in Just nextCursor
+
+decodeNTI :: Maybe Base58 -> Maybe Int64
+decodeNTI Nothing = Nothing
+decodeNTI (Just c) =
+    case decodeBase58 c of
+        Just dc -> Just $ fromIntegral $ bsToInteger dc
+        Nothing -> Nothing
+
+encodeNTI :: Maybe Int64 -> Maybe Base58
+encodeNTI Nothing = Nothing
+encodeNTI (Just nti) = Just $ encodeBase58 $ integerToBS $ fromIntegral nti
