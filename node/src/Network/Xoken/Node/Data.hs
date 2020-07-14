@@ -405,7 +405,7 @@ data BlockRecord =
     BlockRecord
         { rbHeight :: Int
         , rbHash :: String
-        , rbHeader :: BlockHeader
+        , rbHeader :: BlockHeader'
         , rbNextBlockHash :: String
         , rbSize :: Int
         , rbTxCount :: Int
@@ -427,6 +427,28 @@ instance ToJSON BlockRecord where
             , "guessedMiner" .= gm
             , "coinbaseMessage" .= cm
             , "coinbaseTx" .= (T.decodeUtf8 . BL.toStrict . B64L.encode . GZ.compress $ cb)
+            ]
+
+data BlockHeader' =
+    BlockHeader'
+        { blockVersion' :: Word32
+        , prevBlock' :: BlockHash
+        , merkleRoot' :: String
+        , blockTimestamp' :: Timestamp
+        , blockBits' :: Word32
+        , bhNonce' :: Word32
+        }
+    deriving (Generic, Show, Hashable, Eq, Serialise, FromJSON)
+
+instance ToJSON BlockHeader' where
+    toJSON (BlockHeader' v pb mr ts bb bn) =
+        object
+            [ "blockVersion" .= v
+            , "prevBlock" .= pb
+            , "merkleRoot" .= (reverse2 mr)
+            , "blockTimestamp" .= ts
+            , "blockBits" .= bb
+            , "bhNonce" .= bn
             ]
 
 data RawTxRecord =
@@ -765,3 +787,7 @@ genTxOutputData (txId, txIndex, ((hs, ht, ind), _, inps, val, addr), Just ((shs,
 
 txOutputDataToOutput :: TxOutputData -> TxOutput
 txOutputDataToOutput (TxOutputData {..}) = TxOutput txind (T.unpack address) spendInfo value ""
+
+reverse2 :: String -> String
+reverse2 (x:y:xs) = reverse2 xs ++ [x,y]
+reverse2 x = x
