@@ -194,17 +194,17 @@ data RPCReqParams'
     | GetOutputsByAddresses
           { gasAddrOutputs :: [String]
           , gasPageSize :: Maybe Int32
-          , gasNominalTxIndex :: Maybe Int64
+          , gasCursor :: Maybe Int64
           }
     | GetOutputsByScriptHash
           { gaScriptHashOutputs :: String
           , gaScriptHashPageSize :: Maybe Int32
-          , gaScriptHashNominalTxIndex :: Maybe Int64
+          , gaScriptHashCursor :: Maybe Int64
           }
     | GetOutputsByScriptHashes
           { gasScriptHashOutputs :: [String]
           , gasScriptHashPageSize :: Maybe Int32
-          , gasScriptHashNominalTxIndex :: Maybe Int64
+          , gasScriptHashCursor :: Maybe Int64
           }
     | GetMerkleBranchByTxID
           { gmbMerkleBranch :: String
@@ -239,11 +239,11 @@ instance FromJSON RPCReqParams' where
         (GetRawTransactionByTxID <$> o .: "gtRTxHash") <|>
         (GetRawTransactionsByTxIDs <$> o .: "gtRTxHashes") <|>
         (GetOutputsByAddress <$> o .: "gaAddrOutputs" <*> o .:? "gaPageSize" <*> o .:? "gaCursor") <|>
-        (GetOutputsByAddresses <$> o .: "gasAddrOutputs" <*> o .:? "gasPageSize" <*> o .:? "gasNominalTxIndex") <|>
+        (GetOutputsByAddresses <$> o .: "gasAddrOutputs" <*> o .:? "gasPageSize" <*> o .:? "gasCursor") <|>
         (GetOutputsByScriptHash <$> o .: "gaScriptHashOutputs" <*> o .:? "gaScriptHashPageSize" <*>
-         o .:? "gaScriptHashNominalTxIndex") <|>
+         o .:? "gaScriptHashCursor") <|>
         (GetOutputsByScriptHashes <$> o .: "gasScriptHashOutputs" <*> o .:? "gasScriptHashPageSize" <*>
-         o .:? "gasScriptHashNominalTxIndex") <|>
+         o .:? "gasScriptHashCursor") <|>
         (GetMerkleBranchByTxID <$> o .: "gmbMerkleBranch") <|>
         (GetAllegoryNameBranch <$> o .: "gaName" <*> o .: "gaIsProducer") <|>
         (RelayTx . BL.toStrict . GZ.decompress . B64L.decodeLenient . BL.fromStrict . T.encodeUtf8 <$> o .: "rTx") <|>

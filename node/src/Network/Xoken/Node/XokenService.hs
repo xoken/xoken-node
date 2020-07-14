@@ -657,16 +657,21 @@ xGetOutputsScriptHash scriptHash pgSize mbNomTxInd = do
             err lg $ LG.msg $ "Error: xGetOutputsScriptHash':" ++ show e
             throw KeyValueDBLookupException
 
-runManyInputsFor ::
+runWithManyInputs ::
        (HasXokenNodeEnv env m, MonadIO m, Ord c, Eq r, Integral p, Bounded p)
     => (i -> Maybe p -> Maybe c -> m ([ResultWithCursor r c]))
     -> [i]
     -> Maybe p
     -> Maybe c
     -> m ([ResultWithCursor r c])
-runManyInputsFor fx inputs pgSize cursor = do
-    li <- LA.mapConcurrently (\input -> fx input pgSize cursor) inputs
-    return $ (L.take (fromMaybePageSize pgSize) . sort . concat $ li)
+runWithManyInputs fx inputs mbPgSize cursor = do
+    let pgSize =
+            fromIntegral $
+            case mbPgSize of
+                Just ps -> ps
+                Nothing -> maxBound
+    li <- LA.mapConcurrently (\input -> fx input mbPgSize cursor) inputs
+    return $ (L.take pgSize . sort . concat $ li)
 
 xGetMerkleBranch :: (HasXokenNodeEnv env m, MonadIO m) => String -> m ([MerkleBranchNode'])
 xGetMerkleBranch txid = do
@@ -1271,23 +1276,23 @@ goGetResource msg net roles = do
         "[ADDR]->[OUTPUT]" -> do
             case methodParams $ rqParams msg of
                 Just (GetOutputsByAddresses addrs pgSize cursor) -> do
-                    ops <- runManyInputsFor xGetOutputsAddress addrs pgSize cursor
+                    ops <- runWithManyInputs xGetOutputsAddress addrs pgSize cursor
                     return $
                         RPCResponse 200 $
                         Right $ Just $ RespOutputsByAddresses (getNextCursor ops) (fromResultWithCursor <$> ops)
                 _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "SCRIPTHASH->[OUTPUT]" -> do
             case methodParams $ rqParams msg of
-                Just (GetOutputsByScriptHash sh pgSize nomTxInd) -> do
-                    ops <- xGetOutputsScriptHash (sh) pgSize nomTxInd
+                Just (GetOutputsByScriptHash sh pgSize cursor) -> do
+                    ops <- xGetOutputsScriptHash sh pgSize cursor
                     return $
                         RPCResponse 200 $
                         Right $ Just $ RespOutputsByScriptHash (getNextCursor ops) (fromResultWithCursor <$> ops)
                 _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "[SCRIPTHASH]->[OUTPUT]" -> do
             case methodParams $ rqParams msg of
-                Just (GetOutputsByScriptHashes shs pgSize nomTxInd) -> do
-                    ops <- runManyInputsFor xGetOutputsScriptHash shs pgSize nomTxInd
+                Just (GetOutputsByScriptHashes shs pgSize cursor) -> do
+                    ops <- runWithManyInputs xGetOutputsScriptHash shs pgSize cursor
                     return $
                         RPCResponse 200 $
                         Right $ Just $ RespOutputsByScriptHashes (getNextCursor ops) (fromResultWithCursor <$> ops)
@@ -1338,10 +1343,3 @@ getNextCursor [] = Nothing
 getNextCursor aos =
     let nextCursor = cur $ last aos
      in Just nextCursor
-
-fromMaybePageSize :: (Integral p, Bounded p) => Maybe p -> Int
-fromMaybePageSize mps =
-    fromIntegral $
-    case mps of
-        Just ps -> ps
-        Nothing -> maxBound

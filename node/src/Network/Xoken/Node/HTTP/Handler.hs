@@ -257,7 +257,7 @@ getOutputsByAddrs = do
             bp2pEnv <- getBitcoinP2P
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
             lg <- getLogger
-            res <- LE.try $ runManyInputsFor xGetOutputsAddress addrs pgSize cursor
+            res <- LE.try $ runWithManyInputs xGetOutputsAddress addrs pgSize cursor
             case res of
                 Left (e :: SomeException) -> do
                     err lg $ LG.msg $ "Error: xGetOutputsAddresses: " ++ show e
@@ -296,7 +296,7 @@ getOutputsByScriptHashes = do
             bp2pEnv <- getBitcoinP2P
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
             lg <- getLogger
-            res <- LE.try $ runManyInputsFor xGetOutputsScriptHash sh pgSize cursor
+            res <- LE.try $ runWithManyInputs xGetOutputsScriptHash sh pgSize cursor
             case res of
                 Left (e :: SomeException) -> do
                     modifyResponse $ setResponseStatus 500 "Internal Server Error"
