@@ -1490,30 +1490,24 @@ getNextCursor aos =
     let nextCursor = cur $ last aos
      in Just nextCursor
 
--- Base58 encode/decode NominalTxIndex and Output cursor types
-decodeNTI :: Maybe Base58 -> Maybe Int64
-decodeNTI Nothing = Nothing
-decodeNTI (Just c) =
-    case decodeBase58 c of
-        Just dc -> Just $ fromIntegral $ bsToInteger dc
-        Nothing -> Nothing
+-- encode/decode NominalTxIndex and Output cursor types
+encodeNTI :: Maybe Int64 -> Maybe String
+encodeNTI mbNTI = show <$> mbNTI
 
-encodeNTI :: Maybe Int64 -> Maybe Base58
-encodeNTI Nothing = Nothing
-encodeNTI (Just nti) = Just $ encodeBase58 $ integerToBS $ fromIntegral nti
+decodeNTI :: Maybe String -> Maybe Int64
+decodeNTI mbCur = read <$> mbCur
 
-encodeOP :: Maybe (DT.Text, Int32) -> Maybe Base58
+encodeOP :: Maybe (DT.Text, Int32) -> Maybe String
 encodeOP Nothing = Nothing
-encodeOP (Just op) = Just $ encodeBase58 serOp
-  where
-    serOp = DS.encode $ (\(txid, index) -> (DT.unpack txid, index)) op
+encodeOP (Just op) = Just $ (DT.unpack $ fst op) ++ (show $ snd op)
 
-decodeOP :: Maybe Base58 -> Maybe (DT.Text, Int32)
+decodeOP :: Maybe String -> Maybe (DT.Text, Int32)
 decodeOP Nothing = Nothing
-decodeOP (Just c) =
-    case decodeBase58 c of
-        Just so ->
-            case DS.decode so of
-                Left _ -> Nothing
-                Right op -> Just $ (\(txid, index) -> (DT.pack txid, index)) op
-        Nothing -> Nothing
+decodeOP (Just c)
+    | length c < 65 = Nothing
+    | otherwise =
+        case readMaybe mbIndex :: Maybe Int32 of
+            Nothing -> Nothing
+            Just index -> Just (DT.pack txid, index)
+  where
+    (txid, mbIndex) = L.splitAt 64 c

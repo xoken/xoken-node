@@ -190,42 +190,42 @@ data RPCReqParams'
     | GetOutputsByAddress
           { gaAddrOutputs :: String
           , gaPageSize :: Maybe Int32
-          , gaCursor :: Maybe Base58
+          , gaCursor :: Maybe String
           }
     | GetOutputsByAddresses
           { gasAddrOutputs :: [String]
           , gasPageSize :: Maybe Int32
-          , gasCursor :: Maybe Base58
+          , gasCursor :: Maybe String
           }
     | GetOutputsByScriptHash
           { gaScriptHashOutputs :: String
           , gaScriptHashPageSize :: Maybe Int32
-          , gaScriptHashCursor :: Maybe Base58
+          , gaScriptHashCursor :: Maybe String
           }
     | GetOutputsByScriptHashes
           { gasScriptHashOutputs :: [String]
           , gasScriptHashPageSize :: Maybe Int32
-          , gasScriptHashCursor :: Maybe Base58
+          , gasScriptHashCursor :: Maybe String
           }
     | GetUTXOsByAddress
           { guaAddrOutputs :: String
           , guaPageSize :: Maybe Int32
-          , guaCursor :: Maybe Base58
+          , guaCursor :: Maybe String
           }
     | GetUTXOsByScriptHash
           { guScriptHashOutputs :: String
           , guScriptHashPageSize :: Maybe Int32
-          , guScriptHashCursor :: Maybe Base58
+          , guScriptHashCursor :: Maybe String
           }
     | GetUTXOsByAddresses
           { guasAddrOutputs :: [String]
           , guasPageSize :: Maybe Int32
-          , guasCursor :: Maybe Base58
+          , guasCursor :: Maybe String
           }
     | GetUTXOsByScriptHashes
           { gusScriptHashOutputs :: [String]
           , gusScriptHashPageSize :: Maybe Int32
-          , gusScriptHashCursor :: Maybe Base58
+          , gusScriptHashCursor :: Maybe String
           }
     | GetMerkleBranchByTxID
           { gmbMerkleBranch :: String
@@ -320,35 +320,35 @@ data RPCResponseBody
           { rawTxs :: [RawTxRecord]
           }
     | RespOutputsByAddress
-          { nextCursor :: Maybe Base58
+          { nextCursor :: Maybe String
           , saddressOutputs :: [AddressOutputs]
           }
     | RespOutputsByAddresses
-          { nextCursor :: Maybe Base58
+          { nextCursor :: Maybe String
           , maddressOutputs :: [AddressOutputs]
           }
     | RespOutputsByScriptHash
-          { nextCursor :: Maybe Base58
+          { nextCursor :: Maybe String
           , sscriptOutputs :: [ScriptOutputs]
           }
     | RespOutputsByScriptHashes
-          { nextCursor :: Maybe Base58
+          { nextCursor :: Maybe String
           , mscriptOutputs :: [ScriptOutputs]
           }
     | RespUTXOsByAddress
-          { nextCursor :: Maybe Base58
+          { nextCursor :: Maybe String
           , saddressUTXOs :: [AddressOutputs]
           }
     | RespUTXOsByAddresses
-          { nextCursor :: Maybe Base58
+          { nextCursor :: Maybe String
           , maddressUTXOs :: [AddressOutputs]
           }
     | RespUTXOsByScriptHash
-          { nextCursor :: Maybe Base58
+          { nextCursor :: Maybe String
           , sscriptUTXOs :: [ScriptOutputs]
           }
     | RespUTXOsByScriptHashes
-          { nextCursor :: Maybe Base58
+          { nextCursor :: Maybe String
           , mscriptUTXOs :: [ScriptOutputs]
           }
     | RespMerkleBranchByTxID
