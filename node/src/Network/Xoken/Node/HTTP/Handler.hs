@@ -41,6 +41,7 @@ import Network.Xoken.Node.Data
     , RawTxRecord(..)
     , TxRecord(..)
     , coinbaseTxToMessage
+    , fromResultWithCursor
     , txToTx'
     )
 import Network.Xoken.Node.Env
@@ -232,18 +233,20 @@ getOutputsByAddr :: Handler App App ()
 getOutputsByAddr = do
     addr <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getParam "address")
     pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
-    nomTxInd <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "nominaltxind")
+    cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
     bp2pEnv <- getBitcoinP2P
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
     lg <- getLogger
-    res <- LE.try $ xGetOutputsAddress (fromJust addr) pgSize nomTxInd
+    res <- LE.try $ xGetOutputsAddress (fromJust addr) pgSize (decodeNTI cursor)
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetOutputsAddress: " ++ show e
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
         Right ops -> do
-            writeBS $ BSL.toStrict $ Aeson.encode $ RespOutputsByAddress ops
+            writeBS $
+                BSL.toStrict $
+                Aeson.encode $ RespOutputsByAddress (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
 
 getOutputsByAddrs :: Handler App App ()
 getOutputsByAddrs = do
@@ -251,35 +254,40 @@ getOutputsByAddrs = do
     case addresses of
         Just (addrs :: [String]) -> do
             pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
-            nomTxInd <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "nominaltxind")
+            cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
             bp2pEnv <- getBitcoinP2P
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
             lg <- getLogger
-            res <- LE.try $ xGetOutputsAddresses addrs pgSize nomTxInd
+            res <- LE.try $ runWithManyInputs xGetOutputsAddress addrs pgSize (decodeNTI cursor)
             case res of
                 Left (e :: SomeException) -> do
                     err lg $ LG.msg $ "Error: xGetOutputsAddresses: " ++ show e
                     modifyResponse $ setResponseStatus 500 "Internal Server Error"
                     writeBS "INTERNAL_SERVER_ERROR"
                 Right ops -> do
-                    writeBS $ BSL.toStrict $ Aeson.encode $ RespOutputsByAddresses ops
+                    writeBS $
+                        BSL.toStrict $
+                        Aeson.encode $
+                        RespOutputsByAddresses (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
         Nothing -> throwBadRequest
 
 getOutputsByScriptHash :: Handler App App ()
 getOutputsByScriptHash = do
     sh <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getParam "scripthash")
     pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
-    nomTxInd <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "nominaltxind")
+    cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
     bp2pEnv <- getBitcoinP2P
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
     lg <- getLogger
-    res <- LE.try $ xGetOutputsScriptHash (fromJust sh) pgSize nomTxInd
+    res <- LE.try $ xGetOutputsScriptHash (fromJust sh) pgSize (decodeNTI cursor)
     case res of
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
         Right ops -> do
-            writeBS $ BSL.toStrict $ Aeson.encode $ RespOutputsByScriptHash ops
+            writeBS $
+                BSL.toStrict $
+                Aeson.encode $ RespOutputsByScriptHash (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
 
 getOutputsByScriptHashes :: Handler App App ()
 getOutputsByScriptHashes = do
@@ -287,17 +295,102 @@ getOutputsByScriptHashes = do
     case shs of
         Just sh -> do
             pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
-            nomTxInd <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "nominaltxind")
+            cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
             bp2pEnv <- getBitcoinP2P
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
             lg <- getLogger
-            res <- LE.try $ xGetOutputsScriptHashes sh pgSize nomTxInd
+            res <- LE.try $ runWithManyInputs xGetOutputsScriptHash sh pgSize (decodeNTI cursor)
             case res of
                 Left (e :: SomeException) -> do
                     modifyResponse $ setResponseStatus 500 "Internal Server Error"
                     writeBS "INTERNAL_SERVER_ERROR"
                 Right ops -> do
-                    writeBS $ BSL.toStrict $ Aeson.encode $ RespOutputsByScriptHashes ops
+                    writeBS $
+                        BSL.toStrict $
+                        Aeson.encode $
+                        RespOutputsByScriptHashes (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
+        Nothing -> throwBadRequest
+
+getUTXOsByAddr :: Handler App App ()
+getUTXOsByAddr = do
+    lg <- getLogger
+    addr <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getParam "address")
+    pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
+    cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
+    bp2pEnv <- getBitcoinP2P
+    let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
+    res <- LE.try $ xGetUTXOsAddress (fromJust addr) pgSize (decodeOP cursor)
+    case res of
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: xGetUTXOsAddress: " ++ show e
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+        Right ops -> do
+            writeBS $
+                BSL.toStrict $
+                Aeson.encode $ RespUTXOsByAddress (encodeOP $ getNextCursor ops) (fromResultWithCursor <$> ops)
+
+getUTXOsByAddrs :: Handler App App ()
+getUTXOsByAddrs = do
+    addresses <- (fmap $ words . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "address")
+    case addresses of
+        Just (addrs :: [String]) -> do
+            pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
+            cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
+            bp2pEnv <- getBitcoinP2P
+            let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
+            lg <- getLogger
+            res <- LE.try $ runWithManyInputs xGetUTXOsAddress addrs pgSize (decodeOP cursor)
+            case res of
+                Left (e :: SomeException) -> do
+                    err lg $ LG.msg $ "Error: xGetUTXOsAddress: " ++ show e
+                    modifyResponse $ setResponseStatus 500 "Internal Server Error"
+                    writeBS "INTERNAL_SERVER_ERROR"
+                Right ops -> do
+                    writeBS $
+                        BSL.toStrict $
+                        Aeson.encode $
+                        RespUTXOsByAddresses (encodeOP $ getNextCursor ops) (fromResultWithCursor <$> ops)
+        Nothing -> throwBadRequest
+
+getUTXOsByScriptHash :: Handler App App ()
+getUTXOsByScriptHash = do
+    sh <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getParam "scripthash")
+    pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
+    cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
+    bp2pEnv <- getBitcoinP2P
+    let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
+    lg <- getLogger
+    res <- LE.try $ xGetUTXOsScriptHash (fromJust sh) pgSize (decodeOP cursor)
+    case res of
+        Left (e :: SomeException) -> do
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+        Right ops -> do
+            writeBS $
+                BSL.toStrict $
+                Aeson.encode $ RespUTXOsByScriptHash (encodeOP $ getNextCursor ops) (fromResultWithCursor <$> ops)
+
+getUTXOsByScriptHashes :: Handler App App ()
+getUTXOsByScriptHashes = do
+    shs <- (fmap $ words . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "scripthash")
+    case shs of
+        Just sh -> do
+            pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
+            cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
+            bp2pEnv <- getBitcoinP2P
+            let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
+            lg <- getLogger
+            res <- LE.try $ runWithManyInputs xGetUTXOsScriptHash sh pgSize (decodeOP cursor)
+            case res of
+                Left (e :: SomeException) -> do
+                    modifyResponse $ setResponseStatus 500 "Internal Server Error"
+                    writeBS "INTERNAL_SERVER_ERROR"
+                Right ops -> do
+                    writeBS $
+                        BSL.toStrict $
+                        Aeson.encode $
+                        RespUTXOsByScriptHashes (encodeOP $ getNextCursor ops) (fromResultWithCursor <$> ops)
         Nothing -> throwBadRequest
 
 getMNodesByTxID :: Handler App App ()

@@ -69,7 +69,7 @@ CREATE TABLE xoken.script_hash_unspent_outputs (
     script_hash text,
     output frozen<tuple<text, int>>,
     PRIMARY KEY (script_hash, output)
-);
+) WITH CLUSTERING ORDER BY (output ASC);
 
 CREATE TABLE xoken.txid_outputs (
     txid text,

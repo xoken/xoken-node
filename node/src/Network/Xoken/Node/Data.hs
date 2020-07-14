@@ -46,6 +46,7 @@ import qualified Database.CQL.IO as Q
 import Database.CQL.Protocol as DCP
 import GHC.Generics
 import Network.Socket (SockAddr(SockAddrUnix))
+import Network.Xoken.Address.Base58
 import Paths_xoken_node as P
 import Prelude as P
 import Text.Regex.TDFA
@@ -189,22 +190,42 @@ data RPCReqParams'
     | GetOutputsByAddress
           { gaAddrOutputs :: String
           , gaPageSize :: Maybe Int32
-          , gaNominalTxIndex :: Maybe Int64
+          , gaCursor :: Maybe String
           }
     | GetOutputsByAddresses
           { gasAddrOutputs :: [String]
           , gasPageSize :: Maybe Int32
-          , gasNominalTxIndex :: Maybe Int64
+          , gasCursor :: Maybe String
           }
     | GetOutputsByScriptHash
           { gaScriptHashOutputs :: String
           , gaScriptHashPageSize :: Maybe Int32
-          , gaScriptHashNominalTxIndex :: Maybe Int64
+          , gaScriptHashCursor :: Maybe String
           }
     | GetOutputsByScriptHashes
           { gasScriptHashOutputs :: [String]
           , gasScriptHashPageSize :: Maybe Int32
-          , gasScriptHashNominalTxIndex :: Maybe Int64
+          , gasScriptHashCursor :: Maybe String
+          }
+    | GetUTXOsByAddress
+          { guaAddrOutputs :: String
+          , guaPageSize :: Maybe Int32
+          , guaCursor :: Maybe String
+          }
+    | GetUTXOsByScriptHash
+          { guScriptHashOutputs :: String
+          , guScriptHashPageSize :: Maybe Int32
+          , guScriptHashCursor :: Maybe String
+          }
+    | GetUTXOsByAddresses
+          { guasAddrOutputs :: [String]
+          , guasPageSize :: Maybe Int32
+          , guasCursor :: Maybe String
+          }
+    | GetUTXOsByScriptHashes
+          { gusScriptHashOutputs :: [String]
+          , gusScriptHashPageSize :: Maybe Int32
+          , gusScriptHashCursor :: Maybe String
           }
     | GetMerkleBranchByTxID
           { gmbMerkleBranch :: String
@@ -238,12 +259,18 @@ instance FromJSON RPCReqParams' where
         (GetTransactionsByTxIDs <$> o .: "gtTxHashes") <|>
         (GetRawTransactionByTxID <$> o .: "gtRTxHash") <|>
         (GetRawTransactionsByTxIDs <$> o .: "gtRTxHashes") <|>
-        (GetOutputsByAddress <$> o .: "gaAddrOutputs" <*> o .:? "gaPageSize" <*> o .:? "gaNominalTxIndex") <|>
-        (GetOutputsByAddresses <$> o .: "gasAddrOutputs" <*> o .:? "gasPageSize" <*> o .:? "gasNominalTxIndex") <|>
+        (GetOutputsByAddress <$> o .: "gaAddrOutputs" <*> o .:? "gaPageSize" <*> o .:? "gaCursor") <|>
+        (GetOutputsByAddresses <$> o .: "gasAddrOutputs" <*> o .:? "gasPageSize" <*> o .:? "gasCursor") <|>
         (GetOutputsByScriptHash <$> o .: "gaScriptHashOutputs" <*> o .:? "gaScriptHashPageSize" <*>
-         o .:? "gaScriptHashNominalTxIndex") <|>
+         o .:? "gaScriptHashCursor") <|>
         (GetOutputsByScriptHashes <$> o .: "gasScriptHashOutputs" <*> o .:? "gasScriptHashPageSize" <*>
-         o .:? "gasScriptHashNominalTxIndex") <|>
+         o .:? "gasScriptHashCursor") <|>
+        (GetUTXOsByAddress <$> o .: "guaAddrOutputs" <*> o .:? "guaPageSize" <*> o .:? "guaCursor") <|>
+        (GetUTXOsByAddresses <$> o .: "guasAddrOutputs" <*> o .:? "guasPageSize" <*> o .:? "guasCursor") <|>
+        (GetUTXOsByScriptHash <$> o .: "guScriptHashOutputs" <*> o .:? "guScriptHashPageSize" <*>
+         o .:? "guScriptHashCursor") <|>
+        (GetUTXOsByScriptHashes <$> o .: "gusScriptHashOutputs" <*> o .:? "gusScriptHashPageSize" <*>
+         o .:? "gusScriptHashCursor") <|>
         (GetMerkleBranchByTxID <$> o .: "gmbMerkleBranch") <|>
         (GetAllegoryNameBranch <$> o .: "gaName" <*> o .: "gaIsProducer") <|>
         (RelayTx . BL.toStrict . GZ.decompress . B64L.decodeLenient . BL.fromStrict . T.encodeUtf8 <$> o .: "rTx") <|>
@@ -293,16 +320,36 @@ data RPCResponseBody
           { rawTxs :: [RawTxRecord]
           }
     | RespOutputsByAddress
-          { saddressOutputs :: [AddressOutputs]
+          { nextCursor :: Maybe String
+          , saddressOutputs :: [AddressOutputs]
           }
     | RespOutputsByAddresses
-          { maddressOutputs :: [AddressOutputs]
+          { nextCursor :: Maybe String
+          , maddressOutputs :: [AddressOutputs]
           }
     | RespOutputsByScriptHash
-          { sscriptOutputs :: [ScriptOutputs]
+          { nextCursor :: Maybe String
+          , sscriptOutputs :: [ScriptOutputs]
           }
     | RespOutputsByScriptHashes
-          { mscriptOutputs :: [ScriptOutputs]
+          { nextCursor :: Maybe String
+          , mscriptOutputs :: [ScriptOutputs]
+          }
+    | RespUTXOsByAddress
+          { nextCursor :: Maybe String
+          , saddressUTXOs :: [AddressOutputs]
+          }
+    | RespUTXOsByAddresses
+          { nextCursor :: Maybe String
+          , maddressUTXOs :: [AddressOutputs]
+          }
+    | RespUTXOsByScriptHash
+          { nextCursor :: Maybe String
+          , sscriptUTXOs :: [ScriptOutputs]
+          }
+    | RespUTXOsByScriptHashes
+          { nextCursor :: Maybe String
+          , mscriptUTXOs :: [ScriptOutputs]
           }
     | RespMerkleBranchByTxID
           { merkleBranch :: [MerkleBranchNode']
@@ -334,10 +381,14 @@ instance ToJSON RPCResponseBody where
     toJSON (RespTransactionsByTxIDs txs) = object ["txs" .= txs]
     toJSON (RespRawTransactionByTxID tx) = object ["rawTx" .= tx]
     toJSON (RespRawTransactionsByTxIDs txs) = object ["rawTxs" .= txs]
-    toJSON (RespOutputsByAddress sa) = object ["saddressOutputs" .= sa]
-    toJSON (RespOutputsByAddresses ma) = object ["maddressOutputs" .= ma]
-    toJSON (RespOutputsByScriptHash sa) = object ["sscriptOutputs" .= sa]
-    toJSON (RespOutputsByScriptHashes ma) = object ["mscriptOutputs" .= ma]
+    toJSON (RespOutputsByAddress nc sa) = object ["nextCursor" .= nc, "saddressOutputs" .= sa]
+    toJSON (RespOutputsByAddresses nc ma) = object ["nextCursor" .= nc, "maddressOutputs" .= ma]
+    toJSON (RespOutputsByScriptHash nc sa) = object ["nextCursor" .= nc, "sscriptOutputs" .= sa]
+    toJSON (RespOutputsByScriptHashes nc ma) = object ["nextCursor" .= nc, "mscriptOutputs" .= ma]
+    toJSON (RespUTXOsByAddress nc sa) = object ["nextCursor" .= nc, "saddressUTXOs" .= sa]
+    toJSON (RespUTXOsByAddresses nc ma) = object ["nextCursor" .= nc, "maddressUTXOs" .= ma]
+    toJSON (RespUTXOsByScriptHash nc sa) = object ["nextCursor" .= nc, "sscriptUTXOs" .= sa]
+    toJSON (RespUTXOsByScriptHashes nc ma) = object ["nextCursor" .= nc, "mscriptUTXOs" .= ma]
     toJSON (RespMerkleBranchByTxID mb) = object ["merkleBranch" .= mb]
     toJSON (RespAllegoryNameBranch nb) = object ["nameBranch" .= nb]
     toJSON (RespRelayTx rrTx) = object ["rrTx" .= rrTx]
@@ -552,12 +603,27 @@ instance ToJSON TxOutputSpendStatus where
     toJSON (TxOutputSpendStatus tis stxid stxht stxindex) =
         object ["isSpent" .= tis, "spendingTxID" .= stxid, "spendingTxBlockHt" .= stxht, "spendingTxIndex" .= stxindex]
 
+data ResultWithCursor r c =
+    ResultWithCursor
+        { res :: r
+        , cur :: c
+        }
+    deriving (Show, Generic, Hashable, Eq, Serialise)
+
+instance (Ord c, Eq r) => Ord (ResultWithCursor r c) where
+    compare rc1 rc2
+        | c1 < c2 = GT
+        | c1 > c2 = LT
+        | otherwise = EQ
+      where
+        c1 = cur rc1
+        c2 = cur rc2
+
 data AddressOutputs =
     AddressOutputs
         { aoAddress :: String
         , aoOutput :: OutPoint'
         , aoBlockInfo :: BlockInfo'
-        , aoNominalTxIndex :: Int64
         , aoSpendInfo :: Maybe SpendInfo
         , aoPrevOutpoint :: [(OutPoint', Int32, Int64)]
         , aoValue :: Int64
@@ -565,7 +631,7 @@ data AddressOutputs =
     deriving (Show, Generic, Hashable, Eq, Serialise)
 
 instance ToJSON AddressOutputs where
-    toJSON (AddressOutputs addr out bi nom ios po val) =
+    toJSON (AddressOutputs addr out bi ios po val) =
         object
             [ "address" .= addr
             , "outputTxHash" .= (opTxHash out)
@@ -573,7 +639,6 @@ instance ToJSON AddressOutputs where
             , "txIndex" .= (binfTxIndex bi)
             , "blockHash" .= (binfBlockHash bi)
             , "blockHeight" .= (binfBlockHeight bi)
-            , "nominalTxIndex" .= nom
             , "spendInfo" .= ios
             , "prevOutpoint" .= po
             , "value" .= val
@@ -584,7 +649,6 @@ data ScriptOutputs =
         { scScriptHash :: String
         , scOutput :: OutPoint'
         , scBlockInfo :: BlockInfo'
-        , scNominalTxIndex :: Int64
         , scSpendInfo :: Maybe SpendInfo
         , scPrevOutpoint :: [(OutPoint', Int32, Int64)]
         , scValue :: Int64
@@ -592,7 +656,7 @@ data ScriptOutputs =
     deriving (Show, Generic, Hashable, Eq, Serialise)
 
 instance ToJSON ScriptOutputs where
-    toJSON (ScriptOutputs dh out bi nom ios po val) =
+    toJSON (ScriptOutputs dh out bi ios po val) =
         object
             [ "scriptHash" .= dh
             , "outputTxHash" .= (opTxHash out)
@@ -600,7 +664,6 @@ instance ToJSON ScriptOutputs where
             , "txIndex" .= (binfTxIndex bi)
             , "blockHash" .= (binfBlockHash bi)
             , "blockHeight" .= (binfBlockHeight bi)
-            , "nominalTxIndex" .= nom
             , "spendInfo" .= ios
             , "prevOutpoint" .= po
             , "value" .= val
@@ -778,6 +841,9 @@ genTxOutputData (txId, txIndex, ((hs, ht, ind), _, inps, val, addr), Just ((shs,
 
 txOutputDataToOutput :: TxOutputData -> TxOutput
 txOutputDataToOutput (TxOutputData {..}) = TxOutput txind (T.unpack address) spendInfo value ""
+
+fromResultWithCursor :: ResultWithCursor r c -> r
+fromResultWithCursor = (\(ResultWithCursor res cur) -> res)
 
 reverse2 :: String -> String
 reverse2 (x:y:xs) = reverse2 xs ++ [x, y]

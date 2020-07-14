@@ -63,6 +63,7 @@ import Data.Maybe
 import Data.Pool
 import qualified Data.Serialize as S
 import Data.Serialize
+import qualified Data.Serialize as DS (decode, encode)
 import qualified Data.Set as S
 import Data.String (IsString, fromString)
 import qualified Data.Text as DT
@@ -77,6 +78,7 @@ import qualified Database.Bolt as BT
 import qualified Database.CQL.IO as Q
 import Database.CQL.Protocol as DCP
 import qualified Network.Simple.TCP.TLS as TLS
+import Network.Xoken.Address.Base58
 import Network.Xoken.Block.Common
 import Network.Xoken.Crypto.Hash
 import Network.Xoken.Node.Data
@@ -86,6 +88,7 @@ import Network.Xoken.Node.GraphDB
 import Network.Xoken.Node.P2P.BlockSync
 import Network.Xoken.Node.P2P.Common
 import Network.Xoken.Node.P2P.Types
+import Network.Xoken.Util (bsToInteger, integerToBS)
 import Numeric (showHex)
 import System.Logger as LG
 import System.Logger.Message
@@ -542,7 +545,12 @@ getTxOutputsData (txid, index) = do
             err lg $ LG.msg $ "Error: getTxOutputsData: " ++ show e
             throw KeyValueDBLookupException
 
-xGetOutputsAddress :: (HasXokenNodeEnv env m, MonadIO m) => String -> Maybe Int32 -> Maybe Int64 -> m ([AddressOutputs])
+xGetOutputsAddress ::
+       (HasXokenNodeEnv env m, MonadIO m)
+    => String
+    -> Maybe Int32
+    -> Maybe Int64
+    -> m ([ResultWithCursor AddressOutputs Int64])
 xGetOutputsAddress address pgSize mbNomTxInd = do
     dbe <- getDB
     lg <- getLogger
@@ -554,8 +562,7 @@ xGetOutputsAddress address pgSize mbNomTxInd = do
                 (Just n) -> n
                 Nothing -> maxBound
         sh = convertToScriptHash net address
-        str =
-            "SELECT nominal_tx_index,output FROM xoken.script_hash_outputs WHERE script_hash=? AND nominal_tx_index<?"
+        str = "SELECT nominal_tx_index,output FROM xoken.script_hash_outputs WHERE script_hash=? AND nominal_tx_index<?"
         qstr = str :: Q.QueryString Q.R (DT.Text, Int64) (Int64, (DT.Text, Int32))
         aop = Q.defQueryParams Q.One (DT.pack address, nominalTxIndex)
         shp = Q.defQueryParams Q.One (maybe "" DT.pack sh, nominalTxIndex)
@@ -589,24 +596,96 @@ xGetOutputsAddress address pgSize mbNomTxInd = do
                     res' <- sequence $ (\(_, (txid, index)) -> getTxOutputsData (txid, index)) <$> iop
                     return $
                         ((\((nti, (op_txid, op_txidx)), TxOutputData _ _ _ val bi ips si) ->
-                              AddressOutputs
-                                  (address)
-                                  (OutPoint' (DT.unpack op_txid) (fromIntegral op_txidx))
-                                  bi
-                                  nti
-                                  si
-                                  ((\((oph, opi), ii, (_, ov)) ->
-                                        (OutPoint' (DT.unpack oph) (fromIntegral opi), fromIntegral ii, fromIntegral ov)) <$>
-                                   ips)
-                                  val) <$>)
+                              ResultWithCursor
+                                  (AddressOutputs
+                                       (address)
+                                       (OutPoint' (DT.unpack op_txid) (fromIntegral op_txidx))
+                                       bi
+                                       si
+                                       ((\((oph, opi), ii, (_, ov)) ->
+                                             ( OutPoint' (DT.unpack oph) (fromIntegral opi)
+                                             , fromIntegral ii
+                                             , fromIntegral ov)) <$>
+                                        ips)
+                                       val)
+                                  nti) <$>)
                             (zip iop res')
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetOutputsAddress':" ++ show e
             throw KeyValueDBLookupException
 
+xGetUTXOsAddress ::
+       (HasXokenNodeEnv env m, MonadIO m)
+    => String
+    -> Maybe Int32
+    -> Maybe (DT.Text, Int32)
+    -> m ([ResultWithCursor AddressOutputs (DT.Text, Int32)])
+xGetUTXOsAddress address pgSize fromOutput = do
+    dbe <- getDB
+    lg <- getLogger
+    bp2pEnv <- getBitcoinP2P
+    let conn = keyValDB (dbe)
+        net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
+        sh = convertToScriptHash net address
+        str = "SELECT output FROM xoken.script_hash_unspent_outputs WHERE script_hash=? AND output>?"
+        qstr = str :: Q.QueryString Q.R (DT.Text, Maybe (DT.Text, Int32)) (Identity (DT.Text, Int32))
+        aop = Q.defQueryParams Q.One (DT.pack address, fromOutput)
+        shp = Q.defQueryParams Q.One (maybe "" DT.pack sh, fromOutput)
+    res <-
+        LE.try $
+        LA.concurrently
+            (case sh of
+                 Nothing -> return []
+                 Just s -> Q.runClient conn (Q.query qstr (shp {pageSize = pgSize})))
+            (case address of
+                 ('3':_) -> return []
+                 _ -> Q.runClient conn (Q.query qstr (aop {pageSize = pgSize})))
+    case res of
+        Right (sr, ar) -> do
+            let iops =
+                    fmap head $
+                    L.groupBy (\(Identity x) (Identity y) -> x == y) $
+                    L.sortBy
+                        (\(Identity x) (Identity y) ->
+                             if x < y
+                                 then GT
+                                 else LT)
+                        (sr ++ ar)
+                iop =
+                    case pgSize of
+                        Nothing -> iops
+                        (Just pg) -> L.take (fromIntegral pg) iops
+            if length iop == 0
+                then return []
+                else do
+                    res' <- sequence $ (\(Identity (txid, index)) -> getTxOutputsData (txid, index)) <$> iop
+                    return $
+                        ((\((Identity (op_txid, op_txidx)), TxOutputData _ _ _ val bi ips si) ->
+                              ResultWithCursor
+                                  (AddressOutputs
+                                       (address)
+                                       (OutPoint' (DT.unpack op_txid) (fromIntegral op_txidx))
+                                       bi
+                                       si
+                                       ((\((oph, opi), ii, (_, ov)) ->
+                                             ( OutPoint' (DT.unpack oph) (fromIntegral opi)
+                                             , fromIntegral ii
+                                             , fromIntegral ov)) <$>
+                                        ips)
+                                       val)
+                                  (op_txid, op_txidx)) <$>)
+                            (zip iop res')
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: xGetUTXOsAddress:" ++ show e
+            throw KeyValueDBLookupException
+
 xGetOutputsScriptHash ::
-       (HasXokenNodeEnv env m, MonadIO m) => String -> Maybe Int32 -> Maybe Int64 -> m ([ScriptOutputs])
-xGetOutputsScriptHash address pgSize mbNomTxInd = do
+       (HasXokenNodeEnv env m, MonadIO m)
+    => String
+    -> Maybe Int32
+    -> Maybe Int64
+    -> m ([ResultWithCursor ScriptOutputs Int64])
+xGetOutputsScriptHash scriptHash pgSize mbNomTxInd = do
     dbe <- getDB
     lg <- getLogger
     let conn = keyValDB (dbe)
@@ -614,12 +693,12 @@ xGetOutputsScriptHash address pgSize mbNomTxInd = do
             case mbNomTxInd of
                 (Just n) -> n
                 Nothing -> maxBound
-        aoStr =
+        str =
             "SELECT script_hash,nominal_tx_index,output FROM xoken.script_hash_outputs WHERE script_hash=? AND nominal_tx_index<?"
-        aoQStr = aoStr :: Q.QueryString Q.R (DT.Text, Int64) (DT.Text, Int64, (DT.Text, Int32))
-        aop = Q.defQueryParams Q.One (DT.pack address, nominalTxIndex)
-    aoRes <- LE.try $ Q.runClient conn (Q.query aoQStr (aop {pageSize = pgSize}))
-    case aoRes of
+        qstr = str :: Q.QueryString Q.R (DT.Text, Int64) (DT.Text, Int64, (DT.Text, Int32))
+        par = Q.defQueryParams Q.One (DT.pack scriptHash, nominalTxIndex)
+    res <- LE.try $ Q.runClient conn (Q.query qstr (par {pageSize = pgSize}))
+    case res of
         Right iop -> do
             if length iop == 0
                 then return []
@@ -627,62 +706,79 @@ xGetOutputsScriptHash address pgSize mbNomTxInd = do
                     res <- sequence $ (\(_, _, (txid, index)) -> getTxOutputsData (txid, index)) <$> iop
                     return $
                         ((\((addr, nti, (op_txid, op_txidx)), TxOutputData _ _ _ val bi ips si) ->
-                              ScriptOutputs
-                                  (DT.unpack addr)
-                                  (OutPoint' (DT.unpack op_txid) (fromIntegral op_txidx))
-                                  bi
-                                  nti
-                                  si
-                                  ((\((oph, opi), ii, (_, ov)) ->
-                                        (OutPoint' (DT.unpack oph) (fromIntegral opi), fromIntegral ii, fromIntegral ov)) <$>
-                                   ips)
-                                  val) <$>)
+                              ResultWithCursor
+                                  (ScriptOutputs
+                                       (DT.unpack addr)
+                                       (OutPoint' (DT.unpack op_txid) (fromIntegral op_txidx))
+                                       bi
+                                       si
+                                       ((\((oph, opi), ii, (_, ov)) ->
+                                             ( OutPoint' (DT.unpack oph) (fromIntegral opi)
+                                             , fromIntegral ii
+                                             , fromIntegral ov)) <$>
+                                        ips)
+                                       val)
+                                  nti) <$>)
                             (zip iop res)
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetOutputsScriptHash':" ++ show e
             throw KeyValueDBLookupException
 
-xGetOutputsAddresses ::
-       (HasXokenNodeEnv env m, MonadIO m) => [String] -> Maybe Int32 -> Maybe Int64 -> m ([AddressOutputs])
-xGetOutputsAddresses addresses pgSize mbNomTxInd = do
+xGetUTXOsScriptHash ::
+       (HasXokenNodeEnv env m, MonadIO m)
+    => String
+    -> Maybe Int32
+    -> Maybe (DT.Text, Int32)
+    -> m ([ResultWithCursor ScriptOutputs (DT.Text, Int32)])
+xGetUTXOsScriptHash scriptHash pgSize fromCursor = do
     dbe <- getDB
     lg <- getLogger
-    listOfAddresses <- LA.mapConcurrently (\a -> xGetOutputsAddress a pgSize mbNomTxInd) addresses
-    let pageSize =
-            fromIntegral $
-            if isJust pgSize
-                then fromJust pgSize
-                else maxBound
-        sortAddressOutputs :: AddressOutputs -> AddressOutputs -> Ordering
-        sortAddressOutputs ao1 ao2
-            | ao1n < ao2n = GT
-            | ao1n > ao2n = LT
-            | otherwise = EQ
-          where
-            ao1n = aoNominalTxIndex ao1
-            ao2n = aoNominalTxIndex ao2
-    return $ (L.take pageSize . sortBy sortAddressOutputs . concat $ listOfAddresses)
+    let conn = keyValDB (dbe)
+        str = "SELECT script_hash,output FROM xoken.script_hash_unspent_outputs WHERE script_hash=? AND output>?"
+        qstr = str :: Q.QueryString Q.R (DT.Text, Maybe (DT.Text, Int32)) (DT.Text, (DT.Text, Int32))
+        par = Q.defQueryParams Q.One (DT.pack scriptHash, fromCursor)
+    res <- LE.try $ Q.runClient conn (Q.query qstr (par {pageSize = pgSize}))
+    case res of
+        Right iop -> do
+            if length iop == 0
+                then return []
+                else do
+                    res <- sequence $ (\(_, (txid, index)) -> getTxOutputsData (txid, index)) <$> iop
+                    return $
+                        ((\((addr, (op_txid, op_txidx)), TxOutputData _ _ _ val bi ips si) ->
+                              ResultWithCursor
+                                  (ScriptOutputs
+                                       (DT.unpack addr)
+                                       (OutPoint' (DT.unpack op_txid) (fromIntegral op_txidx))
+                                       bi
+                                       si
+                                       ((\((oph, opi), ii, (_, ov)) ->
+                                             ( OutPoint' (DT.unpack oph) (fromIntegral opi)
+                                             , fromIntegral ii
+                                             , fromIntegral ov)) <$>
+                                        ips)
+                                       val)
+                                  (op_txid, op_txidx)) <$>)
+                            (zip iop res)
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: xGetOutputsScriptHash':" ++ show e
+            throw KeyValueDBLookupException
 
-xGetOutputsScriptHashes ::
-       (HasXokenNodeEnv env m, MonadIO m) => [String] -> Maybe Int32 -> Maybe Int64 -> m ([ScriptOutputs])
-xGetOutputsScriptHashes shs pgSize mbNomTxInd = do
-    dbe <- getDB
-    lg <- getLogger
-    listOfAddresses <- LA.mapConcurrently (\a -> xGetOutputsScriptHash a pgSize mbNomTxInd) shs
-    let pageSize =
+runWithManyInputs ::
+       (HasXokenNodeEnv env m, MonadIO m, Ord c, Eq r, Integral p, Bounded p)
+    => (i -> Maybe p -> Maybe c -> m ([ResultWithCursor r c]))
+    -> [i]
+    -> Maybe p
+    -> Maybe c
+    -> m ([ResultWithCursor r c])
+runWithManyInputs fx inputs mbPgSize cursor = do
+    let pgSize =
             fromIntegral $
-            if isJust pgSize
-                then fromJust pgSize
-                else maxBound
-        sortAddressOutputs :: ScriptOutputs -> ScriptOutputs -> Ordering
-        sortAddressOutputs ao1 ao2
-            | ao1n < ao2n = GT
-            | ao1n > ao2n = LT
-            | otherwise = EQ
-          where
-            ao1n = scNominalTxIndex ao1
-            ao2n = scNominalTxIndex ao2
-    return $ (L.take pageSize . sortBy sortAddressOutputs . concat $ listOfAddresses)
+            case mbPgSize of
+                Just ps -> ps
+                Nothing -> maxBound
+    li <- LA.mapConcurrently (\input -> fx input mbPgSize cursor) inputs
+    return $ (L.take pgSize . sort . concat $ li)
 
 xGetMerkleBranch :: (HasXokenNodeEnv env m, MonadIO m) => String -> m ([MerkleBranchNode'])
 xGetMerkleBranch txid = do
@@ -1278,27 +1374,74 @@ goGetResource msg net roles = do
                 _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "ADDR->[OUTPUT]" -> do
             case methodParams $ rqParams msg of
-                Just (GetOutputsByAddress addr psize nominalTxIndex) -> do
-                    ops <- xGetOutputsAddress addr psize nominalTxIndex
-                    return $ RPCResponse 200 $ Right $ Just $ RespOutputsByAddress ops
+                Just (GetOutputsByAddress addr psize cursor) -> do
+                    ops <- xGetOutputsAddress addr psize (decodeNTI cursor)
+                    return $
+                        RPCResponse 200 $
+                        Right $
+                        Just $ RespOutputsByAddress (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
                 _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "[ADDR]->[OUTPUT]" -> do
             case methodParams $ rqParams msg of
-                Just (GetOutputsByAddresses addrs pgSize nomTxInd) -> do
-                    ops <- xGetOutputsAddresses addrs pgSize nomTxInd
-                    return $ RPCResponse 200 $ Right $ Just $ RespOutputsByAddresses ops
+                Just (GetOutputsByAddresses addrs pgSize cursor) -> do
+                    ops <- runWithManyInputs xGetOutputsAddress addrs pgSize (decodeNTI cursor)
+                    return $
+                        RPCResponse 200 $
+                        Right $
+                        Just $ RespOutputsByAddresses (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
                 _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "SCRIPTHASH->[OUTPUT]" -> do
             case methodParams $ rqParams msg of
-                Just (GetOutputsByScriptHash sh pgSize nomTxInd) -> do
-                    ops <- xGetOutputsScriptHash (sh) pgSize nomTxInd
-                    return $ RPCResponse 200 $ Right $ Just $ RespOutputsByScriptHash ops
+                Just (GetOutputsByScriptHash sh pgSize cursor) -> do
+                    ops <- xGetOutputsScriptHash sh pgSize (decodeNTI cursor)
+                    return $
+                        RPCResponse 200 $
+                        Right $
+                        Just $ RespOutputsByScriptHash (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
                 _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "[SCRIPTHASH]->[OUTPUT]" -> do
             case methodParams $ rqParams msg of
-                Just (GetOutputsByScriptHashes shs pgSize nomTxInd) -> do
-                    ops <- xGetOutputsScriptHashes shs pgSize nomTxInd
-                    return $ RPCResponse 200 $ Right $ Just $ RespOutputsByScriptHashes ops
+                Just (GetOutputsByScriptHashes shs pgSize cursor) -> do
+                    ops <- runWithManyInputs xGetOutputsScriptHash shs pgSize (decodeNTI cursor)
+                    return $
+                        RPCResponse 200 $
+                        Right $
+                        Just $ RespOutputsByScriptHashes (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
+                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
+        "ADDR->[UTXO]" -> do
+            case methodParams $ rqParams msg of
+                Just (GetUTXOsByAddress addr psize cursor) -> do
+                    ops <- xGetUTXOsAddress addr psize (decodeOP cursor)
+                    return $
+                        RPCResponse 200 $
+                        Right $ Just $ RespUTXOsByAddress (encodeOP $ getNextCursor ops) (fromResultWithCursor <$> ops)
+                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
+        "[ADDR]->[UTXO]" -> do
+            case methodParams $ rqParams msg of
+                Just (GetUTXOsByAddresses addrs pgSize cursor) -> do
+                    ops <- runWithManyInputs xGetUTXOsAddress addrs pgSize (decodeOP cursor)
+                    return $
+                        RPCResponse 200 $
+                        Right $
+                        Just $ RespUTXOsByAddresses (encodeOP $ getNextCursor ops) (fromResultWithCursor <$> ops)
+                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
+        "SCRIPTHASH->[UTXO]" -> do
+            case methodParams $ rqParams msg of
+                Just (GetUTXOsByScriptHash sh pgSize cursor) -> do
+                    ops <- xGetUTXOsScriptHash sh pgSize (decodeOP cursor)
+                    return $
+                        RPCResponse 200 $
+                        Right $
+                        Just $ RespUTXOsByScriptHash (encodeOP $ getNextCursor ops) (fromResultWithCursor <$> ops)
+                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
+        "[SCRIPTHASH]->[UTXO]" -> do
+            case methodParams $ rqParams msg of
+                Just (GetUTXOsByScriptHashes shs pgSize cursor) -> do
+                    ops <- runWithManyInputs xGetUTXOsScriptHash shs pgSize (decodeOP cursor)
+                    return $
+                        RPCResponse 200 $
+                        Right $
+                        Just $ RespUTXOsByScriptHashes (encodeOP $ getNextCursor ops) (fromResultWithCursor <$> ops)
                 _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "TXID->[MNODE]" -> do
             case methodParams $ rqParams msg of
@@ -1340,3 +1483,32 @@ convertToScriptHash :: Network -> String -> Maybe String
 convertToScriptHash net s = do
     let addr = stringToAddr net (DT.pack s)
     (DT.unpack . txHashToHex . TxHash . sha256 . addressToScriptBS) <$> addr
+
+getNextCursor :: [ResultWithCursor r c] -> Maybe c
+getNextCursor [] = Nothing
+getNextCursor aos =
+    let nextCursor = cur $ last aos
+     in Just nextCursor
+
+-- encode/decode NominalTxIndex and Output cursor types
+encodeNTI :: Maybe Int64 -> Maybe String
+encodeNTI mbNTI = show <$> mbNTI
+
+decodeNTI :: Maybe String -> Maybe Int64
+decodeNTI Nothing = Nothing
+decodeNTI (Just nti) = readMaybe nti :: Maybe Int64
+
+encodeOP :: Maybe (DT.Text, Int32) -> Maybe String
+encodeOP Nothing = Nothing
+encodeOP (Just op) = Just $ (DT.unpack $ fst op) ++ (show $ snd op)
+
+decodeOP :: Maybe String -> Maybe (DT.Text, Int32)
+decodeOP Nothing = Nothing
+decodeOP (Just c)
+    | length c < 65 = Nothing
+    | otherwise =
+        case readMaybe mbIndex :: Maybe Int32 of
+            Nothing -> Nothing
+            Just index -> Just (DT.pack txid, index)
+  where
+    (txid, mbIndex) = L.splitAt 64 c
