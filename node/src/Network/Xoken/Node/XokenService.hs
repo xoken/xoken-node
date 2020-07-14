@@ -63,6 +63,7 @@ import Data.Maybe
 import Data.Pool
 import qualified Data.Serialize as S
 import Data.Serialize
+import qualified Data.Serialize as DS (decode, encode)
 import qualified Data.Set as S
 import Data.String (IsString, fromString)
 import qualified Data.Text as DT
@@ -613,6 +614,71 @@ xGetOutputsAddress address pgSize mbNomTxInd = do
             err lg $ LG.msg $ "Error: xGetOutputsAddress':" ++ show e
             throw KeyValueDBLookupException
 
+xGetUTXOsAddress ::
+       (HasXokenNodeEnv env m, MonadIO m)
+    => String
+    -> Maybe Int32
+    -> Maybe (DT.Text, Int32)
+    -> m ([ResultWithCursor AddressOutputs (DT.Text, Int32)])
+xGetUTXOsAddress address pgSize fromOutput = do
+    dbe <- getDB
+    lg <- getLogger
+    bp2pEnv <- getBitcoinP2P
+    let conn = keyValDB (dbe)
+        net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
+        sh = convertToScriptHash net address
+        str = "SELECT output FROM xoken.script_hash_unspent_outputs WHERE script_hash=? AND output>?"
+        qstr = str :: Q.QueryString Q.R (DT.Text, Maybe (DT.Text, Int32)) (Identity (DT.Text, Int32))
+        aop = Q.defQueryParams Q.One (DT.pack address, fromOutput)
+        shp = Q.defQueryParams Q.One (maybe "" DT.pack sh, fromOutput)
+    res <-
+        LE.try $
+        LA.concurrently
+            (case sh of
+                 Nothing -> return []
+                 Just s -> Q.runClient conn (Q.query qstr (shp {pageSize = pgSize})))
+            (case address of
+                 ('3':_) -> return []
+                 _ -> Q.runClient conn (Q.query qstr (aop {pageSize = pgSize})))
+    case res of
+        Right (sr, ar) -> do
+            let iops =
+                    fmap head $
+                    L.groupBy (\(Identity x) (Identity y) -> x == y) $
+                    L.sortBy
+                        (\(Identity x) (Identity y) ->
+                             if x < y
+                                 then GT
+                                 else LT)
+                        (sr ++ ar)
+                iop =
+                    case pgSize of
+                        Nothing -> iops
+                        (Just pg) -> L.take (fromIntegral pg) iops
+            if length iop == 0
+                then return []
+                else do
+                    res' <- sequence $ (\(Identity (txid, index)) -> getTxOutputsData (txid, index)) <$> iop
+                    return $
+                        ((\((Identity (op_txid, op_txidx)), TxOutputData _ _ _ val bi ips si) ->
+                              ResultWithCursor
+                                  (AddressOutputs
+                                       (address)
+                                       (OutPoint' (DT.unpack op_txid) (fromIntegral op_txidx))
+                                       bi
+                                       si
+                                       ((\((oph, opi), ii, (_, ov)) ->
+                                             ( OutPoint' (DT.unpack oph) (fromIntegral opi)
+                                             , fromIntegral ii
+                                             , fromIntegral ov)) <$>
+                                        ips)
+                                       val)
+                                  (op_txid, op_txidx)) <$>)
+                            (zip iop res')
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: xGetUTXOsAddress:" ++ show e
+            throw KeyValueDBLookupException
+
 xGetOutputsScriptHash ::
        (HasXokenNodeEnv env m, MonadIO m)
     => String
@@ -653,6 +719,46 @@ xGetOutputsScriptHash scriptHash pgSize mbNomTxInd = do
                                         ips)
                                        val)
                                   nti) <$>)
+                            (zip iop res)
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: xGetOutputsScriptHash':" ++ show e
+            throw KeyValueDBLookupException
+
+xGetUTXOsScriptHash ::
+       (HasXokenNodeEnv env m, MonadIO m)
+    => String
+    -> Maybe Int32
+    -> Maybe (DT.Text, Int32)
+    -> m ([ResultWithCursor ScriptOutputs (DT.Text, Int32)])
+xGetUTXOsScriptHash scriptHash pgSize fromCursor = do
+    dbe <- getDB
+    lg <- getLogger
+    let conn = keyValDB (dbe)
+        str = "SELECT script_hash,output FROM xoken.script_hash_unspent_outputs WHERE script_hash=? AND output>?"
+        qstr = str :: Q.QueryString Q.R (DT.Text, Maybe (DT.Text, Int32)) (DT.Text, (DT.Text, Int32))
+        par = Q.defQueryParams Q.One (DT.pack scriptHash, fromCursor)
+    res <- LE.try $ Q.runClient conn (Q.query qstr (par {pageSize = pgSize}))
+    case res of
+        Right iop -> do
+            if length iop == 0
+                then return []
+                else do
+                    res <- sequence $ (\(_, (txid, index)) -> getTxOutputsData (txid, index)) <$> iop
+                    return $
+                        ((\((addr, (op_txid, op_txidx)), TxOutputData _ _ _ val bi ips si) ->
+                              ResultWithCursor
+                                  (ScriptOutputs
+                                       (DT.unpack addr)
+                                       (OutPoint' (DT.unpack op_txid) (fromIntegral op_txidx))
+                                       bi
+                                       si
+                                       ((\((oph, opi), ii, (_, ov)) ->
+                                             ( OutPoint' (DT.unpack oph) (fromIntegral opi)
+                                             , fromIntegral ii
+                                             , fromIntegral ov)) <$>
+                                        ips)
+                                       val)
+                                  (op_txid, op_txidx)) <$>)
                             (zip iop res)
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetOutputsScriptHash':" ++ show e
@@ -1349,6 +1455,7 @@ getNextCursor aos =
     let nextCursor = cur $ last aos
      in Just nextCursor
 
+-- Base58 encode/decode NominalTxIndex and Output cursor types
 decodeNTI :: Maybe Base58 -> Maybe Int64
 decodeNTI Nothing = Nothing
 decodeNTI (Just c) =
@@ -1359,3 +1466,19 @@ decodeNTI (Just c) =
 encodeNTI :: Maybe Int64 -> Maybe Base58
 encodeNTI Nothing = Nothing
 encodeNTI (Just nti) = Just $ encodeBase58 $ integerToBS $ fromIntegral nti
+
+encodeOutput :: Maybe (DT.Text, Int32) -> Maybe Base58
+encodeOutput Nothing = Nothing
+encodeOutput (Just op) = Just $ encodeBase58 serOp
+  where
+    serOp = DS.encode $ (\(txid, index) -> (DT.unpack txid, index)) op
+
+decodeOutput :: Maybe Base58 -> Maybe (DT.Text, Int32)
+decodeOutput Nothing = Nothing
+decodeOutput (Just c) =
+    case decodeBase58 c of
+        Just so ->
+            case DS.decode so of
+                Left _ -> Nothing
+                Right op -> Just $ (\(txid, index) -> (DT.pack txid, index)) op
+        Nothing -> Nothing

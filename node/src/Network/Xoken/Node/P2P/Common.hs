@@ -49,6 +49,7 @@ import qualified Database.CQL.IO as Q
 import Network.Socket
 import qualified Network.Socket.ByteString as SB (recv)
 import qualified Network.Socket.ByteString.Lazy as LB (recv, sendAll)
+import Network.Xoken.Address.Base58 as B58
 import Network.Xoken.Block.Common
 import Network.Xoken.Block.Headers
 import Network.Xoken.Constants

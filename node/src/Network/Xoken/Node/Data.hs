@@ -45,8 +45,8 @@ import Data.Word
 import qualified Database.CQL.IO as Q
 import Database.CQL.Protocol as DCP
 import GHC.Generics
-import Network.Xoken.Address.Base58
 import Network.Socket (SockAddr(SockAddrUnix))
+import Network.Xoken.Address.Base58
 import Paths_xoken_node as P
 import Prelude as P
 import Text.Regex.TDFA
@@ -207,6 +207,16 @@ data RPCReqParams'
           , gasScriptHashPageSize :: Maybe Int32
           , gasScriptHashCursor :: Maybe Base58
           }
+    | GetUTXOsByAddress
+          { guaAddrOutputs :: String
+          , guaPageSize :: Maybe Int32
+          , guaCursor :: Maybe Base58
+          }
+    | GetUTXOsByScriptHash
+          { guScriptHashOutputs :: String
+          , guScriptHashPageSize :: Maybe Int32
+          , guScriptHashCursor :: Maybe Base58
+          }
     | GetMerkleBranchByTxID
           { gmbMerkleBranch :: String
           }
@@ -245,6 +255,9 @@ instance FromJSON RPCReqParams' where
          o .:? "gaScriptHashCursor") <|>
         (GetOutputsByScriptHashes <$> o .: "gasScriptHashOutputs" <*> o .:? "gasScriptHashPageSize" <*>
          o .:? "gasScriptHashCursor") <|>
+        (GetUTXOsByAddress <$> o .: "guaAddrOutputs" <*> o .:? "guaPageSize" <*> o .:? "guaCursor") <|>
+        (GetUTXOsByScriptHash <$> o .: "guScriptHashOutputs" <*> o .:? "guScriptHashPageSize" <*>
+         o .:? "guScriptHashCursor") <|>
         (GetMerkleBranchByTxID <$> o .: "gmbMerkleBranch") <|>
         (GetAllegoryNameBranch <$> o .: "gaName" <*> o .: "gaIsProducer") <|>
         (RelayTx . BL.toStrict . GZ.decompress . B64L.decodeLenient . BL.fromStrict . T.encodeUtf8 <$> o .: "rTx") <|>
