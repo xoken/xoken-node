@@ -161,7 +161,7 @@ data RPCReqParams'
     | GetBlockByHeight
           { gbHeight :: Int
           }
-    | GetBlocksByHeight
+    | GetBlocksByHeights
           { gbHeights :: [Int]
           }
     | GetBlockByHash
@@ -251,36 +251,32 @@ data RPCReqParams'
 
 instance FromJSON RPCReqParams' where
     parseJSON (Object o) =
-        (GetBlockByHeight <$> o .: "gbHeight") <|> (GetBlocksByHeight <$> o .: "gbHeights") <|>
-        (GetBlockByHash <$> o .: "gbBlockHash") <|>
-        (GetBlocksByHashes <$> o .: "gbBlockHashes") <|>
-        (GetTxIDsByBlockHash <$> o .: "gtTxBlockHash" <*> o .:? "gtPageSize" .!= 100 <*> o .:? "gtPageNumber" .!= 1) <|>
-        (GetTransactionByTxID <$> o .: "gtTxHash") <|>
-        (GetTransactionsByTxIDs <$> o .: "gtTxHashes") <|>
-        (GetRawTransactionByTxID <$> o .: "gtRTxHash") <|>
-        (GetRawTransactionsByTxIDs <$> o .: "gtRTxHashes") <|>
-        (GetOutputsByAddress <$> o .: "gaAddrOutputs" <*> o .:? "gaPageSize" <*> o .:? "gaCursor") <|>
-        (GetOutputsByAddresses <$> o .: "gasAddrOutputs" <*> o .:? "gasPageSize" <*> o .:? "gasCursor") <|>
-        (GetOutputsByScriptHash <$> o .: "gaScriptHashOutputs" <*> o .:? "gaScriptHashPageSize" <*>
-         o .:? "gaScriptHashCursor") <|>
-        (GetOutputsByScriptHashes <$> o .: "gasScriptHashOutputs" <*> o .:? "gasScriptHashPageSize" <*>
-         o .:? "gasScriptHashCursor") <|>
-        (GetUTXOsByAddress <$> o .: "guaAddrOutputs" <*> o .:? "guaPageSize" <*> o .:? "guaCursor") <|>
-        (GetUTXOsByAddresses <$> o .: "guasAddrOutputs" <*> o .:? "guasPageSize" <*> o .:? "guasCursor") <|>
-        (GetUTXOsByScriptHash <$> o .: "guScriptHashOutputs" <*> o .:? "guScriptHashPageSize" <*>
-         o .:? "guScriptHashCursor") <|>
-        (GetUTXOsByScriptHashes <$> o .: "gusScriptHashOutputs" <*> o .:? "gusScriptHashPageSize" <*>
-         o .:? "gusScriptHashCursor") <|>
-        (GetMerkleBranchByTxID <$> o .: "gmbMerkleBranch") <|>
-        (GetAllegoryNameBranch <$> o .: "gaName" <*> o .: "gaIsProducer") <|>
+        (GetBlockByHeight <$> o .: "height") <|> (GetBlocksByHeights <$> o .: "heights") <|>
+        (GetBlockByHash <$> o .: "hash") <|>
+        (GetBlocksByHashes <$> o .: "hashes") <|>
+        (GetTxIDsByBlockHash <$> o .: "hash" <*> o .:? "pageSize" .!= 100 <*> o .:? "pageNumber" .!= 1) <|>
+        (GetTransactionByTxID <$> o .: "txid") <|>
+        (GetTransactionsByTxIDs <$> o .: "txids") <|>
+        (GetRawTransactionByTxID <$> o .: "txid") <|>
+        (GetRawTransactionsByTxIDs <$> o .: "txids") <|>
+        (GetOutputsByAddress <$> o .: "address" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
+        (GetOutputsByAddresses <$> o .: "addresses" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
+        (GetOutputsByScriptHash <$> o .: "scriptHash" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
+        (GetOutputsByScriptHashes <$> o .: "scriptHashes" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
+        (GetUTXOsByAddress <$> o .: "address" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
+        (GetUTXOsByAddresses <$> o .: "addresses" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
+        (GetUTXOsByScriptHash <$> o .: "scriptHash" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
+        (GetUTXOsByScriptHashes <$> o .: "scriptHashes" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
+        (GetMerkleBranchByTxID <$> o .: "txid") <|>
+        (GetAllegoryNameBranch <$> o .: "name" <*> o .: "isProducer") <|>
         (RelayTx . BL.toStrict . GZ.decompress . B64L.decodeLenient . BL.fromStrict . T.encodeUtf8 <$> o .: "rTx") <|>
-        (GetPartiallySignedAllegoryTx <$> o .: "gpsaPaymentInputs" <*> o .: "gpsaName" <*> o .: "gpsaOutputOwner" <*>
-         o .: "gpsaOutputChange") <|>
-        (AddUser <$> o .: "username" <*> o .:? "api_expiry_time" <*> o .:? "api_quota" <*> o .: "first_name" <*>
-         o .: "last_name" <*>
+        (GetPartiallySignedAllegoryTx <$> o .: "paymentInputs" <*> o .: "name" <*> o .: "outputOwner" <*>
+         o .: "outputChange") <|>
+        (AddUser <$> o .: "username" <*> o .:? "apiExpiryTime" <*> o .:? "apiQuota" <*> o .: "firstName" <*>
+         o .: "lastName" <*>
          o .: "email" <*>
          o .:? "roles") <|>
-        (GetTxOutputSpendStatus <$> o .: "gtssHash" <*> o .: "gtssIndex")
+        (GetTxOutputSpendStatus <$> o .: "txid" <*> o .: "index")
 
 data RPCResponseBody
     = AuthenticateResp

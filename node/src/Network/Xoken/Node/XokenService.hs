@@ -1319,7 +1319,7 @@ goGetResource msg net roles = do
                 _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
         "[HEIGHT]->[BLOCK]" -> do
             case methodParams $ rqParams msg of
-                Just (GetBlocksByHeight hts) -> do
+                Just (GetBlocksByHeights hts) -> do
                     blks <- xGetBlocksHeights $ Data.List.map (fromIntegral) hts
                     return $ RPCResponse 200 $ Right $ Just $ RespBlocksByHashes blks
                 _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
