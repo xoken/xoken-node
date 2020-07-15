@@ -269,7 +269,7 @@ instance FromJSON RPCReqParams' where
         (GetUTXOsByScriptHashes <$> o .: "scriptHashes" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
         (GetMerkleBranchByTxID <$> o .: "txid") <|>
         (GetAllegoryNameBranch <$> o .: "name" <*> o .: "isProducer") <|>
-        (RelayTx . BL.toStrict . GZ.decompress . B64L.decodeLenient . BL.fromStrict . T.encodeUtf8 <$> o .: "rTx") <|>
+        (RelayTx . BL.toStrict . GZ.decompress . B64L.decodeLenient . BL.fromStrict . T.encodeUtf8 <$> o .: "rawTx") <|>
         (GetPartiallySignedAllegoryTx <$> o .: "paymentInputs" <*> o .: "name" <*> o .: "outputOwner" <*>
          o .: "outputChange") <|>
         (AddUser <$> o .: "username" <*> o .:? "apiExpiryTime" <*> o .:? "apiQuota" <*> o .: "firstName" <*>
@@ -381,13 +381,13 @@ instance ToJSON RPCResponseBody where
     toJSON (RespOutputsByAddresses nc ma) = object ["nextCursor" .= nc, "outputs" .= ma]
     toJSON (RespOutputsByScriptHash nc sa) = object ["nextCursor" .= nc, "outputs" .= sa]
     toJSON (RespOutputsByScriptHashes nc ma) = object ["nextCursor" .= nc, "outputs" .= ma]
-    toJSON (RespUTXOsByAddress nc sa) = object ["nextCursor" .= nc, "UTXOs" .= sa]
-    toJSON (RespUTXOsByAddresses nc ma) = object ["nextCursor" .= nc, "UTXOs" .= ma]
-    toJSON (RespUTXOsByScriptHash nc sa) = object ["nextCursor" .= nc, "UTXOs" .= sa]
-    toJSON (RespUTXOsByScriptHashes nc ma) = object ["nextCursor" .= nc, "UTXOs" .= ma]
+    toJSON (RespUTXOsByAddress nc sa) = object ["nextCursor" .= nc, "utxos" .= sa]
+    toJSON (RespUTXOsByAddresses nc ma) = object ["nextCursor" .= nc, "utxos" .= ma]
+    toJSON (RespUTXOsByScriptHash nc sa) = object ["nextCursor" .= nc, "utxos" .= sa]
+    toJSON (RespUTXOsByScriptHashes nc ma) = object ["nextCursor" .= nc, "utxos" .= ma]
     toJSON (RespMerkleBranchByTxID mb) = object ["merkleBranch" .= mb]
     toJSON (RespAllegoryNameBranch nb) = object ["nameBranch" .= nb]
-    toJSON (RespRelayTx rrTx) = object ["rrTx" .= rrTx]
+    toJSON (RespRelayTx rrTx) = object ["txBroadcast" .= rrTx]
     toJSON (RespPartiallySignedAllegoryTx ps) =
         object ["psaTx" .= (T.decodeUtf8 . BL.toStrict . B64L.encode . GZ.compress . BL.fromStrict $ ps)]
     toJSON (RespTxOutputSpendStatus ss) = object ["spendStatus" .= ss]
