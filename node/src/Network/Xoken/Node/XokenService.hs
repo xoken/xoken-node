@@ -770,15 +770,16 @@ runWithManyInputs ::
     -> [i]
     -> Maybe p
     -> Maybe c
+    -> (ResultWithCursor r c -> ResultWithCursor r c -> Ordering)
     -> m ([ResultWithCursor r c])
-runWithManyInputs fx inputs mbPgSize cursor = do
+runWithManyInputs fx inputs mbPgSize cursor ordering = do
     let pgSize =
             fromIntegral $
             case mbPgSize of
                 Just ps -> ps
                 Nothing -> maxBound
     li <- LA.mapConcurrently (\input -> fx input mbPgSize cursor) inputs
-    return $ (L.take pgSize . sort . concat $ li)
+    return $ (L.take pgSize . sortBy ordering . concat $ li)
 
 xGetMerkleBranch :: (HasXokenNodeEnv env m, MonadIO m) => String -> m ([MerkleBranchNode'])
 xGetMerkleBranch txid = do
@@ -1384,7 +1385,7 @@ goGetResource msg net roles = do
         "[ADDR]->[OUTPUT]" -> do
             case methodParams $ rqParams msg of
                 Just (GetOutputsByAddresses addrs pgSize cursor) -> do
-                    ops <- runWithManyInputs xGetOutputsAddress addrs pgSize (decodeNTI cursor)
+                    ops <- runWithManyInputs xGetOutputsAddress addrs pgSize (decodeNTI cursor) compareNTI
                     return $
                         RPCResponse 200 $
                         Right $
@@ -1402,7 +1403,7 @@ goGetResource msg net roles = do
         "[SCRIPTHASH]->[OUTPUT]" -> do
             case methodParams $ rqParams msg of
                 Just (GetOutputsByScriptHashes shs pgSize cursor) -> do
-                    ops <- runWithManyInputs xGetOutputsScriptHash shs pgSize (decodeNTI cursor)
+                    ops <- runWithManyInputs xGetOutputsScriptHash shs pgSize (decodeNTI cursor) compareNTI
                     return $
                         RPCResponse 200 $
                         Right $
@@ -1419,7 +1420,7 @@ goGetResource msg net roles = do
         "[ADDR]->[UTXO]" -> do
             case methodParams $ rqParams msg of
                 Just (GetUTXOsByAddresses addrs pgSize cursor) -> do
-                    ops <- runWithManyInputs xGetUTXOsAddress addrs pgSize (decodeOP cursor)
+                    ops <- runWithManyInputs xGetUTXOsAddress addrs pgSize (decodeOP cursor) compare
                     return $
                         RPCResponse 200 $
                         Right $
@@ -1437,7 +1438,7 @@ goGetResource msg net roles = do
         "[SCRIPTHASH]->[UTXO]" -> do
             case methodParams $ rqParams msg of
                 Just (GetUTXOsByScriptHashes shs pgSize cursor) -> do
-                    ops <- runWithManyInputs xGetUTXOsScriptHash shs pgSize (decodeOP cursor)
+                    ops <- runWithManyInputs xGetUTXOsScriptHash shs pgSize (decodeOP cursor) compare
                     return $
                         RPCResponse 200 $
                         Right $
@@ -1512,3 +1513,13 @@ decodeOP (Just c)
             Just index -> Just (DT.pack txid, index)
   where
     (txid, mbIndex) = L.splitAt 64 c
+
+-- descending ordering instance for NTI functions
+compareNTI :: (Eq r, Ord c) => ResultWithCursor r c -> ResultWithCursor r c -> Ordering
+compareNTI rc1 rc2
+    | c1 < c2 = GT
+    | c1 > c2 = LT
+    | otherwise = EQ
+  where
+    c1 = cur rc1
+    c2 = cur rc2

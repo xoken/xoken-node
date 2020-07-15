@@ -611,10 +611,7 @@ data ResultWithCursor r c =
     deriving (Show, Generic, Hashable, Eq, Serialise)
 
 instance (Ord c, Eq r) => Ord (ResultWithCursor r c) where
-    compare rc1 rc2
-        | c1 < c2 = GT
-        | c1 > c2 = LT
-        | otherwise = EQ
+    compare rc1 rc2 = compare c1 c2
       where
         c1 = cur rc1
         c2 = cur rc2
