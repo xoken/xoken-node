@@ -505,8 +505,8 @@ getTxOutputsFromTxId txid = do
                                          genTxOutputData
                                              ( txid
                                              , idx1
-                                             , (bif1, recv1, oth1, val1, addr1)
-                                             , Just (bif2, recv2, oth2, val2, addr2))) <$>
+                                             , (bif2, recv2, oth2, val2, addr2)
+                                             , Just (bif1, recv1, oth1, val1, addr1))) <$>
                             txg
                     return $ txOutputDataToOutput <$> txOutData
         Left (e :: SomeException) -> do
@@ -540,7 +540,7 @@ getTxOutputsData (txid, index) = do
                     return $
                         case txg of
                             [x] -> genTxOutputData (txid, index, x, Nothing)
-                            [x, y] -> genTxOutputData (txid, index, x, Just y)
+                            [x, y] -> genTxOutputData (txid, index, y, Just x)
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: getTxOutputsData: " ++ show e
             throw KeyValueDBLookupException
