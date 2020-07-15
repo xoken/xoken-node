@@ -620,15 +620,19 @@ xGetUTXOsAddress ::
     -> Maybe Int32
     -> Maybe (DT.Text, Int32)
     -> m ([ResultWithCursor AddressOutputs (DT.Text, Int32)])
-xGetUTXOsAddress address pgSize fromOutput = do
+xGetUTXOsAddress address pgSize mbFromOutput = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
     let conn = keyValDB (dbe)
         net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
         sh = convertToScriptHash net address
-        str = "SELECT output FROM xoken.script_hash_unspent_outputs WHERE script_hash=? AND output>?"
-        qstr = str :: Q.QueryString Q.R (DT.Text, Maybe (DT.Text, Int32)) (Identity (DT.Text, Int32))
+        fromOutput =
+            case mbFromOutput of
+                (Just n) -> n
+                Nothing -> maxBoundOutput
+        str = "SELECT output FROM xoken.script_hash_unspent_outputs WHERE script_hash=? AND output<?"
+        qstr = str :: Q.QueryString Q.R (DT.Text, (DT.Text, Int32)) (Identity (DT.Text, Int32))
         aop = Q.defQueryParams Q.One (DT.pack address, fromOutput)
         shp = Q.defQueryParams Q.One (maybe "" DT.pack sh, fromOutput)
     res <-
@@ -730,13 +734,17 @@ xGetUTXOsScriptHash ::
     -> Maybe Int32
     -> Maybe (DT.Text, Int32)
     -> m ([ResultWithCursor ScriptOutputs (DT.Text, Int32)])
-xGetUTXOsScriptHash scriptHash pgSize fromCursor = do
+xGetUTXOsScriptHash scriptHash pgSize mbFromOutput = do
     dbe <- getDB
     lg <- getLogger
     let conn = keyValDB (dbe)
-        str = "SELECT script_hash,output FROM xoken.script_hash_unspent_outputs WHERE script_hash=? AND output>?"
-        qstr = str :: Q.QueryString Q.R (DT.Text, Maybe (DT.Text, Int32)) (DT.Text, (DT.Text, Int32))
-        par = Q.defQueryParams Q.One (DT.pack scriptHash, fromCursor)
+        fromOutput =
+            case mbFromOutput of
+                (Just n) -> n
+                Nothing -> maxBoundOutput
+        str = "SELECT script_hash,output FROM xoken.script_hash_unspent_outputs WHERE script_hash=? AND output<?"
+        qstr = str :: Q.QueryString Q.R (DT.Text, (DT.Text, Int32)) (DT.Text, (DT.Text, Int32))
+        par = Q.defQueryParams Q.One (DT.pack scriptHash, fromOutput)
     res <- LE.try $ Q.runClient conn (Q.query qstr (par {pageSize = pgSize}))
     case res of
         Right iop -> do
@@ -761,7 +769,7 @@ xGetUTXOsScriptHash scriptHash pgSize fromCursor = do
                                   (op_txid, op_txidx)) <$>)
                             (zip iop res)
         Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: xGetOutputsScriptHash':" ++ show e
+            err lg $ LG.msg $ "Error: xGetUTXOsScriptHash':" ++ show e
             throw KeyValueDBLookupException
 
 runWithManyInputs ::
