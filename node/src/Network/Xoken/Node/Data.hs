@@ -610,8 +610,10 @@ data ResultWithCursor r c =
         }
     deriving (Show, Generic, Hashable, Eq, Serialise)
 
+-- ordering instance for ResultWithCursor
+-- imp.: note the FLIP
 instance (Ord c, Eq r) => Ord (ResultWithCursor r c) where
-    compare rc1 rc2 = compare c1 c2
+    compare rc1 rc2 = flip compare c1 c2
       where
         c1 = cur rc1
         c2 = cur rc2
@@ -845,3 +847,6 @@ fromResultWithCursor = (\(ResultWithCursor res cur) -> res)
 reverse2 :: String -> String
 reverse2 (x:y:xs) = reverse2 xs ++ [x, y]
 reverse2 x = x
+
+maxBoundOutput :: (T.Text, Int32)
+maxBoundOutput = (T.pack "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", maxBound)

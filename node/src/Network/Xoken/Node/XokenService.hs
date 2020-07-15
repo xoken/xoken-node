@@ -620,15 +620,19 @@ xGetUTXOsAddress ::
     -> Maybe Int32
     -> Maybe (DT.Text, Int32)
     -> m ([ResultWithCursor AddressOutputs (DT.Text, Int32)])
-xGetUTXOsAddress address pgSize fromOutput = do
+xGetUTXOsAddress address pgSize mbFromOutput = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
     let conn = keyValDB (dbe)
         net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
         sh = convertToScriptHash net address
-        str = "SELECT output FROM xoken.script_hash_unspent_outputs WHERE script_hash=? AND output>?"
-        qstr = str :: Q.QueryString Q.R (DT.Text, Maybe (DT.Text, Int32)) (Identity (DT.Text, Int32))
+        fromOutput =
+            case mbFromOutput of
+                (Just n) -> n
+                Nothing -> maxBoundOutput
+        str = "SELECT output FROM xoken.script_hash_unspent_outputs WHERE script_hash=? AND output<?"
+        qstr = str :: Q.QueryString Q.R (DT.Text, (DT.Text, Int32)) (Identity (DT.Text, Int32))
         aop = Q.defQueryParams Q.One (DT.pack address, fromOutput)
         shp = Q.defQueryParams Q.One (maybe "" DT.pack sh, fromOutput)
     res <-
@@ -730,13 +734,17 @@ xGetUTXOsScriptHash ::
     -> Maybe Int32
     -> Maybe (DT.Text, Int32)
     -> m ([ResultWithCursor ScriptOutputs (DT.Text, Int32)])
-xGetUTXOsScriptHash scriptHash pgSize fromCursor = do
+xGetUTXOsScriptHash scriptHash pgSize mbFromOutput = do
     dbe <- getDB
     lg <- getLogger
     let conn = keyValDB (dbe)
-        str = "SELECT script_hash,output FROM xoken.script_hash_unspent_outputs WHERE script_hash=? AND output>?"
-        qstr = str :: Q.QueryString Q.R (DT.Text, Maybe (DT.Text, Int32)) (DT.Text, (DT.Text, Int32))
-        par = Q.defQueryParams Q.One (DT.pack scriptHash, fromCursor)
+        fromOutput =
+            case mbFromOutput of
+                (Just n) -> n
+                Nothing -> maxBoundOutput
+        str = "SELECT script_hash,output FROM xoken.script_hash_unspent_outputs WHERE script_hash=? AND output<?"
+        qstr = str :: Q.QueryString Q.R (DT.Text, (DT.Text, Int32)) (DT.Text, (DT.Text, Int32))
+        par = Q.defQueryParams Q.One (DT.pack scriptHash, fromOutput)
     res <- LE.try $ Q.runClient conn (Q.query qstr (par {pageSize = pgSize}))
     case res of
         Right iop -> do
@@ -761,7 +769,7 @@ xGetUTXOsScriptHash scriptHash pgSize fromCursor = do
                                   (op_txid, op_txidx)) <$>)
                             (zip iop res)
         Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: xGetOutputsScriptHash':" ++ show e
+            err lg $ LG.msg $ "Error: xGetUTXOsScriptHash':" ++ show e
             throw KeyValueDBLookupException
 
 runWithManyInputs ::
@@ -770,16 +778,15 @@ runWithManyInputs ::
     -> [i]
     -> Maybe p
     -> Maybe c
-    -> (ResultWithCursor r c -> ResultWithCursor r c -> Ordering)
     -> m ([ResultWithCursor r c])
-runWithManyInputs fx inputs mbPgSize cursor ordering = do
+runWithManyInputs fx inputs mbPgSize cursor = do
     let pgSize =
             fromIntegral $
             case mbPgSize of
                 Just ps -> ps
                 Nothing -> maxBound
     li <- LA.mapConcurrently (\input -> fx input mbPgSize cursor) inputs
-    return $ (L.take pgSize . sortBy ordering . concat $ li)
+    return $ (L.take pgSize . sort . concat $ li)
 
 xGetMerkleBranch :: (HasXokenNodeEnv env m, MonadIO m) => String -> m ([MerkleBranchNode'])
 xGetMerkleBranch txid = do
@@ -1385,7 +1392,7 @@ goGetResource msg net roles = do
         "[ADDR]->[OUTPUT]" -> do
             case methodParams $ rqParams msg of
                 Just (GetOutputsByAddresses addrs pgSize cursor) -> do
-                    ops <- runWithManyInputs xGetOutputsAddress addrs pgSize (decodeNTI cursor) compareNTI
+                    ops <- runWithManyInputs xGetOutputsAddress addrs pgSize (decodeNTI cursor)
                     return $
                         RPCResponse 200 $
                         Right $
@@ -1403,7 +1410,7 @@ goGetResource msg net roles = do
         "[SCRIPTHASH]->[OUTPUT]" -> do
             case methodParams $ rqParams msg of
                 Just (GetOutputsByScriptHashes shs pgSize cursor) -> do
-                    ops <- runWithManyInputs xGetOutputsScriptHash shs pgSize (decodeNTI cursor) compareNTI
+                    ops <- runWithManyInputs xGetOutputsScriptHash shs pgSize (decodeNTI cursor)
                     return $
                         RPCResponse 200 $
                         Right $
@@ -1420,7 +1427,7 @@ goGetResource msg net roles = do
         "[ADDR]->[UTXO]" -> do
             case methodParams $ rqParams msg of
                 Just (GetUTXOsByAddresses addrs pgSize cursor) -> do
-                    ops <- runWithManyInputs xGetUTXOsAddress addrs pgSize (decodeOP cursor) compare
+                    ops <- runWithManyInputs xGetUTXOsAddress addrs pgSize (decodeOP cursor)
                     return $
                         RPCResponse 200 $
                         Right $
@@ -1438,7 +1445,7 @@ goGetResource msg net roles = do
         "[SCRIPTHASH]->[UTXO]" -> do
             case methodParams $ rqParams msg of
                 Just (GetUTXOsByScriptHashes shs pgSize cursor) -> do
-                    ops <- runWithManyInputs xGetUTXOsScriptHash shs pgSize (decodeOP cursor) compare
+                    ops <- runWithManyInputs xGetUTXOsScriptHash shs pgSize (decodeOP cursor)
                     return $
                         RPCResponse 200 $
                         Right $
@@ -1513,13 +1520,3 @@ decodeOP (Just c)
             Just index -> Just (DT.pack txid, index)
   where
     (txid, mbIndex) = L.splitAt 64 c
-
--- descending ordering instance for NTI functions
-compareNTI :: (Eq r, Ord c) => ResultWithCursor r c -> ResultWithCursor r c -> Ordering
-compareNTI rc1 rc2
-    | c1 < c2 = GT
-    | c1 > c2 = LT
-    | otherwise = EQ
-  where
-    c1 = cur rc1
-    c2 = cur rc2

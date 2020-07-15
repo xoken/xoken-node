@@ -258,7 +258,7 @@ getOutputsByAddrs = do
             bp2pEnv <- getBitcoinP2P
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
             lg <- getLogger
-            res <- LE.try $ runWithManyInputs xGetOutputsAddress addrs pgSize (decodeNTI cursor) compareNTI
+            res <- LE.try $ runWithManyInputs xGetOutputsAddress addrs pgSize (decodeNTI cursor)
             case res of
                 Left (e :: SomeException) -> do
                     err lg $ LG.msg $ "Error: xGetOutputsAddresses: " ++ show e
@@ -299,7 +299,7 @@ getOutputsByScriptHashes = do
             bp2pEnv <- getBitcoinP2P
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
             lg <- getLogger
-            res <- LE.try $ runWithManyInputs xGetOutputsScriptHash sh pgSize (decodeNTI cursor) compareNTI
+            res <- LE.try $ runWithManyInputs xGetOutputsScriptHash sh pgSize (decodeNTI cursor)
             case res of
                 Left (e :: SomeException) -> do
                     modifyResponse $ setResponseStatus 500 "Internal Server Error"
@@ -340,7 +340,7 @@ getUTXOsByAddrs = do
             bp2pEnv <- getBitcoinP2P
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
             lg <- getLogger
-            res <- LE.try $ runWithManyInputs xGetUTXOsAddress addrs pgSize (decodeOP cursor) compare
+            res <- LE.try $ runWithManyInputs xGetUTXOsAddress addrs pgSize (decodeOP cursor)
             case res of
                 Left (e :: SomeException) -> do
                     err lg $ LG.msg $ "Error: xGetUTXOsAddress: " ++ show e
@@ -381,7 +381,7 @@ getUTXOsByScriptHashes = do
             bp2pEnv <- getBitcoinP2P
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
             lg <- getLogger
-            res <- LE.try $ runWithManyInputs xGetUTXOsScriptHash sh pgSize (decodeOP cursor) compare
+            res <- LE.try $ runWithManyInputs xGetUTXOsScriptHash sh pgSize (decodeOP cursor)
             case res of
                 Left (e :: SomeException) -> do
                     modifyResponse $ setResponseStatus 500 "Internal Server Error"
