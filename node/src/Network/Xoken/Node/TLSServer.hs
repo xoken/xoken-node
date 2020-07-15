@@ -94,12 +94,15 @@ handleRPCReqResp epConn format mid version encReq = do
                         JSON ->
                             case rsResp rpcResp of
                                 Left (RPCError err rsData) ->
-                                    A.encode
+                                    encodeResp
+                                        (pretty rpcResp)
                                         (JSONRPCErrorResponse
                                              mid
                                              (ErrorResponse (getJsonRPCErrorCode err) (show err) rsData)
                                              (fromJust version))
-                                Right rsBody -> A.encode (JSONRPCSuccessResponse (fromJust version) (rsBody) mid)
+                                Right rsBody ->
+                                    encodeResp (pretty rpcResp) $
+                                    (JSONRPCSuccessResponse (fromJust version) (rsBody) mid)
             connSock <- liftIO $ takeMVar (context epConn)
             let prefixbody = LBS.append (DB.encode (fromIntegral (LBS.length body) :: Int32)) body
             NTLS.sendData connSock prefixbody

@@ -1167,18 +1167,19 @@ xRelayTx rawTx = do
                     err lg $ LG.msg $ val $ "error decoding rawTx (2)"
                     return $ False
 
-authLoginClient :: (HasXokenNodeEnv env m, MonadIO m) => RPCMessage -> Network -> EndPointConnection -> m (RPCMessage)
-authLoginClient msg net epConn = do
+authLoginClient ::
+       (HasXokenNodeEnv env m, MonadIO m) => RPCMessage -> Network -> EndPointConnection -> Bool -> m (RPCMessage)
+authLoginClient msg net epConn pretty = do
     dbe <- getDB
     lg <- getLogger
     case rqMethod msg of
         "AUTHENTICATE" ->
             case rqParams msg of
-                (AuthenticateReq user pass) -> do
+                (AuthenticateReq user pass pretty) -> do
                     resp <- login (DT.pack user) (BC.pack pass)
-                    return $ RPCResponse 200 $ Right $ Just $ AuthenticateResp resp
-                ___ -> return $ RPCResponse 404 $ Left $ RPCError INVALID_REQUEST Nothing
-        _____ -> return $ RPCResponse 200 $ Right $ Just $ AuthenticateResp $ AuthResp Nothing 0 0
+                    return $ RPCResponse 200 pretty $ Right $ Just $ AuthenticateResp resp
+                ___ -> return $ RPCResponse 404 pretty $ Left $ RPCError INVALID_REQUEST Nothing
+        _____ -> return $ RPCResponse 200 pretty $ Right $ Just $ AuthenticateResp $ AuthResp Nothing 0 0
 
 login :: (MonadIO m, HasXokenNodeEnv env m) => DT.Text -> BC.ByteString -> m AuthResp
 login user pass = do
@@ -1227,8 +1228,8 @@ delegateRequest encReq epConn net = do
     lg <- getLogger
     let conn = keyValDB (dbe)
     case rqParams encReq of
-        (AuthenticateReq _ _) -> authLoginClient encReq net epConn
-        (GeneralReq sessionKey __) -> do
+        (AuthenticateReq _ _ pretty) -> authLoginClient encReq net epConn pretty
+        (GeneralReq sessionKey pretty _) -> do
             let str =
                     " SELECT api_quota, api_used, session_key_expiry_time, permissions FROM xoken.user_permission WHERE session_key = ? ALLOW FILTERING "
                 qstr = str :: Q.QueryString Q.R (Q.Identity DT.Text) (Int32, Int32, UTCTime, Set DT.Text)
@@ -1241,18 +1242,19 @@ delegateRequest encReq epConn net = do
                 Right (op) -> do
                     if length op == 0
                         then do
-                            return $ RPCResponse 200 $ Right $ Just $ AuthenticateResp $ AuthResp Nothing 0 0
+                            return $ RPCResponse 200 pretty $ Right $ Just $ AuthenticateResp $ AuthResp Nothing 0 0
                         else do
                             case op !! 0 of
                                 (quota, used, exp, roles) -> do
                                     curtm <- liftIO $ getCurrentTime
                                     if exp > curtm && quota > used
-                                        then goGetResource encReq net (DCP.fromSet roles)
+                                        then goGetResource encReq net (DCP.fromSet roles) pretty
                                         else return $
-                                             RPCResponse 200 $ Right $ Just $ AuthenticateResp $ AuthResp Nothing 0 0
+                                             RPCResponse 200 pretty $
+                                             Right $ Just $ AuthenticateResp $ AuthResp Nothing 0 0
 
-goGetResource :: (HasXokenNodeEnv env m, MonadIO m) => RPCMessage -> Network -> [DT.Text] -> m (RPCMessage)
-goGetResource msg net roles = do
+goGetResource :: (HasXokenNodeEnv env m, MonadIO m) => RPCMessage -> Network -> [DT.Text] -> Bool -> m (RPCMessage)
+goGetResource msg net roles pretty = do
     dbe <- getDB
     lg <- getLogger
     let grdb = graphDB (dbe)
@@ -1277,66 +1279,67 @@ goGetResource msg net roles = do
                                             (apiQuota)
                                             (apiExp)
                                     case usr of
-                                        Just u -> return $ RPCResponse 200 $ Right $ Just $ RespAddUser u
+                                        Just u -> return $ RPCResponse 200 pretty $ Right $ Just $ RespAddUser u
                                         Nothing ->
                                             return $
-                                            RPCResponse 400 $
+                                            RPCResponse 400 pretty $
                                             Left $
                                             RPCError
                                                 INVALID_PARAMS
                                                 (Just $ "User with username " ++ uname ++ " already exists")
-                                else return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS (Just "Invalid email")
+                                else return $
+                                     RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS (Just "Invalid email")
                         else return $
-                             RPCResponse 403 $
+                             RPCResponse 403 pretty $
                              Left $ RPCError INVALID_PARAMS (Just "User lacks permission to create users")
-                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
+                _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
         "CHAIN_INFO" -> do
             cw <- xGetChainInfo
             case cw of
-                Just c -> return $ RPCResponse 200 $ Right $ Just $ RespChainInfo c
-                Nothing -> return $ RPCResponse 404 $ Left $ RPCError INVALID_REQUEST Nothing
+                Just c -> return $ RPCResponse 200 pretty $ Right $ Just $ RespChainInfo c
+                Nothing -> return $ RPCResponse 404 pretty $ Left $ RPCError INVALID_REQUEST Nothing
         "HASH->BLOCK" -> do
             case methodParams $ rqParams msg of
                 Just (GetBlockByHash hs) -> do
                     blk <- xGetBlockHash (DT.pack hs)
                     case blk of
-                        Just b -> return $ RPCResponse 200 $ Right $ Just $ RespBlockByHash b
-                        Nothing -> return $ RPCResponse 404 $ Left $ RPCError INVALID_REQUEST Nothing
-                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
+                        Just b -> return $ RPCResponse 200 pretty $ Right $ Just $ RespBlockByHash b
+                        Nothing -> return $ RPCResponse 404 pretty $ Left $ RPCError INVALID_REQUEST Nothing
+                _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
         "[HASH]->[BLOCK]" -> do
             case methodParams $ rqParams msg of
                 Just (GetBlocksByHashes hashes) -> do
                     blks <- xGetBlocksHashes (DT.pack <$> hashes)
-                    return $ RPCResponse 200 $ Right $ Just $ RespBlocksByHashes blks
-                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
+                    return $ RPCResponse 200 pretty $ Right $ Just $ RespBlocksByHashes blks
+                _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
         "HEIGHT->BLOCK" -> do
             case methodParams $ rqParams msg of
                 Just (GetBlockByHeight ht) -> do
                     blk <- xGetBlockHeight (fromIntegral ht)
                     case blk of
-                        Just b -> return $ RPCResponse 200 $ Right $ Just $ RespBlockByHash b
-                        Nothing -> return $ RPCResponse 404 $ Left $ RPCError INVALID_REQUEST Nothing
-                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
+                        Just b -> return $ RPCResponse 200 pretty $ Right $ Just $ RespBlockByHash b
+                        Nothing -> return $ RPCResponse 404 pretty $ Left $ RPCError INVALID_REQUEST Nothing
+                _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
         "[HEIGHT]->[BLOCK]" -> do
             case methodParams $ rqParams msg of
                 Just (GetBlocksByHeight hts) -> do
                     blks <- xGetBlocksHeights $ Data.List.map (fromIntegral) hts
-                    return $ RPCResponse 200 $ Right $ Just $ RespBlocksByHashes blks
-                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
+                    return $ RPCResponse 200 pretty $ Right $ Just $ RespBlocksByHashes blks
+                _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
         "HASH->[TXID]" -> do
             case methodParams $ rqParams msg of
                 Just (GetTxIDsByBlockHash hash pgSize pgNum) -> do
                     txids <- xGetTxIDsByBlockHash hash pgSize pgNum
-                    return $ RPCResponse 200 $ Right $ Just $ RespTxIDsByBlockHash txids
-                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
+                    return $ RPCResponse 200 pretty $ Right $ Just $ RespTxIDsByBlockHash txids
+                _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
         "TXID->RAWTX" -> do
             case methodParams $ rqParams msg of
                 Just (GetRawTransactionByTxID hs) -> do
                     tx <- xGetTxHash (DT.pack hs)
                     case tx of
-                        Just t -> return $ RPCResponse 200 $ Right $ Just $ RespRawTransactionByTxID t
-                        Nothing -> return $ RPCResponse 200 $ Right $ Nothing
-                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
+                        Just t -> return $ RPCResponse 200 pretty $ Right $ Just $ RespRawTransactionByTxID t
+                        Nothing -> return $ RPCResponse 200 pretty $ Right $ Nothing
+                _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
         "TXID->TX" -> do
             case methodParams $ rqParams msg of
                 Just (GetTransactionByTxID hs) -> do
@@ -1346,7 +1349,7 @@ goGetResource msg net roles = do
                             case S.decodeLazy txSerialized of
                                 Right rt ->
                                     return $
-                                    RPCResponse 200 $
+                                    RPCResponse 200 pretty $
                                     Right $
                                     Just $
                                     RespTransactionByTxID
@@ -1357,15 +1360,15 @@ goGetResource msg net roles = do
                                              (txToTx' rt txOutputs txInputs)
                                              fees
                                              txMerkleBranch)
-                                Left err -> return $ RPCResponse 400 $ Left $ RPCError INTERNAL_ERROR Nothing
-                        Nothing -> return $ RPCResponse 200 $ Right Nothing
-                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
+                                Left err -> return $ RPCResponse 400 pretty $ Left $ RPCError INTERNAL_ERROR Nothing
+                        Nothing -> return $ RPCResponse 200 pretty $ Right Nothing
+                _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
         "[TXID]->[RAWTX]" -> do
             case methodParams $ rqParams msg of
                 Just (GetRawTransactionsByTxIDs hashes) -> do
                     txs <- xGetTxHashes (DT.pack <$> hashes)
-                    return $ RPCResponse 200 $ Right $ Just $ RespRawTransactionsByTxIDs txs
-                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
+                    return $ RPCResponse 200 pretty $ Right $ Just $ RespRawTransactionsByTxIDs txs
+                _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
         "[TXID]->[TX]" -> do
             case methodParams $ rqParams msg of
                 Just (GetTransactionsByTxIDs hashes) -> do
@@ -1378,114 +1381,114 @@ goGetResource msg net roles = do
                                   (pure fees) <*>
                                   (pure txMerkleBranch))) <$>
                             txs
-                    return $ RPCResponse 200 $ Right $ Just $ RespTransactionsByTxIDs $ catMaybes rawTxs
-                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
+                    return $ RPCResponse 200 pretty $ Right $ Just $ RespTransactionsByTxIDs $ catMaybes rawTxs
+                _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
         "ADDR->[OUTPUT]" -> do
             case methodParams $ rqParams msg of
                 Just (GetOutputsByAddress addr psize cursor) -> do
                     ops <- xGetOutputsAddress addr psize (decodeNTI cursor)
                     return $
-                        RPCResponse 200 $
+                        RPCResponse 200 pretty $
                         Right $
                         Just $ RespOutputsByAddress (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
-                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
+                _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
         "[ADDR]->[OUTPUT]" -> do
             case methodParams $ rqParams msg of
                 Just (GetOutputsByAddresses addrs pgSize cursor) -> do
                     ops <- runWithManyInputs xGetOutputsAddress addrs pgSize (decodeNTI cursor)
                     return $
-                        RPCResponse 200 $
+                        RPCResponse 200 pretty $
                         Right $
                         Just $ RespOutputsByAddresses (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
-                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
+                _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
         "SCRIPTHASH->[OUTPUT]" -> do
             case methodParams $ rqParams msg of
                 Just (GetOutputsByScriptHash sh pgSize cursor) -> do
                     ops <- xGetOutputsScriptHash sh pgSize (decodeNTI cursor)
                     return $
-                        RPCResponse 200 $
+                        RPCResponse 200 pretty $
                         Right $
                         Just $ RespOutputsByScriptHash (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
-                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
+                _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
         "[SCRIPTHASH]->[OUTPUT]" -> do
             case methodParams $ rqParams msg of
                 Just (GetOutputsByScriptHashes shs pgSize cursor) -> do
                     ops <- runWithManyInputs xGetOutputsScriptHash shs pgSize (decodeNTI cursor)
                     return $
-                        RPCResponse 200 $
+                        RPCResponse 200 pretty $
                         Right $
                         Just $ RespOutputsByScriptHashes (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
-                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
+                _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
         "ADDR->[UTXO]" -> do
             case methodParams $ rqParams msg of
                 Just (GetUTXOsByAddress addr psize cursor) -> do
                     ops <- xGetUTXOsAddress addr psize (decodeOP cursor)
                     return $
-                        RPCResponse 200 $
+                        RPCResponse 200 pretty $
                         Right $ Just $ RespUTXOsByAddress (encodeOP $ getNextCursor ops) (fromResultWithCursor <$> ops)
-                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
+                _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
         "[ADDR]->[UTXO]" -> do
             case methodParams $ rqParams msg of
                 Just (GetUTXOsByAddresses addrs pgSize cursor) -> do
                     ops <- runWithManyInputs xGetUTXOsAddress addrs pgSize (decodeOP cursor)
                     return $
-                        RPCResponse 200 $
+                        RPCResponse 200 pretty $
                         Right $
                         Just $ RespUTXOsByAddresses (encodeOP $ getNextCursor ops) (fromResultWithCursor <$> ops)
-                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
+                _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
         "SCRIPTHASH->[UTXO]" -> do
             case methodParams $ rqParams msg of
                 Just (GetUTXOsByScriptHash sh pgSize cursor) -> do
                     ops <- xGetUTXOsScriptHash sh pgSize (decodeOP cursor)
                     return $
-                        RPCResponse 200 $
+                        RPCResponse 200 pretty $
                         Right $
                         Just $ RespUTXOsByScriptHash (encodeOP $ getNextCursor ops) (fromResultWithCursor <$> ops)
-                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
+                _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
         "[SCRIPTHASH]->[UTXO]" -> do
             case methodParams $ rqParams msg of
                 Just (GetUTXOsByScriptHashes shs pgSize cursor) -> do
                     ops <- runWithManyInputs xGetUTXOsScriptHash shs pgSize (decodeOP cursor)
                     return $
-                        RPCResponse 200 $
+                        RPCResponse 200 pretty $
                         Right $
                         Just $ RespUTXOsByScriptHashes (encodeOP $ getNextCursor ops) (fromResultWithCursor <$> ops)
-                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
+                _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
         "TXID->[MNODE]" -> do
             case methodParams $ rqParams msg of
                 Just (GetMerkleBranchByTxID txid) -> do
                     ops <- xGetMerkleBranch txid
-                    return $ RPCResponse 200 $ Right $ Just $ RespMerkleBranchByTxID ops
-                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
+                    return $ RPCResponse 200 pretty $ Right $ Just $ RespMerkleBranchByTxID ops
+                _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
         "NAME->[OUTPOINT]" -> do
             case methodParams $ rqParams msg of
                 Just (GetAllegoryNameBranch name isProducer) -> do
                     ops <- xGetAllegoryNameBranch name isProducer
-                    return $ RPCResponse 200 $ Right $ Just $ RespAllegoryNameBranch ops
-                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
+                    return $ RPCResponse 200 pretty $ Right $ Just $ RespAllegoryNameBranch ops
+                _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
         "RELAY_TX" -> do
             case methodParams $ rqParams msg of
                 Just (RelayTx tx) -> do
                     ops <- xRelayTx tx
-                    return $ RPCResponse 200 $ Right $ Just $ RespRelayTx ops
-                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
+                    return $ RPCResponse 200 pretty $ Right $ Just $ RespRelayTx ops
+                _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
         "PS_ALLEGORY_TX" -> do
             case methodParams $ rqParams msg of
                 Just (GetPartiallySignedAllegoryTx payips (name, isProducer) owner change) -> do
                     opsE <- LE.try $ xGetPartiallySignedAllegoryTx payips (name, isProducer) owner change
                     case opsE of
-                        Right ops -> return $ RPCResponse 200 $ Right $ Just $ RespPartiallySignedAllegoryTx ops
+                        Right ops -> return $ RPCResponse 200 pretty $ Right $ Just $ RespPartiallySignedAllegoryTx ops
                         Left (e :: SomeException) -> do
                             liftIO $ print e
-                            return $ RPCResponse 400 $ Left $ RPCError INTERNAL_ERROR Nothing
-                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
+                            return $ RPCResponse 400 pretty $ Left $ RPCError INTERNAL_ERROR Nothing
+                _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
         "OUTPOINT->SPEND_STATUS" -> do
             case methodParams $ rqParams msg of
                 Just (GetTxOutputSpendStatus txid index) -> do
                     txss <- xGetTxOutputSpendStatus txid index
-                    return $ RPCResponse 200 $ Right $ Just $ RespTxOutputSpendStatus txss
-                _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_PARAMS Nothing
-        _____ -> return $ RPCResponse 400 $ Left $ RPCError INVALID_METHOD Nothing
+                    return $ RPCResponse 200 pretty $ Right $ Just $ RespTxOutputSpendStatus txss
+                _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
+        _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_METHOD Nothing
 
 convertToScriptHash :: Network -> String -> Maybe String
 convertToScriptHash net s = do

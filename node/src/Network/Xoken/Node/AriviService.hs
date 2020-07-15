@@ -42,7 +42,7 @@ globalHandlerRpc msg = do
     bp2pEnv <- getBitcoinP2P
     let net = bitcoinNetwork $ nodeConfig bp2pEnv
     liftIO $ printf "Decoded resp: %s\n" (show msg)
-    st <- goGetResource msg net []
+    st <- goGetResource msg net [] True
     return (Just $ st)
 
 globalHandlerPubSub :: (HasService env m) => ServiceTopic -> PubNotifyMessage -> m Status

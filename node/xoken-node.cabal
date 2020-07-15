@@ -52,6 +52,7 @@ executable xoken-nexa
 
   build-depends:
       aeson
+    , aeson-pretty
     , base >=4.9 && <5
     , bytestring
     , cereal

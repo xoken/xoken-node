@@ -17,6 +17,7 @@ import Control.Arrow (first)
 import Control.Monad
 import Control.Monad.Trans.Maybe
 import Data.Aeson as A
+import qualified Data.Aeson.Encode.Pretty as AP
 import qualified Data.Aeson.Encoding as A
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as B
@@ -71,6 +72,7 @@ data RPCMessage
           }
     | RPCResponse
           { rsStatusCode :: Int16
+          , pretty :: Bool
           , rsResp :: Either RPCError (Maybe RPCResponseBody)
           }
     deriving (Show, Generic, Hashable, Eq, Serialise)
@@ -136,17 +138,19 @@ data RPCReqParams
     = AuthenticateReq
           { username :: String
           , password :: String
+          , prettyPrint :: Bool
           }
     | GeneralReq
           { sessionKey :: String
+          , prettyPrint :: Bool
           , methodParams :: Maybe RPCReqParams'
           }
     deriving (Show, Generic, Hashable, Eq, Serialise)
 
 instance FromJSON RPCReqParams where
     parseJSON (Object o) =
-        (AuthenticateReq <$> o .: "username" <*> o .: "password") <|>
-        (GeneralReq <$> o .: "sessionKey" <*> o .:? "methodParams")
+        (AuthenticateReq <$> o .: "username" <*> o .: "password" <*> o .:? "prettyPrint" .!= True) <|>
+        (GeneralReq <$> o .: "sessionKey" <*> o .:? "prettyPrint" .!= True <*> o .:? "methodParams")
 
 data RPCReqParams'
     = AddUser
@@ -850,3 +854,7 @@ reverse2 x = x
 
 maxBoundOutput :: (T.Text, Int32)
 maxBoundOutput = (T.pack "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", maxBound)
+
+encodeResp :: ToJSON a => Bool -> a -> C.ByteString
+encodeResp True = AP.encodePretty
+encodeResp False = A.encode
