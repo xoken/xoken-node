@@ -314,6 +314,7 @@ processUnconfTransaction tx = do
                                          liftIO $
                                          getSatValuesFromEpochOutpoint
                                              conn
+                                             epoch
                                              (txSynchronizer bp2pEnv)
                                              lg
                                              net
@@ -325,6 +326,7 @@ processUnconfTransaction tx = do
                                  liftIO $
                                  getSatValuesFromEpochOutpoint
                                      conn
+                                     epoch
                                      (txSynchronizer bp2pEnv)
                                      lg
                                      net
@@ -392,16 +394,19 @@ processUnconfTransaction tx = do
 
 getSatValuesFromEpochOutpoint ::
        Q.ClientState
+    -> Bool
     -> (MVar (M.Map TxHash EV.Event))
     -> Logger
     -> Network
     -> OutPoint
     -> Int
     -> IO ((Text, Text, Int64))
-getSatValuesFromEpochOutpoint conn txSync lg net outPoint waitSecs = do
-    let str = "SELECT address, script_hash, value FROM xoken.ep_txid_outputs WHERE txid=? AND output_index=?"
-        qstr = str :: Q.QueryString Q.R (Text, Int32) (Text, Text, Int64)
-        par = Q.defQueryParams Q.One $ (txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint)
+getSatValuesFromEpochOutpoint conn epoch txSync lg net outPoint waitSecs = do
+    let str =
+            "SELECT address, script_hash, value FROM xoken.ep_txid_outputs WHERE epoch=? AND txid=? AND output_index=?"
+        qstr = str :: Q.QueryString Q.R (Bool, Text, Int32) (Text, Text, Int64)
+        par =
+            Q.defQueryParams Q.One $ (epoch, txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint)
     res <- liftIO $ try $ Q.runClient conn (Q.query qstr par)
     case res of
         Right results -> do
@@ -425,7 +430,7 @@ getSatValuesFromEpochOutpoint conn txSync lg net outPoint waitSecs = do
                                 LG.msg $
                                 "[Unconfirmed] TxIDNotFoundException: " ++ (show $ txHashToHex $ outPointHash outPoint)
                             throw TxIDNotFoundException
-                        else getSatValuesFromEpochOutpoint conn txSync lg net outPoint waitSecs
+                        else getSatValuesFromEpochOutpoint conn epoch txSync lg net outPoint waitSecs
                 else do
                     let (addr, scriptHash, val) = head $ results
                     return $ (addr, scriptHash, val)
