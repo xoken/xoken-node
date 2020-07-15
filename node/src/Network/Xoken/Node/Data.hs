@@ -273,7 +273,7 @@ instance FromJSON RPCReqParams' where
         (GetUTXOsByScriptHashes <$> o .: "scriptHashes" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
         (GetMerkleBranchByTxID <$> o .: "txid") <|>
         (GetAllegoryNameBranch <$> o .: "name" <*> o .: "isProducer") <|>
-        (RelayTx . BL.toStrict . GZ.decompress . B64L.decodeLenient . BL.fromStrict . T.encodeUtf8 <$> o .: "rTx") <|>
+        (RelayTx . BL.toStrict . GZ.decompress . B64L.decodeLenient . BL.fromStrict . T.encodeUtf8 <$> o .: "rawTx") <|>
         (GetPartiallySignedAllegoryTx <$> o .: "paymentInputs" <*> o .: "name" <*> o .: "outputOwner" <*>
          o .: "outputChange") <|>
         (AddUser <$> o .: "username" <*> o .:? "apiExpiryTime" <*> o .:? "apiQuota" <*> o .: "firstName" <*>
@@ -381,17 +381,17 @@ instance ToJSON RPCResponseBody where
     toJSON (RespTransactionsByTxIDs txs) = object ["txs" .= txs]
     toJSON (RespRawTransactionByTxID tx) = object ["rawTx" .= tx]
     toJSON (RespRawTransactionsByTxIDs txs) = object ["rawTxs" .= txs]
-    toJSON (RespOutputsByAddress nc sa) = object ["nextCursor" .= nc, "saddressOutputs" .= sa]
-    toJSON (RespOutputsByAddresses nc ma) = object ["nextCursor" .= nc, "maddressOutputs" .= ma]
-    toJSON (RespOutputsByScriptHash nc sa) = object ["nextCursor" .= nc, "sscriptOutputs" .= sa]
-    toJSON (RespOutputsByScriptHashes nc ma) = object ["nextCursor" .= nc, "mscriptOutputs" .= ma]
-    toJSON (RespUTXOsByAddress nc sa) = object ["nextCursor" .= nc, "saddressUTXOs" .= sa]
-    toJSON (RespUTXOsByAddresses nc ma) = object ["nextCursor" .= nc, "maddressUTXOs" .= ma]
-    toJSON (RespUTXOsByScriptHash nc sa) = object ["nextCursor" .= nc, "sscriptUTXOs" .= sa]
-    toJSON (RespUTXOsByScriptHashes nc ma) = object ["nextCursor" .= nc, "mscriptUTXOs" .= ma]
+    toJSON (RespOutputsByAddress nc sa) = object ["nextCursor" .= nc, "outputs" .= sa]
+    toJSON (RespOutputsByAddresses nc ma) = object ["nextCursor" .= nc, "outputs" .= ma]
+    toJSON (RespOutputsByScriptHash nc sa) = object ["nextCursor" .= nc, "outputs" .= sa]
+    toJSON (RespOutputsByScriptHashes nc ma) = object ["nextCursor" .= nc, "outputs" .= ma]
+    toJSON (RespUTXOsByAddress nc sa) = object ["nextCursor" .= nc, "utxos" .= sa]
+    toJSON (RespUTXOsByAddresses nc ma) = object ["nextCursor" .= nc, "utxos" .= ma]
+    toJSON (RespUTXOsByScriptHash nc sa) = object ["nextCursor" .= nc, "utxos" .= sa]
+    toJSON (RespUTXOsByScriptHashes nc ma) = object ["nextCursor" .= nc, "utxos" .= ma]
     toJSON (RespMerkleBranchByTxID mb) = object ["merkleBranch" .= mb]
     toJSON (RespAllegoryNameBranch nb) = object ["nameBranch" .= nb]
-    toJSON (RespRelayTx rrTx) = object ["rrTx" .= rrTx]
+    toJSON (RespRelayTx rrTx) = object ["txBroadcast" .= rrTx]
     toJSON (RespPartiallySignedAllegoryTx ps) =
         object ["psaTx" .= (T.decodeUtf8 . BL.toStrict . B64L.encode . GZ.compress . BL.fromStrict $ ps)]
     toJSON (RespTxOutputSpendStatus ss) = object ["spendStatus" .= ss]
@@ -422,12 +422,12 @@ instance ToJSON AddUserResp where
         object
             [ "username" .= uname
             , "password" .= pwd
-            , "first_name" .= fname
-            , "last_name" .= lname
+            , "firstName" .= fname
+            , "lastName" .= lname
             , "email" .= email
             , "roles" .= roles
-            , "api_quota" .= apiQuota
-            , "api_expiry_time" .= apiExpTime
+            , "apiQuota" .= apiQuota
+            , "apiExpiryTime" .= apiExpTime
             ]
 
 data ChainInfo =
