@@ -41,6 +41,7 @@ import Network.Xoken.Node.Data
     , RawTxRecord(..)
     , TxRecord(..)
     , coinbaseTxToMessage
+    , encodeResp
     , fromResultWithCursor
     , txToTx'
     )
@@ -56,37 +57,40 @@ import qualified Xoken.NodeConfig as NC
 
 authClient :: RPCReqParams -> Handler App App ()
 authClient AuthenticateReq {..} = do
+    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     resp <- LE.try $ login (DT.pack username) (BC.pack password)
     case resp of
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
-        Right ar -> writeBS $ BSL.toStrict $ Aeson.encode $ AuthenticateResp ar
+        Right ar -> writeBS $ BSL.toStrict $ encodeResp pretty $ AuthenticateResp ar
 authClient _ = throwBadRequest
 
 getChainInfo :: Handler App App ()
 getChainInfo = do
     lg <- getLogger
+    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     res <- LE.try $ xGetChainInfo
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetChainInfo: " ++ show e
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
-        Right (Just ci) -> writeBS $ BSL.toStrict $ Aeson.encode $ RespChainInfo ci
+        Right (Just ci) -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespChainInfo ci
         Right Nothing -> throwBadRequest
 
 getBlockByHash :: Handler App App ()
 getBlockByHash = do
     hash <- getParam "hash"
     lg <- getLogger
+    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     res <- LE.try $ xGetBlockHash (DTE.decodeUtf8 $ fromJust hash)
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetBlocksHash: " ++ show e
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
-        Right (Just rec) -> writeBS $ BSL.toStrict $ Aeson.encode $ RespBlockByHash rec
+        Right (Just rec) -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespBlockByHash rec
         Right Nothing -> do
             modifyResponse $ setResponseStatus 400 "Bad Request"
             writeBS "400 error"
@@ -95,25 +99,27 @@ getBlocksByHash :: Handler App App ()
 getBlocksByHash = do
     allMap <- getQueryParams
     lg <- getLogger
+    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     res <- LE.try $ xGetBlocksHashes (DTE.decodeUtf8 <$> (fromJust $ Map.lookup "hash" allMap))
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetBlocksHash: " ++ show e
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
-        Right rec -> writeBS $ BSL.toStrict $ Aeson.encode $ RespBlocksByHashes rec
+        Right rec -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespBlocksByHashes rec
 
 getBlockByHeight :: Handler App App ()
 getBlockByHeight = do
     height <- getParam "height"
     lg <- getLogger
+    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     res <- LE.try $ xGetBlockHeight (read $ DT.unpack $ DTE.decodeUtf8 $ fromJust height)
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetBlocksHeight: " ++ show e
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
-        Right (Just rec) -> writeBS $ BSL.toStrict $ Aeson.encode $ RespBlockByHeight rec
+        Right (Just rec) -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespBlockByHeight rec
         Right Nothing -> do
             modifyResponse $ setResponseStatus 400 "Bad Request"
             writeBS "400 error"
@@ -122,25 +128,27 @@ getBlocksByHeight :: Handler App App ()
 getBlocksByHeight = do
     allMap <- getQueryParams
     lg <- getLogger
+    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     res <- LE.try $ xGetBlocksHeights (read . DT.unpack . DTE.decodeUtf8 <$> (fromJust $ Map.lookup "height" allMap))
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetBlocksHeight: " ++ show e
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
-        Right rec -> writeBS $ BSL.toStrict $ Aeson.encode $ RespBlocksByHeight rec
+        Right rec -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespBlocksByHeight rec
 
 getRawTxById :: Handler App App ()
 getRawTxById = do
     txId <- getParam "id"
     lg <- getLogger
+    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     res <- LE.try $ xGetTxHash (DTE.decodeUtf8 $ fromJust txId)
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetTxHash: " ++ show e
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
-        Right (Just rec) -> writeBS $ BSL.toStrict $ Aeson.encode $ RespRawTransactionByTxID rec
+        Right (Just rec) -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespRawTransactionByTxID rec
         Right Nothing -> do
             modifyResponse $ setResponseStatus 400 "Bad Request"
             writeBS "400 error"
@@ -149,18 +157,20 @@ getRawTxByIds :: Handler App App ()
 getRawTxByIds = do
     allMap <- getQueryParams
     lg <- getLogger
+    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     res <- LE.try $ xGetTxHashes (DTE.decodeUtf8 <$> (fromJust $ Map.lookup "id" allMap))
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetTxHash: " ++ show e
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
-        Right rec -> writeBS $ BSL.toStrict $ Aeson.encode $ RespRawTransactionsByTxIDs rec
+        Right rec -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespRawTransactionsByTxIDs rec
 
 getTxById :: Handler App App ()
 getTxById = do
     txId <- getParam "id"
     lg <- getLogger
+    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     res <- LE.try $ xGetTxHash (DTE.decodeUtf8 $ fromJust txId)
     case res of
         Left (e :: SomeException) -> do
@@ -172,7 +182,7 @@ getTxById = do
                 Right rt ->
                     writeBS $
                     BSL.toStrict $
-                    Aeson.encode $
+                    encodeResp pretty $
                     RespTransactionByTxID
                         (TxRecord txId size txBlockInfo (txToTx' rt txOutputs txInputs) fees txMerkleBranch)
                 Left err -> do
@@ -186,6 +196,7 @@ getTxByIds :: Handler App App ()
 getTxByIds = do
     allMap <- getQueryParams
     lg <- getLogger
+    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     res <- LE.try $ xGetTxHashes (DTE.decodeUtf8 <$> (fromJust $ Map.lookup "id" allMap))
     case res of
         Left (e :: SomeException) -> do
@@ -200,7 +211,7 @@ getTxByIds = do
                           (pure fees) <*>
                           (pure txMerkleBranch))) <$>
                     txs
-            writeBS $ BSL.toStrict $ Aeson.encode $ RespTransactionsByTxIDs $ catMaybes rawTxs
+            writeBS $ BSL.toStrict $ encodeResp pretty $ RespTransactionsByTxIDs $ catMaybes rawTxs
 
 getTxIDsByBlockHash :: Handler App App ()
 getTxIDsByBlockHash = do
@@ -208,18 +219,20 @@ getTxIDsByBlockHash = do
     hash <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getParam "hash")
     pgNumber <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagenumber")
     pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
+    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     res <- LE.try $ xGetTxIDsByBlockHash (fromJust hash) (fromMaybe 100 pgSize) (fromMaybe 1 pgNumber)
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetTxIDsByBlockHash: " ++ show e
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
-        Right txids -> writeBS $ BSL.toStrict $ Aeson.encode $ RespTxIDsByBlockHash txids
+        Right txids -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespTxIDsByBlockHash txids
 
 getTxOutputSpendStatus :: Handler App App ()
 getTxOutputSpendStatus = do
     txid <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getParam "txid")
     index <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getParam "index")
+    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     lg <- getLogger
     res <- LE.try $ xGetTxOutputSpendStatus (fromJust txid) (fromJust index)
     case res of
@@ -227,13 +240,14 @@ getTxOutputSpendStatus = do
             err lg $ LG.msg $ "Error: xGetTxOutputSpendStatus: " ++ show e
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
-        Right txss -> writeBS $ BSL.toStrict $ Aeson.encode $ RespTxOutputSpendStatus txss
+        Right txss -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespTxOutputSpendStatus txss
 
 getOutputsByAddr :: Handler App App ()
 getOutputsByAddr = do
     addr <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getParam "address")
     pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
     cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
+    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     bp2pEnv <- getBitcoinP2P
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
     lg <- getLogger
@@ -246,7 +260,7 @@ getOutputsByAddr = do
         Right ops -> do
             writeBS $
                 BSL.toStrict $
-                Aeson.encode $ RespOutputsByAddress (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
+                encodeResp pretty $ RespOutputsByAddress (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
 
 getOutputsByAddrs :: Handler App App ()
 getOutputsByAddrs = do
@@ -255,6 +269,7 @@ getOutputsByAddrs = do
         Just (addrs :: [String]) -> do
             pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
             cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
+            pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
             bp2pEnv <- getBitcoinP2P
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
             lg <- getLogger
@@ -267,7 +282,7 @@ getOutputsByAddrs = do
                 Right ops -> do
                     writeBS $
                         BSL.toStrict $
-                        Aeson.encode $
+                        encodeResp pretty $
                         RespOutputsByAddresses (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
         Nothing -> throwBadRequest
 
@@ -276,6 +291,7 @@ getOutputsByScriptHash = do
     sh <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getParam "scripthash")
     pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
     cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
+    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     bp2pEnv <- getBitcoinP2P
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
     lg <- getLogger
@@ -287,7 +303,8 @@ getOutputsByScriptHash = do
         Right ops -> do
             writeBS $
                 BSL.toStrict $
-                Aeson.encode $ RespOutputsByScriptHash (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
+                encodeResp pretty $
+                RespOutputsByScriptHash (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
 
 getOutputsByScriptHashes :: Handler App App ()
 getOutputsByScriptHashes = do
@@ -296,6 +313,7 @@ getOutputsByScriptHashes = do
         Just sh -> do
             pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
             cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
+            pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
             bp2pEnv <- getBitcoinP2P
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
             lg <- getLogger
@@ -307,7 +325,7 @@ getOutputsByScriptHashes = do
                 Right ops -> do
                     writeBS $
                         BSL.toStrict $
-                        Aeson.encode $
+                        encodeResp pretty $
                         RespOutputsByScriptHashes (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
         Nothing -> throwBadRequest
 
@@ -317,6 +335,7 @@ getUTXOsByAddr = do
     addr <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getParam "address")
     pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
     cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
+    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     bp2pEnv <- getBitcoinP2P
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
     res <- LE.try $ xGetUTXOsAddress (fromJust addr) pgSize (decodeOP cursor)
@@ -328,7 +347,7 @@ getUTXOsByAddr = do
         Right ops -> do
             writeBS $
                 BSL.toStrict $
-                Aeson.encode $ RespUTXOsByAddress (encodeOP $ getNextCursor ops) (fromResultWithCursor <$> ops)
+                encodeResp pretty $ RespUTXOsByAddress (encodeOP $ getNextCursor ops) (fromResultWithCursor <$> ops)
 
 getUTXOsByAddrs :: Handler App App ()
 getUTXOsByAddrs = do
@@ -337,6 +356,7 @@ getUTXOsByAddrs = do
         Just (addrs :: [String]) -> do
             pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
             cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
+            pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
             bp2pEnv <- getBitcoinP2P
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
             lg <- getLogger
@@ -349,7 +369,7 @@ getUTXOsByAddrs = do
                 Right ops -> do
                     writeBS $
                         BSL.toStrict $
-                        Aeson.encode $
+                        encodeResp pretty $
                         RespUTXOsByAddresses (encodeOP $ getNextCursor ops) (fromResultWithCursor <$> ops)
         Nothing -> throwBadRequest
 
@@ -358,6 +378,7 @@ getUTXOsByScriptHash = do
     sh <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getParam "scripthash")
     pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
     cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
+    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     bp2pEnv <- getBitcoinP2P
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
     lg <- getLogger
@@ -369,7 +390,7 @@ getUTXOsByScriptHash = do
         Right ops -> do
             writeBS $
                 BSL.toStrict $
-                Aeson.encode $ RespUTXOsByScriptHash (encodeOP $ getNextCursor ops) (fromResultWithCursor <$> ops)
+                encodeResp pretty $ RespUTXOsByScriptHash (encodeOP $ getNextCursor ops) (fromResultWithCursor <$> ops)
 
 getUTXOsByScriptHashes :: Handler App App ()
 getUTXOsByScriptHashes = do
@@ -378,6 +399,7 @@ getUTXOsByScriptHashes = do
         Just sh -> do
             pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
             cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
+            pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
             bp2pEnv <- getBitcoinP2P
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
             lg <- getLogger
@@ -389,52 +411,56 @@ getUTXOsByScriptHashes = do
                 Right ops -> do
                     writeBS $
                         BSL.toStrict $
-                        Aeson.encode $
+                        encodeResp pretty $
                         RespUTXOsByScriptHashes (encodeOP $ getNextCursor ops) (fromResultWithCursor <$> ops)
         Nothing -> throwBadRequest
 
 getMNodesByTxID :: Handler App App ()
 getMNodesByTxID = do
     txId <- (DT.unpack . DTE.decodeUtf8 . fromJust) <$> getParam "txid"
+    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     res <- LE.try $ xGetMerkleBranch txId
     case res of
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
         Right ops -> do
-            writeBS $ BSL.toStrict $ Aeson.encode $ RespMerkleBranchByTxID ops
+            writeBS $ BSL.toStrict $ encodeResp pretty $ RespMerkleBranchByTxID ops
 
 getOutpointsByName :: Handler App App ()
 getOutpointsByName = do
     name <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getParam "name")
     isProducer <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "isProducer")
+    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     res <- LE.try $ xGetAllegoryNameBranch (fromJust name) (fromJust isProducer)
     case res of
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
-        Right ops -> writeBS $ BSL.toStrict $ Aeson.encode $ RespAllegoryNameBranch ops
+        Right ops -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespAllegoryNameBranch ops
 
 relayTx :: RPCReqParams' -> Handler App App ()
 relayTx RelayTx {..} = do
+    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     res <- LE.try $ xRelayTx rTx
     case res of
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
-        Right ops -> writeBS $ BSL.toStrict $ Aeson.encode $ RespRelayTx ops
+        Right ops -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespRelayTx ops
 
 getRelayTx _ = throwBadRequest
 
 getPartiallySignedAllegoryTx :: RPCReqParams' -> Handler App App ()
 getPartiallySignedAllegoryTx GetPartiallySignedAllegoryTx {..} = do
+    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     res <- LE.try $ xGetPartiallySignedAllegoryTx gpsaPaymentInputs gpsaName gpsaOutputOwner gpsaOutputChange
     case res of
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
         Right ops -> do
-            writeBS $ BSL.toStrict $ Aeson.encode $ RespPartiallySignedAllegoryTx ops
+            writeBS $ BSL.toStrict $ encodeResp pretty $ RespPartiallySignedAllegoryTx ops
 getPartiallySignedAllegoryTx _ = throwBadRequest
 
 --- |
