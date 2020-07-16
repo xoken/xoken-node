@@ -34,7 +34,8 @@ import Database.CQL.IO as Q
 import Database.CQL.Protocol
 import Network.Xoken.Crypto.Hash
 import Network.Xoken.Node.Data
-    ( BlockRecord(..)
+    ( AddUserResp(..)
+    , BlockRecord(..)
     , RPCReqParams(..)
     , RPCReqParams'(..)
     , RPCResponseBody(..)
@@ -47,7 +48,7 @@ import Network.Xoken.Node.Data
     )
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.HTTP.Types
-import Network.Xoken.Node.P2P.Common (generateSessionKey)
+import Network.Xoken.Node.P2P.Common (addNewUser, generateSessionKey)
 import Network.Xoken.Node.P2P.Types
 import Network.Xoken.Node.XokenService
 import Snap
@@ -65,6 +66,34 @@ authClient AuthenticateReq {..} = do
             writeBS "INTERNAL_SERVER_ERROR"
         Right ar -> writeBS $ BSL.toStrict $ encodeResp pretty $ AuthenticateResp ar
 authClient _ = throwBadRequest
+
+addUser :: RPCReqParams' -> Handler App App ()
+addUser AddUser {..} = do
+    dbe <- getDB
+    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    let conn = keyValDB dbe
+    resp <-
+        LE.try $
+        return $
+        addNewUser
+            conn
+            (DT.pack auUsername)
+            (DT.pack auFirstName)
+            (DT.pack auLastName)
+            (DT.pack auEmail)
+            auRoles
+            auApiQuota
+            auApiExpiryTime
+    case resp of
+        Left (e :: SomeException) -> do
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+        Right ar -> do
+            ar' <- liftIO $ ar
+            case ar' of
+                Nothing -> throwBadRequest
+                Just aur -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespAddUser aur
+addUser _ = throwBadRequest
 
 getChainInfo :: Handler App App ()
 getChainInfo = do
@@ -471,7 +500,21 @@ withAuth onSuccess = do
     env <- gets _env
     let mh = getHeader "Authorization" rq
     let h = parseAuthorizationHeader mh
-    uok <- liftIO $ testAuthHeader env h
+    uok <- liftIO $ testAuthHeader env h Nothing
+    modifyResponse (setContentType "application/json")
+    if uok
+        then onSuccess
+        else case h of
+                 Nothing -> throwChallenge
+                 Just _ -> throwDenied
+
+withAuthAs :: DT.Text -> Handler App App () -> Handler App App ()
+withAuthAs role onSuccess = do
+    rq <- getRequest
+    env <- gets _env
+    let mh = getHeader "Authorization" rq
+    let h = parseAuthorizationHeader mh
+    uok <- liftIO $ testAuthHeader env h $ Just role
     modifyResponse (setContentType "application/json")
     if uok
         then onSuccess
@@ -505,15 +548,15 @@ parseAuthorizationHeader bs =
                         else Nothing
                 _ -> Nothing
 
-testAuthHeader :: XokenNodeEnv -> Maybe B.ByteString -> IO Bool
-testAuthHeader _ Nothing = pure False
-testAuthHeader env (Just sessionKey) = do
+testAuthHeader :: XokenNodeEnv -> Maybe B.ByteString -> Maybe DT.Text -> IO Bool
+testAuthHeader _ Nothing _ = pure False
+testAuthHeader env (Just sessionKey) role = do
     let dbe = dbHandles env
     let conn = keyValDB (dbe)
     let lg = loggerEnv env
     let str =
-            " SELECT api_quota, api_used, session_key_expiry_time FROM xoken.user_permission WHERE session_key = ? ALLOW FILTERING "
-        qstr = str :: Q.QueryString Q.R (Q.Identity DT.Text) (Int32, Int32, UTCTime)
+            " SELECT api_quota, api_used, session_key_expiry_time, permissions FROM xoken.user_permission WHERE session_key = ? ALLOW FILTERING "
+        qstr = str :: Q.QueryString Q.R (Q.Identity DT.Text) (Int32, Int32, UTCTime, Set DT.Text)
         p = Q.defQueryParams Q.One $ Identity $ (DTE.decodeUtf8 sessionKey)
     res <- liftIO $ try $ Q.runClient conn (Q.query (Q.prepared qstr) p)
     case res of
@@ -525,10 +568,12 @@ testAuthHeader env (Just sessionKey) = do
                 then return False
                 else do
                     case op !! 0 of
-                        (quota, used, exp) -> do
+                        (quota, used, exp, roles) -> do
                             curtm <- liftIO $ getCurrentTime
                             if exp > curtm && quota > used
-                                then return True
+                                then case role of
+                                         Nothing -> return True
+                                         Just rl -> return $ rl `elem` (fromSet roles)
                                 else return False
 
 throwChallenge :: Handler App App ()

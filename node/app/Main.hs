@@ -222,8 +222,8 @@ runThreads config nodeConf bp2p conn lg p2pEnv certPaths = do
     async $ startTLSEndpoint epHandler (endPointTLSListenIP nodeConf) (endPointTLSListenPort nodeConf) certPaths
     -- start HTTP endpoint
     let snapConfig =
-            Snap.defaultConfig & Snap.setSSLBind (DTE.encodeUtf8 $ DT.pack $ endPointHTTPListenIP nodeConf) &
-            Snap.setSSLPort (fromEnum $ endPointHTTPListenPort nodeConf) &
+            Snap.defaultConfig & Snap.setSSLBind (DTE.encodeUtf8 $ DT.pack $ endPointHTTPSListenIP nodeConf) &
+            Snap.setSSLPort (fromEnum $ endPointHTTPSListenPort nodeConf) &
             Snap.setSSLKey (certPaths !! 1) &
             Snap.setSSLCert (head certPaths) &
             Snap.setSSLChainCert False
