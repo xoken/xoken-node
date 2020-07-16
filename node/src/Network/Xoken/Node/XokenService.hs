@@ -146,6 +146,34 @@ xGetChainInfo = do
             err lg $ LG.msg $ "Error: xGetChainInfo: " ++ show e
             throw KeyValueDBLookupException
 
+xGetChainHeaders :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Int32 -> Int -> m [ChainHeader]
+xGetChainHeaders sblk pgsize = do
+    dbe <- getDB
+    lg <- getLogger
+    let conn = keyValDB (dbe)
+        str = "SELECT tx_count,block_header from xoken.blocks_by_height where block_height in ?"
+        qstr = str :: Q.QueryString Q.R (Identity [Int32]) (Maybe Int32, DT.Text)
+        p = Q.defQueryParams Q.One $ Identity (L.take pgsize [sblk ..])
+    res <- LE.try $ Q.runClient conn (Q.query qstr p)
+    case res of
+        Right iop -> do
+            if length iop == 0
+                then return []
+                else do
+                    case traverse
+                             (\(txc, hdr) ->
+                                  case (eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 hdr) of
+                                      (Right bh) -> Right $ ChainHeader bh (maybe (-1) fromIntegral txc)
+                                      Left e -> Left e)
+                             (iop) of
+                        Right x -> return x
+                        Left e -> do
+                            err lg $ LG.msg $ "Error: xGetChainHeaders: decode failed for blockrecord: " <> show e
+                            return []
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: xGetChainHeaders: " ++ show e
+            throw KeyValueDBLookupException
+
 xGetBlockHash :: (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> m (Maybe BlockRecord)
 xGetBlockHash hash = do
     dbe <- getDB
@@ -1299,6 +1327,12 @@ goGetResource msg net roles pretty = do
             case cw of
                 Just c -> return $ RPCResponse 200 pretty $ Right $ Just $ RespChainInfo c
                 Nothing -> return $ RPCResponse 404 pretty $ Left $ RPCError INVALID_REQUEST Nothing
+        "CHAIN_HEADERS" -> do
+            case methodParams $ rqParams msg of
+                Just (GetChainHeaders ht pg) -> do
+                    hdrs <- xGetChainHeaders ht pg
+                    return $ RPCResponse 200 pretty $ Right $ Just $ RespChainHeaders hdrs
+                _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
         "HASH->BLOCK" -> do
             case methodParams $ rqParams msg of
                 Just (GetBlockByHash hs) -> do
