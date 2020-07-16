@@ -108,6 +108,20 @@ getChainInfo = do
         Right (Just ci) -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespChainInfo ci
         Right Nothing -> throwBadRequest
 
+getChainHeaders :: Handler App App ()
+getChainHeaders = do
+    lg <- getLogger
+    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    ht <- (maybe 1 (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "startBlockHeight")
+    pgsize <- (maybe 2000 (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pagesize")
+    res <- LE.try $ xGetChainHeaders ht pgsize
+    case res of
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: xGetChainHeaders: " ++ show e
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+        Right ch -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespChainHeaders ch
+
 getBlockByHash :: Handler App App ()
 getBlockByHash = do
     hash <- getParam "hash"
