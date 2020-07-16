@@ -394,7 +394,7 @@ xGetTxHash hash = do
     res <-
         LE.try $
         LA.concurrently
-            (LA.concurrently (Q.runClient conn (Q.query qstr p)) (getTxOutputsFromTxId hash))
+            (LA.concurrently (Q.runClient conn (Q.query qstr p)) (return []))
             (xGetMerkleBranch $ DT.unpack hash)
     case res of
         Right ((iop, outs), mrkl) ->
@@ -446,8 +446,7 @@ xGetTxHashes hashes = do
                          let inps = L.sortBy (\(_, x, _) (_, y, _) -> compare x y) $ DCP.fromSet sinps
                              tx = fromJust $ Extra.hush $ S.decodeLazy $ fromBlob sz
                          res' <-
-                             LE.try $ LA.concurrently (return []) (xGetMerkleBranch $ DT.unpack txid)
---                             LE.try $ LA.concurrently (getTxOutputsFromTxId txid) (xGetMerkleBranch $ DT.unpack txid)
+                             LE.try $ LA.concurrently (getTxOutputsFromTxId txid) (xGetMerkleBranch $ DT.unpack txid)
                          case res' of
                              Right (outs, mrkl) ->
                                  return $
