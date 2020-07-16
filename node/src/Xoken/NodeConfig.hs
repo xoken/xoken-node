@@ -32,8 +32,8 @@ data NodeConfig =
         , bitcoinNodeListenPort :: PortNumber
         , endPointTLSListenIP :: String
         , endPointTLSListenPort :: PortNumber
-        , endPointHTTPListenIP :: String
-        , endPointHTTPListenPort :: PortNumber
+        , endPointHTTPSListenIP :: String
+        , endPointHTTPSListenPort :: PortNumber
         , allegoryVendorSecretKey :: SecKey
         , maxTxProcThreads :: Int
         , maxBitcoinPeerCount :: Int

@@ -12,9 +12,9 @@ endPointTLSListenIP: 127.0.0.1
 
 endPointTLSListenPort: 9090
 
-endPointHTTPListenIP: 127.0.0.1
+endPointHTTPSListenIP: 127.0.0.1
 
-endPointHTTPListenPort: 9091
+endPointHTTPSListenPort: 9091
 
 maxTxProcThreads: 80
 
