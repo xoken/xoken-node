@@ -79,6 +79,7 @@ data BitcoinP2P =
         , txSynchronizer :: !(MVar (M.Map TxHash Event))
         , maxTMTBuilderThreadLock :: !(MSem Int)
         , indexUnconfirmedTx :: !(TVar Bool)
+        , userDataCache :: !(HashTable Text (Text, Int32, Int32, UTCTime, [Text])) -- (name, quota, used, expiry time, roles)
         }
 
 class HasBitcoinP2P m where

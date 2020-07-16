@@ -53,6 +53,7 @@ import qualified Data.ByteString.Short as BSS
 import qualified Data.ByteString.UTF8 as BSU (toString)
 import Data.Char
 import Data.Default
+import qualified Data.HashTable.IO as H
 import Data.Hashable
 import Data.IORef
 import Data.Int
@@ -1256,32 +1257,69 @@ delegateRequest :: (HasXokenNodeEnv env m, MonadIO m) => RPCMessage -> EndPointC
 delegateRequest encReq epConn net = do
     dbe <- getDB
     lg <- getLogger
+    bp2pEnv <- getBitcoinP2P
     let conn = keyValDB (dbe)
     case rqParams encReq of
         (AuthenticateReq _ _ pretty) -> authLoginClient encReq net epConn pretty
         (GeneralReq sessionKey pretty _) -> do
-            let str =
-                    " SELECT api_quota, api_used, session_key_expiry_time, permissions FROM xoken.user_permission WHERE session_key = ? ALLOW FILTERING "
-                qstr = str :: Q.QueryString Q.R (Q.Identity DT.Text) (Int32, Int32, UTCTime, Set DT.Text)
-                p = Q.defQueryParams Q.One $ Identity $ (DT.pack sessionKey)
-            res <- liftIO $ try $ Q.runClient conn (Q.query (Q.prepared qstr) p)
-            case res of
-                Left (SomeException e) -> do
-                    err lg $ LG.msg $ "Error: SELECT'ing from 'user_permission': " ++ show e
-                    throw e
-                Right (op) -> do
-                    if length op == 0
+            userData <- liftIO $ H.lookup (userDataCache bp2pEnv) (DT.pack sessionKey)
+            case userData of
+                Just (name, quota, used, exp, roles) -> do
+                    curtm <- liftIO $ getCurrentTime
+                    if exp > curtm && quota > used
                         then do
-                            return $ RPCResponse 200 pretty $ Right $ Just $ AuthenticateResp $ AuthResp Nothing 0 0
+                            if (used + 1) `mod` 100 == 0
+                                then do
+                                    let str = " UPDATE xoken.user_permission SET api_used = ? WHERE username = ? "
+                                        qstr = str :: Q.QueryString Q.W (Int32, DT.Text) ()
+                                        p = Q.defQueryParams Q.One $ (used + 1, name)
+                                    res <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr) p)
+                                    case res of
+                                        Left (SomeException e) -> do
+                                            err lg $ LG.msg $ "Error: UPDATE'ing into 'user_permission': " ++ show e
+                                            throw e
+                                        Right _ -> return ()
+                                else return ()
+                            liftIO $
+                                H.insert
+                                    (userDataCache bp2pEnv)
+                                    (DT.pack sessionKey)
+                                    (name, quota, used + 1, exp, roles)
+                            goGetResource encReq net roles pretty
                         else do
-                            case op !! 0 of
-                                (quota, used, exp, roles) -> do
-                                    curtm <- liftIO $ getCurrentTime
-                                    if exp > curtm && quota > used
-                                        then goGetResource encReq net (DCP.fromSet roles) pretty
-                                        else return $
-                                             RPCResponse 200 pretty $
-                                             Right $ Just $ AuthenticateResp $ AuthResp Nothing 0 0
+                            liftIO $ H.delete (userDataCache bp2pEnv) (DT.pack sessionKey)
+                            return $ RPCResponse 200 pretty $ Right $ Just $ AuthenticateResp $ AuthResp Nothing 0 0
+                Nothing -> do
+                    let str =
+                            " SELECT username, api_quota, api_used, session_key_expiry_time, permissions FROM xoken.user_permission WHERE session_key = ? ALLOW FILTERING "
+                        qstr =
+                            str :: Q.QueryString Q.R (Q.Identity DT.Text) (DT.Text, Int32, Int32, UTCTime, Set DT.Text)
+                        p = Q.defQueryParams Q.One $ Identity $ (DT.pack sessionKey)
+                    res <- liftIO $ try $ Q.runClient conn (Q.query (Q.prepared qstr) p)
+                    case res of
+                        Left (SomeException e) -> do
+                            err lg $ LG.msg $ "Error: SELECT'ing from 'user_permission': " ++ show e
+                            throw e
+                        Right (op) -> do
+                            if length op == 0
+                                then do
+                                    return $
+                                        RPCResponse 200 pretty $ Right $ Just $ AuthenticateResp $ AuthResp Nothing 0 0
+                                else do
+                                    case op !! 0 of
+                                        (name, quota, used, exp, roles) -> do
+                                            curtm <- liftIO $ getCurrentTime
+                                            if exp > curtm && quota > used
+                                                then do
+                                                    liftIO $
+                                                        H.insert
+                                                            (userDataCache bp2pEnv)
+                                                            (DT.pack sessionKey)
+                                                            (name, quota, used + 1, exp, DCP.fromSet roles)
+                                                    goGetResource encReq net (DCP.fromSet roles) pretty
+                                                else return $
+                                                     RPCResponse 200 pretty $
+                                                     Right $ Just $ AuthenticateResp $ AuthResp Nothing 0 0
 
 goGetResource :: (HasXokenNodeEnv env m, MonadIO m) => RPCMessage -> Network -> [DT.Text] -> Bool -> m (RPCMessage)
 goGetResource msg net roles pretty = do
