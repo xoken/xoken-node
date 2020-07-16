@@ -174,6 +174,10 @@ data RPCReqParams'
     | GetBlocksByHashes
           { gbBlockHashes :: [String]
           }
+    | GetChainHeaders
+          { gcHeight :: Int32
+          , gcPageSize :: Int
+          }
     | GetTxIDsByBlockHash
           { gtTxBlockHash :: String
           , gtPageSize :: Int32
@@ -280,7 +284,8 @@ instance FromJSON RPCReqParams' where
          o .: "lastName" <*>
          o .: "email" <*>
          o .:? "roles") <|>
-        (GetTxOutputSpendStatus <$> o .: "txid" <*> o .: "index")
+        (GetTxOutputSpendStatus <$> o .: "txid" <*> o .: "index") <|>
+        (GetChainHeaders <$> o .:? "startBlockHeight" .!= 1 <*> o .:? "pageSize" .!= 2000)
 
 data RPCResponseBody
     = AuthenticateResp
@@ -303,6 +308,9 @@ data RPCResponseBody
           }
     | RespChainInfo
           { chainInfo :: ChainInfo
+          }
+    | RespChainHeaders
+          { chainHeaders :: [ChainHeader]
           }
     | RespTxIDsByBlockHash
           { txids :: [String]
@@ -375,7 +383,8 @@ instance ToJSON RPCResponseBody where
     toJSON (RespBlocksByHeight bs) = object ["blocks" .= bs]
     toJSON (RespBlockByHash b) = object ["block" .= b]
     toJSON (RespBlocksByHashes bs) = object ["blocks" .= bs]
-    toJSON (RespChainInfo cw) = object ["chainInfo" .= cw]
+    toJSON (RespChainInfo ci) = object ["chainInfo" .= ci]
+    toJSON (RespChainHeaders chs) = object ["chainHeaders" .= chs]
     toJSON (RespTxIDsByBlockHash txids) = object ["txids" .= txids]
     toJSON (RespTransactionByTxID tx) = object ["tx" .= tx]
     toJSON (RespTransactionsByTxIDs txs) = object ["txs" .= txs]
@@ -508,6 +517,25 @@ instance ToJSON BlockHeader' where
             , "blockTimestamp" .= ts
             , "blockBits" .= bb
             , "bhNonce" .= bn
+            ]
+
+data ChainHeader =
+    ChainHeader
+        { blockHeader :: BlockHeader'
+        , txCount :: Int32
+        }
+    deriving (Generic, Show, Hashable, Eq, Serialise)
+
+instance ToJSON ChainHeader where
+    toJSON (ChainHeader (BlockHeader' v pb mr ts bb bn) txc) =
+        object
+            [ "blockVersion" .= v
+            , "prevBlock" .= pb
+            , "merkleRoot" .= (reverse2 mr)
+            , "blockTimestamp" .= ts
+            , "difficulty" .= (convertBitsToDifficulty bb)
+            , "bhNonce" .= bn
+            , "txCount" .= txc
             ]
 
 data RawTxRecord =
