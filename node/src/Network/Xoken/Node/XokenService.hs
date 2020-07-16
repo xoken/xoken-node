@@ -151,8 +151,8 @@ xGetChainHeaders sblk pgsize = do
     dbe <- getDB
     lg <- getLogger
     let conn = keyValDB (dbe)
-        str = "SELECT tx_count,block_header from xoken.blocks_by_height where block_height in ?"
-        qstr = str :: Q.QueryString Q.R (Identity [Int32]) (Maybe Int32, DT.Text)
+        str = "SELECT block_hash,block_height,tx_count,block_header from xoken.blocks_by_height where block_height in ?"
+        qstr = str :: Q.QueryString Q.R (Identity [Int32]) (DT.Text, Int32, Maybe Int32, DT.Text)
         p = Q.defQueryParams Q.One $ Identity (L.take pgsize [sblk ..])
     res <- LE.try $ Q.runClient conn (Q.query qstr p)
     case res of
@@ -161,9 +161,10 @@ xGetChainHeaders sblk pgsize = do
                 then return []
                 else do
                     case traverse
-                             (\(txc, hdr) ->
+                             (\(hash, ht, txc, hdr) ->
                                   case (eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 hdr) of
-                                      (Right bh) -> Right $ ChainHeader bh (maybe (-1) fromIntegral txc)
+                                      (Right bh) ->
+                                          Right $ ChainHeader ht (DT.unpack hash) bh (maybe (-1) fromIntegral txc)
                                       Left e -> Left e)
                              (iop) of
                         Right x -> return x

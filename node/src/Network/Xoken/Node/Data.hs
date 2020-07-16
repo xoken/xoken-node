@@ -521,15 +521,19 @@ instance ToJSON BlockHeader' where
 
 data ChainHeader =
     ChainHeader
-        { blockHeader :: BlockHeader'
+        { blockHeight :: Int32
+        , blockHash :: String
+        , blockHeader :: BlockHeader'
         , txCount :: Int32
         }
     deriving (Generic, Show, Hashable, Eq, Serialise)
 
 instance ToJSON ChainHeader where
-    toJSON (ChainHeader (BlockHeader' v pb mr ts bb bn) txc) =
+    toJSON (ChainHeader ht hs (BlockHeader' v pb mr ts bb bn) txc) =
         object
-            [ "blockVersion" .= v
+            [ "blockHeight" .= ht
+            , "blockHash" .= hs
+            , "blockVersion" .= v
             , "prevBlock" .= pb
             , "merkleRoot" .= (reverse2 mr)
             , "blockTimestamp" .= ts
