@@ -124,7 +124,7 @@ xGetChainInfo = do
                 then do
                     return Nothing
                 else do
-                    let (_, blocks, _, _) = snd . head $ (L.filter (\x -> fst x == "best-synced") iop)
+                    let (_, blocks, _, bestSyncedHash) = snd . head $ (L.filter (\x -> fst x == "best-synced") iop)
                         (_, headers, _, bestBlockHash) = snd . head $ (L.filter (\x -> fst x == "best_chain_tip") iop)
                         (_, lagHeight, _, chainwork) = snd . head $ (L.filter (\x -> fst x == "chain-work") iop)
                     blk <- xGetBlockHeight headers
@@ -140,7 +140,8 @@ xGetChainInfo = do
                                     (convertBitsToDifficulty . blockBits' . rbHeader $ b)
                                     (headers)
                                     (blocks)
-                                    (rbHash b)
+                                    (DT.unpack bestBlockHash)
+                                    (DT.unpack bestSyncedHash)
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetChainInfo: " ++ show e
             throw KeyValueDBLookupException
