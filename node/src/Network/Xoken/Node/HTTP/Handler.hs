@@ -20,6 +20,7 @@ import qualified Data.ByteString.Char8 as S
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Lazy.Char8 as C
 import qualified Data.Either as Either
+import qualified Data.HashTable.IO as H
 import Data.Int
 import qualified Data.List as L
 import qualified Data.Map.Strict as Map
@@ -566,29 +567,63 @@ testAuthHeader :: XokenNodeEnv -> Maybe B.ByteString -> Maybe DT.Text -> IO Bool
 testAuthHeader _ Nothing _ = pure False
 testAuthHeader env (Just sessionKey) role = do
     let dbe = dbHandles env
-    let conn = keyValDB (dbe)
-    let lg = loggerEnv env
-    let str =
-            " SELECT api_quota, api_used, session_key_expiry_time, permissions FROM xoken.user_permission WHERE session_key = ? ALLOW FILTERING "
-        qstr = str :: Q.QueryString Q.R (Q.Identity DT.Text) (Int32, Int32, UTCTime, Set DT.Text)
-        p = Q.defQueryParams Q.One $ Identity $ (DTE.decodeUtf8 sessionKey)
-    res <- liftIO $ try $ Q.runClient conn (Q.query (Q.prepared qstr) p)
-    case res of
-        Left (SomeException e) -> do
-            err lg $ LG.msg $ "Error: SELECT'ing from 'user_permission': " ++ show e
-            throw e
-        Right (op) -> do
-            if length op == 0
-                then return False
+        conn = keyValDB (dbe)
+        lg = loggerEnv env
+        bp2pEnv = bitcoinP2PEnv env
+        sKey = DT.pack $ S.unpack sessionKey
+    userData <- liftIO $ H.lookup (userDataCache bp2pEnv) sKey
+    case userData of
+        Just (name, quota, used, exp, roles) -> do
+            curtm <- liftIO $ getCurrentTime
+            if exp > curtm && quota > used
+                then do
+                    if (used + 1) `mod` 100 == 0
+                        then do
+                            let str = " UPDATE xoken.user_permission SET api_used = ? WHERE username = ? "
+                                qstr = str :: Q.QueryString Q.W (Int32, DT.Text) ()
+                                p = Q.defQueryParams Q.One $ (used + 1, name)
+                            res <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr) p)
+                            case res of
+                                Left (SomeException e) -> do
+                                    err lg $ LG.msg $ "Error: UPDATE'ing into 'user_permission': " ++ show e
+                                    throw e
+                                Right _ -> return ()
+                        else return ()
+                    liftIO $ H.insert (userDataCache bp2pEnv) sKey (name, quota, used + 1, exp, roles)
+                    case role of
+                        Nothing -> return True
+                        Just rl -> return $ rl `elem` roles
                 else do
-                    case op !! 0 of
-                        (quota, used, exp, roles) -> do
-                            curtm <- liftIO $ getCurrentTime
-                            if exp > curtm && quota > used
-                                then case role of
-                                         Nothing -> return True
-                                         Just rl -> return $ rl `elem` (fromSet roles)
-                                else return False
+                    liftIO $ H.delete (userDataCache bp2pEnv) sKey
+                    return False
+        Nothing -> do
+            let str =
+                    " SELECT username, api_quota, api_used, session_key_expiry_time, permissions FROM xoken.user_permission WHERE session_key = ? ALLOW FILTERING "
+                qstr = str :: Q.QueryString Q.R (Q.Identity DT.Text) (DT.Text, Int32, Int32, UTCTime, Set DT.Text)
+                p = Q.defQueryParams Q.One $ Identity $ sKey
+            res <- liftIO $ try $ Q.runClient conn (Q.query (Q.prepared qstr) p)
+            case res of
+                Left (SomeException e) -> do
+                    err lg $ LG.msg $ "Error: SELECT'ing from 'user_permission': " ++ show e
+                    throw e
+                Right op -> do
+                    if length op == 0
+                        then return False
+                        else do
+                            case op !! 0 of
+                                (name, quota, used, exp, roles) -> do
+                                    curtm <- liftIO $ getCurrentTime
+                                    if exp > curtm && quota > used
+                                        then do
+                                            liftIO $
+                                                H.insert
+                                                    (userDataCache bp2pEnv)
+                                                    sKey
+                                                    (name, quota, used + 1, exp, fromSet roles)
+                                            case role of
+                                                Nothing -> return True
+                                                Just rl -> return $ rl `elem` (fromSet roles)
+                                        else return False
 
 throwChallenge :: Handler App App ()
 throwChallenge = do
