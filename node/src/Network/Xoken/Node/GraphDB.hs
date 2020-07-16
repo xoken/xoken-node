@@ -65,10 +65,10 @@ instance ToJSON Value where
     toJSON (M m) = toJSON m
     toJSON _ = undefined -- we do not need Maps and Structures in this example
 
--- |Create pool of connections (4 stripes, 500 ms timeout, 1 resource per stripe)
+-- |Create pool of connections (32 stripes, 5000 ms timeout, 64 resource per stripe)
 constructState :: BoltCfg -> IO ServerState
 constructState bcfg = do
-    pool <- createPool (BT.connect bcfg) BT.close 32 500 32
+    pool <- createPool (BT.connect bcfg) BT.close 32 5000 64
     return (ServerState pool)
 
 -- | Convert record to MerkleBranchNode
