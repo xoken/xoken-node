@@ -392,14 +392,15 @@ xGetTxHash hash = do
 --                                                        , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
                                                         , Int64)
         p = Q.defQueryParams Q.One $ Identity $ hash
-    res <-
-        LE.try $
-        LA.concurrently
-            (LA.concurrently (Q.runClient conn (Q.query qstr p)) (return []))
-            (return []) --(xGetMerkleBranch $ DT.unpack hash)
-    case res of
-        Right ((iop, outs), mrkl) ->
-            return $ Just $ RawTxRecord "dummy" 11 (BlockInfo' "foo" 1 2) C.empty [] [] (256 :: Int64) []
+    return Nothing
+--   res <-
+--        LE.try $
+--        LA.concurrently
+--            (LA.concurrently (Q.runClient conn (Q.query qstr p)) (return []))
+--            (return []) --(xGetMerkleBranch $ DT.unpack hash)
+--    case res of
+--        Right ((iop, outs), mrkl) ->
+--            return $ Just $ RawTxRecord "dummy" 11 (BlockInfo' "foo" 1 2) C.empty [] [] (256 :: Int64) []
 --            if length iop == 0
 --                then return Nothing
 --                else do
@@ -420,9 +421,9 @@ xGetTxHash hash = do
 --                             inps)
 --                            fees
 --                            mrkl
-        Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: xGetTxHash: " ++ show e
-            throw KeyValueDBLookupException
+--        Left (e :: SomeException) -> do
+--            err lg $ LG.msg $ "Error: xGetTxHash: " ++ show e
+--            throw KeyValueDBLookupException
 
 xGetTxHashes :: (HasXokenNodeEnv env m, MonadIO m) => [DT.Text] -> m ([RawTxRecord])
 xGetTxHashes hashes = do
