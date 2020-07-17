@@ -258,6 +258,9 @@ data RPCReqParams'
     | GetUserByUsername
           { guUsername :: String
           }
+    | DeleteUserByUsername
+          { duUsername :: String
+          }
     deriving (Generic, Show, Hashable, Eq, Serialise, ToJSON)
 
 instance FromJSON RPCReqParams' where
@@ -288,7 +291,8 @@ instance FromJSON RPCReqParams' where
          o .: "email" <*>
          o .:? "roles") <|>
         (GetTxOutputSpendStatus <$> o .: "txid" <*> o .: "index") <|>
-        (GetUserByUsername <$> o .: "username") <|>
+        (GetUserByUsername <$> o .: "getUsername") <|>
+        (DeleteUserByUsername <$> o .: "deleteUsername") <|>
         (GetChainHeaders <$> o .:? "startBlockHeight" .!= 1 <*> o .:? "pageSize" .!= 2000)
 
 data RPCResponseBody

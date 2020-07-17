@@ -523,6 +523,19 @@ getUserByUsername = do
         Right u@(Just us) -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespUser u
         Right Nothing -> throwNotFound
 
+deleteUserByUsername :: Handler App App ()
+deleteUserByUsername = do
+    uname <- (fmap $ DTE.decodeUtf8) <$> (getParam "username")
+    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    res <- LE.try $ xDeleteUserByUsername (fromJust uname)
+    case res of
+        Left (e :: SomeException) -> do
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+        Right () -> do
+            modifyResponse $ setResponseStatus 200 "Deleted"
+            writeBS $ "User deleted"
+
 --- |
 -- Helper functions
 withAuth :: Handler App App () -> Handler App App ()

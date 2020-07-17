@@ -1256,8 +1256,24 @@ xGetUserByUsername name = do
                                 (maskAfter 10 $ DT.unpack sk)
                                 skE
         Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: xGetChainHeaders: " ++ show e
+            err lg $ LG.msg $ "Error: xGetUserByUsername: " ++ show e
             throw KeyValueDBLookupException
+
+xDeleteUserByUsername :: (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> m ()
+xDeleteUserByUsername name = do
+    dbe <- getDB
+    lg <- getLogger
+    bp2pEnv <- getBitcoinP2P
+    let conn = keyValDB (dbe)
+        str = "DELETE FROM xoken.user_permission WHERE username=?"
+        qstr = str :: Q.QueryString Q.W (Identity DT.Text) ()
+        par = Q.defQueryParams Q.One (Identity name)
+    res <- liftIO $ try $ Q.runClient conn (Q.write qstr par)
+    case res of
+        Right () -> return ()
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: DELETE'ing from 'script_hash_unspent_outputs': " ++ show e
+            throw e
 
 xGetUserBySessionKey :: (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> m (Maybe User)
 xGetUserBySessionKey skey = do
@@ -1317,7 +1333,7 @@ xGetUserBySessionKey skey = do
                                 (maskAfter 10 $ DT.unpack sk)
                                 skE
         Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: xGetChainHeaders: " ++ show e
+            err lg $ LG.msg $ "Error: xGetUserBySessionKey: " ++ show e
             throw KeyValueDBLookupException
 
 authLoginClient ::
@@ -1488,6 +1504,17 @@ goGetResource msg net roles sessKey pretty = do
                         else return $
                              RPCResponse 403 pretty $
                              Left $ RPCError INVALID_PARAMS (Just "User lacks permission to create users")
+                _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
+        "DELETE_USER" -> do
+            case methodParams $ rqParams msg of
+                Just (DeleteUserByUsername u) -> do
+                    if "admin" `elem` roles
+                        then do
+                            xDeleteUserByUsername (DT.pack u)
+                            return $ RPCResponse 200 pretty $ Right $ Nothing
+                        else return $
+                             RPCResponse 403 pretty $
+                             Left $ RPCError INVALID_PARAMS (Just "User lacks permission to fetch users")
                 _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
         "USER" -> do
             usr <- xGetUserBySessionKey sessKey
