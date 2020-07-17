@@ -42,6 +42,7 @@ import Network.Xoken.Node.Data
     , RPCResponseBody(..)
     , RawTxRecord(..)
     , TxRecord(..)
+    , UpdateUserByUsername'(..)
     , coinbaseTxToMessage
     , encodeResp
     , fromResultWithCursor
@@ -535,6 +536,20 @@ deleteUserByUsername = do
         Right () -> do
             modifyResponse $ setResponseStatus 200 "Deleted"
             writeBS $ "User deleted"
+
+updateUserByUsername :: UpdateUserByUsername' -> Handler App App ()
+updateUserByUsername updates = do
+    uname <- (fmap $ DTE.decodeUtf8) <$> (getParam "username")
+    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    res <- LE.try $ xUpdateUserByUsername (fromJust uname) updates
+    case res of
+        Left (e :: SomeException) -> do
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+        Right True -> do
+            modifyResponse $ setResponseStatus 200 "Updated"
+            writeBS $ "User updated"
+        Right False -> throwNotFound
 
 --- |
 -- Helper functions
