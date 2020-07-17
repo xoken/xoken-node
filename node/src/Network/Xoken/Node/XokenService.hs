@@ -24,6 +24,7 @@ import Arivi.P2P.Types hiding (msgType)
 import Codec.Compression.GZip as GZ
 import Codec.Serialise
 import Conduit hiding (runResourceT)
+import Control.Applicative
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (AsyncCancelled, mapConcurrently, mapConcurrently_, race_)
 import qualified Control.Concurrent.Async.Lifted as LA (async, concurrently, mapConcurrently, wait)
@@ -1205,9 +1206,10 @@ xGetUserByUsername name = do
     bp2pEnv <- getBitcoinP2P
     let conn = keyValDB (dbe)
         str =
-            "SELECT username,first_name,last_name,emailid,permissions,api_quota,api_used,api_expiry_time,session_key,session_key_expiry_time from xoken.user_permission where username = ?"
+            "SELECT username,password,first_name,last_name,emailid,permissions,api_quota,api_used,api_expiry_time,session_key,session_key_expiry_time from xoken.user_permission where username = ?"
         qstr =
             str :: Q.QueryString Q.R (Identity DT.Text) ( DT.Text
+                                                        , DT.Text
                                                         , DT.Text
                                                         , DT.Text
                                                         , DT.Text
@@ -1224,7 +1226,7 @@ xGetUserByUsername name = do
             if length iop == 0
                 then return Nothing
                 else do
-                    let (uname, fname, lname, email, roles, apiQ, apiU, apiE, sk, skE) = iop !! 0
+                    let (uname, pwd, fname, lname, email, roles, apiQ, apiU, apiE, sk, skE) = iop !! 0
                     userData <- liftIO $ H.lookup (userDataCache bp2pEnv) (sk)
                     case userData of
                         Just (_, _, used, _, _) ->
@@ -1232,6 +1234,7 @@ xGetUserByUsername name = do
                             Just $
                             User
                                 (DT.unpack uname)
+                                (DT.unpack pwd)
                                 (DT.unpack fname)
                                 (DT.unpack lname)
                                 (DT.unpack email)
@@ -1246,6 +1249,7 @@ xGetUserByUsername name = do
                             Just $
                             User
                                 (DT.unpack uname)
+                                (DT.unpack pwd)
                                 (DT.unpack fname)
                                 (DT.unpack lname)
                                 (DT.unpack email)
@@ -1280,7 +1284,44 @@ xDeleteUserByUsername name = do
                              else return ())
                     cacheList
         Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: DELETE'ing from 'script_hash_unspent_outputs': " ++ show e
+            err lg $ LG.msg $ "Error: DELETE'ing from 'user_permission': " ++ show e
+            throw e
+
+xUpdateUserByUsername :: (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> UpdateUserByUsername' -> m Bool
+xUpdateUserByUsername name (UpdateUserByUsername' {..}) = do
+    dbe <- getDB
+    lg <- getLogger
+    bp2pEnv <- getBitcoinP2P
+    res <- LE.try $ xGetUserByUsername name
+    case res of
+        Right (Just (User {..})) -> do
+            let conn = keyValDB (dbe)
+                str =
+                    "UPDATE xoken.user_permission SET password=?,first_name=?,last_name=?,emailid=?,api_quota=?,permissions=?,api_expiry_time=? WHERE username=?"
+                qstr =
+                    str :: Q.QueryString Q.W (DT.Text, DT.Text, DT.Text, DT.Text, Int32, Set DT.Text, UTCTime, DT.Text) ()
+                par =
+                    Q.defQueryParams
+                        Q.One
+                        ( fromMaybe
+                              (DT.pack uPassword)
+                              ((encodeHex . S.encode . sha256 . B64.encode . BC.pack) <$> uuPassword)
+                        , DT.pack $ fromMaybe uFirstName uuFirstName
+                        , DT.pack $ fromMaybe uLastName uuLastName
+                        , DT.pack $ fromMaybe uEmail uuEmail
+                        , fromMaybe (fromIntegral uApiQuota) uuApiQuota
+                        , DCP.Set $ fmap DT.pack $ fromMaybe uRoles uuRoles
+                        , fromMaybe uApiExpiryTime uuApiExpiryTime
+                        , name)
+            res' <- liftIO $ try $ Q.runClient conn (Q.write qstr par)
+            case res' of
+                Right () -> return True
+                Left (e :: SomeException) -> do
+                    err lg $ LG.msg $ "Error: UPDATE'ing 'user_permission': " ++ show e
+                    throw e
+        Right Nothing -> return False
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: UPDATE'ing 'user_permission': " ++ show e
             throw e
 
 xGetUserBySessionKey :: (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> m (Maybe User)
@@ -1317,6 +1358,7 @@ xGetUserBySessionKey skey = do
                             Just $
                             User
                                 (DT.unpack uname)
+                                (DT.unpack "")
                                 (DT.unpack fname)
                                 (DT.unpack lname)
                                 (DT.unpack email)
@@ -1331,6 +1373,7 @@ xGetUserBySessionKey skey = do
                             Just $
                             User
                                 (DT.unpack uname)
+                                (DT.unpack "")
                                 (DT.unpack fname)
                                 (DT.unpack lname)
                                 (DT.unpack email)
@@ -1520,6 +1563,21 @@ goGetResource msg net roles sessKey pretty = do
                         then do
                             xDeleteUserByUsername (DT.pack u)
                             return $ RPCResponse 200 pretty $ Right $ Nothing
+                        else return $
+                             RPCResponse 403 pretty $
+                             Left $ RPCError INVALID_PARAMS (Just "User lacks permission to fetch users")
+                _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
+        "UPDATE_USER" -> do
+            case methodParams $ rqParams msg of
+                Just (UpdateUserByUsername u d) -> do
+                    if "admin" `elem` roles
+                        then do
+                            upd <- xUpdateUserByUsername (DT.pack u) d
+                            case upd of
+                                True -> return $ RPCResponse 200 pretty $ Right $ Nothing
+                                False ->
+                                    return $
+                                    RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS (Just "User doesn't exist")
                         else return $
                              RPCResponse 403 pretty $
                              Left $ RPCError INVALID_PARAMS (Just "User lacks permission to fetch users")

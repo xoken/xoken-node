@@ -276,6 +276,7 @@ addNewUser conn uname fname lname email roles api_quota api_expiry_time = do
                         AddUserResp
                             (User
                                  (T.unpack uname)
+                                 ""
                                  (T.unpack fname)
                                  (T.unpack lname)
                                  (T.unpack email)

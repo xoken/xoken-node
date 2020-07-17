@@ -261,6 +261,10 @@ data RPCReqParams'
     | DeleteUserByUsername
           { duUsername :: String
           }
+    | UpdateUserByUsername
+          { uuUsername :: String
+          , uuUpdateData :: UpdateUserByUsername'
+          }
     deriving (Generic, Show, Hashable, Eq, Serialise, ToJSON)
 
 instance FromJSON RPCReqParams' where
@@ -293,6 +297,7 @@ instance FromJSON RPCReqParams' where
         (GetTxOutputSpendStatus <$> o .: "txid" <*> o .: "index") <|>
         (GetUserByUsername <$> o .: "getUsername") <|>
         (DeleteUserByUsername <$> o .: "deleteUsername") <|>
+        (UpdateUserByUsername <$> o .: "updateUsername" <*> o .: "updateData") <|>
         (GetChainHeaders <$> o .:? "startBlockHeight" .!= 1 <*> o .:? "pageSize" .!= 2000)
 
 data RPCResponseBody
@@ -417,6 +422,25 @@ instance ToJSON RPCResponseBody where
     toJSON (RespTxOutputSpendStatus ss) = object ["spendStatus" .= ss]
     toJSON (RespUser u) = object ["user" .= u]
 
+data UpdateUserByUsername' =
+    UpdateUserByUsername'
+        { uuPassword :: Maybe String
+        , uuFirstName :: Maybe String
+        , uuLastName :: Maybe String
+        , uuEmail :: Maybe String
+        , uuApiQuota :: Maybe Int32
+        , uuRoles :: Maybe [String]
+        , uuApiExpiryTime :: Maybe UTCTime
+        }
+    deriving (Generic, Show, Hashable, Eq, Serialise, ToJSON)
+
+instance FromJSON UpdateUserByUsername' where
+    parseJSON (Object o) =
+        (UpdateUserByUsername' <$> o .:? "password" <*> o .:? "firstName" <*> o .:? "lastName" <*> o .:? "email" <*>
+         o .:? "apiQuota" <*>
+         o .:? "roles" <*>
+         o .:? "apiExpiryTime")
+
 data AuthResp =
     AuthResp
         { sessionKey :: Maybe String
@@ -433,7 +457,7 @@ data AddUserResp =
     deriving (Generic, Show, Hashable, Eq, Serialise)
 
 instance ToJSON AddUserResp where
-    toJSON (AddUserResp (User uname fname lname email roles apiQuota _ apiExpTime _ _) pwd) =
+    toJSON (AddUserResp (User uname _ fname lname email roles apiQuota _ apiExpTime _ _) pwd) =
         object
             [ "username" .= uname
             , "password" .= pwd
@@ -448,6 +472,7 @@ instance ToJSON AddUserResp where
 data User =
     User
         { uUsername :: String
+        , uPassword :: String
         , uFirstName :: String
         , uLastName :: String
         , uEmail :: String
@@ -461,7 +486,7 @@ data User =
     deriving (Generic, Show, Hashable, Eq, Serialise)
 
 instance ToJSON User where
-    toJSON (User uname fname lname email roles apiQuota apiUsed apiExpTime sKey sKeyExp) =
+    toJSON (User uname _ fname lname email roles apiQuota apiUsed apiExpTime sKey sKeyExp) =
         object
             [ "username" .= uname
             , "firstName" .= fname
