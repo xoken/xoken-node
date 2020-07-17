@@ -1202,6 +1202,7 @@ xGetUserByUsername :: (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> m (Maybe 
 xGetUserByUsername name = do
     dbe <- getDB
     lg <- getLogger
+    bp2pEnv <- getBitcoinP2P
     let conn = keyValDB (dbe)
         str =
             "SELECT username,first_name,last_name,emailid,permissions,api_quota,api_used,api_expiry_time,session_key,session_key_expiry_time from xoken.user_permission where username = ?"
@@ -1224,27 +1225,45 @@ xGetUserByUsername name = do
                 then return Nothing
                 else do
                     let (uname, fname, lname, email, roles, apiQ, apiU, apiE, sk, skE) = iop !! 0
-                    return $
-                        Just $
-                        User
-                            (DT.unpack uname)
-                            (DT.unpack fname)
-                            (DT.unpack lname)
-                            (DT.unpack email)
-                            (DT.unpack <$> (DCP.fromSet roles))
-                            (fromIntegral apiQ)
-                            (fromIntegral apiU)
-                            apiE
-                            (maskAfter 10 $ DT.unpack sk)
-                            skE
+                    userData <- liftIO $ H.lookup (userDataCache bp2pEnv) (sk)
+                    case userData of
+                        Just (_, _, used, _, _) ->
+                            return $
+                            Just $
+                            User
+                                (DT.unpack uname)
+                                (DT.unpack fname)
+                                (DT.unpack lname)
+                                (DT.unpack email)
+                                (DT.unpack <$> (DCP.fromSet roles))
+                                (fromIntegral apiQ)
+                                (fromIntegral used)
+                                apiE
+                                (maskAfter 10 $ DT.unpack sk)
+                                skE
+                        Nothing ->
+                            return $
+                            Just $
+                            User
+                                (DT.unpack uname)
+                                (DT.unpack fname)
+                                (DT.unpack lname)
+                                (DT.unpack email)
+                                (DT.unpack <$> (DCP.fromSet roles))
+                                (fromIntegral apiQ)
+                                (fromIntegral apiU)
+                                apiE
+                                (maskAfter 10 $ DT.unpack sk)
+                                skE
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetChainHeaders: " ++ show e
             throw KeyValueDBLookupException
 
 xGetUserBySessionKey :: (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> m (Maybe User)
-xGetUserBySessionKey sk = do
+xGetUserBySessionKey skey = do
     dbe <- getDB
     lg <- getLogger
+    bp2pEnv <- getBitcoinP2P
     let conn = keyValDB (dbe)
         str =
             "SELECT username,first_name,last_name,emailid,permissions,api_quota,api_used,api_expiry_time,session_key,session_key_expiry_time from xoken.user_permission where session_key = ? ALLOW FILTERING "
@@ -1259,7 +1278,7 @@ xGetUserBySessionKey sk = do
                                                         , UTCTime
                                                         , DT.Text
                                                         , UTCTime)
-        p = Q.defQueryParams Q.One $ Identity sk
+        p = Q.defQueryParams Q.One $ Identity skey
     res <- LE.try $ Q.runClient conn (Q.query qstr p)
     case res of
         Right iop -> do
@@ -1267,19 +1286,36 @@ xGetUserBySessionKey sk = do
                 then return Nothing
                 else do
                     let (uname, fname, lname, email, roles, apiQ, apiU, apiE, sk, skE) = iop !! 0
-                    return $
-                        Just $
-                        User
-                            (DT.unpack uname)
-                            (DT.unpack fname)
-                            (DT.unpack lname)
-                            (DT.unpack email)
-                            (DT.unpack <$> (DCP.fromSet roles))
-                            (fromIntegral apiQ)
-                            (fromIntegral apiU)
-                            apiE
-                            (maskAfter 10 $ DT.unpack sk)
-                            skE
+                    userData <- liftIO $ H.lookup (userDataCache bp2pEnv) (sk)
+                    case userData of
+                        Just (_, _, used, _, _) ->
+                            return $
+                            Just $
+                            User
+                                (DT.unpack uname)
+                                (DT.unpack fname)
+                                (DT.unpack lname)
+                                (DT.unpack email)
+                                (DT.unpack <$> (DCP.fromSet roles))
+                                (fromIntegral apiQ)
+                                (fromIntegral used)
+                                apiE
+                                (maskAfter 10 $ DT.unpack sk)
+                                skE
+                        Nothing ->
+                            return $
+                            Just $
+                            User
+                                (DT.unpack uname)
+                                (DT.unpack fname)
+                                (DT.unpack lname)
+                                (DT.unpack email)
+                                (DT.unpack <$> (DCP.fromSet roles))
+                                (fromIntegral apiQ)
+                                (fromIntegral apiU)
+                                apiE
+                                (maskAfter 10 $ DT.unpack sk)
+                                skE
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetChainHeaders: " ++ show e
             throw KeyValueDBLookupException
@@ -1371,7 +1407,7 @@ delegateRequest encReq epConn net = do
                                     (userDataCache bp2pEnv)
                                     (DT.pack sessionKey)
                                     (name, quota, used + 1, exp, roles)
-                            goGetResource encReq net roles pretty
+                            goGetResource encReq net roles (DT.pack sessionKey) pretty
                         else do
                             liftIO $ H.delete (userDataCache bp2pEnv) (DT.pack sessionKey)
                             return $ RPCResponse 200 pretty $ Right $ Just $ AuthenticateResp $ AuthResp Nothing 0 0
@@ -1402,13 +1438,19 @@ delegateRequest encReq epConn net = do
                                                             (userDataCache bp2pEnv)
                                                             (DT.pack sessionKey)
                                                             (name, quota, used + 1, exp, DCP.fromSet roles)
-                                                    goGetResource encReq net (DCP.fromSet roles) pretty
+                                                    goGetResource
+                                                        encReq
+                                                        net
+                                                        (DCP.fromSet roles)
+                                                        (DT.pack sessionKey)
+                                                        pretty
                                                 else return $
                                                      RPCResponse 200 pretty $
                                                      Right $ Just $ AuthenticateResp $ AuthResp Nothing 0 0
 
-goGetResource :: (HasXokenNodeEnv env m, MonadIO m) => RPCMessage -> Network -> [DT.Text] -> Bool -> m (RPCMessage)
-goGetResource msg net roles pretty = do
+goGetResource ::
+       (HasXokenNodeEnv env m, MonadIO m) => RPCMessage -> Network -> [DT.Text] -> DT.Text -> Bool -> m (RPCMessage)
+goGetResource msg net roles sessKey pretty = do
     dbe <- getDB
     lg <- getLogger
     let grdb = graphDB (dbe)
@@ -1447,6 +1489,9 @@ goGetResource msg net roles pretty = do
                              RPCResponse 403 pretty $
                              Left $ RPCError INVALID_PARAMS (Just "User lacks permission to create users")
                 _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
+        "USER" -> do
+            usr <- xGetUserBySessionKey sessKey
+            return $ RPCResponse 200 pretty $ Right $ Just $ RespUser usr
         "USERNAME->USER" -> do
             case methodParams $ rqParams msg of
                 Just (GetUserByUsername u) -> do
