@@ -2,6 +2,32 @@
 Xoken Nexa Node
 ===============
 
+v1.1.0     2020-07-17
+
+- HTTPS endpoint & REST API added, supports convenient JSON responses.
+- Nexa now runs as a daemon process.
+- User-based authorization added; users have roles (admin or regular user) with permissions that can be set 
+- All calls to API authenticated with a session key that expires after its quota is used up or past an expiry time, whichever is earlier.
+- API calls to authenticate and get the session key using credentials (username, password) added
+- API calls to fetch and update user information, and add or delete users added.
+- UTXO APIs added: get unspent outputs for given address[es]/scripthash[es]
+- Spend status APIs added: get spend status and details for supplied transaction ID and output index
+- Cursor-based pagination added for APIs that may return large amount of results; results include a nextCursor that can be supplied with subsequent requests for next page[s], along with a page size attribute
+- Chain-related API calls added: get information about chain work and chain synchronization progress, and get chain headers given starting block height and number of blocks (acts as page size)
+- JSON responses can be neatly formatted; this is configurable via 'pretty' Boolean switch for all API requests.
+- Processing of unconfirmed transactions begins automatically after the chain sync is complete
+- API to fetch all transaction IDs for a block, queried by block hash has been added
+- Tx output spending information is now computed and stored in database
+- Invalidation-less caching of Tx output values to speed up compilation of Tx input values and output spending information
+- Cache key bits for invalidation-less cache can be configured from node-config.yaml to tune cache performance wherever invalidation-less caching is used
+- Cassandra connection configuration tuned to better handle heavy loads
+- Redesigned JSON request and response design, including RPC method parameters and response parameters to make information structure more intuitive and easier to comprehend
+- Better resilience to Cassandra/Neo4j failures, Nexa will try to reconnect to DB[s] in case of failures
+- Improvements to concurrent transaction processing, fixes that address possible race conditions
+- A number of other parameters have been made configurable via node-config.yaml
+- General bug fixes and code cleanup
+
+
 v1.0.0-beta.1     2020-06-04
 
 - Fix for chain sync slowdown
