@@ -1270,7 +1270,15 @@ xDeleteUserByUsername name = do
         par = Q.defQueryParams Q.One (Identity name)
     res <- liftIO $ try $ Q.runClient conn (Q.write qstr par)
     case res of
-        Right () -> return ()
+        Right () -> do
+            cacheList <- liftIO $ (H.toList $ userDataCache bp2pEnv)
+            liftIO $
+                mapM_
+                    (\(k, (n, _, _, _, _)) ->
+                         if n == name
+                             then H.delete (userDataCache bp2pEnv) k
+                             else return ())
+                    cacheList
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: DELETE'ing from 'script_hash_unspent_outputs': " ++ show e
             throw e
