@@ -107,7 +107,7 @@ getChainInfo = do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
         Right (Just ci) -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespChainInfo ci
-        Right Nothing -> throwBadRequest
+        Right Nothing -> throwNotFound
 
 getChainHeaders :: Handler App App ()
 getChainHeaders = do
@@ -135,9 +135,7 @@ getBlockByHash = do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
         Right (Just rec) -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespBlockByHash rec
-        Right Nothing -> do
-            modifyResponse $ setResponseStatus 400 "Bad Request"
-            writeBS "400 error"
+        Right Nothing -> throwNotFound
 
 getBlocksByHash :: Handler App App ()
 getBlocksByHash = do
@@ -164,9 +162,7 @@ getBlockByHeight = do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
         Right (Just rec) -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespBlockByHeight rec
-        Right Nothing -> do
-            modifyResponse $ setResponseStatus 400 "Bad Request"
-            writeBS "400 error"
+        Right Nothing -> throwNotFound
 
 getBlocksByHeight :: Handler App App ()
 getBlocksByHeight = do
@@ -193,9 +189,7 @@ getRawTxById = do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
         Right (Just rec) -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespRawTransactionByTxID rec
-        Right Nothing -> do
-            modifyResponse $ setResponseStatus 400 "Bad Request"
-            writeBS "400 error"
+        Right Nothing -> throwNotFound
 
 getRawTxByIds :: Handler App App ()
 getRawTxByIds = do
@@ -232,9 +226,7 @@ getTxById = do
                 Left err -> do
                     modifyResponse $ setResponseStatus 400 "Bad Request"
                     writeBS "400 error"
-        Right Nothing -> do
-            modifyResponse $ setResponseStatus 400 "Bad Request"
-            writeBS "400 error"
+        Right Nothing -> throwNotFound
 
 getTxByIds :: Handler App App ()
 getTxByIds = do
@@ -516,7 +508,8 @@ getUserByUsername = do
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
-        Right u -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespUser u
+        Right u@(Just us) -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespUser u
+        Right Nothing -> throwNotFound
 
 --- |
 -- Helper functions
@@ -651,3 +644,8 @@ throwBadRequest :: Handler App App ()
 throwBadRequest = do
     modifyResponse $ setResponseStatus 400 "Bad Request"
     writeBS "Bad Request"
+
+throwNotFound :: Handler App App ()
+throwNotFound = do
+    modifyResponse $ setResponseStatus 404 "Not Found"
+    writeBS "Not Found"
