@@ -507,6 +507,17 @@ getPartiallySignedAllegoryTx GetPartiallySignedAllegoryTx {..} = do
             writeBS $ BSL.toStrict $ encodeResp pretty $ RespPartiallySignedAllegoryTx ops
 getPartiallySignedAllegoryTx _ = throwBadRequest
 
+getUserByUsername :: Handler App App ()
+getUserByUsername = do
+    uname <- (fmap $ DTE.decodeUtf8) <$> (getParam "username")
+    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    res <- LE.try $ xGetUserByUsername (fromJust uname)
+    case res of
+        Left (e :: SomeException) -> do
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+        Right u -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespUser u
+
 --- |
 -- Helper functions
 withAuth :: Handler App App () -> Handler App App ()

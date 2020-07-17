@@ -17,7 +17,8 @@ appInit env =
 apiRoutes :: [(B.ByteString, Handler App App ())]
 apiRoutes =
     [ ("/v1/auth", method POST (withReq authClient))
-    , ("/v1/add/user", method POST (withAuthAs "admin" $ withReq addUser))
+    , ("/v1/user", method POST (withAuthAs "admin" $ withReq addUser))
+    , ("/v1/user/:username", method GET (withAuthAs "admin" getUserByUsername))
     , ("/v1/chain/info/", method GET (withAuth getChainInfo))
     , ("/v1/chain/headers/", method GET (withAuth getChainHeaders))
     , ("/v1/block/hash/:hash", method GET (withAuth getBlockByHash))
