@@ -255,6 +255,9 @@ data RPCReqParams'
           { gtssHash :: String
           , gtssIndex :: Int32
           }
+    | GetUserByUsername
+          { guUsername :: String
+          }
     deriving (Generic, Show, Hashable, Eq, Serialise, ToJSON)
 
 instance FromJSON RPCReqParams' where
@@ -285,6 +288,7 @@ instance FromJSON RPCReqParams' where
          o .: "email" <*>
          o .:? "roles") <|>
         (GetTxOutputSpendStatus <$> o .: "txid" <*> o .: "index") <|>
+        (GetUserByUsername <$> o .: "username") <|>
         (GetChainHeaders <$> o .:? "startBlockHeight" .!= 1 <*> o .:? "pageSize" .!= 2000)
 
 data RPCResponseBody
@@ -292,7 +296,7 @@ data RPCResponseBody
           { auth :: AuthResp
           }
     | RespAddUser
-          { user :: AddUserResp
+          { addUser :: AddUserResp
           }
     | RespBlockByHeight
           { block :: BlockRecord
@@ -374,6 +378,9 @@ data RPCResponseBody
     | RespTxOutputSpendStatus
           { spendStatus :: Maybe TxOutputSpendStatus
           }
+    | RespUser
+          { user :: Maybe User
+          }
     deriving (Generic, Show, Hashable, Eq, Serialise)
 
 instance ToJSON RPCResponseBody where
@@ -404,6 +411,7 @@ instance ToJSON RPCResponseBody where
     toJSON (RespPartiallySignedAllegoryTx ps) =
         object ["psaTx" .= (T.decodeUtf8 . BL.toStrict . B64L.encode . GZ.compress . BL.fromStrict $ ps)]
     toJSON (RespTxOutputSpendStatus ss) = object ["spendStatus" .= ss]
+    toJSON (RespUser u) = object ["user" .= u]
 
 data AuthResp =
     AuthResp
@@ -415,19 +423,13 @@ data AuthResp =
 
 data AddUserResp =
     AddUserResp
-        { aurUsername :: String
+        { aurUser :: User
         , aurPassword :: String
-        , aurFirstName :: String
-        , aurLastName :: String
-        , aurEmail :: String
-        , aurRoles :: [String]
-        , aurApiQuota :: Int
-        , aurApiExpiryTime :: UTCTime
         }
     deriving (Generic, Show, Hashable, Eq, Serialise)
 
 instance ToJSON AddUserResp where
-    toJSON (AddUserResp uname pwd fname lname email roles apiQuota apiExpTime) =
+    toJSON (AddUserResp (User uname fname lname email roles apiQuota _ apiExpTime _ _) pwd) =
         object
             [ "username" .= uname
             , "password" .= pwd
@@ -437,6 +439,36 @@ instance ToJSON AddUserResp where
             , "roles" .= roles
             , "apiQuota" .= apiQuota
             , "apiExpiryTime" .= apiExpTime
+            ]
+
+data User =
+    User
+        { uUsername :: String
+        , uFirstName :: String
+        , uLastName :: String
+        , uEmail :: String
+        , uRoles :: [String]
+        , uApiQuota :: Int
+        , uApiUsed :: Int
+        , uApiExpiryTime :: UTCTime
+        , uSessionKey :: String
+        , uSessionKeyExpiry :: UTCTime
+        }
+    deriving (Generic, Show, Hashable, Eq, Serialise)
+
+instance ToJSON User where
+    toJSON (User uname fname lname email roles apiQuota apiUsed apiExpTime sKey sKeyExp) =
+        object
+            [ "username" .= uname
+            , "firstName" .= fname
+            , "lastName" .= lname
+            , "email" .= email
+            , "roles" .= roles
+            , "callsRemaining" .= (apiQuota - apiUsed)
+            , "callsUsed" .= apiUsed
+            , "apiExpiryTime" .= apiExpTime
+            , "sessionKey" .= sKey
+            , "sessionKeyExpiry" .= sKeyExp
             ]
 
 data ChainInfo =

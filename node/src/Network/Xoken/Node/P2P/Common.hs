@@ -210,6 +210,9 @@ generateSessionKey = do
         sdb = B64.encode $ C.pack $ seed
     return $ encodeHex ((S.encode $ sha256 $ B.reverse sdb))
 
+maskAfter :: Int -> String -> String
+maskAfter n skey = (\x -> take n x ++ fmap (const '*') (drop n x)) skey
+
 addNewUser ::
        Q.ClientState
     -> T.Text
@@ -271,14 +274,18 @@ addNewUser conn uname fname lname email roles api_quota api_expiry_time = do
                     return $
                         Just $
                         AddUserResp
-                            (T.unpack uname)
+                            (User
+                                 (T.unpack uname)
+                                 (T.unpack fname)
+                                 (T.unpack lname)
+                                 (T.unpack email)
+                                 (fromMaybe ["read"] roles)
+                                 (fromIntegral $ fromMaybe 10000 api_quota)
+                                 0
+                                 (fromMaybe (addUTCTime (nominalDay * 365) tm) api_expiry_time)
+                                 (maskAfter 10 $ T.unpack tempSessionKey)
+                                 (addUTCTime (nominalDay * 30) tm))
                             (C.unpack passwd)
-                            (T.unpack fname)
-                            (T.unpack lname)
-                            (T.unpack email)
-                            (fromMaybe ["read"] roles)
-                            (fromIntegral $ fromMaybe 10000 api_quota)
-                            (fromMaybe (addUTCTime (nominalDay * 365) tm) api_expiry_time)
                 Left (SomeException e) -> do
                     putStrLn $ "Error: INSERTing into 'user_permission': " ++ show e
                     throw e
