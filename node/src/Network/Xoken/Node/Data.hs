@@ -255,11 +255,8 @@ data RPCReqParams'
           { gtssHash :: String
           , gtssIndex :: Int32
           }
-    | GetUserByUsername
-          { guUsername :: String
-          }
-    | DeleteUserByUsername
-          { duUsername :: String
+    | UserByUsername
+          { uUsername :: String
           }
     | UpdateUserByUsername
           { uuUsername :: String
@@ -295,9 +292,8 @@ instance FromJSON RPCReqParams' where
          o .: "email" <*>
          o .:? "roles") <|>
         (GetTxOutputSpendStatus <$> o .: "txid" <*> o .: "index") <|>
-        (GetUserByUsername <$> o .: "getUsername") <|>
-        (DeleteUserByUsername <$> o .: "deleteUsername") <|>
-        (UpdateUserByUsername <$> o .: "updateUsername" <*> o .: "updateData") <|>
+        (UserByUsername <$> o .: "username") <|>
+        (UpdateUserByUsername <$> o .: "username" <*> o .: "updateData") <|>
         (GetChainHeaders <$> o .:? "startBlockHeight" .!= 1 <*> o .:? "pageSize" .!= 2000)
 
 data RPCResponseBody
@@ -400,7 +396,7 @@ instance ToJSON RPCResponseBody where
     toJSON (RespBlockByHash b) = object ["block" .= b]
     toJSON (RespBlocksByHashes bs) = object ["blocks" .= bs]
     toJSON (RespChainInfo ci) = object ["chainInfo" .= ci]
-    toJSON (RespChainHeaders chs) = object ["chainHeaders" .= chs]
+    toJSON (RespChainHeaders chs) = object ["blockHeaders" .= chs]
     toJSON (RespTxIDsByBlockHash txids) = object ["txids" .= txids]
     toJSON (RespTransactionByTxID tx) = object ["tx" .= tx]
     toJSON (RespTransactionsByTxIDs txs) = object ["txs" .= txs]
@@ -472,7 +468,7 @@ instance ToJSON AddUserResp where
 data User =
     User
         { uUsername :: String
-        , uPassword :: String
+        , uHashedPassword :: String
         , uFirstName :: String
         , uLastName :: String
         , uEmail :: String

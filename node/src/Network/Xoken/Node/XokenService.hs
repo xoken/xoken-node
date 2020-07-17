@@ -1284,7 +1284,7 @@ xDeleteUserByUsername name = do
                              else return ())
                     cacheList
         Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: DELETE'ing from 'user_permission': " ++ show e
+            err lg $ LG.msg $ "Error: xDeleteUserByUsername: " ++ show e
             throw e
 
 xUpdateUserByUsername :: (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> UpdateUserByUsername' -> m Bool
@@ -1304,7 +1304,7 @@ xUpdateUserByUsername name (UpdateUserByUsername' {..}) = do
                     Q.defQueryParams
                         Q.One
                         ( fromMaybe
-                              (DT.pack uPassword)
+                              (DT.pack uHashedPassword)
                               ((encodeHex . S.encode . sha256 . B64.encode . BC.pack) <$> uuPassword)
                         , DT.pack $ fromMaybe uFirstName uuFirstName
                         , DT.pack $ fromMaybe uLastName uuLastName
@@ -1325,11 +1325,11 @@ xUpdateUserByUsername name (UpdateUserByUsername' {..}) = do
                                    v
                                  , True))
                 Left (e :: SomeException) -> do
-                    err lg $ LG.msg $ "Error: UPDATE'ing 'user_permission': " ++ show e
+                    err lg $ LG.msg $ "Error: xUpdateUserByUsername: " ++ show e
                     throw e
         Right Nothing -> return False
         Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: UPDATE'ing 'user_permission': " ++ show e
+            err lg $ LG.msg $ "Error: xUpdateUserByUsername: " ++ show e
             throw e
 
 xGetUserBySessionKey :: (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> m (Maybe User)
@@ -1566,7 +1566,7 @@ goGetResource msg net roles sessKey pretty = do
                 _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
         "DELETE_USER" -> do
             case methodParams $ rqParams msg of
-                Just (DeleteUserByUsername u) -> do
+                Just (UserByUsername u) -> do
                     if "admin" `elem` roles
                         then do
                             xDeleteUserByUsername (DT.pack u)
@@ -1595,7 +1595,7 @@ goGetResource msg net roles sessKey pretty = do
             return $ RPCResponse 200 pretty $ Right $ Just $ RespUser usr
         "USERNAME->USER" -> do
             case methodParams $ rqParams msg of
-                Just (GetUserByUsername u) -> do
+                Just (UserByUsername u) -> do
                     if "admin" `elem` roles
                         then do
                             usr <- xGetUserByUsername (DT.pack u)
