@@ -499,6 +499,18 @@ getPartiallySignedAllegoryTx GetPartiallySignedAllegoryTx {..} = do
             writeBS $ BSL.toStrict $ encodeResp pretty $ RespPartiallySignedAllegoryTx ops
 getPartiallySignedAllegoryTx _ = throwBadRequest
 
+getCurrentUser :: Handler App App ()
+getCurrentUser = do
+    sk <- (fmap $ DTE.decodeUtf8) <$> (getParam "sessionKey")
+    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    res <- LE.try $ xGetUserBySessionKey (fromJust sk)
+    case res of
+        Left (e :: SomeException) -> do
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+        Right u@(Just us) -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespUser u
+        Right Nothing -> throwNotFound
+
 getUserByUsername :: Handler App App ()
 getUserByUsername = do
     uname <- (fmap $ DTE.decodeUtf8) <$> (getParam "username")
@@ -519,6 +531,9 @@ withAuth onSuccess = do
     env <- gets _env
     let mh = getHeader "Authorization" rq
     let h = parseAuthorizationHeader mh
+    case h of
+        Just sk -> putRequest $ rqSetParam "sessionKey" [sk] rq
+        Nothing -> return ()
     uok <- liftIO $ testAuthHeader env h Nothing
     modifyResponse (setContentType "application/json")
     if uok
@@ -533,6 +548,9 @@ withAuthAs role onSuccess = do
     env <- gets _env
     let mh = getHeader "Authorization" rq
     let h = parseAuthorizationHeader mh
+    case h of
+        Just sk -> putRequest $ rqSetParam "sessionKey" [sk] rq
+        Nothing -> return ()
     uok <- liftIO $ testAuthHeader env h $ Just role
     modifyResponse (setContentType "application/json")
     if uok

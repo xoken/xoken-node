@@ -1241,6 +1241,49 @@ xGetUserByUsername name = do
             err lg $ LG.msg $ "Error: xGetChainHeaders: " ++ show e
             throw KeyValueDBLookupException
 
+xGetUserBySessionKey :: (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> m (Maybe User)
+xGetUserBySessionKey sk = do
+    dbe <- getDB
+    lg <- getLogger
+    let conn = keyValDB (dbe)
+        str =
+            "SELECT username,first_name,last_name,emailid,permissions,api_quota,api_used,api_expiry_time,session_key,session_key_expiry_time from xoken.user_permission where session_key = ? ALLOW FILTERING "
+        qstr =
+            str :: Q.QueryString Q.R (Identity DT.Text) ( DT.Text
+                                                        , DT.Text
+                                                        , DT.Text
+                                                        , DT.Text
+                                                        , Set DT.Text
+                                                        , Int32
+                                                        , Int32
+                                                        , UTCTime
+                                                        , DT.Text
+                                                        , UTCTime)
+        p = Q.defQueryParams Q.One $ Identity sk
+    res <- LE.try $ Q.runClient conn (Q.query qstr p)
+    case res of
+        Right iop -> do
+            if length iop == 0
+                then return Nothing
+                else do
+                    let (uname, fname, lname, email, roles, apiQ, apiU, apiE, sk, skE) = iop !! 0
+                    return $
+                        Just $
+                        User
+                            (DT.unpack uname)
+                            (DT.unpack fname)
+                            (DT.unpack lname)
+                            (DT.unpack email)
+                            (DT.unpack <$> (DCP.fromSet roles))
+                            (fromIntegral apiQ)
+                            (fromIntegral apiU)
+                            apiE
+                            (maskAfter 10 $ DT.unpack sk)
+                            skE
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: xGetChainHeaders: " ++ show e
+            throw KeyValueDBLookupException
+
 authLoginClient ::
        (HasXokenNodeEnv env m, MonadIO m) => RPCMessage -> Network -> EndPointConnection -> Bool -> m (RPCMessage)
 authLoginClient msg net epConn pretty = do
