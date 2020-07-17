@@ -383,41 +383,43 @@ xGetTxHash hash = do
     bp2pEnv <- getBitcoinP2P
     let conn = keyValDB (dbe)
         net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
-        str = "SELECT tx_id, block_info, tx_serialized, inputs, fees from xoken.transactions where tx_id = ?"
+        str = "SELECT tx_id, fees from xoken.transactions where tx_id=?"
+--        str = "SELECT tx_id, block_info, tx_serialized, inputs, fees from xoken.transactions where tx_id = ?"
         qstr =
             str :: Q.QueryString Q.R (Identity DT.Text) ( DT.Text
-                                                        , (DT.Text, Int32, Int32)
-                                                        , Blob
-                                                        , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
+--                                                        , (DT.Text, Int32, Int32)
+--                                                        , Blob
+--                                                        , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
                                                         , Int64)
         p = Q.defQueryParams Q.One $ Identity $ hash
     res <-
         LE.try $
         LA.concurrently
             (LA.concurrently (Q.runClient conn (Q.query qstr p)) (return []))
-            (xGetMerkleBranch $ DT.unpack hash)
+            (return []) --(xGetMerkleBranch $ DT.unpack hash)
     case res of
         Right ((iop, outs), mrkl) ->
-            if length iop == 0
-                then return Nothing
-                else do
-                    let (txid, (bhash, blkht, txind), sz, sinps, fees) = iop !! 0
-                        inps = L.sortBy (\(_, x, _) (_, y, _) -> compare x y) $ DCP.fromSet sinps
-                        tx = fromJust $ Extra.hush $ S.decodeLazy $ fromBlob sz
-                    return $
-                        Just $
-                        RawTxRecord
-                            (DT.unpack txid)
-                            (fromIntegral $ C.length $ fromBlob sz)
-                            (BlockInfo' (DT.unpack bhash) (fromIntegral blkht) (fromIntegral txind))
-                            (fromBlob sz)
-                            (zipWith mergeTxOutTxOutput (txOut tx) outs)
-                            (zipWith mergeTxInTxInput (txIn tx) $
-                             (\((outTxId, outTxIndex), inpTxIndex, (addr, value)) ->
-                                  TxInput (DT.unpack outTxId) outTxIndex inpTxIndex (DT.unpack addr) value "") <$>
-                             inps)
-                            fees
-                            mrkl
+            return $ Just $ RawTxRecord "dummy" 11 (BlockInfo' "foo" 1 2) C.empty [] [] (256 :: Int64) []
+--            if length iop == 0
+--                then return Nothing
+--                else do
+--                    let (txid, (bhash, blkht, txind), sz, sinps, fees) = iop !! 0
+--                        inps = L.sortBy (\(_, x, _) (_, y, _) -> compare x y) $ DCP.fromSet sinps
+--                        tx = fromJust $ Extra.hush $ S.decodeLazy $ fromBlob sz
+--                    return $
+--                        Just $
+--                        RawTxRecord
+--                            (DT.unpack txid)
+--                            (fromIntegral $ C.length $ fromBlob sz)
+--                            (BlockInfo' (DT.unpack bhash) (fromIntegral blkht) (fromIntegral txind))
+--                            (fromBlob sz)
+--                            (zipWith mergeTxOutTxOutput (txOut tx) outs)
+--                            (zipWith mergeTxInTxInput (txIn tx) $
+--                             (\((outTxId, outTxIndex), inpTxIndex, (addr, value)) ->
+--                                  TxInput (DT.unpack outTxId) outTxIndex inpTxIndex (DT.unpack addr) value "") <$>
+--                             inps)
+--                            fees
+--                            mrkl
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetTxHash: " ++ show e
             throw KeyValueDBLookupException
