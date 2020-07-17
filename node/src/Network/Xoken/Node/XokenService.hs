@@ -1315,7 +1315,15 @@ xUpdateUserByUsername name (UpdateUserByUsername' {..}) = do
                         , name)
             res' <- liftIO $ try $ Q.runClient conn (Q.write qstr par)
             case res' of
-                Right () -> return True
+                Right () -> do
+                    liftIO $
+                        H.mutate
+                            (userDataCache bp2pEnv)
+                            (DT.pack uSessionKey)
+                            (\v ->
+                                 ( (\(n, _, u, e, r) -> (n, fromMaybe (fromIntegral uApiQuota) uuApiQuota, u, e, r)) <$>
+                                   v
+                                 , True))
                 Left (e :: SomeException) -> do
                     err lg $ LG.msg $ "Error: UPDATE'ing 'user_permission': " ++ show e
                     throw e
