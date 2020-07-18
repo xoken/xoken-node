@@ -203,9 +203,7 @@ xUpdateUserByUsername name (UpdateUserByUsername' {..}) = do
                 par =
                     Q.defQueryParams
                         Q.One
-                        ( fromMaybe
-                              (DT.pack uHashedPassword)
-                              ((encodeHex . S.encode . sha256 . B64.encode . BC.pack) <$> uuPassword)
+                        ( fromMaybe (DT.pack uHashedPassword) ((encodeHex . S.encode . sha256 . BC.pack) <$> uuPassword)
                         , DT.pack $ fromMaybe uFirstName uuFirstName
                         , DT.pack $ fromMaybe uLastName uuLastName
                         , DT.pack $ fromMaybe uEmail uuEmail
@@ -216,16 +214,52 @@ xUpdateUserByUsername name (UpdateUserByUsername' {..}) = do
             res' <- liftIO $ try $ Q.runClient conn (Q.write qstr par)
             case res' of
                 Right () -> do
-                    liftIO $
-                        H.mutate
-                            (userDataCache bp2pEnv)
-                            (DT.pack uSessionKey)
-                            (\v ->
-                                 ( (\(n, _, u, e, r) -> (n, fromMaybe (fromIntegral uApiQuota) uuApiQuota, u, e, r)) <$>
-                                   v
-                                 , True))
+                    if isJust uuPassword
+                        then do
+                            tm <- liftIO $ getCurrentTime
+                            newSessionKey <- liftIO $ generateSessionKey
+                            let str' =
+                                    "UPDATE xoken.user_permission SET session_key=?, session_key_expiry_time=? WHERE username=?"
+                                qstr' = str' :: Q.QueryString Q.W (DT.Text, UTCTime, DT.Text) ()
+                                skTime = (addUTCTime (nominalDay * 30) tm)
+                                par' = Q.defQueryParams Q.One (newSessionKey, skTime, name)
+                            res'' <- liftIO $ try $ Q.runClient conn (Q.write qstr' par')
+                            case res'' of
+                                Right () -> do
+                                    cacheList <- liftIO $ (H.toList $ userDataCache bp2pEnv)
+                                    liftIO $
+                                        mapM_
+                                            (\(k, (n, q, u, e, r)) ->
+                                                 if n == name
+                                                     then do
+                                                         H.delete (userDataCache bp2pEnv) k
+                                                         liftIO $
+                                                             H.insert
+                                                                 (userDataCache bp2pEnv)
+                                                                 (newSessionKey)
+                                                                 ( n
+                                                                 , fromMaybe (fromIntegral uApiQuota) uuApiQuota
+                                                                 , u
+                                                                 , skTime
+                                                                 , r)
+                                                     else return ())
+                                            cacheList
+                                    return True
+                                Left (e :: SomeException) -> do
+                                    err lg $ LG.msg $ "Error: xUpdateUserByUsername (updating sessionKey): " ++ show e
+                                    throw e
+                        else do
+                            liftIO $
+                                H.mutate
+                                    (userDataCache bp2pEnv)
+                                    (DT.pack uSessionKey)
+                                    (\v ->
+                                         ( (\(n, _, u, e, r) ->
+                                                (n, fromMaybe (fromIntegral uApiQuota) uuApiQuota, u, e, r)) <$>
+                                           v
+                                         , True))
                 Left (e :: SomeException) -> do
-                    err lg $ LG.msg $ "Error: xUpdateUserByUsername: " ++ show e
+                    err lg $ LG.msg $ "Error: xUpdateUserByUsername (updating data): " ++ show e
                     throw e
         Right Nothing -> return False
         Left (e :: SomeException) -> do
@@ -299,11 +333,12 @@ login :: (MonadIO m, HasXokenNodeEnv env m) => DT.Text -> BC.ByteString -> m Aut
 login user pass = do
     dbe <- getDB
     lg <- getLogger
+    bp2pEnv <- getBitcoinP2P
     let conn = keyValDB dbe
         hashedPasswd = encodeHex ((S.encode $ sha256 pass))
         str =
-            " SELECT password, api_quota, api_used, session_key_expiry_time FROM xoken.user_permission WHERE username = ? "
-        qstr = str :: Q.QueryString Q.R (Identity DT.Text) (DT.Text, Int32, Int32, UTCTime)
+            " SELECT password, api_quota, api_used, session_key, session_key_expiry_time, permissions FROM xoken.user_permission WHERE username = ? "
+        qstr = str :: Q.QueryString Q.R (Identity DT.Text) (DT.Text, Int32, Int32, DT.Text, UTCTime, Set DT.Text)
         p = Q.defQueryParams Q.One $ Identity $ user
     res <- liftIO $ try $ Q.runClient conn (Q.query (Q.prepared qstr) p)
     case res of
@@ -315,8 +350,8 @@ login user pass = do
                 then return $ AuthResp Nothing 0 0
                 else do
                     case (op !! 0) of
-                        (sk, _, _, _) -> do
-                            if (sk /= hashedPasswd)
+                        (pw, quota, used, sk, _, roles) -> do
+                            if (pw /= hashedPasswd)
                                 then return $ AuthResp Nothing 0 0
                                 else do
                                     tm <- liftIO $ getCurrentTime
@@ -330,8 +365,36 @@ login user pass = do
                                                 (newSessionKey, (addUTCTime (nominalDay * 30) tm), user)
                                     res1 <- liftIO $ try $ Q.runClient conn (Q.write (qstr1) par1)
                                     case res1 of
-                                        Right () -> return ()
+                                        Right () -> do
+                                            userData <- liftIO $ H.lookup (userDataCache bp2pEnv) (sk)
+                                            case userData of
+                                                Just (n, q, u, e, r) -> do
+                                                    liftIO $ H.delete (userDataCache bp2pEnv) (sk)
+                                                    liftIO $
+                                                        H.insert
+                                                            (userDataCache bp2pEnv)
+                                                            (newSessionKey)
+                                                            (n, q, u, (addUTCTime (nominalDay * 30) tm), r)
+                                                    return $
+                                                        AuthResp
+                                                            (Just $ DT.unpack newSessionKey)
+                                                            (fromIntegral u)
+                                                            (fromIntegral $ q - u)
+                                                Nothing -> do
+                                                    liftIO $
+                                                        H.insert
+                                                            (userDataCache bp2pEnv)
+                                                            (newSessionKey)
+                                                            ( user
+                                                            , quota
+                                                            , used
+                                                            , (addUTCTime (nominalDay * 30) tm)
+                                                            , DCP.fromSet roles)
+                                                    return $
+                                                        AuthResp
+                                                            (Just $ DT.unpack newSessionKey)
+                                                            (fromIntegral used)
+                                                            (fromIntegral $ quota - used)
                                         Left (SomeException e) -> do
                                             err lg $ LG.msg $ "Error: UPDATE'ing into 'user_permission': " ++ show e
                                             throw e
-                                    return $ AuthResp (Just $ DT.unpack newSessionKey) 1 100
