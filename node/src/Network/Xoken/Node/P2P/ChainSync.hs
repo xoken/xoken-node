@@ -60,7 +60,7 @@ import Network.Xoken.Node.Env
 import Network.Xoken.Node.GraphDB
 import Network.Xoken.Node.P2P.Common
 import Network.Xoken.Node.P2P.Types
-import Network.Xoken.Node.XokenService
+import Network.Xoken.Node.Service.Block
 import Streamly
 import Streamly.Prelude ((|:), nil)
 import qualified Streamly.Prelude as S
@@ -99,8 +99,7 @@ sendRequestMessages msg = do
     case msg of
         MGetHeaders hdr -> do
             allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
-            let connPeers =
-                    L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
+            let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
             let fbh = getHash256 $ getBlockHash $ (getHeadersBL hdr) !! 0
                 md = BSS.index fbh $ (BSS.length fbh) - 1
                 pds =
@@ -259,9 +258,11 @@ processHeaders hdrs = do
                                                                  ("Does not match best-block, potential block re-org ")
                                                          return $ zip [(matchBHt + 1) ..] (headersList hdrs) -- potential re-org
                                              Nothing -> throw BlockHashNotFoundException
-            let str1 = "insert INTO xoken.blocks_by_hash (block_hash, block_header, block_height, next_block_hash) values (?, ? , ?, ?)"
+            let str1 =
+                    "insert INTO xoken.blocks_by_hash (block_hash, block_header, block_height, next_block_hash) values (?, ? , ?, ?)"
                 qstr1 = str1 :: Q.QueryString Q.W (Text, Text, Int32, Text) ()
-                str2 = "insert INTO xoken.blocks_by_height (block_height, block_hash, block_header, next_block_hash) values (?, ? , ?, ?)"
+                str2 =
+                    "insert INTO xoken.blocks_by_height (block_height, block_hash, block_header, next_block_hash) values (?, ? , ?, ?)"
                 qstr2 = str2 :: Q.QueryString Q.W (Int32, Text, Text, Text) ()
                 str3 = "UPDATE xoken.blocks_by_hash SET next_block_hash=? where block_hash=?"
                 qstr3 = str3 :: Q.QueryString Q.W (Text, Text) ()
@@ -271,11 +272,12 @@ processHeaders hdrs = do
             debug lg $ LG.msg $ "indexed " ++ show (lenIndexed)
             liftIO $
                 mapConcurrently_
-                    (\(ind,y) -> do
+                    (\(ind, y) -> do
                          let hdrHash = blockHashToHex $ headerHash $ fst $ snd y
-                             nextHdrHash = if ind == (lenIndexed - 1)
-                                              then ""
-                                              else blockHashToHex $ headerHash $ fst $ snd $ (indexed !! (ind + 1))
+                             nextHdrHash =
+                                 if ind == (lenIndexed - 1)
+                                     then ""
+                                     else blockHashToHex $ headerHash $ fst $ snd $ (indexed !! (ind + 1))
                              hdrJson = T.pack $ LC.unpack $ A.encode $ fst $ snd y
                          let par1 = Q.defQueryParams Q.One (hdrHash, hdrJson, fst y, nextHdrHash)
                              par2 = Q.defQueryParams Q.One (fst y, hdrHash, hdrJson, nextHdrHash)
@@ -292,7 +294,7 @@ processHeaders hdrs = do
                              Left (e :: SomeException) -> do
                                  err lg $ LG.msg ("Error: INSERT into 'blocks_by_height' failed: " ++ show e)
                                  throw KeyValueDBInsertException)
-                    (zip [0..] indexed)
+                    (zip [0 ..] indexed)
             unless (L.null indexed) $ do
                 let height = (fst $ head indexed) - 1
                 if height == 0
@@ -347,39 +349,51 @@ updateChainWork indexed conn = do
         then do
             debug lg $ LG.msg $ val "updateChainWork: Input list empty. Nothing updated."
             return ()
-    else do
-        let str = "SELECT value from xoken.misc_store where key = ?"
-            qstr = str :: Q.QueryString Q.R (Identity Text) (Identity (Maybe Bool, Int32, Maybe Int64, T.Text))
-            str1 = "insert INTO xoken.misc_store (key, value) values (?, ?)"
-            qstr1 = str1 :: Q.QueryString Q.W (Text, (Maybe Bool, Int32, Maybe Int64, Text)) ()
-            par = Q.defQueryParams Q.One $ Identity "chain-work"
-            lenInd = L.length indexed
-            lenOffset = fromIntegral $ if lenInd <= 10 then (10 - lenInd) else 0
-            lagIndexed = take (lenInd - 10) indexed
-            indexedCW = foldr (\x y -> y + (convertBitsToBlockWork $ blockBits $ fst $ snd $ x)) 0 lagIndexed
-        res <- liftIO $ try $ Q.runClient conn (Q.query qstr par)
-        case res of
-            Right iop -> do
-                let (_, height, _, chainWork) = case L.length iop of
-                        0 -> (Nothing, 0, Nothing, "4295032833")  -- 4295032833 (0x100010001) is chainwork for genesis block
-                        _ -> runIdentity $ iop !! 0
-                    lag = [(height + 1)..((fst $ head indexed) - (1 + lenOffset))]
-                if L.null lag
-                    then return ()
-                    else do
-                        lagCW <- calculateChainWork lag conn
-                        let updatedChainwork = T.pack $ show $ lagCW + indexedCW + (read . T.unpack $ chainWork)
-                            updatedBlock = if L.null lagIndexed then last lag else fst $ last lagIndexed
-                            par1 = Q.defQueryParams Q.One ("chain-work", (Nothing, updatedBlock, Nothing, updatedChainwork))
-                        res1 <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr1) par1)
-                        case res1 of
-                            Right () -> do
-                                debug lg $ LG.msg $ val $ ("updateChainWork: updated till block: " <> (C.pack $ show updatedBlock))
-                                return ()
-                            Left (e :: SomeException) -> do
-                                err lg $ LG.msg ("Error: INSERT 'chain-work' into 'misc_store' failed: " ++ show e)
-                                throw KeyValueDBInsertException
-            Left (e :: SomeException) -> do
-                err lg $ LG.msg ("Error: SELECT from 'misc_store' failed: " ++ show e)
-                throw KeyValueDBLookupException
-
+        else do
+            let str = "SELECT value from xoken.misc_store where key = ?"
+                qstr = str :: Q.QueryString Q.R (Identity Text) (Identity (Maybe Bool, Int32, Maybe Int64, T.Text))
+                str1 = "insert INTO xoken.misc_store (key, value) values (?, ?)"
+                qstr1 = str1 :: Q.QueryString Q.W (Text, (Maybe Bool, Int32, Maybe Int64, Text)) ()
+                par = Q.defQueryParams Q.One $ Identity "chain-work"
+                lenInd = L.length indexed
+                lenOffset =
+                    fromIntegral $
+                    if lenInd <= 10
+                        then (10 - lenInd)
+                        else 0
+                lagIndexed = take (lenInd - 10) indexed
+                indexedCW = foldr (\x y -> y + (convertBitsToBlockWork $ blockBits $ fst $ snd $ x)) 0 lagIndexed
+            res <- liftIO $ try $ Q.runClient conn (Q.query qstr par)
+            case res of
+                Right iop -> do
+                    let (_, height, _, chainWork) =
+                            case L.length iop of
+                                0 -> (Nothing, 0, Nothing, "4295032833") -- 4295032833 (0x100010001) is chainwork for genesis block
+                                _ -> runIdentity $ iop !! 0
+                        lag = [(height + 1) .. ((fst $ head indexed) - (1 + lenOffset))]
+                    if L.null lag
+                        then return ()
+                        else do
+                            lagCW <- calculateChainWork lag conn
+                            let updatedChainwork = T.pack $ show $ lagCW + indexedCW + (read . T.unpack $ chainWork)
+                                updatedBlock =
+                                    if L.null lagIndexed
+                                        then last lag
+                                        else fst $ last lagIndexed
+                                par1 =
+                                    Q.defQueryParams
+                                        Q.One
+                                        ("chain-work", (Nothing, updatedBlock, Nothing, updatedChainwork))
+                            res1 <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr1) par1)
+                            case res1 of
+                                Right () -> do
+                                    debug lg $
+                                        LG.msg $
+                                        val $ ("updateChainWork: updated till block: " <> (C.pack $ show updatedBlock))
+                                    return ()
+                                Left (e :: SomeException) -> do
+                                    err lg $ LG.msg ("Error: INSERT 'chain-work' into 'misc_store' failed: " ++ show e)
+                                    throw KeyValueDBInsertException
+                Left (e :: SomeException) -> do
+                    err lg $ LG.msg ("Error: SELECT from 'misc_store' failed: " ++ show e)
+                    throw KeyValueDBLookupException

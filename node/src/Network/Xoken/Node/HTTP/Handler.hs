@@ -52,7 +52,7 @@ import Network.Xoken.Node.Env
 import Network.Xoken.Node.HTTP.Types
 import Network.Xoken.Node.P2P.Common (addNewUser, generateSessionKey)
 import Network.Xoken.Node.P2P.Types
-import Network.Xoken.Node.XokenService
+import Network.Xoken.Node.Service
 import Snap
 import System.Logger as LG
 import Text.Read (readMaybe)
