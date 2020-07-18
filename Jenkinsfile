@@ -92,7 +92,7 @@ pipeline {
                       sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/archlinux.cid) git checkout $(basename $(git symbolic-ref HEAD))'
                       sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/archlinux.cid) git pull'
                       sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/archlinux.cid) stack clean'
-                      sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/archlinux.cid) stack install  --local-bin-path  . '
+                      sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/archlinux.cid) env LD_PRELOAD=/usr/lib/libjemalloc.so.2 stack install  --local-bin-path  . '
                       sh 'docker cp $(cat /tmp/archlinux.cid):/opt/work/xoken-node/xoken-nexa  . '
                       sh 'rm -f /tmp/archlinux.cid'
                       sh 'sha256sum ./xoken-nexa > Checksum_SHA256'
