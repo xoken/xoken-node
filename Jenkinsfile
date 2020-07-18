@@ -64,7 +64,7 @@ pipeline {
                       sh 'docker cp $(cat /tmp/ubuntu1804.cid):/opt/work/xoken-node/xoken-nexa  . '
                       sh 'rm -f /tmp/ubuntu1804.cid'
                       sh 'sha256sum ./xoken-nexa > Checksum_SHA256'
-                      sh 'zip xoken-nexa_"$(basename $(git symbolic-ref HEAD))"_ubuntu1804.zip ./xoken-nexa node-config.yaml ReleaseNotes README Checksum_SHA256 '
+                      sh 'zip xoken-nexa_"$(basename $(git symbolic-ref HEAD))"_ubuntu1804.zip ./xoken-nexa node-config.yaml ReleaseNotes README Checksum_SHA256 schema.cql LICENSE LICENSE-AGPL LICENSE-OpenBSV '
                     }
               echo '****** Starting Ubuntu20.04 container ******'
               dir(path: 'xoken-node'){
@@ -80,7 +80,7 @@ pipeline {
                       sh 'docker cp $(cat /tmp/ubuntu2004.cid):/opt/work/xoken-node/xoken-nexa  . '
                       sh 'rm -f /tmp/ubuntu2004.cid'
                       sh 'sha256sum ./xoken-nexa > Checksum_SHA256'
-                      sh 'zip xoken-nexa_"$(basename $(git symbolic-ref HEAD))"_ubuntu2004.zip ./xoken-nexa node-config.yaml ReleaseNotes README Checksum_SHA256 '
+                      sh 'zip xoken-nexa_"$(basename $(git symbolic-ref HEAD))"_ubuntu2004.zip ./xoken-nexa node-config.yaml ReleaseNotes README Checksum_SHA256 schema.cql LICENSE LICENSE-AGPL LICENSE-OpenBSV '
                     }
               echo '****** Starting Arch Linux container ******'
               dir(path: 'xoken-node'){
@@ -96,7 +96,7 @@ pipeline {
                       sh 'docker cp $(cat /tmp/archlinux.cid):/opt/work/xoken-node/xoken-nexa  . '
                       sh 'rm -f /tmp/archlinux.cid'
                       sh 'sha256sum ./xoken-nexa > Checksum_SHA256'
-                      sh 'zip xoken-nexa_"$(basename $(git symbolic-ref HEAD))"_archlinux.zip ./xoken-nexa node-config.yaml ReleaseNotes README Checksum_SHA256 '
+                      sh 'zip xoken-nexa_"$(basename $(git symbolic-ref HEAD))"_archlinux.zip ./xoken-nexa node-config.yaml ReleaseNotes README Checksum_SHA256 schema.cql LICENSE LICENSE-AGPL LICENSE-OpenBSV '
                     }
                     archiveArtifacts(artifacts: 'xoken-node/xoken-nexa*.zip', followSymlinks: true)
           } else { 
