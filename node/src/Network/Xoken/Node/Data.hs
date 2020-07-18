@@ -500,7 +500,6 @@ data ChainInfo =
     ChainInfo
         { ciChain :: String
         , ciChainWork :: String
-        , ciDifficulty :: Double
         , ciHeaders :: Int32
         , ciBlocks :: Int32
         , ciBestBlockHash :: String
@@ -509,11 +508,10 @@ data ChainInfo =
     deriving (Generic, Show, Hashable, Eq, Serialise)
 
 instance ToJSON ChainInfo where
-    toJSON (ChainInfo ch cw diff hdr blk hs shs) =
+    toJSON (ChainInfo ch cw hdr blk hs shs) =
         object
             [ "chain" .= ch
             , "chainwork" .= cw
-            , "difficulty" .= diff
             , "chainTip" .= hdr
             , "blocksSynced" .= blk
             , "chainTipHash" .= hs

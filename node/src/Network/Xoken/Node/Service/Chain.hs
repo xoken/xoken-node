@@ -90,7 +90,6 @@ import Network.Xoken.Node.GraphDB
 import Network.Xoken.Node.P2P.BlockSync
 import Network.Xoken.Node.P2P.Common
 import Network.Xoken.Node.P2P.Types
-import Network.Xoken.Node.Service.Block
 import Network.Xoken.Util (bsToInteger, integerToBS)
 import Numeric (showHex)
 import System.Logger as LG
@@ -118,21 +117,16 @@ xGetChainInfo = do
                     let (_, blocks, _, bestSyncedHash) = snd . head $ (L.filter (\x -> fst x == "best-synced") iop)
                         (_, headers, _, bestBlockHash) = snd . head $ (L.filter (\x -> fst x == "best_chain_tip") iop)
                         (_, lagHeight, _, chainwork) = snd . head $ (L.filter (\x -> fst x == "chain-work") iop)
-                    blk <- xGetBlockHeight headers
                     lagCW <- calculateChainWork [(lagHeight + 1) .. (headers)] conn
-                    case blk of
-                        Nothing -> return Nothing
-                        Just b -> do
-                            return $
-                                Just $
-                                ChainInfo
-                                    "main"
-                                    (showHex (lagCW + (read . DT.unpack $ chainwork)) "")
-                                    (convertBitsToDifficulty . blockBits' . rbHeader $ b)
-                                    (headers)
-                                    (blocks)
-                                    (DT.unpack bestBlockHash)
-                                    (DT.unpack bestSyncedHash)
+                    return $
+                        Just $
+                        ChainInfo
+                            "main"
+                            (showHex (lagCW + (read . DT.unpack $ chainwork)) "")
+                            (headers)
+                            (blocks)
+                            (DT.unpack bestBlockHash)
+                            (DT.unpack bestSyncedHash)
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetChainInfo: " ++ show e
             throw KeyValueDBLookupException
