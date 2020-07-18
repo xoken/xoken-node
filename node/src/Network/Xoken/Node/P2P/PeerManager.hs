@@ -197,7 +197,7 @@ setupSeedPeerConnection =
                                                                   handleIncomingMessages bp
                                                               Nothing -> return ()
                                                       Left (SocketConnectException addr) ->
-                                                          err lg $ msg ("SocketConnectException: " ++ show addr)))
+                                                          warn lg $ msg ("SocketConnectException: " ++ show addr)))
             (addrs)
         liftIO $ threadDelay (30 * 1000000)
 
@@ -295,7 +295,7 @@ setupPeerConnection saddr = do
                                              return $ Just bp
                                          Nothing -> return (Nothing)
                                  Left (SocketConnectException addr) -> do
-                                     err lg $ msg ("SocketConnectException: " ++ show addr)
+                                     warn lg $ msg ("SocketConnectException: " ++ show addr)
                                      return Nothing
 
 -- Helper Functions
