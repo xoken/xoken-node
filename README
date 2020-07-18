@@ -1,113 +1,174 @@
-==================
-Nexa Prerequisites
-==================
+**Nexa Prerequisites**
+======================
 
-Setting Up Cassandra
---------------------
+    **Setting Up Cassandra**
+    ------------------------
 
-Prerequisites:
-The latest version of Java 8, either the Oracle Java Standard Edition 8 or OpenJDK 8. For using cqlsh, the latest version of Python 2.7.
+        **Prerequisites**
 
-Installation:
-Follow below instructions to install via your Linux distribution's package manager
+            Install Oracle Java Standard Edition 8 and Python 2.7 from your distro's package manager.
 
-Debian based distros (Ubuntu/etc.)
-sudo apt-get install cassandra
+        **Installation**
 
-Arch Linux & derivatives
-Install the cassandra package from the User Repository, using your favorite AUR helper.
+            We are going to install all the necessary software under /opt directory which has sufficient disk space 
+            (ideally 1 TB) and is mounted on an SSD.
 
-Configuration:
-"Edit section data_file_directories to reflect below, where 'repo' is ideally mounted on an exclusive drive/SSD. The reduces IO contention b/w Neo4j and Cassandra databases. Also ensure the folders have the writer permissions enabled."
+            Download Apache Cassandra 3.11.6 from this official download link and unarchive directly under /opt.
 
-data_file_directories: /<repo>/lib/cassandra/data
-commitlog_directory: /repo/lib/cassandra/commitlog
-listen_address: localhost
+        **Configuration**
 
-"Also tweak the below settings appropriately per the instructions provided in the config file. The below sample values are good for a 12 core machine"
+            Edit the config file (/opt/apache-cassandra-3.11.6/conf/cassandra.yaml)
 
-concurrent_reads: 32
-concurrent_writes: 96
-concurrent_counter_writes: 32
+            Update the listen address appropriately,
 
-"To facilitate the highly concurrent application, its advisable to make the following system configurations, it primarily is meant to help Cassandra operate at its best."
+            listen_address: localhost
 
-/etc/limits.conf
-* - memlock unlimited
-* - nofile 100000
-* - nproc 32768
-* - as unlimited
-/etc/sysctl.conf
-vm.max_map_count = 1048575
+            Also tweak the below settings appropriately per the instructions provided in the config file. 
+            The below sample values are good for a 12 core machine
 
-Setting Up Neo4j
-----------------
+            concurrent_reads: 32 
+            concurrent_writes: 96 
+            concurrent_counter_writes: 32
 
-Installation:
-Recommend following official prerequisite & install instructions as below - https://neo4j.com/docs/operations-manual/current/installation/linux/
+            Also explicitly set the max threads configuration as below,
 
-Note:
-- Only Neo4j version "3.5.x" is officially supported. The packaged Neo4j driver does NOT support versions 4.x.x.
-- If Neo4j demands Java 10/11 proceed installing the same, it can typically co-exist with Java8 (Cassandra dependency) without causing an issue.
+            native_transport_max_threads: 256
 
-Install the Neo4j community edition package from the User Repository, using your favorite AUR helper. Subsequently you can configure running it via systemd per instructions here
+            To facilitate the highly concurrent application, make the following system configurations, it primarily 
+            is meant to help Cassandra operate optimally.
 
-Configuration:
-"Add the following at the bottom of the file /etc/neo4j/neo4j.conf" dbms.connector.bolt.thread_pool_min_size=20
-dbms.connector.bolt.thread_pool_max_size=1024
-dbms.connector.bolt.thread_pool_keep_alive=5m
+            /etc/security/limits.conf
+            * - memlock unlimited
+            * - nofile 100000
+            * - nproc 32768
+            * - as unlimited
 
-Other packages:
----------------
+            /etc/sysctl.conf
+            vm.max_map_count = 1048575
 
-Using the appropriate package manager for your Linux distribution install the below packages. For example on Arch variants run,
+            Set the PATH environment variable as follows in your .bashrc file:
 
-sudo pacman -S libsecp256k1
-sudo pacman -S leveldb
+            export PATH=$PATH:/opt/apache-cassandra-3.11.6/bin
+
+            Cassandra can be started using the following command
+
+            $cassandra
+
+            To stop Cassandra, we can simply get the processID and kill it.
+
+            $ps -ef |grep cassandra
+            $kill -9 <pid>
+
+        **Database schema setup**
+
+            Login to CQL shell (cqlsh) and execute the contents of the schema.cql file that was included in the release.
+
+    **Setting Up Neo4j**
+    --------------------
+
+        **Installation**
+
+            Download the official (3.5.20) release of Neo4j from here and unarchive the same under /opt.
+
+            Note: Only Neo4j version "3.5.x" is officially supported. The packaged Neo4j driver does NOT support versions 4.x.x.
+
+        **Configuration**
+
+            Edit the config file at /opt/neo4j-community-3.5.20/conf/neo4j.conf and add the following at the bottom of the file
+
+            dbms.connector.bolt.thread_pool_min_size=20
+            dbms.connector.bolt.thread_pool_max_size=2048
+            dbms.connector.bolt.thread_pool_keep_alive=5m
+
+            Also uncomment and update the following entry appropriately,
+
+            dbms.connector.default_listen_address=0.0.0.0
+
+            Login to the Neo4j web console (http://localhost:7474/) and execute the following:
+
+            CREATE CONSTRAINT ON (n:mnode) ASSERT n.v IS UNIQUE;
+            
+            You can verify if the constraints have been applied correctly by querying
+
+            $ :schema
+            And you should see the following output,
+
+            Indexes
+            ON :mnode(v) ONLINE  (for uniqueness constraint)
+
+            Constraints
+            ON ( mnode:mnode ) ASSERT mnode.v IS UNIQUE
+            
+            Set the PATH environment variable as follows in your .bashrc file:
+
+            export PATH=$PATH:/opt/apache-cassandra-3.11.6/bin:/opt/neo4j-community-3.5.20/bin
+
+            neo4j can be started and stopped using the following command/s
+
+            $neo4j [start/stop/restart]
+
+    **Other packages**
+    ------------------
+
+        Using the appropriate package manager for your Linux distribution install the below packages. 
+        For example on Arch variants run,
+
+        sudo pacman -S libsecp256k1
+        sudo pacman -S leveldb
 
 
-=============
-Nexa Installation
-=============
+**Nexa Installation**
+=====================
 
-Download the pre-compiled binary (available for a few popular Linux distributions) from https://www.xoken.org/nexa/download/ and unzip contents at an appropriate directory of your choice.
+    Download the latest stable release from the downloads page and unzip contents under /opt/xoken
 
-Note: It should work fine on the popular Linux distributions. If you are out of luck, please follow instructions on the same web-page to compile from source.
+    The Nexa node sources configurable parameters from two different config files, as below:
 
-The Xoken Nexa server can be started as below.
+    - node-config.yaml: Contains all the general Nexa node, Bitcoin P2P & listen endpoint related configurations.
+    - arivi-config.yaml: Contains all the Arivi P2P related configurations (typically autogenerated)
 
-$ xoken-node 
+    **Configure**
+    -------------
+        Place the node-config.yaml (provided in the release) in the same directory as the xoken-nexa executable. 
+        Typically you will need to update the following parameters.
 
-The program sources configurable parameters from two different config files, as below:
+        - bitcoinNodeListenIP : the Nexa host's public IP that is used to interact with public Bitcoin mining nodes via BitconP2P.
+        - bitcoinNodeListenPort : the system port that is used to connect with public Bitcoin mining nodes. 
+        - endPointTLSListenIP : the host's public IP where the TLS endpoint is listening.
+        - endPointTLSListenPort : the port being used by the TLS server. Default value of '9090' is recommended.
+        - tlsCertificatePath : the TLS self-signed certificate file path, including the file-name.
+        - tlsKeyfilePath : the TLS keyfile path, including the file-name.
+        - tlsCertificateStorePath : Please set to any valid directory, currently the client certificate validation is disabled.
+        - endPointHTTPSListenIP : listen IP for the HTTPS REST API endpoint.
+        - endPointHTTPSListenPort : listen port for the HTTPS REST API.
+        - endpointneo4jUsername : neo4j username
+        - neo4jPassword : neo4j password
+        - logLevel : Debug/Warn/Error , Debug level is very verbose and is not recommended unless you are troubleshooting.
 
-- node-config.yaml: Contains all the general Nexa node, Bitcoin P2P & listen endpoint related configurations.
-- arivi-config.yaml: Contains all the Arivi P2P related configurations (typically autogenerated)
+        The rest are mostly tuning related parameters and meant for advanced users.
 
+        The following command can be used to generate a TLS certificate and keyfile pair:
 
-Configure:
----------
-Place the node-config.yaml (provided in the release) in the same directory as the xoken-nexa executable. Typically you will need to update the following parameters.
+        openssl req -newkey rsa:4096 -x509 -sha256 -days 3650 -nodes -out example.crt -keyout example.key
 
-- bitcoinNodeListenIP
-- bitcoinNodeListenPort
-- endPointTLSListenIP
-- endPointTLSListenPort
-- tlsCertificatePath
-- tlsKeyfilePath
-- tlsCertificateStorePath
+    **Running Nexa**
+    ----------------
 
-The rest are mostly tuning related parameters and meant for advanced users.
+        The Xoken Nexa server can be started as below, and it will run as a daemon process by defualt
 
-Backup keys:
-Once the server has started successfully, open the newly generated arivi-config.yaml file and safely backup the application generated secret key. This is essential to restore the unique identity of your node, since nodes maintain the reputation of their peers.
+        $ ./xoken-nexa
 
-e.g.
-secretKey: d670be193389c79349edd8ea4194925609f39cbeffc59b78fc1b4d431c0ebac
+        And to stop the node you can do
 
-To keep processes running even after exiting the shell or terminal, you can use the nohup command or can configure it as a systemd service and use below template to execute as a daemon service.
+        $ pkill xoken-nexa
 
-sudo systemctl <start|stop> <node-service-name>
+    **Backup admin password & keys**
+    --------------------------------
 
+        Once the server has started successfully for the first time, open the nexa.log file and safely backup 
+        the auto generated admin password, this is needed to provision other users and control user/node privileges.
 
+        Open the newly generated arivi-config.yaml file and safely backup the application generated secret key. 
+        This is essential to restore the unique identity of your node, since nodes maintain the reputation of their peers.
 
-
+        e.g. secretKey: d670be193389c79349edd8ea4194925609f39cbeffc59b78fc1b4d431c0ebac
