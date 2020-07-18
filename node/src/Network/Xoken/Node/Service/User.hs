@@ -226,16 +226,24 @@ xUpdateUserByUsername name (UpdateUserByUsername' {..}) = do
                             res'' <- liftIO $ try $ Q.runClient conn (Q.write qstr' par')
                             case res'' of
                                 Right () -> do
-                                    userData <- liftIO $ H.lookup (userDataCache bp2pEnv) (DT.pack uSessionKey)
-                                    case userData of
-                                        Just (n, q, u, e, r) -> do
-                                            liftIO $ H.delete (userDataCache bp2pEnv) (DT.pack uSessionKey)
-                                            liftIO $
-                                                H.insert
-                                                    (userDataCache bp2pEnv)
-                                                    (newSessionKey)
-                                                    (n, fromMaybe (fromIntegral uApiQuota) uuApiQuota, u, skTime, r)
-                                        Nothing -> return ()
+                                    cacheList <- liftIO $ (H.toList $ userDataCache bp2pEnv)
+                                    liftIO $
+                                        mapM_
+                                            (\(k, (n, q, u, e, r)) ->
+                                                 if n == name
+                                                     then do
+                                                         H.delete (userDataCache bp2pEnv) k
+                                                         liftIO $
+                                                             H.insert
+                                                                 (userDataCache bp2pEnv)
+                                                                 (newSessionKey)
+                                                                 ( n
+                                                                 , fromMaybe (fromIntegral uApiQuota) uuApiQuota
+                                                                 , u
+                                                                 , skTime
+                                                                 , r)
+                                                     else return ())
+                                            cacheList
                                     return True
                                 Left (e :: SomeException) -> do
                                     err lg $ LG.msg $ "Error: xUpdateUserByUsername (updating sessionKey): " ++ show e
