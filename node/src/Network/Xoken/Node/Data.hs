@@ -561,7 +561,7 @@ instance FromJSON BlockHeader' where
     parseJSON (Object o) =
         (BlockHeader' <$> o .: "blockVersion" <*> o .: "prevBlock" <*> o .: "merkleRoot" <*> o .: "blockTimestamp" <*>
          o .: "blockBits" <*>
-         o .: "nonce")
+         o .: "bhNonce")
 
 instance ToJSON BlockHeader' where
     toJSON (BlockHeader' v pb mr ts bb bn) =
