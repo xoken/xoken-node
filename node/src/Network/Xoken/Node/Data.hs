@@ -561,7 +561,7 @@ instance FromJSON BlockHeader' where
     parseJSON (Object o) =
         (BlockHeader' <$> o .: "blockVersion" <*> o .: "prevBlock" <*> o .: "merkleRoot" <*> o .: "blockTimestamp" <*>
          o .: "blockBits" <*>
-         o .: "bhNonce")
+         o .: "nonce")
 
 instance ToJSON BlockHeader' where
     toJSON (BlockHeader' v pb mr ts bb bn) =
@@ -571,7 +571,7 @@ instance ToJSON BlockHeader' where
             , "merkleRoot" .= (reverse2 mr)
             , "blockTimestamp" .= ts
             , "blockBits" .= bb
-            , "bhNonce" .= bn
+            , "nonce" .= bn
             ]
 
 data ChainHeader =
@@ -593,7 +593,7 @@ instance ToJSON ChainHeader where
             , "merkleRoot" .= (reverse2 mr)
             , "blockTimestamp" .= ts
             , "difficulty" .= (convertBitsToDifficulty bb)
-            , "bhNonce" .= bn
+            , "nonce" .= bn
             , "txCount" .= txc
             ]
 
