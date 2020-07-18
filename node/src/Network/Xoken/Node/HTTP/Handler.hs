@@ -20,6 +20,7 @@ import qualified Data.ByteString.Char8 as S
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Lazy.Char8 as C
 import qualified Data.Either as Either
+import qualified Data.HashTable.IO as H
 import Data.Int
 import qualified Data.List as L
 import qualified Data.Map.Strict as Map
@@ -41,6 +42,7 @@ import Network.Xoken.Node.Data
     , RPCResponseBody(..)
     , RawTxRecord(..)
     , TxRecord(..)
+    , UpdateUserByUsername'(..)
     , coinbaseTxToMessage
     , encodeResp
     , fromResultWithCursor
@@ -50,7 +52,7 @@ import Network.Xoken.Node.Env
 import Network.Xoken.Node.HTTP.Types
 import Network.Xoken.Node.P2P.Common (addNewUser, generateSessionKey)
 import Network.Xoken.Node.P2P.Types
-import Network.Xoken.Node.XokenService
+import Network.Xoken.Node.Service
 import Snap
 import System.Logger as LG
 import Text.Read (readMaybe)
@@ -106,7 +108,21 @@ getChainInfo = do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
         Right (Just ci) -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespChainInfo ci
-        Right Nothing -> throwBadRequest
+        Right Nothing -> throwNotFound
+
+getChainHeaders :: Handler App App ()
+getChainHeaders = do
+    lg <- getLogger
+    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    ht <- (maybe 1 (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "startBlockHeight")
+    pgsize <- (maybe 2000 (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pagesize")
+    res <- LE.try $ xGetChainHeaders ht pgsize
+    case res of
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: xGetChainHeaders: " ++ show e
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+        Right ch -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespChainHeaders ch
 
 getBlockByHash :: Handler App App ()
 getBlockByHash = do
@@ -120,9 +136,7 @@ getBlockByHash = do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
         Right (Just rec) -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespBlockByHash rec
-        Right Nothing -> do
-            modifyResponse $ setResponseStatus 400 "Bad Request"
-            writeBS "400 error"
+        Right Nothing -> throwNotFound
 
 getBlocksByHash :: Handler App App ()
 getBlocksByHash = do
@@ -149,9 +163,7 @@ getBlockByHeight = do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
         Right (Just rec) -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespBlockByHeight rec
-        Right Nothing -> do
-            modifyResponse $ setResponseStatus 400 "Bad Request"
-            writeBS "400 error"
+        Right Nothing -> throwNotFound
 
 getBlocksByHeight :: Handler App App ()
 getBlocksByHeight = do
@@ -178,9 +190,7 @@ getRawTxById = do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
         Right (Just rec) -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespRawTransactionByTxID rec
-        Right Nothing -> do
-            modifyResponse $ setResponseStatus 400 "Bad Request"
-            writeBS "400 error"
+        Right Nothing -> throwNotFound
 
 getRawTxByIds :: Handler App App ()
 getRawTxByIds = do
@@ -217,9 +227,7 @@ getTxById = do
                 Left err -> do
                     modifyResponse $ setResponseStatus 400 "Bad Request"
                     writeBS "400 error"
-        Right Nothing -> do
-            modifyResponse $ setResponseStatus 400 "Bad Request"
-            writeBS "400 error"
+        Right Nothing -> throwNotFound
 
 getTxByIds :: Handler App App ()
 getTxByIds = do
@@ -492,6 +500,57 @@ getPartiallySignedAllegoryTx GetPartiallySignedAllegoryTx {..} = do
             writeBS $ BSL.toStrict $ encodeResp pretty $ RespPartiallySignedAllegoryTx ops
 getPartiallySignedAllegoryTx _ = throwBadRequest
 
+getCurrentUser :: Handler App App ()
+getCurrentUser = do
+    sk <- (fmap $ DTE.decodeUtf8) <$> (getParam "sessionKey")
+    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    res <- LE.try $ xGetUserBySessionKey (fromJust sk)
+    case res of
+        Left (e :: SomeException) -> do
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+        Right u@(Just us) -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespUser u
+        Right Nothing -> throwNotFound
+
+getUserByUsername :: Handler App App ()
+getUserByUsername = do
+    uname <- (fmap $ DTE.decodeUtf8) <$> (getParam "username")
+    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    res <- LE.try $ xGetUserByUsername (fromJust uname)
+    case res of
+        Left (e :: SomeException) -> do
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+        Right u@(Just us) -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespUser u
+        Right Nothing -> throwNotFound
+
+deleteUserByUsername :: Handler App App ()
+deleteUserByUsername = do
+    uname <- (fmap $ DTE.decodeUtf8) <$> (getParam "username")
+    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    res <- LE.try $ xDeleteUserByUsername (fromJust uname)
+    case res of
+        Left (e :: SomeException) -> do
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+        Right () -> do
+            modifyResponse $ setResponseStatus 200 "Deleted"
+            writeBS $ "User deleted"
+
+updateUserByUsername :: UpdateUserByUsername' -> Handler App App ()
+updateUserByUsername updates = do
+    uname <- (fmap $ DTE.decodeUtf8) <$> (getParam "username")
+    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    res <- LE.try $ xUpdateUserByUsername (fromJust uname) updates
+    case res of
+        Left (e :: SomeException) -> do
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+        Right True -> do
+            modifyResponse $ setResponseStatus 200 "Updated"
+            writeBS $ "User updated"
+        Right False -> throwNotFound
+
 --- |
 -- Helper functions
 withAuth :: Handler App App () -> Handler App App ()
@@ -500,6 +559,9 @@ withAuth onSuccess = do
     env <- gets _env
     let mh = getHeader "Authorization" rq
     let h = parseAuthorizationHeader mh
+    case h of
+        Just sk -> putRequest $ rqSetParam "sessionKey" [sk] rq
+        Nothing -> return ()
     uok <- liftIO $ testAuthHeader env h Nothing
     modifyResponse (setContentType "application/json")
     if uok
@@ -514,6 +576,9 @@ withAuthAs role onSuccess = do
     env <- gets _env
     let mh = getHeader "Authorization" rq
     let h = parseAuthorizationHeader mh
+    case h of
+        Just sk -> putRequest $ rqSetParam "sessionKey" [sk] rq
+        Nothing -> return ()
     uok <- liftIO $ testAuthHeader env h $ Just role
     modifyResponse (setContentType "application/json")
     if uok
@@ -552,29 +617,63 @@ testAuthHeader :: XokenNodeEnv -> Maybe B.ByteString -> Maybe DT.Text -> IO Bool
 testAuthHeader _ Nothing _ = pure False
 testAuthHeader env (Just sessionKey) role = do
     let dbe = dbHandles env
-    let conn = keyValDB (dbe)
-    let lg = loggerEnv env
-    let str =
-            " SELECT api_quota, api_used, session_key_expiry_time, permissions FROM xoken.user_permission WHERE session_key = ? ALLOW FILTERING "
-        qstr = str :: Q.QueryString Q.R (Q.Identity DT.Text) (Int32, Int32, UTCTime, Set DT.Text)
-        p = Q.defQueryParams Q.One $ Identity $ (DTE.decodeUtf8 sessionKey)
-    res <- liftIO $ try $ Q.runClient conn (Q.query (Q.prepared qstr) p)
-    case res of
-        Left (SomeException e) -> do
-            err lg $ LG.msg $ "Error: SELECT'ing from 'user_permission': " ++ show e
-            throw e
-        Right (op) -> do
-            if length op == 0
-                then return False
+        conn = keyValDB (dbe)
+        lg = loggerEnv env
+        bp2pEnv = bitcoinP2PEnv env
+        sKey = DT.pack $ S.unpack sessionKey
+    userData <- liftIO $ H.lookup (userDataCache bp2pEnv) sKey
+    case userData of
+        Just (name, quota, used, exp, roles) -> do
+            curtm <- liftIO $ getCurrentTime
+            if exp > curtm && quota > used
+                then do
+                    if (used + 1) `mod` 100 == 0
+                        then do
+                            let str = " UPDATE xoken.user_permission SET api_used = ? WHERE username = ? "
+                                qstr = str :: Q.QueryString Q.W (Int32, DT.Text) ()
+                                p = Q.defQueryParams Q.One $ (used + 1, name)
+                            res <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr) p)
+                            case res of
+                                Left (SomeException e) -> do
+                                    err lg $ LG.msg $ "Error: UPDATE'ing into 'user_permission': " ++ show e
+                                    throw e
+                                Right _ -> return ()
+                        else return ()
+                    liftIO $ H.insert (userDataCache bp2pEnv) sKey (name, quota, used + 1, exp, roles)
+                    case role of
+                        Nothing -> return True
+                        Just rl -> return $ rl `elem` roles
                 else do
-                    case op !! 0 of
-                        (quota, used, exp, roles) -> do
-                            curtm <- liftIO $ getCurrentTime
-                            if exp > curtm && quota > used
-                                then case role of
-                                         Nothing -> return True
-                                         Just rl -> return $ rl `elem` (fromSet roles)
-                                else return False
+                    liftIO $ H.delete (userDataCache bp2pEnv) sKey
+                    return False
+        Nothing -> do
+            let str =
+                    " SELECT username, api_quota, api_used, session_key_expiry_time, permissions FROM xoken.user_permission WHERE session_key = ? ALLOW FILTERING "
+                qstr = str :: Q.QueryString Q.R (Q.Identity DT.Text) (DT.Text, Int32, Int32, UTCTime, Set DT.Text)
+                p = Q.defQueryParams Q.One $ Identity $ sKey
+            res <- liftIO $ try $ Q.runClient conn (Q.query (Q.prepared qstr) p)
+            case res of
+                Left (SomeException e) -> do
+                    err lg $ LG.msg $ "Error: SELECT'ing from 'user_permission': " ++ show e
+                    throw e
+                Right op -> do
+                    if length op == 0
+                        then return False
+                        else do
+                            case op !! 0 of
+                                (name, quota, used, exp, roles) -> do
+                                    curtm <- liftIO $ getCurrentTime
+                                    if exp > curtm && quota > used
+                                        then do
+                                            liftIO $
+                                                H.insert
+                                                    (userDataCache bp2pEnv)
+                                                    sKey
+                                                    (name, quota, used + 1, exp, fromSet roles)
+                                            case role of
+                                                Nothing -> return True
+                                                Just rl -> return $ rl `elem` (fromSet roles)
+                                        else return False
 
 throwChallenge :: Handler App App ()
 throwChallenge = do
@@ -591,3 +690,8 @@ throwBadRequest :: Handler App App ()
 throwBadRequest = do
     modifyResponse $ setResponseStatus 400 "Bad Request"
     writeBS "Bad Request"
+
+throwNotFound :: Handler App App ()
+throwNotFound = do
+    modifyResponse $ setResponseStatus 404 "Not Found"
+    writeBS "Not Found"

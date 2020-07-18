@@ -174,6 +174,10 @@ data RPCReqParams'
     | GetBlocksByHashes
           { gbBlockHashes :: [String]
           }
+    | GetChainHeaders
+          { gcHeight :: Int32
+          , gcPageSize :: Int
+          }
     | GetTxIDsByBlockHash
           { gtTxBlockHash :: String
           , gtPageSize :: Int32
@@ -251,6 +255,13 @@ data RPCReqParams'
           { gtssHash :: String
           , gtssIndex :: Int32
           }
+    | UserByUsername
+          { uUsername :: String
+          }
+    | UpdateUserByUsername
+          { uuUsername :: String
+          , uuUpdateData :: UpdateUserByUsername'
+          }
     deriving (Generic, Show, Hashable, Eq, Serialise, ToJSON)
 
 instance FromJSON RPCReqParams' where
@@ -280,14 +291,17 @@ instance FromJSON RPCReqParams' where
          o .: "lastName" <*>
          o .: "email" <*>
          o .:? "roles") <|>
-        (GetTxOutputSpendStatus <$> o .: "txid" <*> o .: "index")
+        (GetTxOutputSpendStatus <$> o .: "txid" <*> o .: "index") <|>
+        (UserByUsername <$> o .: "username") <|>
+        (UpdateUserByUsername <$> o .: "username" <*> o .: "updateData") <|>
+        (GetChainHeaders <$> o .:? "startBlockHeight" .!= 1 <*> o .:? "pageSize" .!= 2000)
 
 data RPCResponseBody
     = AuthenticateResp
           { auth :: AuthResp
           }
     | RespAddUser
-          { user :: AddUserResp
+          { addUser :: AddUserResp
           }
     | RespBlockByHeight
           { block :: BlockRecord
@@ -303,6 +317,9 @@ data RPCResponseBody
           }
     | RespChainInfo
           { chainInfo :: ChainInfo
+          }
+    | RespChainHeaders
+          { chainHeaders :: [ChainHeader]
           }
     | RespTxIDsByBlockHash
           { txids :: [String]
@@ -366,6 +383,9 @@ data RPCResponseBody
     | RespTxOutputSpendStatus
           { spendStatus :: Maybe TxOutputSpendStatus
           }
+    | RespUser
+          { user :: Maybe User
+          }
     deriving (Generic, Show, Hashable, Eq, Serialise)
 
 instance ToJSON RPCResponseBody where
@@ -375,7 +395,8 @@ instance ToJSON RPCResponseBody where
     toJSON (RespBlocksByHeight bs) = object ["blocks" .= bs]
     toJSON (RespBlockByHash b) = object ["block" .= b]
     toJSON (RespBlocksByHashes bs) = object ["blocks" .= bs]
-    toJSON (RespChainInfo cw) = object ["chainInfo" .= cw]
+    toJSON (RespChainInfo ci) = object ["chainInfo" .= ci]
+    toJSON (RespChainHeaders chs) = object ["blockHeaders" .= chs]
     toJSON (RespTxIDsByBlockHash txids) = object ["txids" .= txids]
     toJSON (RespTransactionByTxID tx) = object ["tx" .= tx]
     toJSON (RespTransactionsByTxIDs txs) = object ["txs" .= txs]
@@ -395,6 +416,26 @@ instance ToJSON RPCResponseBody where
     toJSON (RespPartiallySignedAllegoryTx ps) =
         object ["psaTx" .= (T.decodeUtf8 . BL.toStrict . B64L.encode . GZ.compress . BL.fromStrict $ ps)]
     toJSON (RespTxOutputSpendStatus ss) = object ["spendStatus" .= ss]
+    toJSON (RespUser u) = object ["user" .= u]
+
+data UpdateUserByUsername' =
+    UpdateUserByUsername'
+        { uuPassword :: Maybe String
+        , uuFirstName :: Maybe String
+        , uuLastName :: Maybe String
+        , uuEmail :: Maybe String
+        , uuApiQuota :: Maybe Int32
+        , uuRoles :: Maybe [String]
+        , uuApiExpiryTime :: Maybe UTCTime
+        }
+    deriving (Generic, Show, Hashable, Eq, Serialise, ToJSON)
+
+instance FromJSON UpdateUserByUsername' where
+    parseJSON (Object o) =
+        (UpdateUserByUsername' <$> o .:? "password" <*> o .:? "firstName" <*> o .:? "lastName" <*> o .:? "email" <*>
+         o .:? "apiQuota" <*>
+         o .:? "roles" <*>
+         o .:? "apiExpiryTime")
 
 data AuthResp =
     AuthResp
@@ -406,19 +447,13 @@ data AuthResp =
 
 data AddUserResp =
     AddUserResp
-        { aurUsername :: String
+        { aurUser :: User
         , aurPassword :: String
-        , aurFirstName :: String
-        , aurLastName :: String
-        , aurEmail :: String
-        , aurRoles :: [String]
-        , aurApiQuota :: Int
-        , aurApiExpiryTime :: UTCTime
         }
     deriving (Generic, Show, Hashable, Eq, Serialise)
 
 instance ToJSON AddUserResp where
-    toJSON (AddUserResp uname pwd fname lname email roles apiQuota apiExpTime) =
+    toJSON (AddUserResp (User uname _ fname lname email roles apiQuota _ apiExpTime _ _) pwd) =
         object
             [ "username" .= uname
             , "password" .= pwd
@@ -428,6 +463,37 @@ instance ToJSON AddUserResp where
             , "roles" .= roles
             , "apiQuota" .= apiQuota
             , "apiExpiryTime" .= apiExpTime
+            ]
+
+data User =
+    User
+        { uUsername :: String
+        , uHashedPassword :: String
+        , uFirstName :: String
+        , uLastName :: String
+        , uEmail :: String
+        , uRoles :: [String]
+        , uApiQuota :: Int
+        , uApiUsed :: Int
+        , uApiExpiryTime :: UTCTime
+        , uSessionKey :: String
+        , uSessionKeyExpiry :: UTCTime
+        }
+    deriving (Generic, Show, Hashable, Eq, Serialise)
+
+instance ToJSON User where
+    toJSON (User uname _ fname lname email roles apiQuota apiUsed apiExpTime sKey sKeyExp) =
+        object
+            [ "username" .= uname
+            , "firstName" .= fname
+            , "lastName" .= lname
+            , "email" .= email
+            , "roles" .= roles
+            , "callsRemaining" .= (apiQuota - apiUsed)
+            , "callsUsed" .= apiUsed
+            , "apiExpiryTime" .= apiExpTime
+            , "sessionKey" .= sKey
+            , "sessionKeyExpiry" .= sKeyExp
             ]
 
 data ChainInfo =
@@ -508,6 +574,29 @@ instance ToJSON BlockHeader' where
             , "blockTimestamp" .= ts
             , "blockBits" .= bb
             , "bhNonce" .= bn
+            ]
+
+data ChainHeader =
+    ChainHeader
+        { blockHeight :: Int32
+        , blockHash :: String
+        , blockHeader :: BlockHeader'
+        , txCount :: Int32
+        }
+    deriving (Generic, Show, Hashable, Eq, Serialise)
+
+instance ToJSON ChainHeader where
+    toJSON (ChainHeader ht hs (BlockHeader' v pb mr ts bb bn) txc) =
+        object
+            [ "blockHeight" .= ht
+            , "blockHash" .= hs
+            , "blockVersion" .= v
+            , "prevBlock" .= pb
+            , "merkleRoot" .= (reverse2 mr)
+            , "blockTimestamp" .= ts
+            , "difficulty" .= (convertBitsToDifficulty bb)
+            , "bhNonce" .= bn
+            , "txCount" .= txc
             ]
 
 data RawTxRecord =

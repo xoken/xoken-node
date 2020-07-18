@@ -45,6 +45,13 @@ executable xoken-nexa
       Network.Xoken.Node.HTTP.Types
       Network.Xoken.Node.HTTP.Server
       Network.Xoken.Node.HTTP.Handler
+      Network.Xoken.Node.Service
+      Network.Xoken.Node.Service.Address
+      Network.Xoken.Node.Service.Allegory
+      Network.Xoken.Node.Service.Block
+      Network.Xoken.Node.Service.Chain
+      Network.Xoken.Node.Service.Transaction
+      Network.Xoken.Node.Service.User
 
   ghc-options:  -fprof-auto -fprof-cafs -rtsopts -O2 -threaded
   hs-source-dirs:
