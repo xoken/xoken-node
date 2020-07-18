@@ -301,11 +301,15 @@ checkBlocksFullySynced conn = do
 
 getBatchSize :: Int32 -> Int32 -> [Int32]
 getBatchSize peerCount n
-    | n < 180000 =
+    | n < 300000 =
         if peerCount > 16
             then [1 .. 16]
             else [1 .. peerCount]
-    | n >= 180000 && n < 500000 =
+    | n >= 300000 && n < 400000 =
+        if peerCount > 8
+            then [1 .. 8]
+            else [1 .. peerCount]
+    | n >= 400000 && n < 500000 =
         if peerCount > 4
             then [1 .. 4]
             else [1 .. peerCount]
