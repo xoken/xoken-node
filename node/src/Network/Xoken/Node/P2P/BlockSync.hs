@@ -306,8 +306,8 @@ getBatchSize peerCount n
             then [1 .. 16]
             else [1 .. peerCount]
     | n >= 200000 && n < 400000 =
-        if peerCount > 8
-            then [1 .. 8]
+        if peerCount > 4
+            then [1 .. 4]
             else [1 .. peerCount]
     | n >= 400000 && n < 500000 =
         if peerCount > 4
@@ -859,7 +859,7 @@ handleIfAllegoryTx :: (HasXokenNodeEnv env m, MonadIO m) => Tx -> Bool -> m (Boo
 handleIfAllegoryTx tx revert = do
     dbe <- getDB
     lg <- getLogger
-    debug lg $ LG.msg $ val $ "Checking for Allegory OP_RETURN"
+    trace lg $ LG.msg $ val $ "Checking for Allegory OP_RETURN"
     let op_return = head (txOut tx)
     let hexstr = B16.encode (scriptOutput op_return)
     if "006a0f416c6c65676f72792f416c6c506179" `L.isPrefixOf` (C.unpack hexstr)
