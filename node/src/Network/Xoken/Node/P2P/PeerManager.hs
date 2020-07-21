@@ -917,9 +917,9 @@ messageHandler peer (mm, ingss) = do
                                                                         ("DONE!, block: " ++ (show $ biBlockHash bf))
                                                                 else return ()
                                                         Nothing -> do
-                                                            err lg $
+                                                            debug lg $
                                                                 LG.msg $
-                                                                ("[ERROR] not found in blockTxProcessingLeftMap block_hash " ++
+                                                                ("not found in blockTxProcessingLeftMap block_hash " ++
                                                                  (show $ biBlockHash bf))
                                                             liftIO $ putMVar (blockTxProcessingLeftMap bp2pEnv) mv
                                                             -- throw BlockHashNotFoundException

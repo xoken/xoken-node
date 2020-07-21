@@ -163,7 +163,8 @@ runEgressBlockSync =
                              return (fromIntegral $ diffTimeToPicoseconds $ utctDayTime rt, pr)
                          Nothing -> return (999, pr))
                 (connPeers)
-        let sortedPeers = L.take 4 $ L.reverse $ L.sortBy (\(a, _) (b, _) -> compare a b) (timePeer)
+        let spr = L.take 6 $ L.reverse $ L.sortBy (\(a, _) (b, _) -> compare a b) (timePeer)
+        let sortedPeers = L.take 2 spr ++ L.drop 2 spr -- shuffle 
         !tm <- liftIO $ getCurrentTime
         mapM_
             (\(_, peer) -> do
@@ -302,14 +303,10 @@ checkBlocksFullySynced conn = do
 getBatchSize :: Int32 -> Int32 -> [Int32]
 getBatchSize peerCount n
     | n < 200000 =
-        if peerCount > 16
-            then [1 .. 16]
+        if peerCount > 8
+            then [1 .. 8]
             else [1 .. peerCount]
-    | n >= 200000 && n < 400000 =
-        if peerCount > 4
-            then [1 .. 4]
-            else [1 .. peerCount]
-    | n >= 400000 && n < 500000 =
+    | n >= 200000 && n < 500000 =
         if peerCount > 4
             then [1 .. 4]
             else [1 .. peerCount]
@@ -330,7 +327,12 @@ getNextBlockToSync tm = do
     if M.size sy == 0
         then do
             (hash, ht) <- fetchBestSyncedBlock conn net
-            let cacheInd = getBatchSize (fromIntegral $ maxBitcoinPeerCount $ nodeConfig bp2pEnv) ht
+            allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
+            let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
+            let cacheInd =
+                    if L.length connPeers > 4
+                        then getBatchSize (fromIntegral $ maxBitcoinPeerCount $ nodeConfig bp2pEnv) ht
+                        else [1]
             let !bks = map (\x -> ht + x) cacheInd
             let str = "SELECT block_height, block_hash from xoken.blocks_by_height where block_height in ?"
                 qstr = str :: Q.QueryString Q.R (Identity [Int32]) ((Int32, T.Text))

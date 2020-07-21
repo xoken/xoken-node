@@ -247,7 +247,7 @@ runThreads config nodeConf bp2p conn lg p2pEnv certPaths = do
                                                 return ())
     liftIO $ Q.shutdown conn
     liftIO $ destroyAllResources $ pool gdbState
-    liftIO $ putStrLn $ "quitting node after irrecoverable DB connection failure"
+    liftIO $ putStrLn $ "node recovering from fatal DB connection failure!"
     return ()
 
 runSyncStatusChecker :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
