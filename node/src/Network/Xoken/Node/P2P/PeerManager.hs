@@ -612,7 +612,7 @@ readNextMessage net sock ingss = do
             ((tx, unused), txbytLen) <- resilientRead sock blin
             case tx of
                 Just t -> do
-                    debug lg $
+                    trace lg $
                         msg
                             ("Confirmed-Tx: " ++
                              (show $ txHashToHex $ txHash t) ++ " unused: " ++ show (B.length unused))
@@ -809,12 +809,12 @@ messageHandler peer (mm, ingss) = do
                         (\x ->
                              if (invType x) == InvBlock
                                  then do
-                                     debug lg $ LG.msg ("INV - new Block: " ++ (show $ invHash x))
+                                     trace lg $ LG.msg ("INV - new Block: " ++ (show $ invHash x))
                                      liftIO $ putMVar (bestBlockUpdated bp2pEnv) True -- will trigger a GetHeaders to peers
                                  else if (invType x == InvTx)
                                           then do
                                               indexUnconfirmedTx <- liftIO $ readTVarIO $ indexUnconfirmedTx bp2pEnv
-                                              debug lg $ LG.msg ("INV - new Tx: " ++ (show $ invHash x))
+                                              trace lg $ LG.msg ("INV - new Tx: " ++ (show $ invHash x))
                                               if indexUnconfirmedTx == True
                                                   then processTxGetData peer $ invHash x
                                                   else return ()
@@ -858,7 +858,7 @@ messageHandler peer (mm, ingss) = do
                                             mv <- liftIO $ takeMVar (blockSyncStatusMap bp2pEnv)
                                             case (M.lookup (biBlockHash bf) mv) of
                                                 Just (st, _) ->
-                                                    if st == BlockReceiveComplete
+                                                    if st == BlockProcessingComplete
                                                         then do
                                                             liftIO $ putMVar (blockSyncStatusMap bp2pEnv) mv
                                                             throw BlockAlreadySyncedException
@@ -903,7 +903,8 @@ messageHandler peer (mm, ingss) = do
                                                                     let syu =
                                                                             M.insert
                                                                                 (biBlockHash bf)
-                                                                                (BlockReceiveComplete, biBlockHeight bf)
+                                                                                ( BlockProcessingComplete
+                                                                                , biBlockHeight bf)
                                                                                 sy
                                                                     liftIO $ putMVar (blockSyncStatusMap bp2pEnv) syu
                                                                     mv <-
@@ -1010,6 +1011,14 @@ readNextMessage' peer = do
                                     if binTxTotalCount ingst == binTxIngested ingst
                                             -- debug lg $ LG.msg $ ("DEBUG Block receive complete - " ++ show " ")
                                         then do
+                                            tm <- liftIO $ getCurrentTime
+                                            sy <- liftIO $ takeMVar (blockSyncStatusMap bp2pEnv)
+                                            let syu =
+                                                    M.insert
+                                                        (biBlockHash bi)
+                                                        (BlockReceiveComplete tm, biBlockHeight bi)
+                                                        sy
+                                            liftIO $ putMVar (blockSyncStatusMap bp2pEnv) syu
                                             liftIO $ atomically $ writeTVar (bpIngressState peer) $ Nothing
                                         else liftIO $ atomically $ writeTVar (bpIngressState peer) $ ingressState
                                 Nothing -> throw InvalidBlockInfoException

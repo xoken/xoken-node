@@ -121,8 +121,9 @@ data BlockIngestState =
 data BlockSyncStatus
     = RequestSent !UTCTime
     | RequestQueued
-    | BlockReceiveComplete
     | RecentTxReceiveTime !(UTCTime, Int)
+    | BlockReceiveComplete !UTCTime
+    | BlockProcessingComplete
     deriving (Eq, Ord, Show)
 
 -- |A pool of connections to Neo4j server
