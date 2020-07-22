@@ -325,3 +325,8 @@ fromBytes :: B.ByteString -> Integer
 fromBytes = B.foldl' f 0
   where
     f a b = a `shiftL` 8 .|. fromIntegral b
+
+splitList :: [a] -> ([a], [a])
+splitList xs = (f 1 xs, f 0 xs)
+  where
+    f n a = map fst . filter (odd . snd) . zip a $ [n ..]

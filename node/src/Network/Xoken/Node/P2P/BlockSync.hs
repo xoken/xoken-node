@@ -163,8 +163,8 @@ runEgressBlockSync =
                              return (fromIntegral $ diffTimeToPicoseconds $ utctDayTime rt, pr)
                          Nothing -> return (999, pr))
                 (connPeers)
-        let spr = L.take 6 $ L.reverse $ L.sortBy (\(a, _) (b, _) -> compare a b) (timePeer)
-        let sortedPeers = L.take 2 spr ++ L.drop 2 spr -- shuffle 
+        let spr = L.take 8 $ L.reverse $ L.sortBy (\(a, _) (b, _) -> compare a b) (timePeer)
+        let sortedPeers = fst $ splitList spr -- shuffle; pick 4 odd elems
         !tm <- liftIO $ getCurrentTime
         mapM_
             (\(_, peer) -> do

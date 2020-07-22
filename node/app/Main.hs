@@ -273,28 +273,38 @@ runSyncStatusChecker = do
 runWatchDog :: (HasXokenNodeEnv env m, MonadIO m) => m ()
 runWatchDog = do
     dbe <- getDB
+    bp2pEnv <- getBitcoinP2P
     let conn = keyValDB (dbe)
     liftIO $ putStrLn $ ("Starting watchdog")
     continue <- liftIO $ newIORef True
     whileM_ (liftIO $ readIORef continue) $ do
         liftIO $ threadDelay (60 * 1000000)
-        tm <- liftIO $ getCurrentTime
-        let ttime = (floor $ utcTimeToPOSIXSeconds tm) :: Int64
-            str = "insert INTO xoken.transactions ( tx_id, block_info, tx_serialized ) values (?, ?, ?)"
-            qstr = str :: Q.QueryString Q.W (T.Text, ((T.Text, Int32), Int32), Blob) ()
-            par = Q.defQueryParams Q.One ("watchdog-last-check", ((T.pack $ show ttime, 0), 0), Blob $ CL.pack "")
-        ores <-
-            LA.race (liftIO $ threadDelay (500000)) (liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr) par))
-        case ores of
-            Right (eth) -> do
-                case eth of
-                    Right () -> return ()
-                    Left (SomeException e) -> do
-                        liftIO $ print ("Error: unable to insert, watchdog raise alert " ++ show e)
-                        liftIO $ writeIORef continue False
-            Left () -> do
-                liftIO $ print ("Error: insert timed-out, watchdog raise alert ")
+        fa <- liftIO $ readTVarIO (txProcFailAttempts bp2pEnv)
+        if fa > 5
+            then do
+                liftIO $ print ("Error: exceeded Tx proc fail attempt threshold, watchdog raise alert ")
                 liftIO $ writeIORef continue False
+            else do
+                tm <- liftIO $ getCurrentTime
+                let ttime = (floor $ utcTimeToPOSIXSeconds tm) :: Int64
+                    str = "insert INTO xoken.transactions ( tx_id, block_info, tx_serialized ) values (?, ?, ?)"
+                    qstr = str :: Q.QueryString Q.W (T.Text, ((T.Text, Int32), Int32), Blob) ()
+                    par =
+                        Q.defQueryParams Q.One ("watchdog-last-check", ((T.pack $ show ttime, 0), 0), Blob $ CL.pack "")
+                ores <-
+                    LA.race
+                        (liftIO $ threadDelay (500000))
+                        (liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr) par))
+                case ores of
+                    Right (eth) -> do
+                        case eth of
+                            Right () -> return ()
+                            Left (SomeException e) -> do
+                                liftIO $ print ("Error: unable to insert, watchdog raise alert " ++ show e)
+                                liftIO $ writeIORef continue False
+                    Left () -> do
+                        liftIO $ print ("Error: insert timed-out, watchdog raise alert ")
+                        liftIO $ writeIORef continue False
 
 runNode :: Config.Config -> NC.NodeConfig -> Q.ClientState -> BitcoinP2P -> [FilePath] -> IO ()
 runNode config nodeConf conn bp2p certPaths = do
@@ -378,7 +388,8 @@ defBitcoinP2P nodeCnf = do
     tbt <- MS.new $ maxTMTBuilderThreads nodeCnf
     iut <- newTVarIO False
     udc <- H.new
-    return $ BitcoinP2P nodeCnf g bp mv hl st tl ep tc vc (rpf, rpc) mq ts tbt iut udc
+    tpfa <- newTVarIO 0
+    return $ BitcoinP2P nodeCnf g bp mv hl st tl ep tc vc (rpf, rpc) mq ts tbt iut udc tpfa
 
 initNexa :: IO ()
 initNexa = do

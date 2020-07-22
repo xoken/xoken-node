@@ -625,7 +625,8 @@ readNextMessage net sock ingss = do
                                         mv <- liftIO $ takeMVar (blockTxProcessingLeftMap p2pEnv)
                                         case (M.lookup (biBlockHash $ bf) mv) of
                                             Just v -> do
-                                                debug lg $ msg ("Block already under sync: " ++ (show $ biBlockHash bf))
+                                                debug lg $
+                                                    msg ("Block already partly synced: " ++ (show $ biBlockHash bf))
                                                 liftIO $ putMVar (blockTxProcessingLeftMap p2pEnv) mv
                                             Nothing -> do
                                                 let ar = map (\_ -> False) [1 .. (binTxTotalCount blin)]
@@ -841,11 +842,11 @@ messageHandler peer (mm, ingss) = do
                             case binfo of
                                 Just bf -> do
                                     ma <- liftIO $ takeMVar (blockTxProcessingLeftMap bp2pEnv)
+                                    liftIO $ putMVar (blockTxProcessingLeftMap bp2pEnv) ma
                                     let skip =
                                             case (M.lookup (biBlockHash bf) ma) of
                                                 Just lfa -> (lfa !! (binTxIngested bi - 1))
                                                 Nothing -> False
-                                    liftIO $ putMVar (blockTxProcessingLeftMap bp2pEnv) ma
                                     if skip
                                         then do
                                             debug lg $
@@ -854,27 +855,6 @@ messageHandler peer (mm, ingss) = do
                                                  (show $ biBlockHash bf) ++ ", tx-index: " ++ show (binTxIngested bi))
                                             return ()
                                         else do
-                                            tm <- liftIO $ getCurrentTime
-                                            mv <- liftIO $ takeMVar (blockSyncStatusMap bp2pEnv)
-                                            case (M.lookup (biBlockHash bf) mv) of
-                                                Just (st, _) ->
-                                                    if st == BlockProcessingComplete
-                                                        then do
-                                                            liftIO $ putMVar (blockSyncStatusMap bp2pEnv) mv
-                                                            throw BlockAlreadySyncedException
-                                                        else return ()
-                                                Nothing -> do
-                                                    liftIO $ putMVar (blockSyncStatusMap bp2pEnv) mv
-                                                    throw UnexpectedDuringBlockProcException
-                                            let xm =
-                                                    (M.insert
-                                                         (biBlockHash bf)
-                                                         ( RecentTxReceiveTime (tm, binTxIngested bi)
-                                                         , biBlockHeight bf -- track receive progress
-                                                          ))
-                                                        mv
-                                            liftIO $ putMVar (blockSyncStatusMap bp2pEnv) xm
-                                            --
                                             res <-
                                                 LE.try $
                                                 processConfTransaction
@@ -907,12 +887,6 @@ messageHandler peer (mm, ingss) = do
                                                                                 , biBlockHeight bf)
                                                                                 sy
                                                                     liftIO $ putMVar (blockSyncStatusMap bp2pEnv) syu
-                                                                    mv <-
-                                                                        liftIO $
-                                                                        takeMVar (blockTxProcessingLeftMap bp2pEnv)
-                                                                    let xm = M.delete (biBlockHash $ bf) mv
-                                                                    liftIO $
-                                                                        putMVar (blockTxProcessingLeftMap bp2pEnv) xm
                                                                     debug lg $
                                                                         LG.msg $
                                                                         ("DONE!, block: " ++ (show $ biBlockHash bf))
@@ -923,7 +897,6 @@ messageHandler peer (mm, ingss) = do
                                                                 ("not found in blockTxProcessingLeftMap block_hash " ++
                                                                  (show $ biBlockHash bf))
                                                             liftIO $ putMVar (blockTxProcessingLeftMap bp2pEnv) mv
-                                                            -- throw BlockHashNotFoundException
                                                 Left BlockHashNotFoundException -> return ()
                                                 Left EmptyHeadersMessageException -> return ()
                                                 Left TxIDNotFoundException -> do
@@ -1009,7 +982,6 @@ readNextMessage' peer = do
                                         then liftIO $ atomically $ modifyTVar' (bpBlockFetchWindow peer) (\z -> z - 1)
                                         else return ()
                                     if binTxTotalCount ingst == binTxIngested ingst
-                                            -- debug lg $ LG.msg $ ("DEBUG Block receive complete - " ++ show " ")
                                         then do
                                             tm <- liftIO $ getCurrentTime
                                             sy <- liftIO $ takeMVar (blockSyncStatusMap bp2pEnv)
@@ -1020,7 +992,18 @@ readNextMessage' peer = do
                                                         sy
                                             liftIO $ putMVar (blockSyncStatusMap bp2pEnv) syu
                                             liftIO $ atomically $ writeTVar (bpIngressState peer) $ Nothing
-                                        else liftIO $ atomically $ writeTVar (bpIngressState peer) $ ingressState
+                                        else do
+                                            tm <- liftIO $ getCurrentTime
+                                            mv <- liftIO $ takeMVar (blockSyncStatusMap bp2pEnv)
+                                            let xm =
+                                                    (M.insert
+                                                         (biBlockHash bi)
+                                                         ( RecentTxReceiveTime (tm, binTxIngested ingst)
+                                                         , biBlockHeight bi -- track receive progress
+                                                          ))
+                                                        mv
+                                            liftIO $ putMVar (blockSyncStatusMap bp2pEnv) xm
+                                            liftIO $ atomically $ writeTVar (bpIngressState peer) $ ingressState
                                 Nothing -> throw InvalidBlockInfoException
                         otherwise -> throw UnexpectedDuringBlockProcException
                 Nothing -> return ()
@@ -1040,6 +1023,7 @@ procTxStream pr = do
             case ores of
                 Right () -> do
                     err lg $ LG.msg $ (val "[ERROR] Closing peer connection due to Tx proc timeout")
+                    liftIO $ atomically $ modifyTVar' (txProcFailAttempts bp2pEnv) (\z -> z + 1)
                     liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
                     closeSocket (bpSocket pr)
                 Left res ->
