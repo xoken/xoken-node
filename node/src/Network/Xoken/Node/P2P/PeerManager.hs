@@ -853,7 +853,22 @@ messageHandler peer (mm, ingss) = do
                                                 LG.msg $
                                                 ("Tx already processed, block: " ++
                                                  (show $ biBlockHash bf) ++ ", tx-index: " ++ show (binTxIngested bi))
-                                            return ()
+                                            case (M.lookup (biBlockHash bf) ma) of
+                                                Just reda -> do
+                                                    if (all (== True) reda) -- redundant check for any race conditions
+                                                        then do
+                                                            sy <- liftIO $ takeMVar (blockSyncStatusMap bp2pEnv)
+                                                            let syu =
+                                                                    M.insert
+                                                                        (biBlockHash bf)
+                                                                        (BlockProcessingComplete, biBlockHeight bf)
+                                                                        sy
+                                                            liftIO $ putMVar (blockSyncStatusMap bp2pEnv) syu
+                                                            debug lg $
+                                                                LG.msg $
+                                                                ("DONE!(2), block: " ++ (show $ biBlockHash bf))
+                                                        else return ()
+                                                Nothing -> return ()
                                         else do
                                             res <-
                                                 LE.try $
