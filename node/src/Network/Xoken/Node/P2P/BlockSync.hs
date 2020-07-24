@@ -163,7 +163,8 @@ runEgressBlockSync =
                              return (fromIntegral $ diffTimeToPicoseconds $ utctDayTime rt, pr)
                          Nothing -> return (999, pr))
                 (connPeers)
-        let sortedPeers = L.take 4 $ L.reverse $ L.sortBy (\(a, _) (b, _) -> compare a b) (timePeer)
+        let spr = L.take 8 $ L.reverse $ L.sortBy (\(a, _) (b, _) -> compare a b) (timePeer)
+        let sortedPeers = fst $ splitList spr -- shuffle; pick 4 odd elems
         !tm <- liftIO $ getCurrentTime
         mapM_
             (\(_, peer) -> do
@@ -302,14 +303,10 @@ checkBlocksFullySynced conn = do
 getBatchSize :: Int32 -> Int32 -> [Int32]
 getBatchSize peerCount n
     | n < 200000 =
-        if peerCount > 16
-            then [1 .. 16]
-            else [1 .. peerCount]
-    | n >= 200000 && n < 400000 =
         if peerCount > 8
             then [1 .. 8]
             else [1 .. peerCount]
-    | n >= 400000 && n < 500000 =
+    | n >= 200000 && n < 500000 =
         if peerCount > 4
             then [1 .. 4]
             else [1 .. peerCount]
@@ -330,7 +327,12 @@ getNextBlockToSync tm = do
     if M.size sy == 0
         then do
             (hash, ht) <- fetchBestSyncedBlock conn net
-            let cacheInd = getBatchSize (fromIntegral $ maxBitcoinPeerCount $ nodeConfig bp2pEnv) ht
+            allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
+            let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
+            let cacheInd =
+                    if L.length connPeers > 4
+                        then getBatchSize (fromIntegral $ maxBitcoinPeerCount $ nodeConfig bp2pEnv) ht
+                        else [1]
             let !bks = map (\x -> ht + x) cacheInd
             let str = "SELECT block_height, block_hash from xoken.blocks_by_height where block_height in ?"
                 qstr = str :: Q.QueryString Q.R (Identity [Int32]) ((Int32, T.Text))
@@ -373,6 +375,7 @@ getNextBlockToSync tm = do
                                  RequestSent _ -> True
                                  otherwise -> False)
                         sy
+            let recvNotStarted = M.filter (\((RequestSent t), _) -> (diffUTCTime tm t > 10)) sent
             let receiveInProgress =
                     M.filter
                         (\x ->
@@ -382,9 +385,21 @@ getNextBlockToSync tm = do
                         sy
             let recvTimedOut =
                     M.filter (\((RecentTxReceiveTime (t, c)), _) -> (diffUTCTime tm t > 30)) receiveInProgress
+            let recvComplete =
+                    M.filter
+                        (\x ->
+                             case fst x of
+                                 BlockReceiveComplete _ -> True
+                                 otherwise -> False)
+                        sy
+            let processingIncomplete =
+                    M.filter (\((BlockReceiveComplete t), _) -> (diffUTCTime tm t > 360)) recvComplete
             -- all blocks received, empty the cache, cache-miss gracefully
-            debug lg $ LG.msg $ ("recv in progress, awaiting: " ++ show receiveInProgress)
-            if M.size sent == 0 && M.size unsent == 0 && M.size receiveInProgress == 0
+            debug lg $
+                LG.msg $
+                ("recv in progress, awaiting: " ++
+                 show receiveInProgress ++ " | recveived but still processing: " ++ show recvComplete)
+            if M.size sent == 0 && M.size unsent == 0 && M.size receiveInProgress == 0 && M.size recvComplete == 0
                 then do
                     let !lelm = last $ L.sortOn (snd . snd) (M.toList sy)
                     debug lg $ LG.msg $ ("DEBUG, marking best synced " ++ show (blockHashToHex $ fst $ lelm))
@@ -393,37 +408,20 @@ getNextBlockToSync tm = do
                     return Nothing
                 else do
                     liftIO $ putMVar (blockSyncStatusMap bp2pEnv) sy
-                    if M.size recvTimedOut > 0
-                             -- TODO: can be replaced with minimum using Ord instance based on (snd . snd)
-                        then do
-                            let !sortRecvTimedOutHead = head $ L.sortOn (snd . snd) (M.toList recvTimedOut)
-                            return (Just $ BlockInfo (fst sortRecvTimedOutHead) (snd $ snd sortRecvTimedOutHead))
-                        else if M.size sent > 0
-                                 then do
-                                     let !recvNotStarted =
-                                             M.filter (\((RequestSent t), _) -> (diffUTCTime tm t > 10)) sent
-                                     if M.size recvNotStarted > 0
-                                         then do
-                                             let !sortRecvNotStartedHead =
-                                                     head $ L.sortOn (snd . snd) (M.toList recvNotStarted)
-                                             return
-                                                 (Just $
-                                                  BlockInfo
-                                                      (fst $ sortRecvNotStartedHead)
-                                                      (snd $ snd $ sortRecvNotStartedHead))
-                                         else if M.size unsent > 0
-                                                  then do
-                                                      let !sortUnsentHead =
-                                                              head $ L.sortOn (snd . snd) (M.toList unsent)
-                                                      return
-                                                          (Just $
-                                                           BlockInfo (fst sortUnsentHead) (snd $ snd sortUnsentHead))
-                                                  else return Nothing
-                                 else if M.size unsent > 0
-                                          then do
-                                              let !sortUnsentHead = head $ L.sortOn (snd . snd) (M.toList unsent)
-                                              return (Just $ BlockInfo (fst sortUnsentHead) (snd $ snd sortUnsentHead))
-                                          else return Nothing
+                    if M.size processingIncomplete > 0
+                        then return $ mkBlkInf $ getHead processingIncomplete
+                        else if M.size recvTimedOut > 0
+                                 then return $ mkBlkInf $ getHead recvTimedOut
+                                 else if M.size recvNotStarted > 0
+                                          then return $ mkBlkInf $ getHead recvNotStarted
+                                          else if M.size unsent > 0
+                                                   then return $ mkBlkInf $ getHead unsent
+                                                   else if M.size unsent > 0
+                                                            then return $ mkBlkInf $ getHead unsent
+                                                            else return Nothing
+  where
+    getHead l = head $ L.sortOn (snd . snd) (M.toList l)
+    mkBlkInf h = Just $ BlockInfo (fst h) (snd $ snd h)
 
 fetchBestSyncedBlock :: (HasLogger m, MonadIO m) => Q.ClientState -> Network -> m ((BlockHash, Int32))
 fetchBestSyncedBlock conn net = do
@@ -552,7 +550,7 @@ processConfTransaction tx bhash txind blkht = do
     lg <- getLogger
     let net = bitcoinNetwork $ nodeConfig bp2pEnv
     let conn = keyValDB $ dbe'
-    debug lg $ LG.msg $ "processing Transaction " ++ show (txHash tx) ++ ": started"
+    debug lg $ LG.msg $ "processing Tx " ++ show (txHash tx)
     let inAddrs = zip (txIn tx) [0 :: Int32 ..]
     let outAddrs =
             zip3
@@ -647,7 +645,7 @@ processConfTransaction tx bhash txind blkht = do
                  return
                      ((txHashToHex $ outPointHash $ prevOutput b, fromIntegral $ outPointIndex $ prevOutput b), j, val))
             inAddrs
-    trace lg $ LG.msg $ "processing Transaction " ++ show (txHash tx) ++ ": fetched input(s): " ++ show inputs
+    trace lg $ LG.msg $ "processing Tx " ++ show (txHash tx) ++ ": fetched input(s): " ++ show inputs
     --
     -- cache compile output values 
     -- imp: order is (address, scriptHash, value)
@@ -657,14 +655,14 @@ processConfTransaction tx bhash txind blkht = do
                      ( fromIntegral $ i
                      , (a, (txHashToHex $ TxHash $ sha256 (scriptOutput o)), fromIntegral $ outValue o)))
                 outAddrs
-    trace lg $ LG.msg $ "processing Transaction " ++ show (txHash tx) ++ ": compiled output value(s): " ++ (show ovs)
+    trace lg $ LG.msg $ "processing Tx " ++ show (txHash tx) ++ ": compiled output value(s): " ++ (show ovs)
     liftIO $
         H.insert
             (txOutputValuesCache bp2pEnv)
             (getTxShortHash (txHash tx) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
             (txHash tx, ovs)
     --
-    trace lg $ LG.msg $ "processing Transaction " ++ show (txHash tx) ++ ": added outputvals to cache"
+    trace lg $ LG.msg $ "processing Tx " ++ show (txHash tx) ++ ": added outputvals to cache"
     -- update outputs and scripthash tables
     mapM_
         (\(a, o, i) -> do
@@ -691,7 +689,7 @@ processConfTransaction tx bhash txind blkht = do
                                    else return ()
                            (Left e) -> return ())))
         outAddrs
-    trace lg $ LG.msg $ "processing Transaction " ++ show (txHash tx) ++ ": committed scripthash,txid_outputs tables"
+    trace lg $ LG.msg $ "processing Tx " ++ show (txHash tx) ++ ": committed scripthash,txid_outputs tables"
     mapM_
         (\((o, i), (a, sh)) -> do
              let bi = (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
@@ -708,13 +706,13 @@ processConfTransaction tx bhash txind blkht = do
                               (deleteScriptHashUnspentOutputs conn a prevOutpoint)))
         (zip (inAddrs) (map (\x -> (fst3 $ thd3 x, snd3 $ thd3 $ x)) inputs))
     --
-    trace lg $ LG.msg $ "processing Transaction " ++ show (txHash tx) ++ ": updated spend info for inputs"
+    trace lg $ LG.msg $ "processing Tx " ++ show (txHash tx) ++ ": updated spend info for inputs"
     -- calculate Tx fees
     let ipSum = foldl (+) 0 $ (\(_, _, (_, _, val)) -> val) <$> inputs
         opSum = foldl (+) 0 $ (\(_, o, _) -> fromIntegral $ outValue o) <$> outAddrs
         fees = ipSum - opSum
     --
-    trace lg $ LG.msg $ "processing Transaction " ++ show (txHash tx) ++ ": calculated fees"
+    trace lg $ LG.msg $ "processing Tx " ++ show (txHash tx) ++ ": calculated fees"
     -- persist tx
     let str = "insert INTO xoken.transactions (tx_id, block_info, tx_serialized , inputs, fees) values (?, ?, ?, ?, ?)"
         qstr =
@@ -734,21 +732,21 @@ processConfTransaction tx bhash txind blkht = do
             liftIO $ err lg $ LG.msg ("Error: INSERTing into 'xoken.transactions': " ++ show e)
             throw KeyValueDBInsertException
     --
-    trace lg $ LG.msg $ "processing Transaction " ++ show (txHash tx) ++ ": persisted in DB"
+    trace lg $ LG.msg $ "processing Tx " ++ show (txHash tx) ++ ": persisted in DB"
     -- handle allegory
     eres <- LE.try $ handleIfAllegoryTx tx True
     case eres of
         Right (flg) -> return ()
         Left (e :: SomeException) -> err lg $ LG.msg ("Error: " ++ show e)
     --
-    trace lg $ LG.msg $ "processing Transaction " ++ show (txHash tx) ++ ": handled Allegory Tx"
+    trace lg $ LG.msg $ "processing Tx " ++ show (txHash tx) ++ ": handled Allegory Tx"
     -- signal 'done' event for tx's that were processed out of sequence 
     --
     txSyncMap <- liftIO $ readMVar (txSynchronizer bp2pEnv)
     case (M.lookup (txHash tx) txSyncMap) of
         Just ev -> liftIO $ EV.signal $ ev
         Nothing -> return ()
-    trace lg $ LG.msg $ "processing Transaction " ++ show (txHash tx) ++ ": end of processing signaled"
+    trace lg $ LG.msg $ "processing Tx " ++ show (txHash tx) ++ ": end of processing signaled"
 
 getSatValuesFromOutpoint ::
        Q.ClientState
@@ -859,7 +857,7 @@ handleIfAllegoryTx :: (HasXokenNodeEnv env m, MonadIO m) => Tx -> Bool -> m (Boo
 handleIfAllegoryTx tx revert = do
     dbe <- getDB
     lg <- getLogger
-    debug lg $ LG.msg $ val $ "Checking for Allegory OP_RETURN"
+    trace lg $ LG.msg $ val $ "Checking for Allegory OP_RETURN"
     let op_return = head (txOut tx)
     let hexstr = B16.encode (scriptOutput op_return)
     if "006a0f416c6c65676f72792f416c6c506179" `L.isPrefixOf` (C.unpack hexstr)
