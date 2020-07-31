@@ -75,18 +75,24 @@ produceGetHeadersMessage = do
     debug lg $ LG.msg $ val "produceGetHeadersMessage - called."
     bp2pEnv <- getBitcoinP2P
     -- be blocked until a new best-block is updated in DB, or a set timeout.
-    LA.race (liftIO $ takeMVar (bestBlockUpdated bp2pEnv)) (liftIO $ threadDelay (15 * 1000000))
-    conn <- keyValDB <$> getDB
-    let net = bitcoinNetwork $ nodeConfig bp2pEnv
-    bl <- getBlockLocator conn net
-    let gh =
-            GetHeaders
-                { getHeadersVersion = myVersion
-                , getHeadersBL = bl
-                , getHeadersHashStop = "0000000000000000000000000000000000000000000000000000000000000000"
-                }
-    debug lg $ LG.msg ("block-locator: " ++ show bl)
-    return (MGetHeaders gh)
+    res <- LA.race (liftIO $ threadDelay (15 * 1000000)) (liftIO $ takeMVar (bestBlockUpdated bp2pEnv))
+    case res of
+        Right _ -> do
+            conn <- keyValDB <$> getDB
+            let net = bitcoinNetwork $ nodeConfig bp2pEnv
+            bl <- getBlockLocator conn net
+            let gh =
+                    GetHeaders
+                        { getHeadersVersion = myVersion
+                        , getHeadersBL = bl
+                        , getHeadersHashStop = "0000000000000000000000000000000000000000000000000000000000000000"
+                        }
+            debug lg $ LG.msg ("block-locator: " ++ show bl)
+            return (MGetHeaders gh)
+        Left _ -> do
+            debug lg $ LG.msg $ val ("produceGetHeadersMessage timed-out")
+            liftIO $ putMVar (bestBlockUpdated bp2pEnv) True
+            return (MPing $ Ping 0)
 
 sendRequestMessages :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Message -> m ()
 sendRequestMessages msg = do
