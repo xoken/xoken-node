@@ -279,11 +279,11 @@ runWatchDog = do
     LG.debug lg $ LG.msg $ LG.val "Starting watchdog"
     continue <- liftIO $ newIORef True
     whileM_ (liftIO $ readIORef continue) $ do
-        liftIO $ threadDelay (60 * 1000000)
+        liftIO $ threadDelay (120 * 1000000)
         fa <- liftIO $ readTVarIO (txProcFailAttempts bp2pEnv)
         if fa > 5
             then do
-                LG.debug lg $ LG.msg $ LG.val "Error: exceeded Tx proc fail attempt threshold, watchdog raise alert "
+                LG.err lg $ LG.msg $ LG.val "Error: exceeded Tx proc fail attempt threshold, watchdog raise alert "
                 liftIO $ writeIORef continue False
             else do
                 tm <- liftIO $ getCurrentTime
@@ -294,17 +294,17 @@ runWatchDog = do
                         Q.defQueryParams Q.One ("watchdog-last-check", ((T.pack $ show ttime, 0), 0), Blob $ CL.pack "")
                 ores <-
                     LA.race
-                        (liftIO $ threadDelay (2500000)) -- worst case of 2.5 seconds
+                        (liftIO $ threadDelay (3000000)) -- worst case of 3 secs
                         (liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr) par))
                 case ores of
                     Right (eth) -> do
                         case eth of
                             Right () -> return ()
                             Left (SomeException e) -> do
-                                LG.debug lg $ LG.msg ("Error: unable to insert, watchdog raise alert " ++ show e)
+                                LG.err lg $ LG.msg ("Error: unable to insert, watchdog raise alert " ++ show e)
                                 liftIO $ writeIORef continue False
                     Left () -> do
-                        LG.debug lg $ LG.msg $ LG.val "Error: insert timed-out, watchdog raise alert "
+                        LG.err lg $ LG.msg $ LG.val "Error: insert timed-out, watchdog raise alert "
                         liftIO $ writeIORef continue False
 
 runNode :: Config.Config -> NC.NodeConfig -> Q.ClientState -> BitcoinP2P -> [FilePath] -> IO ()
