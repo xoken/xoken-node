@@ -16,6 +16,7 @@ import Data.ByteString.Char8 as C
 import Data.Maybe
 import Data.Text as T
 import qualified Data.Text.Encoding as E
+import Data.Word
 import Data.Yaml
 import GHC.Generics
 import Network.Socket
@@ -39,7 +40,6 @@ data NodeConfig =
         , maxBitcoinPeerCount :: Int
         , unresponsivePeerConnTimeoutSecs :: Int
         , acivatePeerDiscovery :: Bool
-        -- , staticPeerList: []
         , maxTMTBuilderThreads :: Int
         , maxTMTQueueSize :: Int
         , txProcInputDependenciesWait :: Int
@@ -52,8 +52,8 @@ data NodeConfig =
         , allegoryNameUtxoSatoshis :: Int
         , allegoryTxFeeSatsProducerAction :: Int
         , allegoryTxFeeSatsOwnerAction :: Int
-        , txOutputValuesCacheKeyBits :: Int
-        , unconfirmedTxCacheKeyBits :: Int
+        , txOutputValuesCacheKeyBits :: Word8
+        , unconfirmedTxCacheKeyBits :: Word8
         }
     deriving (Show, Generic)
 
