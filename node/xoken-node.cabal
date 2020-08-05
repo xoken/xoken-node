@@ -132,6 +132,7 @@ executable xoken-nexa
     , daemons
     , snap
     , lens
+    , list-t
   default-language: Haskell2010
 
 test-suite xoken-node-test
@@ -209,6 +210,7 @@ test-suite xoken-node-test
     , utf8-string
     , yaml
     , secp256k1-haskell
+    , list-t
 
 
   default-language: Haskell2010

@@ -93,6 +93,7 @@ import Network.Xoken.Node.P2P.Types
 import Network.Xoken.Node.Service.Transaction
 import Network.Xoken.Util (bsToInteger, integerToBS)
 import Numeric (showHex)
+import StmContainers.Map as SM
 import System.Logger as LG
 import System.Logger.Message
 import System.Random

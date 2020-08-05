@@ -104,6 +104,7 @@ import Options.Applicative
 import Paths_xoken_node as P
 import Prelude as P
 import qualified Snap as Snap
+import StmContainers.Map as SM
 import System.Directory (doesDirectoryExist, doesFileExist)
 import System.Environment (getArgs)
 import System.Exit
@@ -377,15 +378,15 @@ defBitcoinP2P nodeCnf = do
     bp <- newTVarIO M.empty
     mv <- newMVar True
     hl <- newMVar True
-    st <- newMVar M.empty
-    tl <- newMVar M.empty
+    st <- SM.newIO -- newMVar M.empty
+    tl <- SM.newIO -- newMVar M.empty
     ep <- newTVarIO False
     tc <- H.new
     vc <- H.new
     rpf <- newEmptyMVar
     rpc <- newTVarIO 0
-    mq <- newTVarIO M.empty
-    ts <- newMVar M.empty
+    mq <- SM.newIO -- newTVarIO M.empty
+    ts <- SM.newIO -- newMVar M.empty
     tbt <- MS.new $ maxTMTBuilderThreads nodeCnf
     iut <- newTVarIO False
     udc <- H.new

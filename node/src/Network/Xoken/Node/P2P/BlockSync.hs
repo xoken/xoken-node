@@ -67,6 +67,7 @@ import qualified Database.Bolt as BT
 import qualified Database.CQL.IO as Q
 import qualified Database.CQL.IO as Q
 import Database.CQL.Protocol
+import qualified ListT as LT
 import qualified Network.Socket as NS
 import qualified Network.Socket.ByteString as SB (recv)
 import qualified Network.Socket.ByteString.Lazy as LB (recv, sendAll)
@@ -85,6 +86,7 @@ import Network.Xoken.Node.P2P.Types
 import Network.Xoken.Script.Standard
 import Network.Xoken.Transaction.Common
 import Network.Xoken.Util
+import StmContainers.Map as SM
 import Streamly
 import Streamly.Prelude ((|:), nil)
 import qualified Streamly.Prelude as S
@@ -102,10 +104,14 @@ produceGetDataMessage !tm = do
     case res of
         Right (bl) -> do
             case bl of
-                Just b -> do
-                    mv <- liftIO $ takeMVar (blockSyncStatusMap bp2pEnv)
-                    let xm = M.insert (biBlockHash b) (RequestSent tm, biBlockHeight b) mv
-                    liftIO $ putMVar (blockSyncStatusMap bp2pEnv) xm
+                Just b
+                    -- mv <- liftIO $ takeMVar (blockSyncStatusMap bp2pEnv)
+                 -> do
+                    liftIO $
+                        atomically $
+                        SM.insert (RequestSent tm, biBlockHeight b) (biBlockHash b) (blockSyncStatusMap bp2pEnv)
+                    -- let xm = M.insert (biBlockHash b) (RequestSent tm, biBlockHeight b) mv
+                    -- liftIO $ putMVar (blockSyncStatusMap bp2pEnv) xm
                     let gd = GetData $ [InvVector InvBlock $ getBlockHash $ biBlockHash b]
                     debug lg $ LG.msg $ "GetData req: " ++ show gd
                     return (Just $ MGetData gd)
@@ -322,9 +328,11 @@ getNextBlockToSync tm = do
     bp2pEnv <- getBitcoinP2P
     conn <- keyValDB <$> getDB
     let net = bitcoinNetwork $ nodeConfig bp2pEnv
-    sy <- liftIO $ takeMVar (blockSyncStatusMap bp2pEnv)
+    -- sy <- liftIO $ takeMVar (blockSyncStatusMap bp2pEnv)
+    -- let sy = blockSyncStatusMap bp2pEnv
+    sysz <- liftIO $ atomically $ SM.size (blockSyncStatusMap bp2pEnv)
     -- reload cache
-    if M.size sy == 0
+    if sysz == 0
         then do
             (hash, ht) <- fetchBestSyncedBlock conn net
             allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
@@ -339,15 +347,16 @@ getNextBlockToSync tm = do
                 p = Q.defQueryParams Q.One $ Identity (bks)
             res <- liftIO $ try $ Q.runClient conn (Q.query qstr p)
             case res of
-                Left (e :: SomeException) -> do
-                    liftIO $ putMVar (blockSyncStatusMap bp2pEnv) sy
+                Left (e :: SomeException)
+                    -- liftIO $ putMVar (blockSyncStatusMap bp2pEnv) sy
+                 -> do
                     err lg $ LG.msg ("Error: getNextBlockToSync: " ++ show e)
                     throw e
                 Right (op) -> do
                     if L.length op == 0
                         then do
                             debug lg $ LG.msg $ val "Synced fully!"
-                            liftIO $ putMVar (blockSyncStatusMap bp2pEnv) sy
+                            -- liftIO $ putMVar (blockSyncStatusMap bp2pEnv) sy
                             return (Nothing)
                         else if L.length op == (fromIntegral $ last cacheInd)
                                  then do
@@ -360,67 +369,72 @@ getNextBlockToSync tm = do
                                                           Just h -> Just (h, (RequestQueued, fromIntegral $ fst x))
                                                           Nothing -> Nothing)
                                                  (op)
-                                     liftIO $ putMVar (blockSyncStatusMap bp2pEnv) (M.fromList p)
+                                     -- liftIO $ putMVar (blockSyncStatusMap bp2pEnv) (M.fromList p)
+                                     mapM
+                                         (\(k, v) -> liftIO $ atomically $ SM.insert v k (blockSyncStatusMap bp2pEnv))
+                                         p
                                      let e = p !! 0
                                      return (Just $ BlockInfo (fst e) (snd $ snd e))
                                  else do
                                      debug lg $ LG.msg $ val "Still loading block headers, try again!"
                                      return (Nothing)
         else do
-            let unsent = M.filter (\x -> fst x == RequestQueued) sy
+            syt <- liftIO $ atomically $ LT.toList $ listT (blockSyncStatusMap bp2pEnv)
+            let unsent = L.filter (\x -> (fst $ snd x) == RequestQueued) syt
             let sent =
-                    M.filter
+                    L.filter
                         (\x ->
-                             case fst x of
+                             case fst $ snd x of
                                  RequestSent _ -> True
                                  otherwise -> False)
-                        sy
-            let recvNotStarted = M.filter (\((RequestSent t), _) -> (diffUTCTime tm t > 10)) sent
+                        syt
+            let recvNotStarted = L.filter (\(_, ((RequestSent t), _)) -> (diffUTCTime tm t > 10)) sent
             let receiveInProgress =
-                    M.filter
+                    L.filter
                         (\x ->
-                             case fst x of
+                             case fst $ snd x of
                                  RecentTxReceiveTime _ -> True
                                  otherwise -> False)
-                        sy
+                        syt
             let recvTimedOut =
-                    M.filter (\((RecentTxReceiveTime (t, c)), _) -> (diffUTCTime tm t > 30)) receiveInProgress
+                    L.filter (\(_, ((RecentTxReceiveTime (t, c)), _)) -> (diffUTCTime tm t > 30)) receiveInProgress
             let recvComplete =
-                    M.filter
+                    L.filter
                         (\x ->
-                             case fst x of
+                             case fst $ snd x of
                                  BlockReceiveComplete _ -> True
                                  otherwise -> False)
-                        sy
+                        syt
             let processingIncomplete =
-                    M.filter (\((BlockReceiveComplete t), _) -> (diffUTCTime tm t > 360)) recvComplete
+                    L.filter (\(_, ((BlockReceiveComplete t), _)) -> (diffUTCTime tm t > 360)) recvComplete
             -- all blocks received, empty the cache, cache-miss gracefully
             debug lg $
                 LG.msg $
                 ("recv in progress, awaiting: " ++
                  show receiveInProgress ++ " | recveived but still processing: " ++ show recvComplete)
-            if M.size sent == 0 && M.size unsent == 0 && M.size receiveInProgress == 0 && M.size recvComplete == 0
+            if L.length sent == 0 &&
+               L.length unsent == 0 && L.length receiveInProgress == 0 && L.length recvComplete == 0
                 then do
-                    let !lelm = last $ L.sortOn (snd . snd) (M.toList sy)
+                    let !lelm = last $ L.sortOn (snd . snd) (syt)
                     debug lg $ LG.msg $ ("DEBUG, marking best synced " ++ show (blockHashToHex $ fst $ lelm))
                     markBestSyncedBlock (blockHashToHex $ fst $ lelm) (fromIntegral $ snd $ snd $ lelm) conn
-                    liftIO $ putMVar (blockSyncStatusMap bp2pEnv) M.empty
+                    -- liftIO $ putMVar (blockSyncStatusMap bp2pEnv) M.empty
+                    liftIO $ atomically $ SM.reset (blockSyncStatusMap bp2pEnv)
                     return Nothing
                 else do
-                    liftIO $ putMVar (blockSyncStatusMap bp2pEnv) sy
-                    if M.size processingIncomplete > 0
+                    if L.length processingIncomplete > 0
                         then return $ mkBlkInf $ getHead processingIncomplete
-                        else if M.size recvTimedOut > 0
+                        else if L.length recvTimedOut > 0
                                  then return $ mkBlkInf $ getHead recvTimedOut
-                                 else if M.size recvNotStarted > 0
+                                 else if L.length recvNotStarted > 0
                                           then return $ mkBlkInf $ getHead recvNotStarted
-                                          else if M.size unsent > 0
+                                          else if L.length unsent > 0
                                                    then return $ mkBlkInf $ getHead unsent
-                                                   else if M.size unsent > 0
+                                                   else if L.length unsent > 0
                                                             then return $ mkBlkInf $ getHead unsent
                                                             else return Nothing
   where
-    getHead l = head $ L.sortOn (snd . snd) (M.toList l)
+    getHead l = head $ L.sortOn (snd . snd) (l)
     mkBlkInf h = Just $ BlockInfo (fst h) (snd $ snd h)
 
 fetchBestSyncedBlock :: (HasLogger m, MonadIO m) => Q.ClientState -> Network -> m ((BlockHash, Int32))
@@ -742,20 +756,15 @@ processConfTransaction tx bhash txind blkht = do
     trace lg $ LG.msg $ "processing Tx " ++ show (txHash tx) ++ ": handled Allegory Tx"
     -- signal 'done' event for tx's that were processed out of sequence 
     --
-    txSyncMap <- liftIO $ readMVar (txSynchronizer bp2pEnv)
-    case (M.lookup (txHash tx) txSyncMap) of
+    -- txSyncMap <- liftIO $ readMVar (txSynchronizer bp2pEnv)
+    vall <- liftIO $ atomically $ SM.lookup (txHash tx) (txSynchronizer bp2pEnv)
+    case vall of
         Just ev -> liftIO $ EV.signal $ ev
         Nothing -> return ()
     trace lg $ LG.msg $ "processing Tx " ++ show (txHash tx) ++ ": end of processing signaled"
 
 getSatValuesFromOutpoint ::
-       Q.ClientState
-    -> (MVar (M.Map TxHash EV.Event))
-    -> Logger
-    -> Network
-    -> OutPoint
-    -> Int
-    -> IO ((Text, Text, Int64))
+       Q.ClientState -> SM.Map TxHash EV.Event -> Logger -> Network -> OutPoint -> Int -> IO ((Text, Text, Int64))
 getSatValuesFromOutpoint conn txSync lg net outPoint waitSecs = do
     let str = "SELECT address, script_hash, value FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
         qstr = str :: Q.QueryString Q.R (Text, Int32) (Text, Text, Int64)
@@ -768,17 +777,19 @@ getSatValuesFromOutpoint conn txSync lg net outPoint waitSecs = do
                     debug lg $
                         LG.msg $
                         "Tx not found: " ++ (show $ txHashToHex $ outPointHash outPoint) ++ "... waiting for event"
-                    tmap <- liftIO $ takeMVar (txSync)
+                    -- tmap <- liftIO $ takeMVar (txSync)
+                    valx <- liftIO $ atomically $ SM.lookup (outPointHash outPoint) txSync
                     event <-
-                        case (M.lookup (outPointHash outPoint) tmap) of
+                        case valx of
                             Just evt -> return evt
                             Nothing -> EV.new
-                    liftIO $ putMVar (txSync) (M.insert (outPointHash outPoint) event tmap)
+                    liftIO $ atomically $ SM.insert event (outPointHash outPoint) txSync
                     tofl <- waitTimeout event (1000000 * (fromIntegral waitSecs))
                     if tofl == False
+                            -- tmap <- liftIO $ takeMVar (txSync)
+                            -- liftIO $ putMVar (txSync) (M.delete (outPointHash outPoint) tmap)
                         then do
-                            tmap <- liftIO $ takeMVar (txSync)
-                            liftIO $ putMVar (txSync) (M.delete (outPointHash outPoint) tmap)
+                            liftIO $ atomically $ SM.delete (outPointHash outPoint) txSync
                             debug lg $
                                 LG.msg $
                                 "TxIDNotFoundException: While querying txid_outputs for (TxID, Index): " ++
@@ -797,7 +808,7 @@ getSatValuesFromOutpoint conn txSync lg net outPoint waitSecs = do
 --
 --
 getScriptHashFromOutpoint ::
-       Q.ClientState -> (MVar (M.Map TxHash EV.Event)) -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Text)
+       Q.ClientState -> (SM.Map TxHash EV.Event) -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Text)
 getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs = do
     let str = "SELECT tx_serialized from xoken.transactions where tx_id = ?"
         qstr = str :: Q.QueryString Q.R (Identity Text) (Identity Blob)
@@ -813,17 +824,20 @@ getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs = do
                     debug lg $
                         LG.msg ("TxID not found: (waiting for event) " ++ (show $ txHashToHex $ outPointHash outPoint))
                     --
-                    tmap <- liftIO $ takeMVar (txSync)
+                    -- tmap <- liftIO $ takeMVar (txSync)
+                    valx <- liftIO $ atomically $ SM.lookup (outPointHash outPoint) txSync
                     event <-
-                        case (M.lookup (outPointHash outPoint) tmap) of
+                        case valx of
                             Just evt -> return evt
                             Nothing -> EV.new
-                    liftIO $ putMVar (txSync) (M.insert (outPointHash outPoint) event tmap)
+                    -- liftIO $ putMVar (txSync) (M.insert (outPointHash outPoint) event tmap)
+                    liftIO $ atomically $ SM.insert event (outPointHash outPoint) txSync
                     tofl <- waitTimeout event (1000000 * (fromIntegral waitSecs))
                     if tofl == False -- False indicates a timeout occurred.
+                            -- tmap <- liftIO $ takeMVar (txSync)
+                            -- liftIO $ putMVar (txSync) (M.delete (outPointHash outPoint) tmap)
                         then do
-                            tmap <- liftIO $ takeMVar (txSync)
-                            liftIO $ putMVar (txSync) (M.delete (outPointHash outPoint) tmap)
+                            liftIO $ atomically $ SM.delete (outPointHash outPoint) txSync
                             debug lg $ LG.msg ("TxIDNotFoundException" ++ (show $ txHashToHex $ outPointHash outPoint))
                             throw TxIDNotFoundException
                         else getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs -- if being signalled, try again to success
