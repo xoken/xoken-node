@@ -77,6 +77,7 @@ import Network.Xoken.Node.P2P.UnconfTxSync
 import Network.Xoken.Transaction.Common
 import Network.Xoken.Util
 import StmContainers.Map as SM
+import StmContainers.Set as SS
 import Streamly
 import Streamly.Prelude ((|:), drain, nil)
 import qualified Streamly.Prelude as S
@@ -629,22 +630,12 @@ readNextMessage net sock ingss = do
                                                 vala <- SM.lookup (biBlockHash $ bf) (blockTxProcessingLeftMap p2pEnv)
                                                 case vala of
                                                     Just v -> return ()
-                                                        -- debug lg $
-                                                        --     msg
-                                                        --         ("Block already partly synced: " ++
-                                                        --          (show $ biBlockHash bf))
-                                                        -- liftIO $ putMVar (blockTxProcessingLeftMap p2pEnv) mv
                                                     Nothing -> do
-                                                        let ar = map (\_ -> False) [1 .. (binTxTotalCount blin)]
+                                                        ar <- SS.new
                                                         SM.insert
-                                                            (ar)
+                                                            (ar, (binTxTotalCount blin))
                                                             (biBlockHash $ bf)
                                                             (blockTxProcessingLeftMap p2pEnv)
-                                                        -- let xm = M.insert (biBlockHash $ bf) (ar) mv
-                                                        -- liftIO $ putMVar (blockTxProcessingLeftMap p2pEnv) xm
-                                                        -- debug lg $
-                                                        --     LG.msg $
-                                                        --     "blockTxProcessingLeftMap (init), block_hash " ++ show iss
                                         qq <-
                                             liftIO $
                                             atomically $ newTBQueue $ intToNatural (maxTMTQueueSize $ nodeConfig p2pEnv)
@@ -852,40 +843,21 @@ messageHandler peer (mm, ingss) = do
                             let bi = issBlockIngest iss
                             let binfo = issBlockInfo iss
                             case binfo of
-                                Just bf
-                                    -- ma <- liftIO $ takeMVar (blockTxProcessingLeftMap bp2pEnv)
-                                    -- liftIO $ putMVar (blockTxProcessingLeftMap bp2pEnv) ma
-                                 -> do
+                                Just bf -> do
                                     valx <-
                                         liftIO $
                                         atomically $ SM.lookup (biBlockHash bf) (blockTxProcessingLeftMap bp2pEnv)
-                                    let skip =
-                                            case valx of
-                                                Just lfa -> (lfa !! (binTxIngested bi - 1))
-                                                Nothing -> False
+                                    skip <-
+                                        case valx of
+                                            Just lfa ->
+                                                liftIO $ atomically $ SS.lookup ((binTxIngested bi) - 1) (fst lfa)
+                                            Nothing -> return False
                                     if skip
                                         then do
                                             debug lg $
                                                 LG.msg $
                                                 ("Tx already processed, block: " ++
                                                  (show $ biBlockHash bf) ++ ", tx-index: " ++ show (binTxIngested bi))
-                                            case valx of
-                                                Just reda -> do
-                                                    if (all (== True) reda) -- redundant check for any race conditions
-                                                            -- sy <- liftIO $ takeMVar (blockSyncStatusMap bp2pEnv)
-                                                        then do
-                                                            liftIO $
-                                                                atomically $
-                                                                SM.insert
-                                                                    (BlockProcessingComplete, biBlockHeight bf)
-                                                                    (biBlockHash bf)
-                                                                    (blockSyncStatusMap bp2pEnv)
-                                                            -- liftIO $ putMVar (blockSyncStatusMap bp2pEnv) syu
-                                                            debug lg $
-                                                                LG.msg $
-                                                                ("DONE!(2), block: " ++ (show $ biBlockHash bf))
-                                                        else return ()
-                                                Nothing -> return ()
                                         else do
                                             res <-
                                                 LE.try $
@@ -898,26 +870,17 @@ messageHandler peer (mm, ingss) = do
                                                 Right () ->
                                                     liftIO $
                                                     atomically $ do
-                                                        valy <-
-                                                            SM.lookup
-                                                                (biBlockHash bf)
-                                                                (blockTxProcessingLeftMap bp2pEnv)
-                                                        case valy of
+                                                        case valx of
                                                             Just lefta -> do
-                                                                let !fs =
-                                                                        take ((binTxIngested bi) - 1) lefta ++
-                                                                        [True] ++ (drop (binTxIngested bi) lefta)
-                                                                SM.insert
-                                                                    fs
-                                                                    (biBlockHash bf)
-                                                                    (blockTxProcessingLeftMap bp2pEnv)
-                                                                if (all (== True) fs)
-                                                                    then do
-                                                                        SM.insert
-                                                                            (BlockProcessingComplete, biBlockHeight bf)
-                                                                            (biBlockHash bf)
-                                                                            (blockSyncStatusMap bp2pEnv)
-                                                                    else return ()
+                                                                SS.insert ((binTxIngested bi) - 1) (fst lefta)
+                                                                -- siza <- SS.size (fst lefta)
+                                                                -- if (siza == binTxTotalCount bi)
+                                                                --     then do
+                                                                --         SM.insert
+                                                                --             (BlockProcessingComplete, biBlockHeight bf)
+                                                                --             (biBlockHash bf)
+                                                                --             (blockSyncStatusMap bp2pEnv)
+                                                                --     else return ()
                                                             Nothing -> return ()
                                                 Left BlockHashNotFoundException -> return ()
                                                 Left EmptyHeadersMessageException -> return ()

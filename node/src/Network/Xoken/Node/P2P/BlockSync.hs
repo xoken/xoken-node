@@ -87,6 +87,7 @@ import Network.Xoken.Script.Standard
 import Network.Xoken.Transaction.Common
 import Network.Xoken.Util
 import StmContainers.Map as SM
+import StmContainers.Set as SS
 import Streamly
 import Streamly.Prelude ((|:), nil)
 import qualified Streamly.Prelude as S
@@ -379,7 +380,23 @@ getNextBlockToSync tm = do
                                      debug lg $ LG.msg $ val "Still loading block headers, try again!"
                                      return (Nothing)
         else do
-            syt <- liftIO $ atomically $ LT.toList $ listT (blockSyncStatusMap bp2pEnv)
+            syt <- liftIO $ atomically $ LT.toList $ SM.listT (blockSyncStatusMap bp2pEnv)
+            --
+            mapM
+                (\(bsh, (_, ht)) -> do
+                     liftIO $
+                         atomically $ do
+                             valx <- SM.lookup (bsh) (blockTxProcessingLeftMap bp2pEnv)
+                             case valx of
+                                 Just xv -> do
+                                     siza <- SS.size (fst xv)
+                                     if (siza == snd xv)
+                                         then do
+                                             SM.insert (BlockProcessingComplete, ht) (bsh) (blockSyncStatusMap bp2pEnv)
+                                         else return ()
+                                 Nothing -> return ())
+                (syt)
+            --
             let unsent = L.filter (\x -> (fst $ snd x) == RequestQueued) syt
             let sent =
                     L.filter

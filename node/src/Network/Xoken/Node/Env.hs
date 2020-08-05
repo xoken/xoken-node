@@ -34,6 +34,7 @@ import Network.Xoken.Node.Data
 import Network.Xoken.Node.P2P.Types
 import Network.Xoken.Transaction
 import StmContainers.Map as SM
+import StmContainers.Set as SS
 import System.Logger
 import System.Random
 import Text.Read
@@ -71,7 +72,7 @@ data BitcoinP2P =
         , bestBlockUpdated :: !(MVar Bool)
         , headersWriteLock :: !(MVar Bool)
         , blockSyncStatusMap :: (SM.Map BlockHash (BlockSyncStatus, BlockHeight))
-        , blockTxProcessingLeftMap :: (SM.Map BlockHash [Bool])
+        , blockTxProcessingLeftMap :: (SM.Map BlockHash ((SS.Set Int), Int))
         , epochType :: !(TVar Bool)
         , unconfirmedTxCache :: !(HashTable TxShortHash (Bool, TxHash))
         , txOutputValuesCache :: !(HashTable TxShortHash (TxHash, [(Int16, (Text, Text, Int64))]))
