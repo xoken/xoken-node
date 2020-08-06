@@ -171,7 +171,7 @@ getBlockLocator conn net = do
         str = "SELECT block_height, block_hash from xoken.blocks_by_height where block_height in ?"
         qstr = str :: Q.QueryString Q.R (Identity [Int32]) ((Int32, T.Text))
         p = Q.defQueryParams Q.One $ Identity bl
-    op <- Q.runClient conn (Q.query qstr p)
+    op <- Q.runClient conn (Q.query (Q.prepared qstr) p)
     if L.null op
         then return [headerHash $ getGenesisHeader net]
         else do
@@ -184,7 +184,7 @@ fetchBestBlock conn net = do
     let str = "SELECT value from xoken.misc_store where key = ?"
         qstr = str :: Q.QueryString Q.R (Identity Text) (Identity (Maybe Bool, Maybe Int32, Maybe Int64, Maybe T.Text))
         p = Q.defQueryParams Q.One $ Identity "best_chain_tip"
-    iop <- Q.runClient conn (Q.query qstr p)
+    iop <- Q.runClient conn (Q.query (Q.prepared qstr) p)
     if L.null iop
         then do
             debug lg $ LG.msg $ val "Bestblock is genesis."
@@ -335,7 +335,7 @@ fetchMatchBlockOffset conn net hashes = do
     let str = "SELECT block_height, block_hash from xoken.blocks_by_hash where block_hash = ?"
         qstr = str :: Q.QueryString Q.R (Identity Text) (Int32, Text)
         p = Q.defQueryParams Q.One $ Identity hashes
-    iop <- Q.runClient conn (Q.query qstr p)
+    iop <- Q.runClient conn (Q.query (Q.prepared qstr) p)
     if L.null iop
         then return Nothing
         else do
@@ -363,7 +363,7 @@ updateChainWork indexed conn = do
                         else 0
                 lagIndexed = take (lenInd - 10) indexed
                 indexedCW = foldr (\x y -> y + (convertBitsToBlockWork $ blockBits $ fst $ snd $ x)) 0 lagIndexed
-            res <- liftIO $ try $ Q.runClient conn (Q.query qstr par)
+            res <- liftIO $ try $ Q.runClient conn (Q.query (Q.prepared qstr) par)
             case res of
                 Right iop -> do
                     let (_, height, _, chainWork) =

@@ -285,7 +285,7 @@ checkBlocksFullySynced conn = do
     let str = "SELECT value FROM xoken.misc_store WHERE key IN (?,?)"
         qstr = str :: Q.QueryString Q.R (Text, Text) (Identity (Maybe Bool, Int32, Maybe Int64, Text))
         par = Q.defQueryParams Q.One $ (T.pack "best-synced", T.pack "best_chain_tip")
-    res <- liftIO $ try $ Q.runClient conn (Q.query qstr par)
+    res <- liftIO $ try $ Q.runClient conn (Q.query (Q.prepared qstr) par)
     case res of
         Right results ->
             if L.length results /= 2
@@ -341,7 +341,7 @@ getNextBlockToSync tm = do
             let str = "SELECT block_height, block_hash from xoken.blocks_by_height where block_height in ?"
                 qstr = str :: Q.QueryString Q.R (Identity [Int32]) ((Int32, T.Text))
                 p = Q.defQueryParams Q.One $ Identity (bks)
-            res <- liftIO $ try $ Q.runClient conn (Q.query qstr p)
+            res <- liftIO $ try $ Q.runClient conn (Q.query (Q.prepared qstr) p)
             case res of
                 Left (e :: SomeException) -> do
                     err lg $ LG.msg ("Error: getNextBlockToSync: " ++ show e)
@@ -451,7 +451,7 @@ fetchBestSyncedBlock conn net = do
     let str = "SELECT value from xoken.misc_store where key = ?"
         qstr = str :: Q.QueryString Q.R (Identity Text) (Identity (Maybe Bool, Maybe Int32, Maybe Int64, Maybe T.Text))
         p = Q.defQueryParams Q.One $ Identity "best-synced"
-    iop <- Q.runClient conn (Q.query qstr p)
+    iop <- Q.runClient conn (Q.query (Q.prepared qstr) p)
     if L.length iop == 0
         then do
             debug lg $ LG.msg $ val "Best-synced-block is genesis."
@@ -479,7 +479,7 @@ commitScriptHashOutputs conn sh output blockInfo = do
         strAddrOuts = "INSERT INTO xoken.script_hash_outputs (script_hash, nominal_tx_index, output) VALUES (?,?,?)"
         qstrAddrOuts = strAddrOuts :: Q.QueryString Q.W (Text, Int64, (Text, Int32)) ()
         parAddrOuts = Q.defQueryParams Q.One (sh, nominalTxIndex, output)
-    resAddrOuts <- liftIO $ try $ Q.runClient conn (Q.write (qstrAddrOuts) parAddrOuts)
+    resAddrOuts <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstrAddrOuts) parAddrOuts)
     case resAddrOuts of
         Right () -> return ()
         Left (e :: SomeException) -> do
@@ -492,7 +492,7 @@ commitScriptHashUnspentOutputs conn sh output = do
     let str = "INSERT INTO xoken.script_hash_unspent_outputs (script_hash, output) VALUES (?,?)"
         qstr = str :: Q.QueryString Q.W (Text, (Text, Int32)) ()
         par = Q.defQueryParams Q.One (sh, output)
-    res <- liftIO $ try $ Q.runClient conn (Q.write qstr par)
+    res <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr) par)
     case res of
         Right () -> return ()
         Left (e :: SomeException) -> do
@@ -505,7 +505,7 @@ deleteScriptHashUnspentOutputs conn sh output = do
     let str = "DELETE FROM xoken.script_hash_unspent_outputs WHERE script_hash=? AND output=?"
         qstr = str :: Q.QueryString Q.W (Text, (Text, Int32)) ()
         par = Q.defQueryParams Q.One (sh, output)
-    res <- liftIO $ try $ Q.runClient conn (Q.write qstr par)
+    res <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr) par)
     case res of
         Right () -> return ()
         Left (e :: SomeException) -> do
@@ -537,7 +537,7 @@ insertTxIdOutputs conn (txid, outputIndex) address scriptHash isRecv blockInfo o
                                      , [((Text, Int32), Int32, (Text, Int64))]
                                      , Int64) ()
         par = Q.defQueryParams Q.One (txid, outputIndex, address, scriptHash, isRecv, blockInfo, other, value)
-    res <- liftIO $ try $ Q.runClient conn $ (Q.write qstr par)
+    res <- liftIO $ try $ Q.runClient conn $ (Q.write (Q.prepared qstr) par)
     case res of
         Right () -> return ()
         Left (e :: SomeException) -> do
@@ -558,7 +558,7 @@ commitTxPage txhash bhash page = do
         str = "insert INTO xoken.blockhash_txids (block_hash, page_number, txids) values (?, ?, ?)"
         qstr = str :: Q.QueryString Q.W (Text, Int32, [Text]) ()
         par = Q.defQueryParams Q.One (blockHashToHex bhash, page, txids)
-    res <- liftIO $ try $ Q.runClient conn (Q.write qstr par)
+    res <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr) par)
     case res of
         Right () -> return ()
         Left (e :: SomeException) -> do
@@ -749,7 +749,7 @@ processConfTransaction tx bhash txind blkht = do
                 , Blob $ runPutLazy $ putLazyByteString $ S.encodeLazy tx
                 , (stripScriptHash <$> inputs)
                 , fees)
-    res <- liftIO $ try $ Q.runClient conn (Q.write (qstr) par)
+    res <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr) par)
     case res of
         Right () -> return ()
         Left (e :: SomeException) -> do
@@ -785,7 +785,7 @@ getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait = do
     let str = "SELECT address, script_hash, value FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
         qstr = str :: Q.QueryString Q.R (Text, Int32) (Text, Text, Int64)
         par = Q.defQueryParams Q.One $ (txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint)
-    res <- liftIO $ try $ Q.runClient conn (Q.query qstr par)
+    res <- liftIO $ try $ Q.runClient conn (Q.query (Q.prepared qstr) par)
     case res of
         Right results -> do
             if L.length results == 0

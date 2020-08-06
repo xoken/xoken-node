@@ -298,7 +298,7 @@ calculateChainWork blks conn = do
     let str = "SELECT block_height,block_header from xoken.blocks_by_height where block_height in ?"
         qstr = str :: Q.QueryString Q.R (Identity [Int32]) (Int32, Text)
         p = Q.defQueryParams Q.One $ Identity $ blks
-    res <- liftIO $ try $ Q.runClient conn (Q.query qstr p)
+    res <- liftIO $ try $ Q.runClient conn (Q.query (Q.prepared qstr) p)
     case res of
         Right iop -> do
             if L.length iop == 0
