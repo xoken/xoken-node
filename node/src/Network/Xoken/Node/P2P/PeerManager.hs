@@ -618,12 +618,10 @@ readNextMessage net sock ingss = do
                         msg
                             ("Confirmed-Tx: " ++
                              (show $ txHashToHex $ txHash t) ++ " unused: " ++ show (B.length unused))
-                    -- mqm <- liftIO $ readTVarIO $ merkleQueueMap p2pEnv
                     qe <-
                         case (issBlockInfo iss) of
                             Just bf ->
                                 if (binTxIngested blin == 0) -- very first Tx
-                                        -- mv <- liftIO $ takeMVar (blockTxProcessingLeftMap p2pEnv)
                                     then do
                                         liftIO $
                                             atomically $ do
@@ -873,14 +871,6 @@ messageHandler peer (mm, ingss) = do
                                                         case valx of
                                                             Just lefta -> do
                                                                 SS.insert ((binTxIngested bi) - 1) (fst lefta)
-                                                                -- siza <- SS.size (fst lefta)
-                                                                -- if (siza == binTxTotalCount bi)
-                                                                --     then do
-                                                                --         SM.insert
-                                                                --             (BlockProcessingComplete, biBlockHeight bf)
-                                                                --             (biBlockHash bf)
-                                                                --             (blockSyncStatusMap bp2pEnv)
-                                                                --     else return ()
                                                             Nothing -> return ()
                                                 Left BlockHashNotFoundException -> return ()
                                                 Left EmptyHeadersMessageException -> return ()
@@ -942,12 +932,9 @@ readNextMessage' peer = do
                     let ingst = issBlockIngest iss
                     case msg of
                         Just (MBlock blk) -- setup state
-                            -- mp <- liftIO $ takeMVar (blockSyncStatusMap bp2pEnv)
-                            -- liftIO $ putMVar (blockSyncStatusMap bp2pEnv) mp
                          -> do
                             let hh = headerHash $ defBlockHeader blk
                             mht <- liftIO $ atomically $ SM.lookup hh (blockSyncStatusMap bp2pEnv)
-                            -- let mht = M.lookup hh mp
                             case (mht) of
                                 Just x -> return ()
                                 Nothing -> do
@@ -970,31 +957,15 @@ readNextMessage' peer = do
                                     if binTxTotalCount ingst == binTxIngested ingst
                                         then do
                                             tm <- liftIO $ getCurrentTime
-                                            -- sy <- liftIO $ takeMVar (blockSyncStatusMap bp2pEnv)
                                             liftIO $
                                                 atomically $
                                                 SM.insert
                                                     (BlockReceiveComplete tm, biBlockHeight bi)
                                                     (biBlockHash bi)
                                                     (blockSyncStatusMap bp2pEnv)
-                                            -- let syu =
-                                            --         M.insert
-                                            --             (biBlockHash bi)
-                                            --             (BlockReceiveComplete tm, biBlockHeight bi)
-                                            --             sy
-                                            -- liftIO $ putMVar (blockSyncStatusMap bp2pEnv) syu
                                             liftIO $ atomically $ writeTVar (bpIngressState peer) $ Nothing
                                         else do
                                             tm <- liftIO $ getCurrentTime
-                                            -- mv <- liftIO $ takeMVar (blockSyncStatusMap bp2pEnv)
-                                            -- let xm =
-                                            --         (M.insert
-                                            --              (biBlockHash bi)
-                                            --              ( RecentTxReceiveTime (tm, binTxIngested ingst)
-                                            --              , biBlockHeight bi -- track receive progress
-                                            --               ))
-                                            --             mv
-                                            -- liftIO $ putMVar (blockSyncStatusMap bp2pEnv) xm
                                             liftIO $
                                                 atomically $
                                                 SM.insert

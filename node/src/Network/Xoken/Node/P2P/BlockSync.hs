@@ -106,14 +106,10 @@ produceGetDataMessage !tm = do
     case res of
         Right (bl) -> do
             case bl of
-                Just b
-                    -- mv <- liftIO $ takeMVar (blockSyncStatusMap bp2pEnv)
-                 -> do
+                Just b -> do
                     liftIO $
                         atomically $
                         SM.insert (RequestSent tm, biBlockHeight b) (biBlockHash b) (blockSyncStatusMap bp2pEnv)
-                    -- let xm = M.insert (biBlockHash b) (RequestSent tm, biBlockHeight b) mv
-                    -- liftIO $ putMVar (blockSyncStatusMap bp2pEnv) xm
                     let gd = GetData $ [InvVector InvBlock $ getBlockHash $ biBlockHash b]
                     debug lg $ LG.msg $ "GetData req: " ++ show gd
                     return (Just $ MGetData gd)
@@ -330,8 +326,6 @@ getNextBlockToSync tm = do
     bp2pEnv <- getBitcoinP2P
     conn <- keyValDB <$> getDB
     let net = bitcoinNetwork $ nodeConfig bp2pEnv
-    -- sy <- liftIO $ takeMVar (blockSyncStatusMap bp2pEnv)
-    -- let sy = blockSyncStatusMap bp2pEnv
     sysz <- liftIO $ atomically $ SM.size (blockSyncStatusMap bp2pEnv)
     -- reload cache
     if sysz == 0
@@ -349,16 +343,13 @@ getNextBlockToSync tm = do
                 p = Q.defQueryParams Q.One $ Identity (bks)
             res <- liftIO $ try $ Q.runClient conn (Q.query qstr p)
             case res of
-                Left (e :: SomeException)
-                    -- liftIO $ putMVar (blockSyncStatusMap bp2pEnv) sy
-                 -> do
+                Left (e :: SomeException) -> do
                     err lg $ LG.msg ("Error: getNextBlockToSync: " ++ show e)
                     throw e
                 Right (op) -> do
                     if L.length op == 0
                         then do
                             debug lg $ LG.msg $ val "Synced fully!"
-                            -- liftIO $ putMVar (blockSyncStatusMap bp2pEnv) sy
                             return (Nothing)
                         else if L.length op == (fromIntegral $ last cacheInd)
                                  then do
@@ -371,7 +362,6 @@ getNextBlockToSync tm = do
                                                           Just h -> Just (h, (RequestQueued, fromIntegral $ fst x))
                                                           Nothing -> Nothing)
                                                  (op)
-                                     -- liftIO $ putMVar (blockSyncStatusMap bp2pEnv) (M.fromList p)
                                      mapM
                                          (\(k, v) -> liftIO $ atomically $ SM.insert v k (blockSyncStatusMap bp2pEnv))
                                          p
@@ -776,7 +766,6 @@ processConfTransaction tx bhash txind blkht = do
     trace lg $ LG.msg $ "processing Tx " ++ show (txHash tx) ++ ": handled Allegory Tx"
     -- signal 'done' event for tx's that were processed out of sequence 
     --
-    -- txSyncMap <- liftIO $ readMVar (txSynchronizer bp2pEnv)
     vall <- liftIO $ atomically $ SM.lookup (txHash tx) (txSynchronizer bp2pEnv)
     case vall of
         Just ev -> liftIO $ EV.signal $ ev

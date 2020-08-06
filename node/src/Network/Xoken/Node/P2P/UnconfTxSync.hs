@@ -388,7 +388,6 @@ processUnconfTransaction tx = do
             liftIO $ err lg $ LG.msg $ "Error: INSERTing into 'xoken.ep_transactions':" ++ show e
             throw KeyValueDBInsertException
     --
-    -- txSyncMap <- liftIO $ readMVar (txSynchronizer bp2pEnv)
     vall <- liftIO $ atomically $ SM.lookup (txHash tx) (txSynchronizer bp2pEnv)
     case vall of
         Just ev -> liftIO $ EV.signal $ ev
@@ -418,17 +417,14 @@ getSatsValueFromEpochOutpoint conn epoch txSync lg net outPoint waitSecs = do
                         LG.msg $
                         "[Unconfirmed] Tx not found: " ++
                         (show $ txHashToHex $ outPointHash outPoint) ++ "... waiting for event"
-                    -- tmap <- liftIO $ takeMVar (txSync)
                     valx <- liftIO $ atomically $ SM.lookup (outPointHash outPoint) txSync
                     event <-
                         case valx of
                             Just evt -> return evt
                             Nothing -> EV.new
-                    -- liftIO $ putMVar (txSync) (M.insert (outPointHash outPoint) event tmap)
                     liftIO $ atomically $ SM.insert event (outPointHash outPoint) txSync
                     tofl <- waitTimeout event (1000000 * (fromIntegral waitSecs))
                     if tofl == False
-                            -- liftIO $ putMVar (txSync) (M.delete (outPointHash outPoint) tmap)
                         then do
                             liftIO $ atomically $ SM.delete (outPointHash outPoint) txSync
                             debug lg $
