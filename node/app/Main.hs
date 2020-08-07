@@ -85,7 +85,7 @@ import Data.Word (Word32)
 import Data.Word
 import qualified Database.Bolt as BT
 import qualified Database.CQL.IO as Q
-import Database.CQL.Protocol
+import Database.CQL.Protocol as DCP
 import Network.Simple.TCP
 import Network.Socket
 import Network.Xoken.Node.AriviService
@@ -215,6 +215,8 @@ runThreads ::
 runThreads config nodeConf bp2p conn lg p2pEnv certPaths = do
     gdbState <- makeGraphDBResPool (neo4jUsername nodeConf) (neo4jPassword nodeConf)
     let hints = defaultHints {addrFlags = [AI_NUMERICHOST, AI_NUMERICSERV], addrSocketType = Stream}
+        startCql :: DCP.Request DCP.W () ()
+        startCql = DCP.RqStartup $ DCP.Startup (DCP.CqlVersion "3.4.4") DCP.None
     (addr:_) <- getAddrInfo (Just hints) (Just "127.0.0.1") (Just "9042")
     sckPool <-
         createPool
@@ -224,6 +226,7 @@ runThreads config nodeConf bp2p conn lg p2pEnv certPaths = do
             1
             (1800000000000)
             200
+    query DCP.V3 sckPool startCql
     let dbh = DatabaseHandles conn gdbState (sckPool)
     let allegoryEnv = AllegoryEnv $ allegoryVendorSecretKey nodeConf
     let xknEnv = XokenNodeEnv bp2p dbh lg allegoryEnv
@@ -373,7 +376,8 @@ defaultAdminUser conn = do
 makeKeyValDBConn :: IO (Q.ClientState)
 makeKeyValDBConn = do
     let logg = Q.stdoutLogger Q.LogWarn
-        stng = Q.setMaxStreams 2048 $ Q.setMaxConnections 256 $ Q.setPoolStripes 12 $ Q.setLogger logg Q.defSettings
+        stng = Q.setMaxStreams 200 $ Q.setMaxConnections 20 $ Q.setPoolStripes 10 $ Q.setLogger logg Q.defSettings
+        --stng = Q.setMaxStreams 2048 $ Q.setMaxConnections 256 $ Q.setPoolStripes 12 $ Q.setLogger logg Q.defSettings
         stng2 = Q.setRetrySettings Q.eagerRetrySettings stng
         qstr = "SELECT cql_version from system.local" :: Q.QueryString Q.R () (Identity T.Text)
         p = Q.defQueryParams Q.One ()

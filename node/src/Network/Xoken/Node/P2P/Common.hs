@@ -334,11 +334,11 @@ splitList xs = (f 1 xs, f 0 xs)
   where
     f n a = map fst . filter (odd . snd) . zip a $ [n ..]
 
-query :: (Tuple a, Tuple b) => QP.Version -> (Pool Socket) -> QueryString k a b -> QueryParams a -> IO (Response k a b)
-query v ps q p = do
+query :: (Tuple a, Tuple b) => QP.Version -> (Pool Socket) -> Request k a b -> IO (Response k a b)
+query v ps req = do
     let i = mkStreamId 0
     withResource ps $ \sock -> do
-        case (QP.pack v noCompression False i (RqQuery (Query q p))) of
+        case (QP.pack v noCompression False i req) of
             Right qp -> do
                 LB.sendAll sock qp
                 b <-

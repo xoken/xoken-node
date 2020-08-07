@@ -163,7 +163,7 @@ markBestBlock hash height sock = do
         q = DCP.QueryString "insert INTO xoken.misc_store (key, value) values (? , ?)"
         p :: DCP.QueryParams (Text, (Maybe Bool, Int32, Maybe Int64, Text))
         p = DCP.QueryParams DCP.One False ("best_chain_tip", (Nothing, height, Nothing, hash)) Nothing Nothing Nothing Nothing
-    res <- liftIO $ try $ query DCP.V3 sock q p 
+    res <- liftIO $ try $ query DCP.V3 sock (DCP.RqQuery $ DCP.Query q p) 
     case res of
         Right _ -> return ()
         Left (e :: SomeException) -> do
