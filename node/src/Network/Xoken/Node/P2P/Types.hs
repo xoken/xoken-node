@@ -41,7 +41,7 @@ data DatabaseHandles =
     DatabaseHandles
         { keyValDB :: !Q.ClientState
         , graphDB :: !ServerState
-        , sockPool :: !(Pool Socket, SockAddr)
+        , sockPool :: !(Pool Socket)
         }
 
 -- | Data structure representing an bitcoin peer.

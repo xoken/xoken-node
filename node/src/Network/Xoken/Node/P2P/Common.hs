@@ -334,15 +334,19 @@ splitList xs = (f 1 xs, f 0 xs)
   where
     f n a = map fst . filter (odd . snd) . zip a $ [n ..]
 
-query :: (Tuple a, Tuple b) => QP.Version -> (Pool Socket, SockAddr) -> QueryString k a b -> QueryParams a -> IO (Response k a b)
-query v (ps,ad) q p = do
+query :: (Tuple a, Tuple b) => QP.Version -> (Pool Socket) -> QueryString k a b -> QueryParams a -> IO (Response k a b)
+query v ps q p = do
     let i = mkStreamId 0
     withResource ps $ \sock -> do
-        connect sock ad
         case (QP.pack v noCompression False i (RqQuery (Query q p))) of
             Right qp -> do
                 LB.sendAll sock qp
-                b <- LB.recv sock (if v == V3 then 9 else 8)
+                b <-
+                    LB.recv
+                        sock
+                        (if v == V3
+                             then 9
+                             else 8)
                 h' <- return $ header v b
                 case h' of
                     Left s -> throw KeyValPoolException
@@ -353,7 +357,7 @@ query v (ps,ad) q p = do
                                 let len = lengthRepr (bodyLength h)
                                 x <- LB.recv sock (fromIntegral len)
                                 case QP.unpack noCompression h x of
-                                    Left e                -> throwIO KeyValPoolException
+                                    Left e -> throwIO KeyValPoolException
                                     Right (RsError _ _ e) -> throw KeyValPoolException
-                                    Right response        -> return response
+                                    Right response -> return response
             Left _ -> throw KeyValPoolException
