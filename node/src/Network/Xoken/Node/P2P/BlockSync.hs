@@ -640,7 +640,7 @@ processConfTransaction tx bhash txind blkht = do
                                                          ", " ++ show (outPointIndex $ prevOutput b) ++ ")"
                                                      throw e
                          Nothing -> do
-                             if True -- (outPointHash nullOutPoint) == (outPointHash $ prevOutput b)
+                             if (outPointHash nullOutPoint) == (outPointHash $ prevOutput b)
                                  then return
                                           ("", "", fromIntegral $ computeSubsidy net $ (fromIntegral blkht :: Word32))
                                  else do
