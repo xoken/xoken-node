@@ -215,18 +215,19 @@ runThreads ::
 runThreads config nodeConf bp2p conn lg p2pEnv certPaths = do
     gdbState <- makeGraphDBResPool (neo4jUsername nodeConf) (neo4jPassword nodeConf)
     let hints = defaultHints {addrFlags = [AI_NUMERICHOST, AI_NUMERICSERV], addrSocketType = Stream}
-        startCql :: DCP.Request DCP.W () ()
-        startCql = DCP.RqStartup $ DCP.Startup (DCP.CqlVersion "3.4.4") DCP.None
+        startCql :: DCP.Request k () ()
+        startCql = DCP.RqStartup $ DCP.Startup DCP.Cqlv300 (DCP.algorithm DCP.noCompression) --(DCP.CqlVersion "3.4.4") DCP.None
     (addr:_) <- getAddrInfo (Just hints) (Just "127.0.0.1") (Just "9042")
+    sock <- (socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr))
+    connHandshake DCP.V3 sock startCql
     sckPool <-
         createPool
-            ((socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)) >>= \s ->
+            (return sock >>= \s ->
                  Network.Socket.connect s (addrAddress addr) >> return s)
             (Network.Socket.close)
             1
             (1800000000000)
             200
-    query DCP.V3 sckPool startCql
     let dbh = DatabaseHandles conn gdbState (sckPool)
     let allegoryEnv = AllegoryEnv $ allegoryVendorSecretKey nodeConf
     let xknEnv = XokenNodeEnv bp2p dbh lg allegoryEnv

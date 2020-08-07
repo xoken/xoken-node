@@ -371,3 +371,41 @@ query v ps req = do
             Left _ -> do
                 print "[Error] Query: pack"
                 throw KeyValPoolException
+
+connHandshake :: (Tuple a, Tuple b) => QP.Version -> Socket -> Request k a b -> IO (Response k a b)
+connHandshake v sock req = do
+    let i = mkStreamId 0
+    case (QP.pack v noCompression False i req) of
+        Right qp -> do
+            LB.sendAll sock qp
+            b <-
+                LB.recv
+                    sock
+                    (if v == V3
+                         then 9
+                         else 8)
+            h' <- return $ header v b
+            case h' of
+                Left s -> do
+                    print $ "[Error] Query: header error: " ++ s
+                    throw KeyValPoolException
+                Right h -> do
+                    case headerType h of
+                        RqHeader -> do
+                            print "[Error] Query: RqHeader"
+                            throw KeyValPoolException
+                        RsHeader -> do
+                            case QP.unpack noCompression h "" of
+                                Right r@(RsReady _ _ Ready) -> return r
+                                Left e -> do
+                                    print "[Error] Query: unpack"
+                                    throw KeyValPoolException
+                                Right (RsError _ _ e) -> do
+                                    print $ "[Error] Query: RsError: " ++ show e
+                                    throw KeyValPoolException
+                                Right _ -> do
+                                    print $ "[Error] Query: Response is not ready"
+                                    throw KeyValPoolException
+        Left _ -> do
+            print "[Error] Query: pack"
+            throw KeyValPoolException
