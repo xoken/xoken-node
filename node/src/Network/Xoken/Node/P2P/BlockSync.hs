@@ -479,7 +479,6 @@ commitScriptHashOutputs conn sh output blockInfo = do
         strAddrOuts = "INSERT INTO xoken.script_hash_outputs (script_hash, nominal_tx_index, output) VALUES (?,?,?)"
         qstrAddrOuts = strAddrOuts :: Q.QueryString Q.W (Text, Int64, (Text, Int32)) ()
         parAddrOuts = Q.defQueryParams Q.One (sh, nominalTxIndex, output)
-    -- return ()
     resAddrOuts <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstrAddrOuts) parAddrOuts)
     case resAddrOuts of
         Right () -> return ()
@@ -493,7 +492,6 @@ commitScriptHashUnspentOutputs conn sh output = do
     let str = "INSERT INTO xoken.script_hash_unspent_outputs (script_hash, output) VALUES (?,?)"
         qstr = str :: Q.QueryString Q.W (Text, (Text, Int32)) ()
         par = Q.defQueryParams Q.One (sh, output)
-    -- return ()
     res <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr) par)
     case res of
         Right () -> return ()
@@ -507,7 +505,6 @@ deleteScriptHashUnspentOutputs conn sh output = do
     let str = "DELETE FROM xoken.script_hash_unspent_outputs WHERE script_hash=? AND output=?"
         qstr = str :: Q.QueryString Q.W (Text, (Text, Int32)) ()
         par = Q.defQueryParams Q.One (sh, output)
-    -- return ()
     res <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr) par)
     case res of
         Right () -> return ()
