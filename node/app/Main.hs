@@ -222,7 +222,7 @@ runThreads config nodeConf bp2p conn lg p2pEnv certPaths = do
                  Network.Socket.connect s (addrAddress addr) >> return s)
             (Network.Socket.close)
             1
-            (1)
+            (1800000000000)
             200
     let dbh = DatabaseHandles conn gdbState (sckPool)
     let allegoryEnv = AllegoryEnv $ allegoryVendorSecretKey nodeConf

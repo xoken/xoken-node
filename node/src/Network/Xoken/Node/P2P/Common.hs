@@ -349,15 +349,25 @@ query v ps q p = do
                              else 8)
                 h' <- return $ header v b
                 case h' of
-                    Left s -> throw KeyValPoolException
+                    Left s -> do
+                        print $ "[Error] Query: header error: " ++ s
+                        throw KeyValPoolException
                     Right h -> do
                         case headerType h of
-                            RqHeader -> throw KeyValPoolException
+                            RqHeader -> do
+                                print "[Error] Query: RqHeader"
+                                throw KeyValPoolException
                             RsHeader -> do
                                 let len = lengthRepr (bodyLength h)
                                 x <- LB.recv sock (fromIntegral len)
                                 case QP.unpack noCompression h x of
-                                    Left e -> throwIO KeyValPoolException
-                                    Right (RsError _ _ e) -> throw KeyValPoolException
+                                    Left e -> do
+                                        print "[Error] Query: unpack"
+                                        throw KeyValPoolException
+                                    Right (RsError _ _ e) -> do
+                                        print $ "[Error] Query: RsError: " ++ show e
+                                        throw KeyValPoolException
                                     Right response -> return response
-            Left _ -> throw KeyValPoolException
+            Left _ -> do
+                print "[Error] Query: pack"
+                throw KeyValPoolException

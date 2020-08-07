@@ -37,6 +37,7 @@ import Data.Int
 import qualified Data.List as L
 import qualified Data.Map.Strict as M
 import Data.Maybe
+import Data.Pool
 import Data.Serialize
 import Data.String.Conversions
 import Data.Text (Text)
@@ -46,6 +47,7 @@ import Data.Time.Clock
 import Data.Time.Clock.POSIX
 import Data.Word
 import qualified Database.CQL.IO as Q
+import qualified Database.CQL.Protocol as DCP
 import Network.Socket
 import qualified Network.Socket.ByteString as SB (recv)
 import qualified Network.Socket.ByteString.Lazy as LB (recv, sendAll)
@@ -150,15 +152,20 @@ validateChainedBlockHeaders hdrs = do
         pairs = zip xs (drop 1 xs)
     L.foldl' (\ac x -> ac && (headerHash $ fst (fst x)) == (prevBlock $ fst (snd x))) True pairs
 
-markBestBlock :: (HasLogger m, MonadIO m) => Text -> Int32 -> Q.ClientState -> m ()
-markBestBlock hash height conn = do
+markBestBlock :: (HasLogger m, MonadIO m) => Text -> Int32 -> Pool Socket -> m ()
+markBestBlock hash height sock = do
     lg <- getLogger
-    let str = "insert INTO xoken.misc_store (key, value) values (? , ?)"
-        qstr = str :: Q.QueryString Q.W (Text, (Maybe Bool, Int32, Maybe Int64, Text)) ()
-        par = Q.defQueryParams Q.One ("best_chain_tip", (Nothing, height, Nothing, hash))
-    res <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr) par)
+    --let str = "insert INTO xoken.misc_store (key, value) values (? , ?)"
+    --    qstr = str :: Q.QueryString Q.W (Text, (Maybe Bool, Int32, Maybe Int64, Text)) ()
+    --    par = Q.defQueryParams Q.One ("best_chain_tip", (Nothing, height, Nothing, hash))
+    --res <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr) par)
+    let q :: DCP.QueryString DCP.W (Text, (Maybe Bool, Int32, Maybe Int64, Text)) ()
+        q = DCP.QueryString "insert INTO xoken.misc_store (key, value) values (? , ?)"
+        p :: DCP.QueryParams (Text, (Maybe Bool, Int32, Maybe Int64, Text))
+        p = DCP.QueryParams DCP.One False ("best_chain_tip", (Nothing, height, Nothing, hash)) Nothing Nothing Nothing Nothing
+    res <- liftIO $ try $ query DCP.V3 sock q p 
     case res of
-        Right () -> return ()
+        Right _ -> return ()
         Left (e :: SomeException) -> do
             err lg $ LG.msg ("Error: Marking [Best] blockhash failed: " ++ show e)
             throw KeyValueDBInsertException
@@ -217,6 +224,7 @@ processHeaders hdrs = do
             let net = bitcoinNetwork $ nodeConfig bp2pEnv
                 genesisHash = blockHashToHex $ headerHash $ getGenesisHeader net
                 conn = keyValDB $ dbe'
+                sock = sockPool dbe'
                 headPrevHash = (blockHashToHex $ prevBlock $ fst $ head $ headersList hdrs)
                 hdrHash y = headerHash $ fst y
                 validate m = validateWithCheckPoint net (fromIntegral m) (hdrHash <$> (headersList hdrs))
@@ -323,7 +331,7 @@ processHeaders hdrs = do
                                 err lg $ LG.msg ("Error: SELECT from 'blocks_by_height' for height :" ++ show height)
                                 throw KeyValueDBLookupException
                 updateChainWork indexed conn
-                markBestBlock (blockHashToHex $ headerHash $ fst $ snd $ last $ indexed) (fst $ last indexed) conn
+                markBestBlock (blockHashToHex $ headerHash $ fst $ snd $ last $ indexed) (fst $ last indexed) sock
                 liftIO $ putMVar (bestBlockUpdated bp2pEnv) True
         False -> do
             err lg $ LG.msg $ val "Error: BlocksNotChainedException"
