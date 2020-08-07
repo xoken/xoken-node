@@ -445,10 +445,10 @@ resilientRead ::
     => Socket
     -> BlockIngestState
     -> m ((Maybe Tx, C.ByteString), Int)
-resilientRead sock blin = do
+resilientRead sock !blin = do
     lg <- getLogger
     let chunkSize = 400 * 1024
-        delta =
+        !delta =
             if binTxPayloadLeft blin > chunkSize
                 then chunkSize - (B.length $ binUnspentBytes blin)
                 else (binTxPayloadLeft blin) - (B.length $ binUnspentBytes blin)
@@ -456,17 +456,17 @@ resilientRead sock blin = do
     -- debug lg $ msg (" | Bytes prev unspent " ++ show (B.length $ binUnspentBytes blin))
     -- debug lg $ msg (" | Bytes to read " ++ show delta)
     nbyt <- recvAll sock delta
-    let txbyt = (binUnspentBytes blin) `B.append` nbyt
+    let !txbyt = (binUnspentBytes blin) `B.append` nbyt
     case runGetState (getConfirmedTx) txbyt 0 of
         Left e -> do
             err lg $ msg $ "1st attempt|" ++ show e
             let chunkSizeFB = (1024 * 1024 * 1024)
-                deltaNew =
+                !deltaNew =
                     if binTxPayloadLeft blin > chunkSizeFB
                         then chunkSizeFB - ((B.length $ binUnspentBytes blin) + delta)
                         else (binTxPayloadLeft blin) - ((B.length $ binUnspentBytes blin) + delta)
             nbyt2 <- recvAll sock deltaNew
-            let txbyt2 = txbyt `B.append` nbyt2
+            let !txbyt2 = txbyt `B.append` nbyt2
             case runGetState (getConfirmedTx) txbyt2 0 of
                 Left e -> do
                     err lg $ msg $ "2nd attempt|" ++ show e
