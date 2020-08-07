@@ -36,6 +36,7 @@ import Data.Int
 import qualified Data.List as L
 import qualified Data.Map.Strict as M
 import Data.Maybe
+import Data.Pool
 import Data.Serialize
 import Data.Serialize as S
 import Data.String.Conversions
@@ -46,15 +47,16 @@ import Data.Time.Clock
 import Data.Time.Clock.POSIX
 import Data.Word
 import qualified Database.CQL.IO as Q
+import Database.CQL.Protocol as QP
 import Network.Socket
-import qualified Network.Socket.ByteString as SB (recv)
+import qualified Network.Socket.ByteString as SB (recv, sendAll)
 import qualified Network.Socket.ByteString.Lazy as LB (recv, sendAll)
 import Network.Xoken.Address.Base58 as B58
 import Network.Xoken.Block.Common
 import Network.Xoken.Block.Headers
 import Network.Xoken.Constants
 import Network.Xoken.Crypto.Hash
-import Network.Xoken.Network.Common -- (GetData(..), MessageCommand(..), NetworkAddress(..))
+import Network.Xoken.Network.Common as XNC -- (GetData(..), MessageCommand(..), NetworkAddress(..))
 import Network.Xoken.Network.Message
 import Network.Xoken.Node.Data
 import Network.Xoken.Node.Env
@@ -118,6 +120,7 @@ data AriviServiceException
     = KeyValueDBLookupException
     | GraphDBLookupException
     | InvalidOutputAddressException
+    | KeyValPoolException
     deriving (Show)
 
 instance Exception AriviServiceException
@@ -125,7 +128,7 @@ instance Exception AriviServiceException
 --
 --
 -- | Create version data structure.
-buildVersion :: Network -> Word64 -> BlockHeight -> NetworkAddress -> NetworkAddress -> Word64 -> Version
+buildVersion :: Network -> Word64 -> BlockHeight -> NetworkAddress -> NetworkAddress -> Word64 -> XNC.Version
 buildVersion net nonce height loc rmt time =
     Version
         { version = myVersion
@@ -330,3 +333,26 @@ splitList :: [a] -> ([a], [a])
 splitList xs = (f 1 xs, f 0 xs)
   where
     f n a = map fst . filter (odd . snd) . zip a $ [n ..]
+
+query :: (Tuple a, Tuple b) => QP.Version -> (Pool Socket, SockAddr) -> QueryString k a b -> QueryParams a -> IO (Response k a b)
+query v (ps,ad) q p = do
+    let i = mkStreamId 0
+    withResource ps $ \sock -> do
+        connect sock ad
+        case (QP.pack v noCompression False i (RqQuery (Query q p))) of
+            Right qp -> do
+                LB.sendAll sock qp
+                b <- LB.recv sock (if v == V3 then 9 else 8)
+                h' <- return $ header v b
+                case h' of
+                    Left s -> throw KeyValPoolException
+                    Right h -> do
+                        when (headerType h == RqHeader) $
+                            throw KeyValPoolException
+                        let len = lengthRepr (bodyLength h)
+                        x <- LB.recv sock (fromIntegral len)
+                        case QP.unpack noCompression h x of
+                            Left e                -> throwIO KeyValPoolException
+                            Right (RsError _ _ e) -> throw KeyValPoolException
+                            Right response        -> return response
+            Left _ -> throw KeyValPoolException
