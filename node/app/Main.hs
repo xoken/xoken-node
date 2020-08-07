@@ -426,5 +426,6 @@ relaunch =
 
 main :: IO ()
 main = do
-    let pid = "/tmp/nexa.pid.0"
-    runDetached (Just pid) (ToFile "nexa.log") relaunch
+    initNexa
+    -- let pid = "/tmp/nexa.pid.0"
+    -- runDetached (Just pid) (ToFile "nexa.log") relaunch

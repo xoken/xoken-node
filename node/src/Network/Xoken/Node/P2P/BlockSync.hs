@@ -479,12 +479,13 @@ commitScriptHashOutputs conn sh output blockInfo = do
         strAddrOuts = "INSERT INTO xoken.script_hash_outputs (script_hash, nominal_tx_index, output) VALUES (?,?,?)"
         qstrAddrOuts = strAddrOuts :: Q.QueryString Q.W (Text, Int64, (Text, Int32)) ()
         parAddrOuts = Q.defQueryParams Q.One (sh, nominalTxIndex, output)
-    resAddrOuts <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstrAddrOuts) parAddrOuts)
-    case resAddrOuts of
-        Right () -> return ()
-        Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: INSERTing into 'script_hash_outputs': " ++ show e
-            throw KeyValueDBInsertException
+    return ()
+    -- resAddrOuts <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstrAddrOuts) parAddrOuts)
+    -- case resAddrOuts of
+    --     Right () -> return ()
+    --     Left (e :: SomeException) -> do
+    --         err lg $ LG.msg $ "Error: INSERTing into 'script_hash_outputs': " ++ show e
+    --         throw KeyValueDBInsertException
 
 commitScriptHashUnspentOutputs :: (HasLogger m, MonadIO m) => Q.ClientState -> Text -> (Text, Int32) -> m ()
 commitScriptHashUnspentOutputs conn sh output = do
@@ -492,12 +493,13 @@ commitScriptHashUnspentOutputs conn sh output = do
     let str = "INSERT INTO xoken.script_hash_unspent_outputs (script_hash, output) VALUES (?,?)"
         qstr = str :: Q.QueryString Q.W (Text, (Text, Int32)) ()
         par = Q.defQueryParams Q.One (sh, output)
-    res <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr) par)
-    case res of
-        Right () -> return ()
-        Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: INSERTing into 'script_hash_unspent_outputs': " ++ show e
-            throw KeyValueDBInsertException
+    return ()
+    -- res <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr) par)
+    -- case res of
+    --     Right () -> return ()
+    --     Left (e :: SomeException) -> do
+    --         err lg $ LG.msg $ "Error: INSERTing into 'script_hash_unspent_outputs': " ++ show e
+    --         throw KeyValueDBInsertException
 
 deleteScriptHashUnspentOutputs :: (HasLogger m, MonadIO m) => Q.ClientState -> Text -> (Text, Int32) -> m ()
 deleteScriptHashUnspentOutputs conn sh output = do
@@ -505,12 +507,13 @@ deleteScriptHashUnspentOutputs conn sh output = do
     let str = "DELETE FROM xoken.script_hash_unspent_outputs WHERE script_hash=? AND output=?"
         qstr = str :: Q.QueryString Q.W (Text, (Text, Int32)) ()
         par = Q.defQueryParams Q.One (sh, output)
-    res <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr) par)
-    case res of
-        Right () -> return ()
-        Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: DELETE'ing from 'script_hash_unspent_outputs': " ++ show e
-            throw e
+    return ()
+    -- res <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr) par)
+    -- case res of
+    --     Right () -> return ()
+    --     Left (e :: SomeException) -> do
+    --         err lg $ LG.msg $ "Error: DELETE'ing from 'script_hash_unspent_outputs': " ++ show e
+    --         throw e
 
 insertTxIdOutputs ::
        (HasLogger m, MonadIO m)
@@ -537,12 +540,13 @@ insertTxIdOutputs conn (txid, outputIndex) address scriptHash isRecv blockInfo o
                                      , [((Text, Int32), Int32, (Text, Int64))]
                                      , Int64) ()
         par = Q.defQueryParams Q.One (txid, outputIndex, address, scriptHash, isRecv, blockInfo, other, value)
-    res <- liftIO $ try $ Q.runClient conn $ (Q.write (Q.prepared qstr) par)
-    case res of
-        Right () -> return ()
-        Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: INSERTing into: txid_outputs " ++ show e
-            throw KeyValueDBInsertException
+    -- res <- liftIO $ try $ Q.runClient conn $ (Q.write (Q.prepared qstr) par)
+    -- case res of
+    --     Right () -> return ()
+    --     Left (e :: SomeException) -> do
+    --         err lg $ LG.msg $ "Error: INSERTing into: txid_outputs " ++ show e
+    --         throw KeyValueDBInsertException
+    return ()
 
 commitTxPage ::
        (HasBitcoinP2P m, HasLogger m, HasDatabaseHandles m, MonadBaseControl IO m, MonadIO m)
@@ -573,8 +577,8 @@ processConfTransaction tx bhash txind blkht = do
     let net = bitcoinNetwork $ nodeConfig bp2pEnv
     let conn = keyValDB $ dbe'
     debug lg $ LG.msg $ "processing Tx " ++ show (txHash tx)
-    let inAddrs = zip (txIn tx) [0 :: Int32 ..]
-    let outAddrs =
+    let !inAddrs = zip (txIn tx) [0 :: Int32 ..]
+    let !outAddrs =
             zip3
                 (map (\y ->
                           case scriptToAddressBS $ scriptOutput y of
@@ -591,11 +595,11 @@ processConfTransaction tx bhash txind blkht = do
     inputs <-
         mapM
             (\(b, j) -> do
-                 tuple <-
-                     liftIO $
-                     H.lookup
-                         (txOutputValuesCache bp2pEnv)
-                         (getTxShortHash (outPointHash $ prevOutput b) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
+                 tuple <- return Nothing
+                    --  liftIO $
+                    --  H.lookup
+                    --      (txOutputValuesCache bp2pEnv)
+                    --      (getTxShortHash (outPointHash $ prevOutput b) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
                  val <-
                      case tuple of
                          Just (ftxh, indexvals) ->
@@ -639,7 +643,7 @@ processConfTransaction tx bhash txind blkht = do
                                                          ", " ++ show (outPointIndex $ prevOutput b) ++ ")"
                                                      throw e
                          Nothing -> do
-                             if (outPointHash nullOutPoint) == (outPointHash $ prevOutput b)
+                             if True -- (outPointHash nullOutPoint) == (outPointHash $ prevOutput b)
                                  then return
                                           ("", "", fromIntegral $ computeSubsidy net $ (fromIntegral blkht :: Word32))
                                  else do
@@ -680,11 +684,11 @@ processConfTransaction tx bhash txind blkht = do
                      , (a, (txHashToHex $ TxHash $ sha256 (scriptOutput o)), fromIntegral $ outValue o)))
                 outAddrs
     trace lg $ LG.msg $ "processing Tx " ++ show (txHash tx) ++ ": compiled output value(s): " ++ (show ovs)
-    liftIO $
-        H.insert
-            (txOutputValuesCache bp2pEnv)
-            (getTxShortHash (txHash tx) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
-            (txHash tx, ovs)
+    -- liftIO $
+    --     H.insert
+    --         (txOutputValuesCache bp2pEnv)
+    --         (getTxShortHash (txHash tx) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
+    --         (txHash tx, ovs)
     --
     trace lg $ LG.msg $ "processing Tx " ++ show (txHash tx) ++ ": added outputvals to cache"
     -- update outputs and scripthash tables
@@ -749,12 +753,12 @@ processConfTransaction tx bhash txind blkht = do
                 , Blob $ runPutLazy $ putLazyByteString $ S.encodeLazy tx
                 , (stripScriptHash <$> inputs)
                 , fees)
-    res <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr) par)
-    case res of
-        Right () -> return ()
-        Left (e :: SomeException) -> do
-            liftIO $ err lg $ LG.msg ("Error: INSERTing into 'xoken.transactions': " ++ show e)
-            throw KeyValueDBInsertException
+    -- res <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr) par)
+    -- case res of
+    --     Right () -> return ()
+    --     Left (e :: SomeException) -> do
+    --         liftIO $ err lg $ LG.msg ("Error: INSERTing into 'xoken.transactions': " ++ show e)
+    --         throw KeyValueDBInsertException
     --
     trace lg $ LG.msg $ "processing Tx " ++ show (txHash tx) ++ ": persisted in DB"
     -- handle allegory
