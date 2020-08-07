@@ -526,7 +526,7 @@ insertMerkleSubTree leaves inodes = do
 
 deleteMerkleSubTree :: [MerkleNode] -> BoltActionT IO ()
 deleteMerkleSubTree inodes = do
-    res <- LE.try $ query cypher
+    res <- LE.try $ BT.query cypher
     case res of
         Left (e :: SomeException)
             -- liftIO $ print ("[ERROR] deleteMerkleSubTree " ++ show e)

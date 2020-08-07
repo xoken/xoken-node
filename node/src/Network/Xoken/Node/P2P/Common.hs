@@ -347,12 +347,13 @@ query v (ps,ad) q p = do
                 case h' of
                     Left s -> throw KeyValPoolException
                     Right h -> do
-                        when (headerType h == RqHeader) $
-                            throw KeyValPoolException
-                        let len = lengthRepr (bodyLength h)
-                        x <- LB.recv sock (fromIntegral len)
-                        case QP.unpack noCompression h x of
-                            Left e                -> throwIO KeyValPoolException
-                            Right (RsError _ _ e) -> throw KeyValPoolException
-                            Right response        -> return response
+                        case headerType h of
+                            RqHeader -> throw KeyValPoolException
+                            RsHeader -> do
+                                let len = lengthRepr (bodyLength h)
+                                x <- LB.recv sock (fromIntegral len)
+                                case QP.unpack noCompression h x of
+                                    Left e                -> throwIO KeyValPoolException
+                                    Right (RsError _ _ e) -> throw KeyValPoolException
+                                    Right response        -> return response
             Left _ -> throw KeyValPoolException
