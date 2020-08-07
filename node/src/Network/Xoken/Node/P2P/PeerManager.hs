@@ -1018,8 +1018,8 @@ procTxStream pr = do
             Just sock -> liftIO $ Network.Socket.close sock
             Nothing -> return ()
 
-handleIncomingMessages :: (HasXokenNodeEnv env m, MonadIO m) => BitcoinPeer -> m ()
-handleIncomingMessages pr = do
+__handleIncomingMessages :: (HasXokenNodeEnv env m, MonadIO m) => BitcoinPeer -> m ()
+__handleIncomingMessages pr = do
     bp2pEnv <- getBitcoinP2P
     lg <- getLogger
     debug lg $ msg $ "reading from: " ++ show (bpAddress pr)
@@ -1047,3 +1047,28 @@ handleIncomingMessages pr = do
     case (bpSocket pr) of
         Just sock -> liftIO $ Network.Socket.close sock
         Nothing -> return ()
+
+handleIncomingMessages :: (HasXokenNodeEnv env m, MonadIO m) => BitcoinPeer -> m ()
+handleIncomingMessages pr = do
+    bp2pEnv <- getBitcoinP2P
+    lg <- getLogger
+    debug lg $ msg $ "reading from: " ++ show (bpAddress pr)
+    res <-
+        LE.try $
+        S.drain $ asyncly $ S.repeatM (readNextMessage' pr) & S.mapM (messageHandler pr) & S.mapM (logMessage pr)
+    case res of
+        Right () -> return ()
+        Left (e :: SomeException) -> do
+            err lg $ msg $ (val "[ERROR] Closing peer connection ") +++ (show e)
+            case (bpSocket pr) of
+                Just sock -> liftIO $ Network.Socket.close sock
+                Nothing -> return ()
+            liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
+            return ()
+
+logMessage :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BitcoinPeer -> MessageCommand -> m ()
+logMessage peer mg = do
+    lg <- getLogger
+    -- liftIO $ atomically $ modifyTVar' (bpIngressMsgCount peer) (\z -> z + 1)
+    trace lg $ LG.msg $ "processed: " ++ show mg
+    return ()
