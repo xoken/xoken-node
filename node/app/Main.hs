@@ -216,7 +216,7 @@ runThreads config nodeConf bp2p conn lg p2pEnv certPaths = do
     gdbState <- makeGraphDBResPool (neo4jUsername nodeConf) (neo4jPassword nodeConf)
     let hints = defaultHints { addrFlags = [AI_NUMERICHOST, AI_NUMERICSERV], addrSocketType = Stream }
     (addr:_) <- getAddrInfo (Just hints) (Just "127.0.0.1") (Just "9042")
-    sckPool <- createPool (socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)) (close) 1 (1) 200
+    sckPool <- createPool (socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)) (Network.Socket.close) 1 (1) 200
     let dbh = DatabaseHandles conn gdbState sckPool
     let allegoryEnv = AllegoryEnv $ allegoryVendorSecretKey nodeConf
     let xknEnv = XokenNodeEnv bp2p dbh lg allegoryEnv
