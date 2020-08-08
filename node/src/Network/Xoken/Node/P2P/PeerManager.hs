@@ -874,8 +874,9 @@ readNextMessage' ::
        (HasXokenNodeEnv env m, MonadIO m)
     => BitcoinPeer
     -> MVar (Maybe IngressStreamState)
+    -> PeerTracker
     -> m ((Maybe Message, Maybe IngressStreamState))
-readNextMessage' peer readLock = do
+readNextMessage' peer readLock tracker = do
     bp2pEnv <- getBitcoinP2P
     lg <- getLogger
     let net = bitcoinNetwork $ nodeConfig bp2pEnv
@@ -902,9 +903,10 @@ readNextMessage' peer readLock = do
                             case issBlockInfo iss of
                                 Just bi -> do
                                     tm <- liftIO $ getCurrentTime
+                                    liftIO $ writeIORef (ptLastTxRecvTime tracker) $ Just tm
+                                    liftIO $ modifyIORef' (ptBlockFetchWindow tracker) (\z -> z - 1)
                                     if binTxTotalCount ingst == binTxIngested ingst
                                         then do
-                                            tm <- liftIO $ getCurrentTime
                                             liftIO $
                                                 atomically $
                                                 SM.insert
@@ -915,7 +917,6 @@ readNextMessage' peer readLock = do
                                                 LG.msg $ ("putMVar readLock Nothing - " ++ (show $ bpAddress peer))
                                             liftIO $ putMVar readLock Nothing
                                         else do
-                                            tm <- liftIO $ getCurrentTime
                                             liftIO $
                                                 atomically $
                                                 SM.insert
@@ -944,14 +945,14 @@ handleIncomingMessages pr = do
     rc <- liftIO $ newIORef Nothing
     st <- liftIO $ newIORef Nothing
     fw <- liftIO $ newIORef 0
-    -- LA.async $ peerBlockSync pr $ PeerTracker imc rc st fw
+    let tracker = PeerTracker imc rc st fw
     --
     res <-
         LE.try $
         LA.concurrently_
-            (peerBlockSync pr $ PeerTracker imc rc st fw)
+            (peerBlockSync pr tracker)
             (S.drain $
-             asyncly $ S.repeatM (readNextMessage' pr rlk) & S.mapM (messageHandler pr) & S.mapM (logMessage pr))
+             asyncly $ S.repeatM (readNextMessage' pr rlk tracker) & S.mapM (messageHandler pr) & S.mapM (logMessage pr))
     case res of
         Right (a) -> return ()
         Left (e :: SomeException) -> do

@@ -33,6 +33,7 @@ import Control.Concurrent.Event as EV
 import Control.Concurrent.MSem as MS
 import Control.Concurrent.MVar
 import Control.Concurrent.QSem
+import Control.Concurrent.STM.TBQueue as TB
 import Control.Concurrent.STM.TVar
 import Control.Exception (throw)
 import Control.Monad
@@ -238,15 +239,14 @@ runThreads config nodeConf bp2p conn lg p2pEnv certPaths = do
                 bp2pEnv <- getBitcoinP2P
                 withAsync runEpochSwitcher $ \_ -> do
                     withAsync setupSeedPeerConnection $ \_ -> do
-                        withAsync runEgressChainSync $ \_
-                            -- withAsync runEgressBlockSync $ \_ -> do
-                         -> do
-                            withAsync (handleNewConnectionRequest epHandler) $ \_ -> do
-                                withAsync runPeerSync $ \_ -> do
-                                    withAsync runSyncStatusChecker $ \_ -> do
-                                        withAsync runWatchDog $ \z -> do
-                                            _ <- LA.wait z
-                                            return ())
+                        withAsync runEgressChainSync $ \_ -> do
+                            withAsync runBlockCacheQueue $ \_ -> do
+                                withAsync (handleNewConnectionRequest epHandler) $ \_ -> do
+                                    withAsync runPeerSync $ \_ -> do
+                                        withAsync runSyncStatusChecker $ \_ -> do
+                                            withAsync runWatchDog $ \z -> do
+                                                _ <- LA.wait z
+                                                return ())
     liftIO $ Q.shutdown conn
     liftIO $ destroyAllResources $ pool gdbState
     liftIO $ putStrLn $ "node recovering from fatal DB connection failure!"
@@ -392,7 +392,8 @@ defBitcoinP2P nodeCnf = do
     iut <- newTVarIO False
     udc <- H.new
     tpfa <- newTVarIO 0
-    return $ BitcoinP2P nodeCnf g bp mv hl st tl ep tc vc (rpf, rpc) mq ts tbt iut udc tpfa
+    bfq <- liftIO $ newTBQueueIO 100
+    return $ BitcoinP2P nodeCnf g bp mv hl st tl ep tc vc (rpf, rpc) mq ts tbt iut udc tpfa bfq
 
 initNexa :: IO ()
 initNexa = do
