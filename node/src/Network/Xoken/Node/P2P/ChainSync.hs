@@ -274,16 +274,28 @@ processHeaders hdrs = do
                                                                  ("Does not match best-block, potential block re-org ")
                                                          return $ zip [(matchBHt + 1) ..] (headersList hdrs) -- potential re-org
                                              Nothing -> throw BlockHashNotFoundException
-            let str1 =
-                    "insert INTO xoken.blocks_by_hash (block_hash, block_header, block_height, next_block_hash) values (?, ? , ?, ?)"
-                qstr1 = str1 :: Q.QueryString Q.W (Text, Text, Int32, Text) ()
-                str2 =
-                    "insert INTO xoken.blocks_by_height (block_height, block_hash, block_header, next_block_hash) values (?, ? , ?, ?)"
-                qstr2 = str2 :: Q.QueryString Q.W (Int32, Text, Text, Text) ()
-                str3 = "UPDATE xoken.blocks_by_hash SET next_block_hash=? where block_hash=?"
-                qstr3 = str3 :: Q.QueryString Q.W (Text, Text) ()
-                str4 = "UPDATE xoken.blocks_by_height SET next_block_hash=? where block_height=?"
-                qstr4 = str4 :: Q.QueryString Q.W (Text, Int32) ()
+            let q1 :: DCP.QueryString DCP.W (Text, Text, Int32, Text) ()
+                q1 =
+                    DCP.QueryString
+                        "insert INTO xoken.blocks_by_hash (block_hash, block_header, block_height, next_block_hash) values (?, ? , ?, ?)"
+                q2 :: DCP.QueryString DCP.W (Int32, Text, Text, Text) ()
+                q2 =
+                    DCP.QueryString
+                        "insert INTO xoken.blocks_by_height (block_height, block_hash, block_header, next_block_hash) values (?, ? , ?, ?)"
+                q3 :: DCP.QueryString DCP.W (Text, Text) ()
+                q3 = DCP.QueryString "UPDATE xoken.blocks_by_hash SET next_block_hash=? where block_hash=?"
+                q4 :: DCP.QueryString DCP.W (Text, Int32) ()
+                q4 = DCP.QueryString "UPDATE xoken.blocks_by_height SET next_block_hash=? where block_height=?"
+                --str1 =
+                --    "insert INTO xoken.blocks_by_hash (block_hash, block_header, block_height, next_block_hash) values (?, ? , ?, ?)"
+                --qstr1 = str1 :: Q.QueryString Q.W (Text, Text, Int32, Text) ()
+                --str2 =
+                --    "insert INTO xoken.blocks_by_height (block_height, block_hash, block_header, next_block_hash) values (?, ? , ?, ?)"
+                --qstr2 = str2 :: Q.QueryString Q.W (Int32, Text, Text, Text) ()
+                --str3 = "UPDATE xoken.blocks_by_hash SET next_block_hash=? where block_hash=?"
+                --qstr3 = str3 :: Q.QueryString Q.W (Text, Text) ()
+                --str4 = "UPDATE xoken.blocks_by_height SET next_block_hash=? where block_height=?"
+                --qstr4 = str4 :: Q.QueryString Q.W (Text, Int32) ()
                 lenIndexed = L.length indexed
             debug lg $ LG.msg $ "indexed " ++ show (lenIndexed)
             liftIO $
@@ -295,18 +307,22 @@ processHeaders hdrs = do
                                      then ""
                                      else blockHashToHex $ headerHash $ fst $ snd $ (indexed !! (ind + 1))
                              hdrJson = T.pack $ LC.unpack $ A.encode $ fst $ snd y
-                         let par1 = Q.defQueryParams Q.One (hdrHash, hdrJson, fst y, nextHdrHash)
-                             par2 = Q.defQueryParams Q.One (fst y, hdrHash, hdrJson, nextHdrHash)
-                         res1 <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr1) par1)
+                         --let par1 = Q.defQueryParams Q.One (hdrHash, hdrJson, fst y, nextHdrHash)
+                         --    par2 = Q.defQueryParams Q.One (fst y, hdrHash, hdrJson, nextHdrHash)
+                         --res1 <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr1) par1)
+                         let p1 = getSimpleQueryParam (hdrHash, hdrJson, fst y, nextHdrHash)
+                             p2 = getSimpleQueryParam (fst y, hdrHash, hdrJson, nextHdrHash)
+                         res1 <- liftIO $ try $ query connPool (DCP.RqQuery $ DCP.Query q1 p1)
                          case res1 of
-                             Right () -> return ()
+                             Right _ -> return ()
                              Left (e :: SomeException) ->
                                  liftIO $ do
                                      err lg $ LG.msg ("Error: INSERT into 'blocks_hash' failed: " ++ show e)
                                      throw KeyValueDBInsertException
-                         res2 <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr2) par2)
+                         res2 <- liftIO $ try $ query connPool (DCP.RqQuery $ DCP.Query q2 p2)
+                         --res1 <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr2) par2)
                          case res2 of
-                             Right () -> return ()
+                             Right _ -> return ()
                              Left (e :: SomeException) -> do
                                  err lg $ LG.msg ("Error: INSERT into 'blocks_by_height' failed: " ++ show e)
                                  throw KeyValueDBInsertException)
@@ -320,25 +336,29 @@ processHeaders hdrs = do
                         case blk of
                             Just b -> do
                                 let nextHdrHash = blockHashToHex $ headerHash $ fst $ snd $ head indexed
-                                    par3 = Q.defQueryParams Q.One (nextHdrHash, T.pack $ rbHash b)
-                                    par4 = Q.defQueryParams Q.One (nextHdrHash, height)
-                                res1 <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr3) par3)
-                                case res1 of
-                                    Right () -> return ()
+                                    --par3 = Q.defQueryParams Q.One (nextHdrHash, T.pack $ rbHash b)
+                                    --par4 = Q.defQueryParams Q.One (nextHdrHash, height)
+                                --res3 <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr3) par3)
+                                    p3 = getSimpleQueryParam (nextHdrHash, T.pack $ rbHash b)
+                                    p4 = getSimpleQueryParam (nextHdrHash, height)
+                                res3 <- liftIO $ try $ query connPool (DCP.RqQuery $ DCP.Query q3 p3)
+                                case res3 of
+                                    Right _ -> return ()
                                     Left (e :: SomeException) ->
                                         liftIO $ do
                                             err lg $ LG.msg ("Error: UPDATE into 'blocks_by_hash' failed: " ++ show e)
                                             throw KeyValueDBInsertException
-                                res2 <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr4) par4)
-                                case res2 of
-                                    Right () -> return ()
+                                --res4 <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr4) par4)
+                                res4 <- liftIO $ try $ query connPool (DCP.RqQuery $ DCP.Query q4 p4)
+                                case res4 of
+                                    Right _ -> return ()
                                     Left (e :: SomeException) -> do
                                         err lg $ LG.msg ("Error: UPDATE into 'blocks_by_height' failed: " ++ show e)
                                         throw KeyValueDBInsertException
                             Nothing -> do
                                 err lg $ LG.msg ("Error: SELECT from 'blocks_by_height' for height :" ++ show height)
                                 throw KeyValueDBLookupException
-                updateChainWork indexed conn
+                --updateChainWork indexed conn
                 markBestBlock (blockHashToHex $ headerHash $ fst $ snd $ last $ indexed) (fst $ last indexed) connPool
                 liftIO $ putMVar (bestBlockUpdated bp2pEnv) True
         False -> do

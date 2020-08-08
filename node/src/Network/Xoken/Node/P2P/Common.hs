@@ -334,6 +334,9 @@ splitList xs = (f 1 xs, f 0 xs)
   where
     f n a = map fst . filter (odd . snd) . zip a $ [n ..]
 
+getSimpleQueryParam :: Tuple a => a -> QueryParams a
+getSimpleQueryParam a = QP.QueryParams QP.One False a Nothing Nothing Nothing Nothing
+
 query :: (Tuple a, Tuple b) => (Pool Socket) -> Request k a b -> IO (Response k a b)
 query ps req = do
     let i = mkStreamId 0
