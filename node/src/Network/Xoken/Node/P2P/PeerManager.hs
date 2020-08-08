@@ -55,7 +55,7 @@ import qualified Data.Text as T
 import Data.Time.Clock.POSIX
 import Data.Word
 import qualified Database.Bolt as BT
-import qualified Database.CQL.IO as Q
+import qualified Database.CQL.Protocol as Q
 import Database.CQL.Protocol
 import GHC.Natural
 import Network.Socket
@@ -562,36 +562,38 @@ updateBlocks :: (HasLogger m, HasDatabaseHandles m, MonadIO m) => BlockHash -> B
 updateBlocks bhash blkht bsize txcount cbase = do
     lg <- getLogger
     dbe' <- getDB
-    let conn = keyValDB $ dbe'
-    let str1 = "INSERT INTO xoken.blocks_by_hash (block_hash,block_size,tx_count,coinbase_tx) VALUES (?, ?, ?, ?)"
-        str2 = "INSERT INTO xoken.blocks_by_height (block_height,block_size,tx_count,coinbase_tx) VALUES (?, ?, ?, ?)"
-        qstr1 = str1 :: Q.QueryString Q.W (T.Text, Int32, Int32, Blob) ()
-        qstr2 = str2 :: Q.QueryString Q.W (Int32, Int32, Int32, Blob) ()
-        par1 =
-            Q.defQueryParams
-                Q.One
+    let conn = connection $ dbe'
+    let q1 :: Q.QueryString Q.W (T.Text, Int32, Int32, Blob) ()
+        q1 =
+            Q.QueryString
+                "INSERT INTO xoken.blocks_by_hash (block_hash,block_size,tx_count,coinbase_tx) VALUES (?, ?, ?, ?)"
+        q2 :: Q.QueryString Q.W (Int32, Int32, Int32, Blob) ()
+        q2 =
+            Q.QueryString
+                "INSERT INTO xoken.blocks_by_height (block_height,block_size,tx_count,coinbase_tx) VALUES (?, ?, ?, ?)"
+        p1 =
+            getSimpleQueryParam
                 ( blockHashToHex bhash
                 , fromIntegral bsize
                 , fromIntegral txcount
                 , Blob $ runPutLazy $ putLazyByteString $ encodeLazy $ cbase)
-        par2 =
-            Q.defQueryParams
-                Q.One
+        p2 =
+            getSimpleQueryParam
                 ( fromIntegral blkht
                 , fromIntegral bsize
                 , fromIntegral txcount
                 , Blob $ runPutLazy $ putLazyByteString $ encodeLazy $ cbase)
-    res1 <- liftIO $ try $ Q.runClient conn (Q.write (qstr1) par1)
+    res1 <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query q1 p1)
     case res1 of
-        Right () -> do
+        Right _ -> do
             debug lg $ LG.msg $ "Updated blocks_by_hash for block_hash " ++ show bhash
             return ()
         Left (e :: SomeException) -> do
             err lg $ LG.msg ("Error: INSERT into 'blocks_by_hash' failed: " ++ show e)
             throw KeyValueDBInsertException
-    res2 <- liftIO $ try $ Q.runClient conn (Q.write (qstr2) par2)
+    res2 <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query q2 p2)
     case res2 of
-        Right () -> do
+        Right _ -> do
             debug lg $ LG.msg $ "Updated blocks_by_height for block_height " ++ show blkht
             return ()
         Left (e :: SomeException) -> do
