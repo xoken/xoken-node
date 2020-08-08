@@ -110,6 +110,7 @@ data PeerMessageException
     | PeerSocketNotConnectedException
     | ZeroLengthSocketReadException
     | NetworkMagicMismatchException
+    | UnresponsivePeerException
     deriving (Show)
 
 instance Exception PeerMessageException
