@@ -83,7 +83,7 @@ data BlockSyncException
     | InvalidBlockIngestStateException
     | InvalidMetaDataException
     | InvalidBlockHashException
-    | UnexpectedDuringBlockProcException
+    | UnexpectedDuringBlockProcException String
     | InvalidBlockSyncStatusMapException
     | InvalidBlockInfoException
     | OutpointAddressNotFoundException
@@ -112,6 +112,7 @@ data PeerMessageException
     | PeerSocketNotConnectedException
     | ZeroLengthSocketReadException
     | NetworkMagicMismatchException
+    | UnresponsivePeerException
     deriving (Show)
 
 instance Exception PeerMessageException

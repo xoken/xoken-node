@@ -93,7 +93,7 @@ produceGetHeadersMessage = do
 sendRequestMessages :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Message -> m ()
 sendRequestMessages msg = do
     lg <- getLogger
-    debug lg $ LG.msg $ val ("sendRequestMessages - called.")
+    debug lg $ LG.msg $ val ("Chain - sendRequestMessages - called.")
     bp2pEnv <- getBitcoinP2P
     dbe' <- getDB
     let conn = keyValDB $ dbe'

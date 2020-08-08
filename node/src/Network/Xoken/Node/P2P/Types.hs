@@ -12,6 +12,7 @@ import Control.Concurrent.STM
 import Control.Concurrent.STM.TSem
 import qualified Data.ByteString as B
 import Data.Functor.Identity
+import Data.IORef
 import Data.Int
 import qualified Data.Map.Strict as M
 import Data.Pool
@@ -53,7 +54,7 @@ data BitcoinPeer =
       -- ^ network address
         , bpSocket :: !(Maybe Socket)
       -- ^ live stream socket
-        , bpReadMsgLock :: !(MVar Bool)
+       --  , bpReadMsgLock :: !(MVar Bool)
       -- ^  read message lock
         , bpWriteMsgLock :: !(MVar Bool)
       -- ^ write message lock
@@ -63,20 +64,15 @@ data BitcoinPeer =
       -- ^ protocol version
         , bpNonce :: !Word64
       -- ^ random nonce sent during handshake
-        , bpPing :: !(Maybe (UTCTime, Word64))
-      -- ^ last sent ping time and nonce
-        , bpIngressState :: !(TVar (Maybe IngressStreamState))
-      -- ^ Block stream processing state
-        , bpIngressMsgCount :: !(TVar Int)
-      -- ^ recent msg count for detecting stale peer connections
-        , bpLastTxRecvTime :: !(TVar (Maybe UTCTime))
-      -- ^ last tx recv time
-        , bpLastGetDataSent :: !(TVar (Maybe UTCTime))
-      -- ^ block 'GetData' sent time
-        , bpBlockFetchWindow :: !(TVar Int)
-      -- number of outstanding blocks
-        , bpTxSem :: !(MSemN Int)
-        -- number of outstanding transactions
+        }
+
+data PeerTracker =
+    PeerTracker
+        { ptIngressMsgCount :: !(IORef Int) -- recent msg count for detecting stale peer connections
+        , ptLastTxRecvTime :: !(IORef (Maybe UTCTime)) -- last tx recv time
+        , ptLastGetDataSent :: !(IORef (Maybe UTCTime)) -- block 'GetData' sent time
+        , ptBlockFetchWindow :: !(IORef Int) -- number of outstanding blocks
+        -- , Ping :: !(Maybe (UTCTime, Word64)) -- last sent ping time and nonce
         }
 
 instance Show BitcoinPeer where
