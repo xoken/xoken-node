@@ -104,6 +104,7 @@ produceGetDataMessage :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => UTCT
 produceGetDataMessage !tm = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
+    debug lg $ LG.msg $ val "Block - produceGetDataMessage - called."
     res <- LE.try $ getNextBlockToSync tm
     case res of
         Right (bl) -> do
@@ -133,7 +134,7 @@ sendRequestMessages pr msg = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
     let net = bitcoinNetwork $ nodeConfig bp2pEnv
-    debug lg $ LG.msg $ val "sendRequestMessages - called."
+    debug lg $ LG.msg $ val "Block - sendRequestMessages - called."
     case msg of
         MGetData gd -> do
             case (bpSocket pr) of
@@ -304,6 +305,7 @@ getNextBlockToSync tm = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
     conn <- keyValDB <$> getDB
+    debug lg $ LG.msg $ val "getNextBlockToSync - called."
     let net = bitcoinNetwork $ nodeConfig bp2pEnv
     sysz <- liftIO $ atomically $ SM.size (blockSyncStatusMap bp2pEnv)
     -- reload cache
