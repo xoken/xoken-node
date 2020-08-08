@@ -287,117 +287,65 @@ getBatchSize peerCount n
             else [1 .. peerCount]
     | otherwise = [1]
 
-getNextBlockToSync :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => UTCTime -> m (Maybe BlockInfo)
-getNextBlockToSync tm = do
-    lg <- getLogger
-    bp2pEnv <- getBitcoinP2P
-    dbe <- getDB
-    let net = bitcoinNetwork $ nodeConfig bp2pEnv
-        conn = keyValDB dbe
-        connPool = connection dbe
-    sysz <- liftIO $ atomically $ SM.size (blockSyncStatusMap bp2pEnv)
-    -- reload cache
-    if sysz == 0
-        then do
-            (hash, ht) <- fetchBestSyncedBlock conn net
-            allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
-            let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
-            let cacheInd =
-                    if L.length connPeers > 4
-                        then getBatchSize (fromIntegral $ maxBitcoinPeerCount $ nodeConfig bp2pEnv) ht
-                        else [1]
-            let !bks = map (\x -> ht + x) cacheInd
-            let str = "SELECT block_height, block_hash from xoken.blocks_by_height where block_height in ?"
-                qstr = str :: Q.QueryString Q.R (Identity [Int32]) ((Int32, T.Text))
-                p = Q.defQueryParams Q.One $ Identity (bks)
-            res <- liftIO $ try $ Q.runClient conn (Q.query (Q.prepared qstr) p)
-            case res of
-                Left (e :: SomeException) -> do
-                    err lg $ LG.msg ("Error: getNextBlockToSync: " ++ show e)
-                    throw e
-                Right (op) -> do
-                    if L.length op == 0
-                        then do
-                            debug lg $ LG.msg $ val "Synced fully!"
-                            return (Nothing)
-                        else if L.length op == (fromIntegral $ last cacheInd)
-                                 then do
-                                     debug lg $ LG.msg $ val "Reloading cache."
-                                     let !p =
-                                             catMaybes $
-                                             map
-                                                 (\x ->
-                                                      case (hexToBlockHash $ snd x) of
-                                                          Just h -> Just (h, (RequestQueued, fromIntegral $ fst x))
-                                                          Nothing -> Nothing)
-                                                 (op)
-                                     mapM
-                                         (\(k, v) -> liftIO $ atomically $ SM.insert v k (blockSyncStatusMap bp2pEnv))
-                                         p
-                                     let e = p !! 0
-                                     return (Just $ BlockInfo (fst e) (snd $ snd e))
-                                 else do
-                                     debug lg $ LG.msg $ val "Still loading block headers, try again!"
-                                     return (Nothing)
-        else do
-            syt <- liftIO $ atomically $ LT.toList $ SM.listT (blockSyncStatusMap bp2pEnv)
-            --
-            mapM
-                (\(bsh, (_, ht)) -> do
-                     liftIO $
-                         atomically $ do
-                             valx <- SM.lookup (bsh) (blockTxProcessingLeftMap bp2pEnv)
-                             case valx of
-                                 Just xv -> do
-                                     siza <- SS.size (fst xv)
-                                     if (siza == snd xv)
-                                         then do
-                                             SM.insert (BlockProcessingComplete, ht) (bsh) (blockSyncStatusMap bp2pEnv)
-                                         else return ()
-                                 Nothing -> return ())
-                (syt)
-            --
-            let unsent = L.filter (\x -> (fst $ snd x) == RequestQueued) syt
-            let sent =
-                    L.filter
-                        (\x ->
-                             case fst $ snd x of
-                                 RequestSent _ -> True
-                                 otherwise -> False)
-                        syt
-            let recvNotStarted = L.filter (\(_, ((RequestSent t), _)) -> (diffUTCTime tm t > 10)) sent
-            let receiveInProgress =
-                    L.filter
-                        (\x ->
-                             case fst $ snd x of
-                                 RecentTxReceiveTime _ -> True
-                                 otherwise -> False)
-                        syt
-            let recvTimedOut =
-                    L.filter (\(_, ((RecentTxReceiveTime (t, c)), _)) -> (diffUTCTime tm t > 30)) receiveInProgress
-            let recvComplete =
-                    L.filter
-                        (\x ->
-                             case fst $ snd x of
-                                 BlockReceiveComplete _ -> True
-                                 otherwise -> False)
-                        syt
-            let processingIncomplete =
-                    L.filter (\(_, ((BlockReceiveComplete t), _)) -> (diffUTCTime tm t > 360)) recvComplete
-            -- all blocks received, empty the cache, cache-miss gracefully
-            debug lg $
-                LG.msg $
-                ("recv in progress, awaiting: " ++
-                 show receiveInProgress ++ " | recveived but still processing: " ++ show recvComplete)
-            if L.length sent == 0 &&
-               L.length unsent == 0 && L.length receiveInProgress == 0 && L.length recvComplete == 0
+runBlockCacheQueue :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
+runBlockCacheQueue =
+    forever $ do
+        liftIO $ threadDelay (2 * 1000000)
+        lg <- getLogger
+        bp2pEnv <- getBitcoinP2P
+        dbe <- getDB
+        !tm <- liftIO $ getCurrentTime
+        debug lg $ LG.msg $ val "getNextBlockToSync - called."
+        let net = bitcoinNetwork $ nodeConfig bp2pEnv
+            conn = keyValDB dbe
+            connPool = connection dbe
+        sysz <- liftIO $ atomically $ SM.size (blockSyncStatusMap bp2pEnv)
+        -- reload cache
+        retn <-
+            if sysz == 0
                 then do
-                    let !lelm = last $ L.sortOn (snd . snd) (syt)
-                    debug lg $ LG.msg $ ("DEBUG, marking best synced " ++ show (blockHashToHex $ fst $ lelm))
-                    markBestSyncedBlock (blockHashToHex $ fst $ lelm) (fromIntegral $ snd $ snd $ lelm) connPool
-                    -- liftIO $ putMVar (blockSyncStatusMap bp2pEnv) M.empty
-                    liftIO $ atomically $ SM.reset (blockSyncStatusMap bp2pEnv)
-                    return Nothing
+                    (hash, ht) <- fetchBestSyncedBlock conn net
+                    allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
+                    let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
+                    let cacheInd =
+                            if L.length connPeers > 4
+                                then getBatchSize (fromIntegral $ maxBitcoinPeerCount $ nodeConfig bp2pEnv) ht
+                                else [1]
+                    let !bks = map (\x -> ht + x) cacheInd
+                    let str = "SELECT block_height, block_hash from xoken.blocks_by_height where block_height in ?"
+                        qstr = str :: Q.QueryString Q.R (Identity [Int32]) ((Int32, T.Text))
+                        p = Q.defQueryParams Q.One $ Identity (bks)
+                    res <- liftIO $ try $ Q.runClient conn (Q.query (Q.prepared qstr) p)
+                    case res of
+                        Left (e :: SomeException) -> do
+                            err lg $ LG.msg ("Error: getNextBlockToSync: " ++ show e)
+                            throw e
+                        Right (op) -> do
+                            if L.length op == 0
+                                then do
+                                    debug lg $ LG.msg $ val "Synced fully!"
+                                    return (Nothing)
+                                else if L.length op == (fromIntegral $ last cacheInd)
+                                         then do
+                                             debug lg $ LG.msg $ val "Reloading cache."
+                                             let !p =
+                                                     catMaybes $
+                                                     map
+                                                         (\x ->
+                                                              case (hexToBlockHash $ snd x) of
+                                                                  Just h ->
+                                                                      Just (h, (RequestQueued, fromIntegral $ fst x))
+                                                                  Nothing -> Nothing)
+                                                         (op)
+                                             mapM
+                                                 (\(k, v) ->
+                                                      liftIO $ atomically $ SM.insert v k (blockSyncStatusMap bp2pEnv))
+                                                 p
+                                             let e = p !! 0
+                                             return (Just $ BlockInfo (fst e) (snd $ snd e))
+                                         else do
+                                             debug lg $ LG.msg $ val "Still loading block headers, try again!"
+                                             return (Nothing)
                 else do
                     syt <- liftIO $ atomically $ LT.toList $ SM.listT (blockSyncStatusMap bp2pEnv)
                     --
@@ -458,7 +406,7 @@ getNextBlockToSync tm = do
                         then do
                             let !lelm = last $ L.sortOn (snd . snd) (syt)
                             debug lg $ LG.msg $ ("marking best synced " ++ show (blockHashToHex $ fst $ lelm))
-                            markBestSyncedBlock (blockHashToHex $ fst $ lelm) (fromIntegral $ snd $ snd $ lelm) conn
+                            markBestSyncedBlock (blockHashToHex $ fst $ lelm) (fromIntegral $ snd $ snd $ lelm) connPool
                             liftIO $ atomically $ SM.reset (blockSyncStatusMap bp2pEnv)
                             return Nothing
                         else do
@@ -482,64 +430,6 @@ getNextBlockToSync tm = do
   where
     getHead l = head $ L.sortOn (snd . snd) (l)
     mkBlkInf h = Just $ BlockInfo (fst h) (snd $ snd h)
-
-runBlockCacheQueue :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
-runBlockCacheQueue =
-    forever $ do
-        liftIO $ threadDelay (2 * 1000000)
-        lg <- getLogger
-        bp2pEnv <- getBitcoinP2P
-        conn <- keyValDB <$> getDB
-        !tm <- liftIO $ getCurrentTime
-        debug lg $ LG.msg $ val "getNextBlockToSync - called."
-        let net = bitcoinNetwork $ nodeConfig bp2pEnv
-        sysz <- liftIO $ atomically $ SM.size (blockSyncStatusMap bp2pEnv)
-        -- reload cache
-        retn <-
-            if sysz == 0
-                then do
-                    (hash, ht) <- fetchBestSyncedBlock conn net
-                    allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
-                    let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
-                    let cacheInd =
-                            if L.length connPeers > 4
-                                then getBatchSize (fromIntegral $ maxBitcoinPeerCount $ nodeConfig bp2pEnv) ht
-                                else [1]
-                    let !bks = map (\x -> ht + x) cacheInd
-                    let str = "SELECT block_height, block_hash from xoken.blocks_by_height where block_height in ?"
-                        qstr = str :: Q.QueryString Q.R (Identity [Int32]) ((Int32, T.Text))
-                        p = Q.defQueryParams Q.One $ Identity (bks)
-                    res <- liftIO $ try $ Q.runClient conn (Q.query (Q.prepared qstr) p)
-                    case res of
-                        Left (e :: SomeException) -> do
-                            err lg $ LG.msg ("Error: getNextBlockToSync: " ++ show e)
-                            throw e
-                        Right (op) -> do
-                            if L.length op == 0
-                                then do
-                                    debug lg $ LG.msg $ val "Synced fully!"
-                                    return (Nothing)
-                                else if L.length op == (fromIntegral $ last cacheInd)
-                                         then do
-                                             debug lg $ LG.msg $ val "Reloading cache."
-                                             let !p =
-                                                     catMaybes $
-                                                     map
-                                                         (\x ->
-                                                              case (hexToBlockHash $ snd x) of
-                                                                  Just h ->
-                                                                      Just (h, (RequestQueued, fromIntegral $ fst x))
-                                                                  Nothing -> Nothing)
-                                                         (op)
-                                             mapM
-                                                 (\(k, v) ->
-                                                      liftIO $ atomically $ SM.insert v k (blockSyncStatusMap bp2pEnv))
-                                                 p
-                                             let e = p !! 0
-                                             return (Just $ BlockInfo (fst e) (snd $ snd e))
-                                         else do
-                                             debug lg $ LG.msg $ val "Still loading block headers, try again!"
-                                             return (Nothing)
 
 fetchBestSyncedBlock :: (HasLogger m, MonadIO m) => Q.ClientState -> Network -> m ((BlockHash, Int32))
 fetchBestSyncedBlock conn net = do

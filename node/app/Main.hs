@@ -376,8 +376,7 @@ defaultAdminUser conn = do
 makeKeyValDBConn :: IO (Q.ClientState)
 makeKeyValDBConn = do
     let logg = Q.stdoutLogger Q.LogWarn
-        stng = Q.setMaxStreams 200 $ Q.setMaxConnections 20 $ Q.setPoolStripes 10 $ Q.setLogger logg Q.defSettings
-        --stng = Q.setMaxStreams 2048 $ Q.setMaxConnections 256 $ Q.setPoolStripes 12 $ Q.setLogger logg Q.defSettings
+        stng = Q.setMaxStreams 2048 $ Q.setMaxConnections 256 $ Q.setPoolStripes 12 $ Q.setLogger logg Q.defSettings
         stng2 = Q.setRetrySettings Q.eagerRetrySettings stng
         qstr = "SELECT cql_version from system.local" :: Q.QueryString Q.R () (Identity T.Text)
         p = Q.defQueryParams Q.One ()
