@@ -238,14 +238,15 @@ runThreads config nodeConf bp2p conn lg p2pEnv certPaths = do
                 bp2pEnv <- getBitcoinP2P
                 withAsync runEpochSwitcher $ \_ -> do
                     withAsync setupSeedPeerConnection $ \_ -> do
-                        withAsync runEgressChainSync $ \_ -> do
-                            withAsync runEgressBlockSync $ \_ -> do
-                                withAsync (handleNewConnectionRequest epHandler) $ \_ -> do
-                                    withAsync runPeerSync $ \_ -> do
-                                        withAsync runSyncStatusChecker $ \_ -> do
-                                            withAsync runWatchDog $ \z -> do
-                                                _ <- LA.wait z
-                                                return ())
+                        withAsync runEgressChainSync $ \_
+                            -- withAsync runEgressBlockSync $ \_ -> do
+                         -> do
+                            withAsync (handleNewConnectionRequest epHandler) $ \_ -> do
+                                withAsync runPeerSync $ \_ -> do
+                                    withAsync runSyncStatusChecker $ \_ -> do
+                                        withAsync runWatchDog $ \z -> do
+                                            _ <- LA.wait z
+                                            return ())
     liftIO $ Q.shutdown conn
     liftIO $ destroyAllResources $ pool gdbState
     liftIO $ putStrLn $ "node recovering from fatal DB connection failure!"

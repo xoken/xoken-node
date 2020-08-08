@@ -81,7 +81,7 @@ data BlockSyncException
     | InvalidBlockIngestStateException
     | InvalidMetaDataException
     | InvalidBlockHashException
-    | UnexpectedDuringBlockProcException
+    | UnexpectedDuringBlockProcException String
     | InvalidBlockSyncStatusMapException
     | InvalidBlockInfoException
     | OutpointAddressNotFoundException
