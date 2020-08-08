@@ -38,10 +38,13 @@ type Host = String
 -- | Type alias for a port number.
 type Port = Int
 
+type CqlConnection = Pool Socket
+
 data DatabaseHandles =
     DatabaseHandles
         { keyValDB :: !Q.ClientState
         , graphDB :: !ServerState
+        , connection :: !(CqlConnection)
         }
 
 -- | Data structure representing an bitcoin peer.

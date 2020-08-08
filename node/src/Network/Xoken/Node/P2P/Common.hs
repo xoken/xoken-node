@@ -36,6 +36,7 @@ import Data.Int
 import qualified Data.List as L
 import qualified Data.Map.Strict as M
 import Data.Maybe
+import Data.Pool
 import Data.Serialize
 import Data.Serialize as S
 import Data.String.Conversions
@@ -46,6 +47,7 @@ import Data.Time.Clock
 import Data.Time.Clock.POSIX
 import Data.Word
 import qualified Database.CQL.IO as Q
+import Database.CQL.Protocol as QP hiding (Version)
 import Network.Socket
 import qualified Network.Socket.ByteString as SB (recv)
 import qualified Network.Socket.ByteString.Lazy as LB (recv, sendAll)
@@ -119,6 +121,7 @@ data AriviServiceException
     = KeyValueDBLookupException
     | GraphDBLookupException
     | InvalidOutputAddressException
+    | KeyValPoolException
     deriving (Show)
 
 instance Exception AriviServiceException
@@ -331,3 +334,72 @@ splitList :: [a] -> ([a], [a])
 splitList xs = (f 1 xs, f 0 xs)
   where
     f n a = map fst . filter (odd . snd) . zip a $ [n ..]
+
+getSimpleQueryParam :: Tuple a => a -> QueryParams a
+getSimpleQueryParam a = QP.QueryParams QP.One False a Nothing Nothing Nothing Nothing
+
+query :: (Tuple a, Tuple b) => CqlConnection -> Request k a b -> IO (Response k a b)
+query ps req = do
+    let i = mkStreamId 0
+    withResource ps $ \sock -> do
+        case (QP.pack QP.V3 noCompression False i req) of
+            Right qp -> do
+                LB.sendAll sock qp
+                b <- LB.recv sock 9
+                h' <- return $ header QP.V3 b
+                case h' of
+                    Left s -> do
+                        print $ "[Error] Query: header error: " ++ s
+                        throw KeyValPoolException
+                    Right h -> do
+                        case headerType h of
+                            RqHeader -> do
+                                print "[Error] Query: RqHeader"
+                                throw KeyValPoolException
+                            RsHeader -> do
+                                let len = lengthRepr (bodyLength h)
+                                x <- LB.recv sock (fromIntegral len)
+                                case QP.unpack noCompression h x of
+                                    Left e -> do
+                                        print "[Error] Query: unpack"
+                                        throw KeyValPoolException
+                                    Right (RsError _ _ e) -> do
+                                        print $ "[Error] Query: RsError: " ++ show e
+                                        throw KeyValPoolException
+                                    Right response -> return response
+            Left _ -> do
+                print "[Error] Query: pack"
+                throw KeyValPoolException
+
+connHandshake :: (Tuple a, Tuple b) => Socket -> Request k a b -> IO (Response k a b)
+connHandshake sock req = do
+    let i = mkStreamId 0
+    case (QP.pack QP.V3 noCompression False i req) of
+        Right qp -> do
+            LB.sendAll sock qp
+            b <- LB.recv sock 9
+            h' <- return $ header QP.V3 b
+            case h' of
+                Left s -> do
+                    print $ "[Error] Query: header error: " ++ s
+                    throw KeyValPoolException
+                Right h -> do
+                    case headerType h of
+                        RqHeader -> do
+                            print "[Error] Query: RqHeader"
+                            throw KeyValPoolException
+                        RsHeader -> do
+                            case QP.unpack noCompression h "" of
+                                Right r@(RsReady _ _ Ready) -> return r
+                                Left e -> do
+                                    print "[Error] Query: unpack"
+                                    throw KeyValPoolException
+                                Right (RsError _ _ e) -> do
+                                    print $ "[Error] Query: RsError: " ++ show e
+                                    throw KeyValPoolException
+                                Right _ -> do
+                                    print $ "[Error] Query: Response is not ready"
+                                    throw KeyValPoolException
+        Left _ -> do
+            print "[Error] Query: pack"
+            throw KeyValPoolException

@@ -86,7 +86,7 @@ import Data.Word (Word32)
 import Data.Word
 import qualified Database.Bolt as BT
 import qualified Database.CQL.IO as Q
-import Database.CQL.Protocol
+import Database.CQL.Protocol as DCP
 import Network.Simple.TCP
 import Network.Socket
 import Network.Xoken.Node.AriviService
@@ -215,7 +215,19 @@ runThreads ::
     -> IO ()
 runThreads config nodeConf bp2p conn lg p2pEnv certPaths = do
     gdbState <- makeGraphDBResPool (neo4jUsername nodeConf) (neo4jPassword nodeConf)
-    let dbh = DatabaseHandles conn gdbState
+    let hints = defaultHints {addrFlags = [AI_NUMERICHOST, AI_NUMERICSERV], addrSocketType = Stream}
+        startCql :: DCP.Request k () ()
+        startCql = DCP.RqStartup $ DCP.Startup DCP.Cqlv300 (DCP.algorithm DCP.noCompression) --(DCP.CqlVersion "3.4.4") DCP.None
+    (addr:_) <- getAddrInfo (Just hints) (Just "127.0.0.1") (Just "9042")
+    connPool <-
+        createPool
+            (socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr) >>= \s ->
+                 Network.Socket.connect s (addrAddress addr) >> connHandshake s startCql >> return s)
+            (Network.Socket.close)
+            1
+            (1800000000000)
+            200
+    let dbh = DatabaseHandles conn gdbState connPool
     let allegoryEnv = AllegoryEnv $ allegoryVendorSecretKey nodeConf
     let xknEnv = XokenNodeEnv bp2p dbh lg allegoryEnv
     let serviceEnv = ServiceEnv xknEnv p2pEnv
