@@ -334,20 +334,15 @@ splitList xs = (f 1 xs, f 0 xs)
   where
     f n a = map fst . filter (odd . snd) . zip a $ [n ..]
 
-query :: (Tuple a, Tuple b) => QP.Version -> (Pool Socket) -> Request k a b -> IO (Response k a b)
-query v ps req = do
+query :: (Tuple a, Tuple b) => (Pool Socket) -> Request k a b -> IO (Response k a b)
+query ps req = do
     let i = mkStreamId 0
     withResource ps $ \sock -> do
-        case (QP.pack v noCompression False i req) of
+        case (QP.pack QP.V3 noCompression False i req) of
             Right qp -> do
                 LB.sendAll sock qp
-                b <-
-                    LB.recv
-                        sock
-                        (if v == V3
-                             then 9
-                             else 8)
-                h' <- return $ header v b
+                b <- LB.recv sock 9
+                h' <- return $ header QP.V3 b
                 case h' of
                     Left s -> do
                         print $ "[Error] Query: header error: " ++ s
@@ -372,19 +367,14 @@ query v ps req = do
                 print "[Error] Query: pack"
                 throw KeyValPoolException
 
-connHandshake :: (Tuple a, Tuple b) => QP.Version -> Socket -> Request k a b -> IO (Response k a b)
-connHandshake v sock req = do
+connHandshake :: (Tuple a, Tuple b) => Socket -> Request k a b -> IO (Response k a b)
+connHandshake sock req = do
     let i = mkStreamId 0
-    case (QP.pack v noCompression False i req) of
+    case (QP.pack QP.V3 noCompression False i req) of
         Right qp -> do
             LB.sendAll sock qp
-            b <-
-                LB.recv
-                    sock
-                    (if v == V3
-                         then 9
-                         else 8)
-            h' <- return $ header v b
+            b <- LB.recv sock 9
+            h' <- return $ header QP.V3 b
             case h' of
                 Left s -> do
                     print $ "[Error] Query: header error: " ++ s

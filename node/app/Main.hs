@@ -218,17 +218,15 @@ runThreads config nodeConf bp2p conn lg p2pEnv certPaths = do
         startCql :: DCP.Request k () ()
         startCql = DCP.RqStartup $ DCP.Startup DCP.Cqlv300 (DCP.algorithm DCP.noCompression) --(DCP.CqlVersion "3.4.4") DCP.None
     (addr:_) <- getAddrInfo (Just hints) (Just "127.0.0.1") (Just "9042")
-    sock <- (socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr))
-    connHandshake DCP.V3 sock startCql
-    sckPool <-
+    connPool <-
         createPool
-            (return sock >>= \s ->
-                 Network.Socket.connect s (addrAddress addr) >> return s)
+            (socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr) >>= \s ->
+                 Network.Socket.connect s (addrAddress addr) >> connHandshake s startCql >> return s)
             (Network.Socket.close)
             1
             (1800000000000)
             200
-    let dbh = DatabaseHandles conn gdbState (sckPool)
+    let dbh = DatabaseHandles conn gdbState connPool
     let allegoryEnv = AllegoryEnv $ allegoryVendorSecretKey nodeConf
     let xknEnv = XokenNodeEnv bp2p dbh lg allegoryEnv
     let serviceEnv = ServiceEnv xknEnv p2pEnv

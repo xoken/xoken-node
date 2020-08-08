@@ -152,8 +152,8 @@ validateChainedBlockHeaders hdrs = do
         pairs = zip xs (drop 1 xs)
     L.foldl' (\ac x -> ac && (headerHash $ fst (fst x)) == (prevBlock $ fst (snd x))) True pairs
 
-markBestBlock :: (HasLogger m, MonadIO m) => Text -> Int32 -> Pool Socket -> m ()
-markBestBlock hash height sock = do
+markBestBlock :: (HasLogger m, MonadIO m) => Text -> Int32 -> CqlConnection -> m ()
+markBestBlock hash height connPool = do
     lg <- getLogger
     --let str = "insert INTO xoken.misc_store (key, value) values (? , ?)"
     --    qstr = str :: Q.QueryString Q.W (Text, (Maybe Bool, Int32, Maybe Int64, Text)) ()
@@ -162,8 +162,16 @@ markBestBlock hash height sock = do
     let q :: DCP.QueryString DCP.W (Text, (Maybe Bool, Int32, Maybe Int64, Text)) ()
         q = DCP.QueryString "insert INTO xoken.misc_store (key, value) values (? , ?)"
         p :: DCP.QueryParams (Text, (Maybe Bool, Int32, Maybe Int64, Text))
-        p = DCP.QueryParams DCP.One False ("best_chain_tip", (Nothing, height, Nothing, hash)) Nothing Nothing Nothing Nothing
-    res <- liftIO $ try $ query DCP.V3 sock (DCP.RqQuery $ DCP.Query q p) 
+        p =
+            DCP.QueryParams
+                DCP.One
+                False
+                ("best_chain_tip", (Nothing, height, Nothing, hash))
+                Nothing
+                Nothing
+                Nothing
+                Nothing
+    res <- liftIO $ try $ query connPool (DCP.RqQuery $ DCP.Query q p)
     case res of
         Right _ -> return ()
         Left (e :: SomeException) -> do
@@ -224,7 +232,7 @@ processHeaders hdrs = do
             let net = bitcoinNetwork $ nodeConfig bp2pEnv
                 genesisHash = blockHashToHex $ headerHash $ getGenesisHeader net
                 conn = keyValDB $ dbe'
-                sock = sockPool dbe'
+                connPool = connection dbe'
                 headPrevHash = (blockHashToHex $ prevBlock $ fst $ head $ headersList hdrs)
                 hdrHash y = headerHash $ fst y
                 validate m = validateWithCheckPoint net (fromIntegral m) (hdrHash <$> (headersList hdrs))
@@ -331,7 +339,7 @@ processHeaders hdrs = do
                                 err lg $ LG.msg ("Error: SELECT from 'blocks_by_height' for height :" ++ show height)
                                 throw KeyValueDBLookupException
                 updateChainWork indexed conn
-                markBestBlock (blockHashToHex $ headerHash $ fst $ snd $ last $ indexed) (fst $ last indexed) sock
+                markBestBlock (blockHashToHex $ headerHash $ fst $ snd $ last $ indexed) (fst $ last indexed) connPool
                 liftIO $ putMVar (bestBlockUpdated bp2pEnv) True
         False -> do
             err lg $ LG.msg $ val "Error: BlocksNotChainedException"
