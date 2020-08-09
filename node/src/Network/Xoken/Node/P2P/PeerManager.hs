@@ -66,6 +66,7 @@ import Network.Xoken.Constants
 import Network.Xoken.Crypto.Hash
 import Network.Xoken.Network.Common
 import Network.Xoken.Network.Message
+import qualified Network.Xoken.Node.Data.ThreadSafeHashTable as TSH
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.GraphDB
 import Network.Xoken.Node.P2P.BlockSync
@@ -576,17 +577,16 @@ readNextMessage net sock ingss = do
                             Just bf ->
                                 if (binTxIngested blin == 0) -- very first Tx
                                     then do
-                                        liftIO $
-                                            atomically $ do
-                                                vala <- SM.lookup (biBlockHash $ bf) (blockTxProcessingLeftMap p2pEnv)
-                                                case vala of
-                                                    Just v -> return ()
-                                                    Nothing -> do
-                                                        ar <- SS.new
-                                                        SM.insert
-                                                            (ar, (binTxTotalCount blin))
-                                                            (biBlockHash $ bf)
-                                                            (blockTxProcessingLeftMap p2pEnv)
+                                        liftIO $ do
+                                            vala <- TSH.lookup (blockTxProcessingLeftMap p2pEnv) (biBlockHash $ bf)
+                                            case vala of
+                                                Just v -> return ()
+                                                Nothing -> do
+                                                    ar <- TSH.new 1
+                                                    TSH.insert
+                                                        (blockTxProcessingLeftMap p2pEnv)
+                                                        (biBlockHash $ bf)
+                                                        (ar, (binTxTotalCount blin))
                                         qq <-
                                             liftIO $
                                             atomically $ newTBQueue $ intToNatural (maxTMTQueueSize $ nodeConfig p2pEnv)
@@ -795,13 +795,14 @@ messageHandler peer (mm, ingss) = do
                             let binfo = issBlockInfo iss
                             case binfo of
                                 Just bf -> do
-                                    valx <-
-                                        liftIO $
-                                        atomically $ SM.lookup (biBlockHash bf) (blockTxProcessingLeftMap bp2pEnv)
+                                    valx <- liftIO $ TSH.lookup (blockTxProcessingLeftMap bp2pEnv) (biBlockHash bf)
                                     skip <-
                                         case valx of
-                                            Just lfa ->
-                                                liftIO $ atomically $ SS.lookup ((binTxIngested bi) - 1) (fst lfa)
+                                            Just lfa -> do
+                                                y <- liftIO $ TSH.lookup (fst lfa) ((binTxIngested bi) - 1)
+                                                case y of
+                                                    Just () -> return True
+                                                    Nothing -> return False
                                             Nothing -> return False
                                     if skip
                                         then do
@@ -818,13 +819,14 @@ messageHandler peer (mm, ingss) = do
                                                     ((binTxIngested bi) - 1)
                                                     (fromIntegral $ biBlockHeight bf)
                                             case res of
-                                                Right () ->
-                                                    liftIO $
-                                                    atomically $ do
-                                                        case valx of
-                                                            Just lefta -> do
-                                                                SS.insert ((binTxIngested bi) - 1) (fst lefta)
-                                                            Nothing -> return ()
+                                                Right () -> do
+                                                    valy <-
+                                                        liftIO $
+                                                        TSH.lookup (blockTxProcessingLeftMap bp2pEnv) (biBlockHash bf)
+                                                    case valy of
+                                                        Just lefta ->
+                                                            liftIO $ TSH.insert (fst lefta) ((binTxIngested bi) - 1) ()
+                                                        Nothing -> return ()
                                                 Left BlockHashNotFoundException -> return ()
                                                 Left EmptyHeadersMessageException -> return ()
                                                 Left TxIDNotFoundException -> do
@@ -891,7 +893,7 @@ readNextMessage' peer readLock tracker = do
                         Just (MBlock blk) -- setup state
                          -> do
                             let hh = headerHash $ defBlockHeader blk
-                            mht <- liftIO $ atomically $ SM.lookup hh (blockSyncStatusMap bp2pEnv)
+                            mht <- liftIO $ TSH.lookup (blockSyncStatusMap bp2pEnv) (hh)
                             case (mht) of
                                 Just x -> return ()
                                 Nothing -> do
@@ -908,23 +910,21 @@ readNextMessage' peer readLock tracker = do
                                     if binTxTotalCount ingst == binTxIngested ingst
                                         then do
                                             liftIO $
-                                                atomically $
-                                                SM.insert
-                                                    (BlockReceiveComplete tm, biBlockHeight bi)
-                                                    (biBlockHash bi)
+                                                TSH.insert
                                                     (blockSyncStatusMap bp2pEnv)
+                                                    (biBlockHash bi)
+                                                    (BlockReceiveComplete tm, biBlockHeight bi)
                                             debug lg $
                                                 LG.msg $ ("putMVar readLock Nothing - " ++ (show $ bpAddress peer))
                                             liftIO $ putMVar readLock Nothing
                                         else do
                                             liftIO $
-                                                atomically $
-                                                SM.insert
+                                                TSH.insert
+                                                    (blockSyncStatusMap bp2pEnv)
+                                                    (biBlockHash bi)
                                                     ( RecentTxReceiveTime (tm, binTxIngested ingst)
                                                     , biBlockHeight bi -- track receive progress
                                                      )
-                                                    (biBlockHash bi)
-                                                    (blockSyncStatusMap bp2pEnv)
                                             liftIO $ putMVar readLock ingressState
                                 Nothing -> throw InvalidBlockInfoException
                         otherwise -> throw $ UnexpectedDuringBlockProcException "_1_"

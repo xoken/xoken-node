@@ -91,6 +91,7 @@ import Network.Simple.TCP
 import Network.Socket
 import Network.Xoken.Node.AriviService
 import Network.Xoken.Node.Data
+import Network.Xoken.Node.Data.ThreadSafeHashTable as TSH
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.GraphDB
 import Network.Xoken.Node.HTTP.Server
@@ -379,20 +380,20 @@ defBitcoinP2P nodeCnf = do
     bp <- newTVarIO M.empty
     mv <- newMVar True
     hl <- newMVar True
-    st <- SM.newIO -- newMVar M.empty
-    tl <- SM.newIO -- newMVar M.empty
+    st <- TSH.new 1
+    tl <- TSH.new 1
     ep <- newTVarIO False
     tc <- H.new
     vc <- H.new
     rpf <- newEmptyMVar
     rpc <- newTVarIO 0
-    mq <- SM.newIO -- newTVarIO M.empty
-    ts <- SM.newIO -- newMVar M.empty
+    mq <- SM.newIO
+    ts <- SM.newIO
     tbt <- MS.new $ maxTMTBuilderThreads nodeCnf
     iut <- newTVarIO False
     udc <- H.new
     tpfa <- newTVarIO 0
-    bfq <- liftIO $ newTBQueueIO 100
+    bfq <- newEmptyMVar
     return $ BitcoinP2P nodeCnf g bp mv hl st tl ep tc vc (rpf, rpc) mq ts tbt iut udc tpfa bfq
 
 initNexa :: IO ()

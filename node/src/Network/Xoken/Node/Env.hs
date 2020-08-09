@@ -31,6 +31,7 @@ import GHC.Generics
 import Network.Socket hiding (send)
 import Network.Xoken.Block.Common
 import Network.Xoken.Node.Data
+import Network.Xoken.Node.Data.ThreadSafeHashTable as TSH
 import Network.Xoken.Node.P2P.Types
 import Network.Xoken.Transaction
 import StmContainers.Map as SM
@@ -71,19 +72,19 @@ data BitcoinP2P =
         , blacklistedPeers :: !(TVar (M.Map SockAddr BitcoinPeer))
         , bestBlockUpdated :: !(MVar Bool)
         , headersWriteLock :: !(MVar Bool)
-        , blockSyncStatusMap :: (SM.Map BlockHash (BlockSyncStatus, BlockHeight))
-        , blockTxProcessingLeftMap :: (SM.Map BlockHash ((SS.Set Int), Int))
+        , blockSyncStatusMap :: !(TSH.TSHashTable BlockHash (BlockSyncStatus, BlockHeight))
+        , blockTxProcessingLeftMap :: !(TSH.TSHashTable BlockHash ((TSH.TSHashTable Int ()), Int))
         , epochType :: !(TVar Bool)
         , unconfirmedTxCache :: !(HashTable TxShortHash (Bool, TxHash))
         , txOutputValuesCache :: !(HashTable TxShortHash (TxHash, [(Int16, (Text, Text, Int64))]))
         , peerReset :: !(MVar Bool, TVar Int)
-        , merkleQueueMap :: (SM.Map BlockHash (TBQueue (TxHash, Bool)))
-        , txSynchronizer :: (SM.Map TxHash Event)
+        , merkleQueueMap :: !(SM.Map BlockHash (TBQueue (TxHash, Bool)))
+        , txSynchronizer :: !(SM.Map TxHash Event)
         , maxTMTBuilderThreadLock :: !(MSem Int)
         , indexUnconfirmedTx :: !(TVar Bool)
         , userDataCache :: !(HashTable Text (Text, Int32, Int32, UTCTime, [Text])) -- (name, quota, used, expiry time, roles)
         , txProcFailAttempts :: !(TVar Int)
-        , blockFetchQueue :: !(TBQueue (Maybe BlockInfo))
+        , blockFetchQueue :: !(MVar (BlockInfo))
         }
 
 class HasBitcoinP2P m where
