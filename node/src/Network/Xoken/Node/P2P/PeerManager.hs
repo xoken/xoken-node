@@ -65,6 +65,7 @@ import Network.Xoken.Constants
 import Network.Xoken.Crypto.Hash
 import Network.Xoken.Network.Common
 import Network.Xoken.Network.Message
+import qualified Network.Xoken.Node.Data.ThreadSafeHashTable as TSH
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.GraphDB
 import Network.Xoken.Node.P2P.BlockSync
@@ -167,7 +168,9 @@ setupSeedPeerConnection =
                                                   st <- liftIO $ newTVarIO Nothing
                                                   fw <- liftIO $ newTVarIO 0
                                                   res <- LE.try $ liftIO $ createSocket y
+                                                  trk <- liftIO $ getNewTracker
                                                   ms <- liftIO $ MSN.new $ maxTxProcThreads $ nodeConfig bp2pEnv
+                                                  bfq <- liftIO $ newEmptyMVar
                                                   case res of
                                                       Right (sock) -> do
                                                           case sock of
@@ -181,6 +184,8 @@ setupSeedPeerConnection =
                                                                               fl
                                                                               Nothing
                                                                               99999
+                                                                              trk
+                                                                              bfq
                                                                   liftIO $
                                                                       atomically $
                                                                       modifyTVar'
@@ -239,11 +244,13 @@ setupPeerConnection saddr = do
                                      st <- liftIO $ newTVarIO Nothing
                                      fw <- liftIO $ newTVarIO 0
                                      ms <- liftIO $ MSN.new $ maxTxProcThreads $ nodeConfig bp2pEnv
+                                     trk <- liftIO $ getNewTracker
+                                     bfq <- liftIO $ newEmptyMVar
                                      case sock of
                                          Just sx -> do
                                              debug lg $ LG.msg ("Discovered Net-Address: " ++ (show $ saddr))
                                              fl <- doVersionHandshake net sx $ saddr
-                                             let bp = BitcoinPeer (saddr) sock wl fl Nothing 99999
+                                             let bp = BitcoinPeer (saddr) sock wl fl Nothing 99999 trk bfq
                                              liftIO $
                                                  atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.insert (saddr) bp)
                                              return $ Just bp
@@ -577,17 +584,16 @@ readNextMessage net sock ingss = do
                             Just bf ->
                                 if (binTxIngested blin == 0) -- very first Tx
                                     then do
-                                        liftIO $
-                                            atomically $ do
-                                                vala <- SM.lookup (biBlockHash $ bf) (blockTxProcessingLeftMap p2pEnv)
-                                                case vala of
-                                                    Just v -> return ()
-                                                    Nothing -> do
-                                                        ar <- SS.new
-                                                        SM.insert
-                                                            (ar, (binTxTotalCount blin))
-                                                            (biBlockHash $ bf)
-                                                            (blockTxProcessingLeftMap p2pEnv)
+                                        liftIO $ do
+                                            vala <- TSH.lookup (blockTxProcessingLeftMap p2pEnv) (biBlockHash $ bf)
+                                            case vala of
+                                                Just v -> return ()
+                                                Nothing -> do
+                                                    ar <- TSH.new 1
+                                                    TSH.insert
+                                                        (blockTxProcessingLeftMap p2pEnv)
+                                                        (biBlockHash $ bf)
+                                                        (ar, (binTxTotalCount blin))
                                         qq <-
                                             liftIO $
                                             atomically $ newTBQueue $ intToNatural (maxTMTQueueSize $ nodeConfig p2pEnv)
@@ -796,13 +802,14 @@ messageHandler peer (mm, ingss) = do
                             let binfo = issBlockInfo iss
                             case binfo of
                                 Just bf -> do
-                                    valx <-
-                                        liftIO $
-                                        atomically $ SM.lookup (biBlockHash bf) (blockTxProcessingLeftMap bp2pEnv)
+                                    valx <- liftIO $ TSH.lookup (blockTxProcessingLeftMap bp2pEnv) (biBlockHash bf)
                                     skip <-
                                         case valx of
-                                            Just lfa ->
-                                                liftIO $ atomically $ SS.lookup ((binTxIngested bi) - 1) (fst lfa)
+                                            Just lfa -> do
+                                                y <- liftIO $ TSH.lookup (fst lfa) ((binTxIngested bi) - 1)
+                                                case y of
+                                                    Just () -> return True
+                                                    Nothing -> return False
                                             Nothing -> return False
                                     if skip
                                         then do
@@ -819,13 +826,14 @@ messageHandler peer (mm, ingss) = do
                                                     ((binTxIngested bi) - 1)
                                                     (fromIntegral $ biBlockHeight bf)
                                             case res of
-                                                Right () ->
-                                                    liftIO $
-                                                    atomically $ do
-                                                        case valx of
-                                                            Just lefta -> do
-                                                                SS.insert ((binTxIngested bi) - 1) (fst lefta)
-                                                            Nothing -> return ()
+                                                Right () -> do
+                                                    valy <-
+                                                        liftIO $
+                                                        TSH.lookup (blockTxProcessingLeftMap bp2pEnv) (biBlockHash bf)
+                                                    case valy of
+                                                        Just lefta ->
+                                                            liftIO $ TSH.insert (fst lefta) ((binTxIngested bi) - 1) ()
+                                                        Nothing -> return ()
                                                 Left BlockHashNotFoundException -> return ()
                                                 Left EmptyHeadersMessageException -> return ()
                                                 Left TxIDNotFoundException -> do
@@ -875,12 +883,12 @@ readNextMessage' ::
        (HasXokenNodeEnv env m, MonadIO m)
     => BitcoinPeer
     -> MVar (Maybe IngressStreamState)
-    -> PeerTracker
     -> m ((Maybe Message, Maybe IngressStreamState))
-readNextMessage' peer readLock tracker = do
+readNextMessage' peer readLock = do
     bp2pEnv <- getBitcoinP2P
     lg <- getLogger
     let net = bitcoinNetwork $ nodeConfig bp2pEnv
+        tracker = statsTracker peer
     case bpSocket peer of
         Just sock -> do
             prevIngressState <- liftIO $ takeMVar $ readLock
@@ -892,7 +900,7 @@ readNextMessage' peer readLock tracker = do
                         Just (MBlock blk) -- setup state
                          -> do
                             let hh = headerHash $ defBlockHeader blk
-                            mht <- liftIO $ atomically $ SM.lookup hh (blockSyncStatusMap bp2pEnv)
+                            mht <- liftIO $ TSH.lookup (blockSyncStatusMap bp2pEnv) (hh)
                             case (mht) of
                                 Just x -> return ()
                                 Nothing -> do
@@ -909,23 +917,21 @@ readNextMessage' peer readLock tracker = do
                                     if binTxTotalCount ingst == binTxIngested ingst
                                         then do
                                             liftIO $
-                                                atomically $
-                                                SM.insert
-                                                    (BlockReceiveComplete tm, biBlockHeight bi)
-                                                    (biBlockHash bi)
+                                                TSH.insert
                                                     (blockSyncStatusMap bp2pEnv)
+                                                    (biBlockHash bi)
+                                                    (BlockReceiveComplete tm, biBlockHeight bi)
                                             debug lg $
                                                 LG.msg $ ("putMVar readLock Nothing - " ++ (show $ bpAddress peer))
                                             liftIO $ putMVar readLock Nothing
                                         else do
                                             liftIO $
-                                                atomically $
-                                                SM.insert
+                                                TSH.insert
+                                                    (blockSyncStatusMap bp2pEnv)
+                                                    (biBlockHash bi)
                                                     ( RecentTxReceiveTime (tm, binTxIngested ingst)
                                                     , biBlockHeight bi -- track receive progress
                                                      )
-                                                    (biBlockHash bi)
-                                                    (blockSyncStatusMap bp2pEnv)
                                             liftIO $ putMVar readLock ingressState
                                 Nothing -> throw InvalidBlockInfoException
                         otherwise -> throw $ UnexpectedDuringBlockProcException "_1_"
@@ -941,19 +947,12 @@ handleIncomingMessages pr = do
     lg <- getLogger
     debug lg $ msg $ "reading from: " ++ show (bpAddress pr)
     rlk <- liftIO $ newMVar Nothing
-    --
-    imc <- liftIO $ newIORef 0
-    rc <- liftIO $ newIORef Nothing
-    st <- liftIO $ newIORef Nothing
-    fw <- liftIO $ newIORef 0
-    let tracker = PeerTracker imc rc st fw
-    --
     res <-
         LE.try $
         LA.concurrently_
-            (peerBlockSync pr tracker)
+            (peerBlockSync pr)
             (S.drain $
-             asyncly $ S.repeatM (readNextMessage' pr rlk tracker) & S.mapM (messageHandler pr) & S.mapM (logMessage pr))
+             asyncly $ S.repeatM (readNextMessage' pr rlk) & S.mapM (messageHandler pr) & S.mapM (logMessage pr))
     case res of
         Right (a) -> return ()
         Left (e :: SomeException) -> do

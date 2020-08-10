@@ -52,6 +52,7 @@ executable xoken-nexa
       Network.Xoken.Node.Service.Chain
       Network.Xoken.Node.Service.Transaction
       Network.Xoken.Node.Service.User
+      Network.Xoken.Node.Data.ThreadSafeHashTable
 
   ghc-options:  -fprof-auto -fprof-cafs -rtsopts -O2 -threaded -with-rtsopts=-N
   hs-source-dirs:
