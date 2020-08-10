@@ -467,8 +467,8 @@ fetchBestSyncedBlock conn net = do
     lg <- getLogger
     let qstr :: Q.QueryString Q.R (Identity Text) (Identity (Maybe Bool, Maybe Int32, Maybe Int64, Maybe T.Text))
         qstr = "SELECT value from xoken.misc_store where key = ?"
-        p = getSimpleQUeryParam $ Identity "best-synced"
-    iop <- query conn (Q.RqQuery $ Q.Query qstr p)
+        p = getSimpleQueryParam $ Identity "best-synced"
+    iop <- liftIO $ query conn (Q.RqQuery $ Q.Query qstr p)
     if L.length iop == 0
         then do
             debug lg $ LG.msg $ val "Best-synced-block is genesis."

@@ -269,7 +269,7 @@ runSyncStatusChecker :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
 runSyncStatusChecker = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    conn <- keyValDB <$> getDB
+    conn <- connection <$> getDB
     -- wait 300 seconds before first check
     liftIO $ threadDelay (300 * 1000000)
     forever $ do
