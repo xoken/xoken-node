@@ -37,9 +37,9 @@ type HashTable k v = H.BasicHashTable k v
 
 data TSHashTable k v =
     TSHashTable
-        { hashTableList :: [HashTable k v]
-        , hashTableLocks :: [MVar Bool]
-        , size :: Int16
+        { hashTableList :: ![HashTable k v]
+        , hashTableLocks :: ![MVar Bool]
+        , size :: !Int16
         }
 
 type GenericShortHash = Int

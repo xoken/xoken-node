@@ -169,7 +169,9 @@ setupSeedPeerConnection =
                                                   st <- liftIO $ newTVarIO Nothing
                                                   fw <- liftIO $ newTVarIO 0
                                                   res <- LE.try $ liftIO $ createSocket y
+                                                  trk <- liftIO $ getNewTracker
                                                   ms <- liftIO $ MSN.new $ maxTxProcThreads $ nodeConfig bp2pEnv
+                                                  bfq <- liftIO $ newEmptyMVar
                                                   case res of
                                                       Right (sock) -> do
                                                           case sock of
@@ -183,6 +185,8 @@ setupSeedPeerConnection =
                                                                               fl
                                                                               Nothing
                                                                               99999
+                                                                              trk
+                                                                              bfq
                                                                   liftIO $
                                                                       atomically $
                                                                       modifyTVar'
@@ -241,11 +245,13 @@ setupPeerConnection saddr = do
                                      st <- liftIO $ newTVarIO Nothing
                                      fw <- liftIO $ newTVarIO 0
                                      ms <- liftIO $ MSN.new $ maxTxProcThreads $ nodeConfig bp2pEnv
+                                     trk <- liftIO $ getNewTracker
+                                     bfq <- liftIO $ newEmptyMVar
                                      case sock of
                                          Just sx -> do
                                              debug lg $ LG.msg ("Discovered Net-Address: " ++ (show $ saddr))
                                              fl <- doVersionHandshake net sx $ saddr
-                                             let bp = BitcoinPeer (saddr) sock wl fl Nothing 99999
+                                             let bp = BitcoinPeer (saddr) sock wl fl Nothing 99999 trk bfq
                                              liftIO $
                                                  atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.insert (saddr) bp)
                                              return $ Just bp
@@ -876,12 +882,12 @@ readNextMessage' ::
        (HasXokenNodeEnv env m, MonadIO m)
     => BitcoinPeer
     -> MVar (Maybe IngressStreamState)
-    -> PeerTracker
     -> m ((Maybe Message, Maybe IngressStreamState))
-readNextMessage' peer readLock tracker = do
+readNextMessage' peer readLock = do
     bp2pEnv <- getBitcoinP2P
     lg <- getLogger
     let net = bitcoinNetwork $ nodeConfig bp2pEnv
+        tracker = statsTracker peer
     case bpSocket peer of
         Just sock -> do
             prevIngressState <- liftIO $ takeMVar $ readLock
@@ -940,19 +946,12 @@ handleIncomingMessages pr = do
     lg <- getLogger
     debug lg $ msg $ "reading from: " ++ show (bpAddress pr)
     rlk <- liftIO $ newMVar Nothing
-    --
-    imc <- liftIO $ newIORef 0
-    rc <- liftIO $ newIORef Nothing
-    st <- liftIO $ newIORef Nothing
-    fw <- liftIO $ newIORef 0
-    let tracker = PeerTracker imc rc st fw
-    --
     res <-
         LE.try $
         LA.concurrently_
-            (peerBlockSync pr tracker)
+            (peerBlockSync pr)
             (S.drain $
-             asyncly $ S.repeatM (readNextMessage' pr rlk tracker) & S.mapM (messageHandler pr) & S.mapM (logMessage pr))
+             asyncly $ S.repeatM (readNextMessage' pr rlk) & S.mapM (messageHandler pr) & S.mapM (logMessage pr))
     case res of
         Right (a) -> return ()
         Left (e :: SomeException) -> do

@@ -393,8 +393,7 @@ defBitcoinP2P nodeCnf = do
     iut <- newTVarIO False
     udc <- H.new
     tpfa <- newTVarIO 0
-    bfq <- newEmptyMVar
-    return $ BitcoinP2P nodeCnf g bp mv hl st tl ep tc vc (rpf, rpc) mq ts tbt iut udc tpfa bfq
+    return $ BitcoinP2P nodeCnf g bp mv hl st tl ep tc vc (rpf, rpc) mq ts tbt iut udc tpfa
 
 initNexa :: IO ()
 initNexa = do

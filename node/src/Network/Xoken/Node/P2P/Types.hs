@@ -10,6 +10,7 @@ import Control.Concurrent.MVar
 import Control.Concurrent.QSem
 import Control.Concurrent.STM
 import Control.Concurrent.STM.TSem
+import Control.Monad.IO.Class
 import qualified Data.ByteString as B
 import Data.Functor.Identity
 import Data.IORef
@@ -47,20 +48,14 @@ data DatabaseHandles =
 -- | Data structure representing an bitcoin peer.
 data BitcoinPeer =
     BitcoinPeer
-        { bpAddress :: !SockAddr
-      -- ^ network address
-        , bpSocket :: !(Maybe Socket)
-      -- ^ live stream socket
-       --  , bpReadMsgLock :: !(MVar Bool)
-      -- ^  read message lock
-        , bpWriteMsgLock :: !(MVar Bool)
-      -- ^ write message lock
-        , bpConnected :: !Bool
-      -- ^ peer is connected and ready
-        , bpVersion :: !(Maybe Version)
-      -- ^ protocol version
-        , bpNonce :: !Word64
-      -- ^ random nonce sent during handshake
+        { bpAddress :: !SockAddr --  network address
+        , bpSocket :: !(Maybe Socket) --  live stream socket
+        , bpWriteMsgLock :: !(MVar Bool) --  write message lock
+        , bpConnected :: !Bool --  peer is connected and ready
+        , bpVersion :: !(Maybe Version) -- protocol version
+        , bpNonce :: !Word64 -- random nonce sent during handshake
+        , statsTracker :: !PeerTracker -- track sync stats
+        , blockFetchQueue :: !(MVar (BlockInfo))
         }
 
 data PeerTracker =
@@ -69,8 +64,16 @@ data PeerTracker =
         , ptLastTxRecvTime :: !(IORef (Maybe UTCTime)) -- last tx recv time
         , ptLastGetDataSent :: !(IORef (Maybe UTCTime)) -- block 'GetData' sent time
         , ptBlockFetchWindow :: !(IORef Int) -- number of outstanding blocks
-        -- , Ping :: !(Maybe (UTCTime, Word64)) -- last sent ping time and nonce
+        -- ptLastPing , Ping :: !(Maybe (UTCTime, Word64)) -- last sent ping time and nonce
         }
+
+getNewTracker :: IO (PeerTracker)
+getNewTracker = do
+    imc <- liftIO $ newIORef 0
+    rc <- liftIO $ newIORef Nothing
+    st <- liftIO $ newIORef Nothing
+    fw <- liftIO $ newIORef 0
+    return $ PeerTracker imc rc st fw
 
 instance Show BitcoinPeer where
     show p = (show $ bpAddress p) ++ " : " ++ (show $ bpConnected p)

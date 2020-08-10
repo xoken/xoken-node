@@ -62,6 +62,7 @@ import Data.Serialize as S
 import Data.String.Conversions
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.Time.Calendar
 import Data.Time.Clock
 import Data.Time.Clock
 import Data.Time.Clock.POSIX
@@ -101,12 +102,13 @@ import System.Random
 import Xoken
 import Xoken.NodeConfig
 
-produceGetDataMessage :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m (Message)
-produceGetDataMessage = do
+produceGetDataMessage :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BitcoinPeer -> m (Message)
+produceGetDataMessage peer = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    debug lg $ LG.msg $ val "Block - produceGetDataMessage - called."
-    bl <- liftIO $ takeMVar (blockFetchQueue bp2pEnv)
+    debug lg $ LG.msg $ "Block - produceGetDataMessage - called." ++ (show peer)
+    bl <- liftIO $ takeMVar (blockFetchQueue peer)
+    trace lg $ LG.msg $ "took mvar.. " ++ (show bl) ++ (show peer)
     let gd = GetData $ [InvVector InvBlock $ getBlockHash $ biBlockHash bl]
     debug lg $ LG.msg $ "GetData req: " ++ show gd
     return (MGetData gd)
@@ -133,13 +135,14 @@ sendRequestMessages pr msg = do
                 Nothing -> err lg $ LG.msg $ val "Error sending, no connections available"
         ___ -> return ()
 
-peerBlockSync :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BitcoinPeer -> (PeerTracker) -> m ()
-peerBlockSync peer tracker =
+peerBlockSync :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BitcoinPeer -> m ()
+peerBlockSync peer =
     forever $ do
         lg <- getLogger
         bp2pEnv <- getBitcoinP2P
         debug lg $ LG.msg $ ("peer block sync : " ++ (show peer))
         !tm <- liftIO $ getCurrentTime
+        let tracker = statsTracker peer
         fw <- liftIO $ readIORef $ ptBlockFetchWindow tracker
         recvtm <- liftIO $ readIORef $ ptLastTxRecvTime tracker
         sendtm <- liftIO $ readIORef $ ptLastGetDataSent tracker
@@ -148,9 +151,7 @@ peerBlockSync peer tracker =
             Just rt -> do
                 if (fw == 0) && (diffUTCTime tm rt < staleTime)
                     then do
-                        msg <- produceGetDataMessage
-                        -- case mmsg of
-                        --     Just msg -> do
+                        msg <- produceGetDataMessage peer
                         res <- LE.try $ sendRequestMessages peer msg
                         case res of
                             Right () -> do
@@ -184,9 +185,7 @@ peerBlockSync peer tracker =
                     Nothing -> do
                         if (fw == 0)
                             then do
-                                msg <- produceGetDataMessage
-                                -- case mmsg of
-                                --     Just msg -> do
+                                msg <- produceGetDataMessage peer
                                 res <- LE.try $ sendRequestMessages peer msg
                                 case res of
                                     Right () -> do
@@ -224,7 +223,7 @@ runPeerSync =
                                          Left (e :: SomeException) -> err lg $ LG.msg ("[ERROR] runPeerSync " ++ show e)
                                  Nothing -> err lg $ LG.msg $ val "Error sending, no connections available")
                         (connPeers)
-            else liftIO $ threadDelay (120 * 1000000)
+            else liftIO $ threadDelay (60 * 1000000)
 
 markBestSyncedBlock :: (HasLogger m, MonadIO m) => Text -> Int32 -> Q.ClientState -> m ()
 markBestSyncedBlock hash height conn = do
@@ -289,6 +288,8 @@ runBlockCacheQueue =
         !tm <- liftIO $ getCurrentTime
         debug lg $ LG.msg $ val "runBlockCacheQueue loop..."
         let net = bitcoinNetwork $ nodeConfig bp2pEnv
+        allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
+        let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
         syt <- liftIO $ TSH.toList (blockSyncStatusMap bp2pEnv)
         let sysz = fromIntegral $ L.length syt
         -- reload cache
@@ -296,8 +297,6 @@ runBlockCacheQueue =
             if sysz == 0
                 then do
                     (hash, ht) <- fetchBestSyncedBlock conn net
-                    allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
-                    let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
                     let cacheInd =
                             if L.length connPeers > 4
                                 then getBatchSize (fromIntegral $ maxBitcoinPeerCount $ nodeConfig bp2pEnv) ht
@@ -419,14 +418,49 @@ runBlockCacheQueue =
                                                            else return Nothing
         case retn of
             Just bbi -> do
-                liftIO $ putMVar (blockFetchQueue bp2pEnv) bbi
-                liftIO $ TSH.insert (blockSyncStatusMap bp2pEnv) (biBlockHash bbi) (RequestSent tm, biBlockHeight bbi)
+                latest <- liftIO $ newIORef True
+                sortedPeers <- liftIO $ sortPeers (snd $ unzip connPeers)
+                mapM_
+                    (\pr -> do
+                         ltst <- liftIO $ readIORef latest
+                         if ltst
+                             then do
+                                 trace lg $ LG.msg $ "try putting mvar.. " ++ (show bbi)
+                                 fl <- liftIO $ tryPutMVar (blockFetchQueue pr) bbi
+                                 if fl
+                                     then do
+                                         trace lg $ LG.msg $ "done putting mvar.. " ++ (show bbi)
+                                         !tm <- liftIO $ getCurrentTime
+                                         liftIO $
+                                             TSH.insert
+                                                 (blockSyncStatusMap bp2pEnv)
+                                                 (biBlockHash bbi)
+                                                 (RequestSent tm, biBlockHeight bbi)
+                                         liftIO $ writeIORef latest False
+                                     else return ()
+                             else return ())
+                    (sortedPeers)
             Nothing -> do
-                liftIO $ threadDelay (200000) -- 0.2 sec
+                trace lg $ LG.msg $ "nothing yet" ++ ""
+        --
+        liftIO $ threadDelay (250000) -- 0.25 sec
         return ()
   where
     getHead l = head $ L.sortOn (snd . snd) (l)
     mkBlkInf h = Just $ BlockInfo (fst h) (snd $ snd h)
+
+sortPeers :: [BitcoinPeer] -> IO ([BitcoinPeer])
+sortPeers peers = do
+    let longlongago = UTCTime (ModifiedJulianDay 1) 1
+    ts <-
+        mapM
+            (\p -> do
+                 lstr <- liftIO $ readIORef $ ptLastTxRecvTime $ statsTracker p
+                 case lstr of
+                     Just lr -> return lr
+                     Nothing -> return longlongago)
+            peers
+    return $ snd $ unzip $ L.sortBy (\(a, _) (b, _) -> compare b a) (zip ts peers)
 
 fetchBestSyncedBlock :: (HasLogger m, MonadIO m) => Q.ClientState -> Network -> m ((BlockHash, Int32))
 fetchBestSyncedBlock conn net = do
@@ -575,11 +609,11 @@ processConfTransaction tx bhash txind blkht = do
     inputs <-
         mapM
             (\(b, j) -> do
-                 tuple <- return Nothing
-                    --  liftIO $
-                    --  H.lookup
-                    --      (txOutputValuesCache bp2pEnv)
-                    --      (getTxShortHash (outPointHash $ prevOutput b) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
+                 tuple <-
+                     liftIO $
+                     H.lookup
+                         (txOutputValuesCache bp2pEnv)
+                         (getTxShortHash (outPointHash $ prevOutput b) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
                  val <-
                      case tuple of
                          Just (ftxh, indexvals) ->
@@ -664,11 +698,11 @@ processConfTransaction tx bhash txind blkht = do
                      , (a, (txHashToHex $ TxHash $ sha256 (scriptOutput o)), fromIntegral $ outValue o)))
                 outAddrs
     trace lg $ LG.msg $ "processing Tx " ++ show (txHash tx) ++ ": compiled output value(s): " ++ (show ovs)
-    -- liftIO $
-    --     H.insert
-    --         (txOutputValuesCache bp2pEnv)
-    --         (getTxShortHash (txHash tx) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
-    --         (txHash tx, ovs)
+    liftIO $
+        H.insert
+            (txOutputValuesCache bp2pEnv)
+            (getTxShortHash (txHash tx) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
+            (txHash tx, ovs)
     --
     trace lg $ LG.msg $ "processing Tx " ++ show (txHash tx) ++ ": added outputvals to cache"
     -- update outputs and scripthash tables
