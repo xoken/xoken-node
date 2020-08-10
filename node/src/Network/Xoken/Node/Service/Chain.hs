@@ -104,6 +104,7 @@ xGetChainInfo = do
     dbe <- getDB
     lg <- getLogger
     let conn = keyValDB $ dbe
+    let conn' = connection $ dbe
         str = "SELECT key,value from xoken.misc_store"
         qstr = str :: Q.QueryString Q.R () (DT.Text, (Maybe Bool, Int32, Maybe Int64, DT.Text))
         p = Q.defQueryParams Q.One ()
@@ -117,7 +118,7 @@ xGetChainInfo = do
                     let (_, blocks, _, bestSyncedHash) = snd . head $ (L.filter (\x -> fst x == "best-synced") iop)
                         (_, headers, _, bestBlockHash) = snd . head $ (L.filter (\x -> fst x == "best_chain_tip") iop)
                         (_, lagHeight, _, chainwork) = snd . head $ (L.filter (\x -> fst x == "chain-work") iop)
-                    lagCW <- calculateChainWork [(lagHeight + 1) .. (headers)] conn
+                    lagCW <- calculateChainWork [(lagHeight + 1) .. (headers)] conn'
                     return $
                         Just $
                         ChainInfo

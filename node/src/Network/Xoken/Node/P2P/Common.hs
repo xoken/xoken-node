@@ -296,13 +296,13 @@ addNewUser conn uname fname lname email roles api_quota api_expiry_time = do
                     throw e
 
 -- | Calculates sum of chainworks for blocks with blockheight in input list
-calculateChainWork :: (HasLogger m, MonadIO m) => [Int32] -> Q.ClientState -> m Integer
+calculateChainWork :: (HasLogger m, MonadIO m) => [Int32] -> CqlConnection -> m Integer
 calculateChainWork blks conn = do
     lg <- getLogger
-    let str = "SELECT block_height,block_header from xoken.blocks_by_height where block_height in ?"
-        qstr = str :: Q.QueryString Q.R (Identity [Int32]) (Int32, Text)
+    let qstr :: Q.QueryString Q.R (Identity [Int32]) (Int32, Text)
+        qstr = "SELECT block_height,block_header from xoken.blocks_by_height where block_height in ?"
         p = Q.defQueryParams Q.One $ Identity $ blks
-    res <- liftIO $ try $ Q.runClient conn (Q.query (Q.prepared qstr) p)
+    res <- liftIO $ try $ query conn (QP.RqQuery $ QP.Query qstr p)
     case res of
         Right iop -> do
             if L.length iop == 0
@@ -338,8 +338,18 @@ splitList xs = (f 1 xs, f 0 xs)
 getSimpleQueryParam :: Tuple a => a -> QueryParams a
 getSimpleQueryParam a = QP.QueryParams QP.One False a Nothing Nothing Nothing Nothing
 
-query :: (Tuple a, Tuple b) => CqlConnection -> Request k a b -> IO (Response k a b)
+query :: (Tuple a, Tuple b) => CqlConnection -> Request k a b -> IO [b]
 query ps req = do
+    resp <- queryResp ps req
+    case resp of
+        (QP.RsResult _ _ (QP.RowsResult _ r)) -> return r
+        response
+            --print $ "[Error] Query: Not a RowsResult!!"
+         -> do
+            return []
+
+queryResp :: (Tuple a, Tuple b) => CqlConnection -> Request k a b -> IO (Response k a b)
+queryResp ps req = do
     let i = mkStreamId 0
     withResource ps $ \sock -> do
         case (QP.pack QP.V3 noCompression False i req) of
