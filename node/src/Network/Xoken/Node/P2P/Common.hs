@@ -47,7 +47,7 @@ import Data.Time.Clock
 import Data.Time.Clock.POSIX
 import Data.Word
 import qualified Database.CQL.IO as Q
-import Database.CQL.Protocol as QP hiding (Version)
+import Database.XCQL.Protocol as QP hiding (Version)
 import Network.Socket
 import qualified Network.Socket.ByteString as SB (recv)
 import qualified Network.Socket.ByteString.Lazy as LB (recv, sendAll)
@@ -299,9 +299,9 @@ addNewUser conn uname fname lname email roles api_quota api_expiry_time = do
 calculateChainWork :: (HasLogger m, MonadIO m) => [Int32] -> CqlConnection -> m Integer
 calculateChainWork blks conn = do
     lg <- getLogger
-    let qstr :: Q.QueryString Q.R (Identity [Int32]) (Int32, Text)
+    let qstr :: QP.QueryString Q.R (Identity [Int32]) (Int32, Text)
         qstr = "SELECT block_height,block_header from xoken.blocks_by_height where block_height in ?"
-        p = Q.defQueryParams Q.One $ Identity $ blks
+        p = getSimpleQueryParam $ Identity $ blks
     res <- liftIO $ try $ query conn (QP.RqQuery $ QP.Query qstr p)
     case res of
         Right iop -> do

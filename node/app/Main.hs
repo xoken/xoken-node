@@ -85,8 +85,9 @@ import Data.Version
 import Data.Word (Word32)
 import Data.Word
 import qualified Database.Bolt as BT
+import Database.CQL.Protocol as CQ
 import qualified Database.CQL.IO as Q
-import Database.CQL.Protocol as DCP
+import qualified Database.XCQL.Protocol as DCP
 import Network.Simple.TCP
 import Network.Socket
 import Network.Xoken.Node.AriviService
@@ -304,9 +305,9 @@ runWatchDog = do
                 tm <- liftIO $ getCurrentTime
                 let ttime = (floor $ utcTimeToPOSIXSeconds tm) :: Int64
                     str = "insert INTO xoken.transactions ( tx_id, block_info, tx_serialized ) values (?, ?, ?)"
-                    qstr = str :: Q.QueryString Q.W (T.Text, ((T.Text, Int32), Int32), Blob) ()
+                    qstr = str :: Q.QueryString Q.W (T.Text, ((T.Text, Int32), Int32), CQ.Blob) ()
                     par =
-                        Q.defQueryParams Q.One ("watchdog-last-check", ((T.pack $ show ttime, 0), 0), Blob $ CL.pack "")
+                        Q.defQueryParams Q.One ("watchdog-last-check", ((T.pack $ show ttime, 0), 0), CQ.Blob $ CL.pack "")
                 ores <-
                     LA.race
                         (liftIO $ threadDelay (3000000)) -- worst case of 3 secs

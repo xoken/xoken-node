@@ -134,6 +134,7 @@ executable xoken-nexa
     , snap
     , lens
     , list-t
+    , xcql
   default-language: Haskell2010
 
 test-suite xoken-node-test

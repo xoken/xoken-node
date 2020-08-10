@@ -45,7 +45,7 @@ import qualified Data.Text.Encoding as DTE
 import Data.Time.Clock
 import Data.Time.Clock.POSIX
 import Data.Word
-import qualified Database.CQL.Protocol as Q
+import qualified Database.XCQL.Protocol as Q
 import Network.Socket
 import qualified Network.Socket.ByteString as SB (recv)
 import qualified Network.Socket.ByteString.Lazy as LB (recv, sendAll)

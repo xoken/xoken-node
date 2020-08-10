@@ -68,7 +68,7 @@ import Data.Time.Clock
 import Data.Time.Clock.POSIX
 import Data.Word
 import qualified Database.Bolt as BT
-import Database.CQL.Protocol as Q
+import Database.XCQL.Protocol as Q
 import qualified ListT as LT
 import qualified Network.Socket as NS
 import qualified Network.Socket.ByteString as SB (recv)

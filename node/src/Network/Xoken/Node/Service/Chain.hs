@@ -78,7 +78,7 @@ import Data.Word
 import Data.Yaml
 import qualified Database.Bolt as BT
 import qualified Database.CQL.IO as Q
-import Database.CQL.Protocol as DCP
+import Database.XCQL.Protocol as DCP
 import qualified Network.Simple.TCP.TLS as TLS
 import Network.Xoken.Address.Base58
 import Network.Xoken.Block.Common
