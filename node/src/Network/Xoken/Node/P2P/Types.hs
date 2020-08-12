@@ -12,6 +12,7 @@ import Control.Concurrent.STM
 import Control.Concurrent.STM.TSem
 import Control.Monad.IO.Class
 import qualified Data.ByteString as B
+import qualified Data.ByteString.Lazy as LB
 import Data.Functor.Identity
 import Data.IORef
 import Data.Int
@@ -111,8 +112,8 @@ data IngressStreamState =
 
 data BlockIngestState =
     BlockIngestState
-        { binUnspentBytes :: !B.ByteString
-        , binTxPayloadLeft :: !Int
+        { binUnspentBytes :: !LB.ByteString
+        , binTxPayloadLeft :: !Int64
         , binTxTotalCount :: !Int
         , binTxIngested :: !Int
         , binBlockSize :: !Int

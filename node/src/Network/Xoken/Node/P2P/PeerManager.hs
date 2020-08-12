@@ -78,7 +78,7 @@ import Network.Xoken.Util
 import StmContainers.Map as SM
 import StmContainers.Set as SS
 import Streamly
-import Streamly.Prelude ((|:), drain, nil)
+import Streamly.Prelude ((|:), drain, each, nil)
 import qualified Streamly.Prelude as S
 import System.Logger as LG
 import System.Logger.Message
@@ -403,36 +403,36 @@ resilientRead ::
        (HasLogger m, MonadBaseControl IO m, MonadIO m)
     => Socket
     -> BlockIngestState
-    -> m ((Maybe Tx, C.ByteString), Int)
+    -> m ((Maybe [Tx], LC.ByteString), Int64)
 resilientRead sock !blin = do
     lg <- getLogger
-    let chunkSize = 400 * 1024
+    let chunkSize = (400 * 1024)
         !delta =
             if binTxPayloadLeft blin > chunkSize
-                then chunkSize - (B.length $ binUnspentBytes blin)
-                else (binTxPayloadLeft blin) - (B.length $ binUnspentBytes blin)
-    -- debug lg $ msg (" | Tx payload left " ++ show (binTxPayloadLeft blin))
-    -- debug lg $ msg (" | Bytes prev unspent " ++ show (B.length $ binUnspentBytes blin))
-    -- debug lg $ msg (" | Bytes to read " ++ show delta)
-    nbyt <- recvAll sock delta
-    let !txbyt = (binUnspentBytes blin) `B.append` nbyt
-    case runGetState (getConfirmedTx) txbyt 0 of
+                then chunkSize - ((LC.length $ binUnspentBytes blin))
+                else (binTxPayloadLeft blin) - (LC.length $ binUnspentBytes blin)
+    debug lg $ msg (" | Tx payload left " ++ show (binTxPayloadLeft blin))
+    debug lg $ msg (" | Bytes prev unspent " ++ show (LC.length $ binUnspentBytes blin))
+    debug lg $ msg (" | Bytes to read " ++ show delta)
+    nbyt <- recvAll sock (fromIntegral delta)
+    let !txbyt = (binUnspentBytes blin) `LC.append` (LC.fromStrict nbyt)
+    case runGetLazyState (getConfirmedTxBatch) txbyt of
         Left e -> do
             err lg $ msg $ "1st attempt|" ++ show e
             let chunkSizeFB = (1024 * 1024 * 1024)
                 !deltaNew =
                     if binTxPayloadLeft blin > chunkSizeFB
-                        then chunkSizeFB - ((B.length $ binUnspentBytes blin) + delta)
-                        else (binTxPayloadLeft blin) - ((B.length $ binUnspentBytes blin) + delta)
-            nbyt2 <- recvAll sock deltaNew
-            let !txbyt2 = txbyt `B.append` nbyt2
-            case runGetState (getConfirmedTx) txbyt2 0 of
+                        then chunkSizeFB - ((LC.length $ binUnspentBytes blin) + delta)
+                        else (binTxPayloadLeft blin) - ((LC.length $ binUnspentBytes blin) + delta)
+            nbyt2 <- recvAll sock (fromIntegral deltaNew)
+            let !txbyt2 = txbyt `LC.append` (LC.fromStrict nbyt2)
+            case runGetLazyState (getConfirmedTxBatch) txbyt2 of
                 Left e -> do
                     err lg $ msg $ "2nd attempt|" ++ show e
                     throw ConfirmedTxParseException
                 Right res -> do
-                    return (res, B.length txbyt2)
-        Right res -> return (res, B.length txbyt)
+                    return (res, LC.length txbyt2)
+        Right res -> return (res, LC.length txbyt)
 
 merkleTreeBuilder ::
        (HasBitcoinP2P m, HasLogger m, HasDatabaseHandles m, MonadBaseControl IO m, MonadIO m)
@@ -572,13 +572,13 @@ readNextMessage net sock ingss = do
     case ingss of
         Just iss -> do
             let blin = issBlockIngest iss
-            ((tx, unused), txbytLen) <- resilientRead sock blin
-            case tx of
-                Just t -> do
+            ((transactions, unused), txbytLen) <- resilientRead sock blin
+            case transactions of
+                Just txns -> do
                     trace lg $
                         msg
                             ("Confirmed-Tx: " ++
-                             (show $ txHashToHex $ txHash t) ++ " unused: " ++ show (B.length unused))
+                             (show $ txHashToHex $ txHash (txns !! 0)) ++ " unused: " ++ show (LC.length unused))
                     qe <-
                         case (issBlockInfo iss) of
                             Just bf ->
@@ -610,7 +610,7 @@ readNextMessage net sock ingss = do
                                             (biBlockHeight bf)
                                             (binBlockSize blin)
                                             (binTxTotalCount blin)
-                                            (t)
+                                            (txns !! 0)
                                         return qq
                                     else do
                                         valx <-
@@ -619,19 +619,19 @@ readNextMessage net sock ingss = do
                                             Just q -> return q
                                             Nothing -> throw MerkleQueueNotFoundException
                             Nothing -> throw MessageParsingException
-                    let isLast = ((binTxTotalCount blin) == (1 + binTxIngested blin))
-                    liftIO $ atomically $ writeTBQueue qe ((txHash t), isLast)
+                    let isLast = ((binTxTotalCount blin) == ((L.length txns) + binTxIngested blin))
+                    liftIO $ atomically $ mapM_ (\tx -> writeTBQueue qe ((txHash tx), isLast)) txns
                     let bio =
                             BlockIngestState
                                 { binUnspentBytes = unused
-                                , binTxPayloadLeft = binTxPayloadLeft blin - (txbytLen - B.length unused)
+                                , binTxPayloadLeft = binTxPayloadLeft blin - (txbytLen - LC.length unused)
                                 , binTxTotalCount = binTxTotalCount blin
-                                , binTxIngested = 1 + binTxIngested blin
+                                , binTxIngested = (L.length txns) + binTxIngested blin
                                 , binBlockSize = binBlockSize blin
                                 , binChecksum = binChecksum blin
                                 }
                     return
-                        ( Just $ MConfTx t
+                        ( Just $ MConfTx txns
                         , Just $ IngressStreamState bio (issBlockInfo iss) -- (merkleTreeHeight iss) 0 nst)
                          )
                 Nothing -> do
@@ -648,7 +648,7 @@ readNextMessage net sock ingss = do
                             if cmd == MCBlock
                                 then do
                                     byts <- recvAll sock (88) -- 80 byte Block header + VarInt (max 8 bytes) Tx count
-                                    case runGetState (getDeflatedBlock) byts 0 of
+                                    case runGetLazyState (getDeflatedBlock) (LC.fromStrict byts) of
                                         Left e -> do
                                             err lg $ msg ("Error, unexpected message header: " ++ e)
                                             throw MessageParsingException
@@ -658,12 +658,12 @@ readNextMessage net sock ingss = do
                                                     trace lg $
                                                         msg
                                                             ("DefBlock: " ++
-                                                             show blk ++ " unused: " ++ show (B.length unused))
+                                                             show blk ++ " unused: " ++ show (LC.length unused))
                                                     let bi =
                                                             BlockIngestState
                                                                 { binUnspentBytes = unused
                                                                 , binTxPayloadLeft =
-                                                                      fromIntegral (len) - (88 - B.length unused)
+                                                                      fromIntegral (len) - (88 - LC.length unused)
                                                                 , binTxTotalCount = fromIntegral $ txnCount b
                                                                 , binTxIngested = 0
                                                                 , binBlockSize = fromIntegral $ len
@@ -793,62 +793,14 @@ messageHandler peer (mm, ingss) = do
                                       Nothing -> return ()))
                         (addrList addrs)
                     return $ msgType msg
-                MConfTx tx -> do
+                MConfTx txns -> do
                     case ingss of
-                        Just iss
-                            -- debug lg $ LG.msg $ LG.val ("DEBUG receiving confirmed Tx ")
-                         -> do
-                            let bi = issBlockIngest iss
-                            let binfo = issBlockInfo iss
-                            case binfo of
-                                Just bf -> do
-                                    valx <- liftIO $ TSH.lookup (blockTxProcessingLeftMap bp2pEnv) (biBlockHash bf)
-                                    skip <-
-                                        case valx of
-                                            Just lfa -> do
-                                                y <- liftIO $ TSH.lookup (fst lfa) ((binTxIngested bi) - 1)
-                                                case y of
-                                                    Just () -> return True
-                                                    Nothing -> return False
-                                            Nothing -> return False
-                                    if skip
-                                        then do
-                                            debug lg $
-                                                LG.msg $
-                                                ("Tx already processed, block: " ++
-                                                 (show $ biBlockHash bf) ++ ", tx-index: " ++ show (binTxIngested bi))
-                                        else do
-                                            res <-
-                                                LE.try $
-                                                processConfTransaction
-                                                    tx
-                                                    (biBlockHash bf)
-                                                    ((binTxIngested bi) - 1)
-                                                    (fromIntegral $ biBlockHeight bf)
-                                            case res of
-                                                Right () -> do
-                                                    valy <-
-                                                        liftIO $
-                                                        TSH.lookup (blockTxProcessingLeftMap bp2pEnv) (biBlockHash bf)
-                                                    case valy of
-                                                        Just lefta ->
-                                                            liftIO $ TSH.insert (fst lefta) ((binTxIngested bi) - 1) ()
-                                                        Nothing -> return ()
-                                                Left BlockHashNotFoundException -> return ()
-                                                Left EmptyHeadersMessageException -> return ()
-                                                Left TxIDNotFoundException -> do
-                                                    throw TxIDNotFoundException
-                                                Left KeyValueDBInsertException -> do
-                                                    err lg $ LG.msg $ val "[ERROR] KeyValueDBInsertException"
-                                                    throw KeyValueDBInsertException
-                                                Left e -> do
-                                                    err lg $ LG.msg ("[ERROR] Unhandled exception!" ++ show e)
-                                                    throw e
-                                    return $ msgType msg
-                                Nothing -> throw InvalidStreamStateException
+                        Just iss -> do
+                            debug lg $ LG.msg $ ("Processing Tx-batch, size :" ++ (show $ L.length txns))
+                            processTxBatch txns iss
                         Nothing -> do
                             err lg $ LG.msg $ val ("[???] Unconfirmed Tx ")
-                            return $ msgType msg
+                    return $ msgType msg
                 MTx tx -> do
                     processUnconfTransaction tx
                     return $ msgType msg
@@ -878,6 +830,65 @@ messageHandler peer (mm, ingss) = do
         Nothing -> do
             err lg $ LG.msg $ val "Error, invalid message"
             throw InvalidMessageTypeException
+
+processTxBatch :: (HasXokenNodeEnv env m, MonadIO m) => [Tx] -> IngressStreamState -> m ()
+processTxBatch txns iss = do
+    bp2pEnv <- getBitcoinP2P
+    lg <- getLogger
+    let bi = issBlockIngest iss
+    let binfo = issBlockInfo iss
+    case binfo of
+        Just bf -> do
+            valx <- liftIO $ TSH.lookup (blockTxProcessingLeftMap bp2pEnv) (biBlockHash bf)
+            skip <-
+                case valx of
+                    Just lfa -> do
+                        y <- liftIO $ TSH.lookup (fst lfa) ((binTxIngested bi) - 1)
+                        case y of
+                            Just () -> return True
+                            Nothing -> return False
+                    Nothing -> return False
+            if skip
+                then do
+                    debug lg $
+                        LG.msg $
+                        ("Tx already processed, block: " ++
+                         (show $ biBlockHash bf) ++ ", tx-index: " ++ show (binTxIngested bi))
+                else do
+                    S.drain $
+                        asyncly $
+                        S.fromList [((binTxIngested bi)) .. (L.length txns + (binTxIngested bi) - 1)] &
+                        S.mapM (\idx -> return ((txns !! idx), bf, idx)) &
+                        S.mapM (processTxStream)
+                    valy <- liftIO $ TSH.lookup (blockTxProcessingLeftMap bp2pEnv) (biBlockHash bf)
+                    case valy of
+                        Just lefta -> liftIO $ TSH.insert (fst lefta) ((binTxIngested bi) - 1) ()
+                        Nothing -> return ()
+                    return ()
+        Nothing -> throw InvalidStreamStateException
+
+--
+-- ((binTxIngested bi) - 1)
+--  (fromIntegral $ biBlockHeight bf)
+-- 
+processTxStream :: (HasXokenNodeEnv env m, MonadIO m) => (Tx, BlockInfo, Int) -> m ()
+processTxStream (tx, binfo, txIndex) = do
+    let bhash = biBlockHash binfo
+        bheight = biBlockHeight binfo
+    lg <- getLogger
+    res <- LE.try $ processConfTransaction (tx) bhash (fromIntegral bheight) txIndex
+    case res of
+        Right () -> return ()
+        Left BlockHashNotFoundException -> return ()
+        Left EmptyHeadersMessageException -> return ()
+        Left TxIDNotFoundException -> do
+            throw TxIDNotFoundException
+        Left KeyValueDBInsertException -> do
+            err lg $ LG.msg $ val "[ERROR] KeyValueDBInsertException"
+            throw KeyValueDBInsertException
+        Left e -> do
+            err lg $ LG.msg ("[ERROR] Unhandled exception!" ++ show e)
+            throw e
 
 readNextMessage' ::
        (HasXokenNodeEnv env m, MonadIO m)
@@ -950,9 +961,13 @@ handleIncomingMessages pr = do
     res <-
         LE.try $
         LA.concurrently_
-            (peerBlockSync pr)
+            (peerBlockSync pr) -- issue GetData msgs
             (S.drain $
-             asyncly $ S.repeatM (readNextMessage' pr rlk) & S.mapM (messageHandler pr) & S.mapM (logMessage pr))
+             serially $
+             S.repeatM (readNextMessage' pr rlk) & -- read next msgs
+             S.mapM (messageHandler pr) & -- handle read msgs
+             S.mapM (logMessage pr) -- log msgs & collect stats
+             )
     case res of
         Right (a) -> return ()
         Left (e :: SomeException) -> do

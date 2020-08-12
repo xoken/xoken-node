@@ -585,7 +585,7 @@ commitTxPage txhash bhash page = do
             throw KeyValueDBInsertException
 
 processConfTransaction :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Tx -> BlockHash -> Int -> Int -> m ()
-processConfTransaction tx bhash txind blkht = do
+processConfTransaction tx bhash blkht txind = do
     dbe' <- getDB
     bp2pEnv <- getBitcoinP2P
     lg <- getLogger
