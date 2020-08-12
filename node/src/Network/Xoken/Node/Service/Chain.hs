@@ -77,8 +77,7 @@ import Data.Time.Clock.POSIX
 import Data.Word
 import Data.Yaml
 import qualified Database.Bolt as BT
-import qualified Database.CQL.IO as Q
-import Database.XCQL.Protocol as DCP
+import Database.XCQL.Protocol as Q
 import qualified Network.Simple.TCP.TLS as TLS
 import Network.Xoken.Address.Base58
 import Network.Xoken.Block.Common
@@ -103,12 +102,12 @@ xGetChainInfo :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m (Maybe Cha
 xGetChainInfo = do
     dbe <- getDB
     lg <- getLogger
-    let conn = keyValDB $ dbe
+    let conn = connection $ dbe
     let conn' = connection $ dbe
         str = "SELECT key,value from xoken.misc_store"
         qstr = str :: Q.QueryString Q.R () (DT.Text, (Maybe Bool, Int32, Maybe Int64, DT.Text))
-        p = Q.defQueryParams Q.One ()
-    res <- LE.try $ Q.runClient conn (Q.query qstr p)
+        p = getSimpleQueryParam ()
+    res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr p)
     case res of
         Right iop -> do
             if L.length iop < 3
@@ -136,11 +135,11 @@ xGetChainHeaders :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Int32 -> 
 xGetChainHeaders sblk pgsize = do
     dbe <- getDB
     lg <- getLogger
-    let conn = keyValDB (dbe)
+    let conn = connection (dbe)
         str = "SELECT block_hash,block_height,tx_count,block_header from xoken.blocks_by_height where block_height in ?"
         qstr = str :: Q.QueryString Q.R (Identity [Int32]) (DT.Text, Int32, Maybe Int32, DT.Text)
-        p = Q.defQueryParams Q.One $ Identity (L.take pgsize [sblk ..])
-    res <- LE.try $ Q.runClient conn (Q.query qstr p)
+        p = getSimpleQueryParam $ Identity (L.take pgsize [sblk ..])
+    res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr p)
     case res of
         Right iop -> do
             if length iop == 0

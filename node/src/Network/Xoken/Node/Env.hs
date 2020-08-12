@@ -26,7 +26,6 @@ import qualified Data.Map.Strict as M
 import Data.Text
 import Data.Time.Clock
 import Data.Word
-import qualified Database.CQL.IO as Q
 import GHC.Generics
 import Network.Socket hiding (send)
 import Network.Xoken.Block.Common

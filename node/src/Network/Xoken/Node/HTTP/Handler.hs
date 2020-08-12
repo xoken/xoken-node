@@ -12,6 +12,7 @@ import Control.Exception (SomeException(..), throw, try)
 import qualified Control.Exception.Lifted as LE (try)
 import Control.Monad
 import Control.Monad.IO.Class
+import Control.Monad.Identity
 import Control.Monad.State.Class
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString as B
@@ -31,8 +32,7 @@ import qualified Data.Text.Encoding as DTE
 import Data.Time.Calendar
 import Data.Time.Clock
 import Data.Time.Clock.POSIX
-import Database.CQL.IO as Q
-import Database.CQL.Protocol
+import Database.XCQL.Protocol as Q
 import Network.Xoken.Crypto.Hash
 import Network.Xoken.Node.Data
     ( AddUserResp(..)
@@ -50,7 +50,7 @@ import Network.Xoken.Node.Data
     )
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.HTTP.Types
-import Network.Xoken.Node.P2P.Common (addNewUser, generateSessionKey)
+import Network.Xoken.Node.P2P.Common (addNewUser, generateSessionKey, getSimpleQueryParam, query)
 import Network.Xoken.Node.P2P.Types
 import Network.Xoken.Node.Service
 import Snap
@@ -73,7 +73,7 @@ addUser :: RPCReqParams' -> Handler App App ()
 addUser AddUser {..} = do
     dbe <- getDB
     pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
-    let conn = keyValDB dbe
+    let conn = connection dbe
     resp <-
         LE.try $
         return $
@@ -617,7 +617,7 @@ testAuthHeader :: XokenNodeEnv -> Maybe B.ByteString -> Maybe DT.Text -> IO Bool
 testAuthHeader _ Nothing _ = pure False
 testAuthHeader env (Just sessionKey) role = do
     let dbe = dbHandles env
-        conn = keyValDB (dbe)
+        conn = connection (dbe)
         lg = loggerEnv env
         bp2pEnv = bitcoinP2PEnv env
         sKey = DT.pack $ S.unpack sessionKey
@@ -631,8 +631,8 @@ testAuthHeader env (Just sessionKey) role = do
                         then do
                             let str = " UPDATE xoken.user_permission SET api_used = ? WHERE username = ? "
                                 qstr = str :: Q.QueryString Q.W (Int32, DT.Text) ()
-                                p = Q.defQueryParams Q.One $ (used + 1, name)
-                            res <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr) p)
+                                p = getSimpleQueryParam (used + 1, name)
+                            res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr p)
                             case res of
                                 Left (SomeException e) -> do
                                     err lg $ LG.msg $ "Error: UPDATE'ing into 'user_permission': " ++ show e
@@ -649,9 +649,9 @@ testAuthHeader env (Just sessionKey) role = do
         Nothing -> do
             let str =
                     " SELECT username, api_quota, api_used, session_key_expiry_time, permissions FROM xoken.user_permission WHERE session_key = ? ALLOW FILTERING "
-                qstr = str :: Q.QueryString Q.R (Q.Identity DT.Text) (DT.Text, Int32, Int32, UTCTime, Set DT.Text)
-                p = Q.defQueryParams Q.One $ Identity $ sKey
-            res <- liftIO $ try $ Q.runClient conn (Q.query (Q.prepared qstr) p)
+                qstr = str :: Q.QueryString Q.R (Identity DT.Text) (DT.Text, Int32, Int32, UTCTime, Set DT.Text)
+                p = getSimpleQueryParam $ Identity $ sKey
+            res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr p)
             case res of
                 Left (SomeException e) -> do
                     err lg $ LG.msg $ "Error: SELECT'ing from 'user_permission': " ++ show e

@@ -112,14 +112,12 @@ executable xoken-nexa
     , transformers-base
     , exceptions
     , monad-control
-    , cql-io
     , tinylog
     , async
     , streamly
     , lifted-base
     , hasbolt >=0.1.3.6
     , resource-pool
-    , cql
     , hashtables
     , base16-bytestring
     , SafeSemaphore
@@ -194,8 +192,6 @@ test-suite xoken-node-test
     , stm-containers
     , resource-pool
     , hasbolt >=0.1.3.6
-    , cql
-    , cql-io
     , serialise
     , exceptions
     , monad-control

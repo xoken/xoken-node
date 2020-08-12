@@ -53,8 +53,7 @@ import Data.Time.Clock
 import Data.Time.Clock.POSIX
 import Data.Time.LocalTime
 import Data.Word
-import qualified Database.CQL.IO as Q
-import Database.CQL.Protocol
+import Database.XCQL.Protocol as Q
 import qualified Network.Socket as NS
 import qualified Network.Socket.ByteString as SB (recv)
 import qualified Network.Socket.ByteString.Lazy as LB (recv, sendAll)
@@ -131,7 +130,7 @@ sendTxGetData pr txHash = do
             let em = runPut . putMessage net $ msg
             res <- liftIO $ try $ sendEncMessage (bpWriteMsgLock pr) s (BSL.fromStrict em)
             case res of
-                Right () ->
+                Right _ ->
                     liftIO $
                     H.insert
                         (unconfirmedTxCache bp2pEnv)
@@ -148,7 +147,7 @@ runEpochSwitcher =
         bp2pEnv <- getBitcoinP2P
         dbe' <- getDB
         tm <- liftIO $ getCurrentTime
-        let conn = keyValDB $ dbe'
+        let conn = connection $ dbe'
             hour = todHour $ timeToTimeOfDay $ utctDayTime tm
             minute = todMin $ timeToTimeOfDay $ utctDayTime tm
             epoch =
@@ -160,28 +159,28 @@ runEpochSwitcher =
             then do
                 let str = "DELETE from xoken.ep_transactions where epoch = ?"
                     qstr = str :: Q.QueryString Q.W (Identity Bool) ()
-                    p = Q.defQueryParams Q.One $ Identity (not epoch)
-                res <- liftIO $ try $ Q.runClient conn (Q.write qstr p)
+                    p = getSimpleQueryParam $ Identity (not epoch)
+                res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr p)
                 case res of
-                    Right () -> return ()
+                    Right _ -> return ()
                     Left (e :: SomeException) -> do
                         err lg $ LG.msg ("Error: deleting stale epoch Txs: " ++ show e)
                         throw e
                 let str = "DELETE from xoken.ep_script_hash_outputs where epoch = ?"
                     qstr = str :: Q.QueryString Q.W (Identity Bool) ()
-                    p = Q.defQueryParams Q.One $ Identity (not epoch)
-                res <- liftIO $ try $ Q.runClient conn (Q.write qstr p)
+                    p = getSimpleQueryParam $ Identity (not epoch)
+                res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr p)
                 case res of
-                    Right () -> return ()
+                    Right _ -> return ()
                     Left (e :: SomeException) -> do
                         err lg $ LG.msg ("Error: deleting stale epoch script_hash_outputs: " ++ show e)
                         throw e
                 let str = "DELETE from xoken.ep_txid_outputs where epoch = ?"
                     qstr = str :: Q.QueryString Q.W (Identity Bool) ()
-                    p = Q.defQueryParams Q.One $ Identity (not epoch)
-                res <- liftIO $ try $ Q.runClient conn (Q.write qstr p)
+                    p = getSimpleQueryParam $ Identity (not epoch)
+                res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr p)
                 case res of
-                    Right () -> return ()
+                    Right _ -> return ()
                     Left (e :: SomeException) -> do
                         err lg $ LG.msg ("Error: deleting stale epoch txid_outputs: " ++ show e)
                         throw e
@@ -191,7 +190,7 @@ runEpochSwitcher =
 
 commitEpochScriptHashOutputs ::
        (HasLogger m, MonadIO m)
-    => Q.ClientState
+    => CqlConnection
     -> Bool -- epoch
     -> Text -- scriptHash
     -> (Text, Int32) -- output (txid, index)
@@ -200,45 +199,45 @@ commitEpochScriptHashOutputs conn epoch sh output = do
     lg <- getLogger
     let strAddrOuts = "INSERT INTO xoken.ep_script_hash_outputs (epoch, script_hash, output) VALUES (?,?,?)"
         qstrAddrOuts = strAddrOuts :: Q.QueryString Q.W (Bool, Text, (Text, Int32)) ()
-        parAddrOuts = Q.defQueryParams Q.One (epoch, sh, output)
-    resAddrOuts <- liftIO $ try $ Q.runClient conn (Q.write (qstrAddrOuts) parAddrOuts)
+        parAddrOuts = getSimpleQueryParam (epoch, sh, output)
+    resAddrOuts <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query (qstrAddrOuts) parAddrOuts)
     case resAddrOuts of
-        Right () -> return ()
+        Right _ -> return ()
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: INSERTing into 'ep_script_hash_outputs': " ++ show e
             throw KeyValueDBInsertException
 
 commitEpochScriptHashUnspentOutputs ::
-       (HasLogger m, MonadIO m) => Q.ClientState -> Bool -> Text -> (Text, Int32) -> m ()
+       (HasLogger m, MonadIO m) => CqlConnection -> Bool -> Text -> (Text, Int32) -> m ()
 commitEpochScriptHashUnspentOutputs conn epoch sh output = do
     lg <- getLogger
     let str = "INSERT INTO xoken.ep_script_hash_unspent_outputs (epoch, script_hash, output) VALUES (?,?,?)"
         qstr = str :: Q.QueryString Q.W (Bool, Text, (Text, Int32)) ()
-        par = Q.defQueryParams Q.One (epoch, sh, output)
-    res <- liftIO $ try $ Q.runClient conn (Q.write qstr par)
+        par = getSimpleQueryParam (epoch, sh, output)
+    res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
     case res of
-        Right () -> return ()
+        Right _ -> return ()
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: INSERTing into 'ep_script_hash_unspent_outputs': " ++ show e
             throw KeyValueDBInsertException
 
 deleteEpochScriptHashUnspentOutputs ::
-       (HasLogger m, MonadIO m) => Q.ClientState -> Bool -> Text -> (Text, Int32) -> m ()
+       (HasLogger m, MonadIO m) => CqlConnection -> Bool -> Text -> (Text, Int32) -> m ()
 deleteEpochScriptHashUnspentOutputs conn epoch sh output = do
     lg <- getLogger
     let str = "DELETE FROM xoken.ep_script_hash_unspent_outputs WHERE epoch=? AND script_hash=? AND output=?"
         qstr = str :: Q.QueryString Q.W (Bool, Text, (Text, Int32)) ()
-        par = Q.defQueryParams Q.One (epoch, sh, output)
-    res <- liftIO $ try $ Q.runClient conn (Q.write qstr par)
+        par = getSimpleQueryParam (epoch, sh, output)
+    res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
     case res of
-        Right () -> return ()
+        Right _ -> return ()
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: DELETE'ing from 'ep_script_hash_unspent_outputs': " ++ show e
             throw e
 
 insertEpochTxIdOutputs ::
        (HasLogger m, MonadIO m)
-    => Q.ClientState
+    => CqlConnection
     -> Bool
     -> (Text, Int32)
     -> Text
@@ -260,10 +259,10 @@ insertEpochTxIdOutputs conn epoch (txid, outputIndex) address scriptHash isRecv 
                                      , Bool
                                      , [((Text, Int32), Int32, (Text, Int64))]
                                      , Int64) ()
-        par = Q.defQueryParams Q.One (epoch, txid, outputIndex, address, scriptHash, isRecv, other, value)
-    res <- liftIO $ try $ Q.runClient conn $ (Q.write qstr par)
+        par = getSimpleQueryParam (epoch, txid, outputIndex, address, scriptHash, isRecv, other, value)
+    res <- liftIO $ try $ query conn $ (Q.RqQuery $ Q.Query qstr par)
     case res of
-        Right () -> return ()
+        Right _ -> return ()
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: INSERTing into ep_txid_outputs: " ++ show e
             throw KeyValueDBInsertException
@@ -275,7 +274,7 @@ processUnconfTransaction tx = do
     lg <- getLogger
     epoch <- liftIO $ readTVarIO $ epochType bp2pEnv
     let net = bitcoinNetwork $ nodeConfig bp2pEnv
-    let conn = keyValDB $ dbe'
+    let conn = connection $ dbe'
     debug lg $ LG.msg $ "Processing unconfirmed transaction: " ++ show (txHash tx)
     --
     let inAddrs = zip (txIn tx) [0 :: Int32 ..]
@@ -374,16 +373,15 @@ processUnconfTransaction tx = do
     let str = "INSERT INTO xoken.ep_transactions (epoch, tx_id, tx_serialized, inputs, fees) values (?, ?, ?, ?, ?)"
         qstr = str :: Q.QueryString Q.W (Bool, Text, Blob, [((Text, Int32), Int32, (Text, Int64))], Int64) ()
         par =
-            Q.defQueryParams
-                Q.One
+            getSimpleQueryParam
                 ( epoch
                 , txHashToHex $ txHash tx
                 , Blob $ runPutLazy $ putLazyByteString $ S.encodeLazy tx
                 , (stripScriptHash <$> inputs)
                 , fees)
-    res <- liftIO $ try $ Q.runClient conn (Q.write qstr par)
+    res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
     case res of
-        Right () -> return ()
+        Right _ -> return ()
         Left (e :: SomeException) -> do
             liftIO $ err lg $ LG.msg $ "Error: INSERTing into 'xoken.ep_transactions':" ++ show e
             throw KeyValueDBInsertException
@@ -394,7 +392,7 @@ processUnconfTransaction tx = do
         Nothing -> return ()
 
 getSatsValueFromEpochOutpoint ::
-       Q.ClientState
+       CqlConnection
     -> Bool
     -> (SM.Map TxHash EV.Event)
     -> Logger
@@ -406,9 +404,8 @@ getSatsValueFromEpochOutpoint conn epoch txSync lg net outPoint waitSecs = do
     let str =
             "SELECT address, script_hash, value FROM xoken.ep_txid_outputs WHERE epoch=? AND txid=? AND output_index=?"
         qstr = str :: Q.QueryString Q.R (Bool, Text, Int32) (Text, Text, Int64)
-        par =
-            Q.defQueryParams Q.One $ (epoch, txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint)
-    res <- liftIO $ try $ Q.runClient conn (Q.query qstr par)
+        par = getSimpleQueryParam $ (epoch, txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint)
+    res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
     case res of
         Right results -> do
             if L.length results == 0
@@ -440,7 +437,7 @@ getSatsValueFromEpochOutpoint conn epoch txSync lg net outPoint waitSecs = do
             throw e
 
 -- sourceSatValuesFromOutpoint ::
---        Q.ClientState -> (SM.Map TxHash EV.Event) -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Text)
+--        CqlConnection -> (SM.Map TxHash EV.Event) -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Text)
 -- sourceSatValuesFromOutpoint conn txSync lg net outPoint waitSecs = do
 --     res <- liftIO $ try $ getSatsValueFromOutpoint conn txSync lg net outPoint waitSecs
 --     case res of
@@ -453,7 +450,7 @@ getSatsValueFromEpochOutpoint conn epoch txSync lg net outPoint waitSecs = do
 --
 --
 -- sourceScriptHashFromOutpoint ::
---        Q.ClientState -> (SM.Map TxHash EV.Event) -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Text)
+--        CqlConnection -> (SM.Map TxHash EV.Event) -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Text)
 -- sourceScriptHashFromOutpoint conn txSync lg net outPoint waitSecs = do
 --     res <- liftIO $ try $ getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs
 --     case res of
@@ -466,12 +463,12 @@ getSatsValueFromEpochOutpoint conn epoch txSync lg net outPoint waitSecs = do
 --
 --
 -- getEpochScriptHashFromOutpoint ::
---        Q.ClientState -> (SM.Map TxHash EV.Event) -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Text)
+--        CqlConnection -> (SM.Map TxHash EV.Event) -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Text)
 -- getEpochScriptHashFromOutpoint conn txSync lg net outPoint waitSecs = do
 --     let str = "SELECT tx_serialized from xoken.ep_transactions where tx_id = ?"
 --         qstr = str :: Q.QueryString Q.R (Identity Text) (Identity Blob)
---         p = Q.defQueryParams Q.One $ Identity $ txHashToHex $ outPointHash outPoint
---     res <- liftIO $ try $ Q.runClient conn (Q.query qstr p)
+--         p = getSimpleQueryParam $ Identity $ txHashToHex $ outPointHash outPoint
+--     res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr p)
 --     case res of
 --         Left (e :: SomeException) -> do
 --             err lg $ LG.msg ("Error: getEpochScriptHashFromOutpoint: " ++ show e)

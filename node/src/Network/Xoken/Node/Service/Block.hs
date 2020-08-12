@@ -77,8 +77,7 @@ import Data.Time.Clock.POSIX
 import Data.Word
 import Data.Yaml
 import qualified Database.Bolt as BT
-import qualified Database.CQL.IO as Q
-import Database.CQL.Protocol as DCP
+import Database.XCQL.Protocol as Q
 import qualified Network.Simple.TCP.TLS as TLS
 import Network.Xoken.Address.Base58
 import Network.Xoken.Block.Common
@@ -103,7 +102,7 @@ xGetBlockHash :: (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> m (Maybe Block
 xGetBlockHash hash = do
     dbe <- getDB
     lg <- getLogger
-    let conn = keyValDB (dbe)
+    let conn = connection (dbe)
         str =
             "SELECT block_hash,block_height,block_header,next_block_hash,block_size,tx_count,coinbase_tx from xoken.blocks_by_hash where block_hash = ?"
         qstr =
@@ -114,8 +113,8 @@ xGetBlockHash hash = do
                                                         , Maybe Int32
                                                         , Maybe Int32
                                                         , Maybe Blob)
-        p = Q.defQueryParams Q.One $ Identity hash
-    res <- LE.try $ Q.runClient conn (Q.query qstr p)
+        p = getSimpleQueryParam $ Identity hash
+    res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr p)
     case res of
         Right iop -> do
             if length iop == 0
@@ -147,7 +146,7 @@ xGetBlocksHashes :: (HasXokenNodeEnv env m, MonadIO m) => [DT.Text] -> m ([Block
 xGetBlocksHashes hashes = do
     dbe <- getDB
     lg <- getLogger
-    let conn = keyValDB (dbe)
+    let conn = connection (dbe)
         str =
             "SELECT block_hash,block_height,block_header,next_block_hash,block_size,tx_count,coinbase_tx from xoken.blocks_by_hash where block_hash in ?"
         qstr =
@@ -158,8 +157,8 @@ xGetBlocksHashes hashes = do
                                                           , Maybe Int32
                                                           , Maybe Int32
                                                           , Maybe Blob)
-        p = Q.defQueryParams Q.One $ Identity $ hashes
-    res <- LE.try $ Q.runClient conn (Q.query qstr p)
+        p = getSimpleQueryParam $ Identity $ hashes
+    res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr p)
     case res of
         Right iop -> do
             if length iop == 0
@@ -194,7 +193,7 @@ xGetBlockHeight :: (HasXokenNodeEnv env m, MonadIO m) => Int32 -> m (Maybe Block
 xGetBlockHeight height = do
     dbe <- getDB
     lg <- getLogger
-    let conn = keyValDB (dbe)
+    let conn = connection (dbe)
         str =
             "SELECT block_hash,block_height,block_header,next_block_hash,block_size,tx_count,coinbase_tx from xoken.blocks_by_height where block_height = ?"
         qstr =
@@ -205,8 +204,8 @@ xGetBlockHeight height = do
                                                       , Maybe Int32
                                                       , Maybe Int32
                                                       , Maybe Blob)
-        p = Q.defQueryParams Q.One $ Identity height
-    res <- LE.try $ Q.runClient conn (Q.query qstr p)
+        p = getSimpleQueryParam $ Identity height
+    res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr p)
     case res of
         Right iop -> do
             if length iop == 0
@@ -238,7 +237,7 @@ xGetBlocksHeights :: (HasXokenNodeEnv env m, MonadIO m) => [Int32] -> m ([BlockR
 xGetBlocksHeights heights = do
     dbe <- getDB
     lg <- getLogger
-    let conn = keyValDB (dbe)
+    let conn = connection (dbe)
         str =
             "SELECT block_hash,block_height,block_header,next_block_hash,block_size,tx_count,coinbase_tx from xoken.blocks_by_height where block_height in ?"
         qstr =
@@ -249,8 +248,8 @@ xGetBlocksHeights heights = do
                                                         , Maybe Int32
                                                         , Maybe Int32
                                                         , Maybe Blob)
-        p = Q.defQueryParams Q.One $ Identity $ heights
-    res <- LE.try $ Q.runClient conn (Q.query qstr p)
+        p = getSimpleQueryParam $ Identity $ heights
+    res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr p)
     case res of
         Right iop -> do
             if length iop == 0

@@ -77,8 +77,7 @@ import Data.Time.Clock.POSIX
 import Data.Word
 import Data.Yaml
 import qualified Database.Bolt as BT
-import qualified Database.CQL.IO as Q
-import Database.CQL.Protocol as DCP
+import Database.XCQL.Protocol as Q
 import qualified Network.Simple.TCP.TLS as TLS
 import Network.Xoken.Address.Base58
 import Network.Xoken.Block.Common
@@ -131,7 +130,7 @@ delegateRequest encReq epConn net = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    let conn = keyValDB (dbe)
+    let conn = connection (dbe)
     case rqParams encReq of
         (AuthenticateReq _ _ pretty) -> authLoginClient encReq net epConn pretty
         (GeneralReq sessionKey pretty _) -> do
@@ -145,8 +144,8 @@ delegateRequest encReq epConn net = do
                                 then do
                                     let str = " UPDATE xoken.user_permission SET api_used = ? WHERE username = ? "
                                         qstr = str :: Q.QueryString Q.W (Int32, DT.Text) ()
-                                        p = Q.defQueryParams Q.One $ (used + 1, name)
-                                    res <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr) p)
+                                        p = getSimpleQueryParam $ (used + 1, name)
+                                    res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr p)
                                     case res of
                                         Left (SomeException e) -> do
                                             err lg $ LG.msg $ "Error: UPDATE'ing into 'user_permission': " ++ show e
@@ -165,10 +164,9 @@ delegateRequest encReq epConn net = do
                 Nothing -> do
                     let str =
                             " SELECT username, api_quota, api_used, session_key_expiry_time, permissions FROM xoken.user_permission WHERE session_key = ? ALLOW FILTERING "
-                        qstr =
-                            str :: Q.QueryString Q.R (Q.Identity DT.Text) (DT.Text, Int32, Int32, UTCTime, Set DT.Text)
-                        p = Q.defQueryParams Q.One $ Identity $ (DT.pack sessionKey)
-                    res <- liftIO $ try $ Q.runClient conn (Q.query (Q.prepared qstr) p)
+                        qstr = str :: Q.QueryString Q.R (Identity DT.Text) (DT.Text, Int32, Int32, UTCTime, Set DT.Text)
+                        p = getSimpleQueryParam $ Identity $ (DT.pack sessionKey)
+                    res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr p)
                     case res of
                         Left (SomeException e) -> do
                             err lg $ LG.msg $ "Error: SELECT'ing from 'user_permission': " ++ show e
@@ -188,11 +186,11 @@ delegateRequest encReq epConn net = do
                                                         H.insert
                                                             (userDataCache bp2pEnv)
                                                             (DT.pack sessionKey)
-                                                            (name, quota, used + 1, exp, DCP.fromSet roles)
+                                                            (name, quota, used + 1, exp, Q.fromSet roles)
                                                     goGetResource
                                                         encReq
                                                         net
-                                                        (DCP.fromSet roles)
+                                                        (Q.fromSet roles)
                                                         (DT.pack sessionKey)
                                                         pretty
                                                 else return $
@@ -205,7 +203,7 @@ goGetResource msg net roles sessKey pretty = do
     dbe <- getDB
     lg <- getLogger
     let grdb = graphDB (dbe)
-        conn = keyValDB (dbe)
+        conn = connection (dbe)
     case rqMethod msg of
         "ADD_USER" -> do
             case methodParams $ rqParams msg of

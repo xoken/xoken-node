@@ -77,8 +77,7 @@ import Data.Time.Clock.POSIX
 import Data.Word
 import Data.Yaml
 import qualified Database.Bolt as BT
-import qualified Database.CQL.IO as Q
-import Database.CQL.Protocol as DCP
+import Database.XCQL.Protocol as Q
 import qualified Network.Simple.TCP.TLS as TLS
 import Network.Xoken.Address.Base58
 import Network.Xoken.Block.Common
@@ -104,7 +103,7 @@ xGetTxHash hash = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    let conn = keyValDB (dbe)
+    let conn = connection (dbe)
         net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
         str = "SELECT tx_id, block_info, tx_serialized, inputs, fees from xoken.transactions where tx_id = ?"
         qstr =
@@ -113,11 +112,11 @@ xGetTxHash hash = do
                                                         , Blob
                                                         , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
                                                         , Int64)
-        p = Q.defQueryParams Q.One $ Identity $ hash
+        p = getSimpleQueryParam $ Identity $ hash
     res <-
         LE.try $
         LA.concurrently
-            (LA.concurrently (Q.runClient conn (Q.query qstr p)) (getTxOutputsFromTxId hash))
+            (LA.concurrently (liftIO $ query conn (Q.RqQuery $ Q.Query qstr p)) (getTxOutputsFromTxId hash))
             (xGetMerkleBranch $ DT.unpack hash)
     case res of
         Right ((iop, outs), mrkl) ->
@@ -125,7 +124,7 @@ xGetTxHash hash = do
                 then return Nothing
                 else do
                     let (txid, (bhash, blkht, txind), sz, sinps, fees) = iop !! 0
-                        inps = L.sortBy (\(_, x, _) (_, y, _) -> compare x y) $ DCP.fromSet sinps
+                        inps = L.sortBy (\(_, x, _) (_, y, _) -> compare x y) $ Q.fromSet sinps
                         tx = fromJust $ Extra.hush $ S.decodeLazy $ fromBlob sz
                     return $
                         Just $
@@ -150,7 +149,7 @@ xGetTxHashes hashes = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    let conn = keyValDB (dbe)
+    let conn = connection (dbe)
         net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
         str = "SELECT tx_id, block_info, tx_serialized, inputs, fees from xoken.transactions where tx_id in ?"
         qstr =
@@ -159,14 +158,14 @@ xGetTxHashes hashes = do
                                                           , Blob
                                                           , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
                                                           , Int64)
-        p = Q.defQueryParams Q.One $ Identity $ hashes
-    res <- LE.try $ Q.runClient conn (Q.query qstr p)
+        p = getSimpleQueryParam $ Identity $ hashes
+    res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr p)
     case res of
         Right iop -> do
             txRecs <-
                 traverse
                     (\(txid, (bhash, blkht, txind), sz, sinps, fees) -> do
-                         let inps = L.sortBy (\(_, x, _) (_, y, _) -> compare x y) $ DCP.fromSet sinps
+                         let inps = L.sortBy (\(_, x, _) (_, y, _) -> compare x y) $ Q.fromSet sinps
                              tx = fromJust $ Extra.hush $ S.decodeLazy $ fromBlob sz
                          res' <-
                              LE.try $ LA.concurrently (getTxOutputsFromTxId txid) (xGetMerkleBranch $ DT.unpack txid)
@@ -199,7 +198,7 @@ getTxOutputsFromTxId :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => DT.Te
 getTxOutputsFromTxId txid = do
     dbe <- getDB
     lg <- getLogger
-    let conn = keyValDB (dbe)
+    let conn = connection (dbe)
         toStr = "SELECT output_index,block_info,is_recv,other,value,address FROM xoken.txid_outputs WHERE txid=?"
         toQStr =
             toStr :: Q.QueryString Q.R (Identity DT.Text) ( Int32
@@ -208,8 +207,8 @@ getTxOutputsFromTxId txid = do
                                                           , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
                                                           , Int64
                                                           , DT.Text)
-        par = Q.defQueryParams Q.One (Identity txid)
-    res <- LE.try $ Q.runClient conn (Q.query toQStr par)
+        par = getSimpleQueryParam (Identity txid)
+    res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query toQStr par)
     case res of
         Right t -> do
             if length t == 0
@@ -241,15 +240,15 @@ xGetTxIDsByBlockHash :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Strin
 xGetTxIDsByBlockHash hash pgSize pgNum = do
     dbe <- getDB
     lg <- getLogger
-    let conn = keyValDB $ dbe
+    let conn = connection $ dbe
         txsToSkip = pgSize * (pgNum - 1)
         firstPage = (+ 1) $ fromIntegral $ floor $ (fromIntegral txsToSkip) / 100
         lastPage = (+ 1) $ fromIntegral $ floor $ (fromIntegral $ txsToSkip + pgSize) / 100
         txDropFromFirst = fromIntegral $ txsToSkip `mod` 100
         str = "SELECT page_number, txids from xoken.blockhash_txids where block_hash = ? and page_number in ? "
         qstr = str :: Q.QueryString Q.R (DT.Text, [Int32]) (Int32, [DT.Text])
-        p = Q.defQueryParams Q.One $ (DT.pack hash, [firstPage .. lastPage])
-    res <- liftIO $ try $ Q.runClient conn (Q.query qstr p)
+        p = getSimpleQueryParam $ (DT.pack hash, [firstPage .. lastPage])
+    res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr p)
     case res of
         Right iop ->
             return . L.take (fromIntegral pgSize) . L.drop txDropFromFirst . L.concat $ (fmap DT.unpack . snd) <$> iop
@@ -260,14 +259,14 @@ xGetTxIDsByBlockHash hash pgSize pgNum = do
 xGetTxOutputSpendStatus :: (HasXokenNodeEnv env m, MonadIO m) => String -> Int32 -> m (Maybe TxOutputSpendStatus)
 xGetTxOutputSpendStatus txId outputIndex = do
     dbe <- getDB
-    let conn = keyValDB (dbe)
+    let conn = connection (dbe)
         str = "SELECT is_recv, block_info, other FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
         qstr =
             str :: Q.QueryString Q.R (DT.Text, Int32) ( Bool
                                                       , (DT.Text, Int32, Int32)
                                                       , Set ((DT.Text, Int32), Int32, (DT.Text, Int64)))
-        p = Q.defQueryParams Q.One (DT.pack txId, outputIndex)
-    iop <- Q.runClient conn (Q.query qstr p)
+        p = getSimpleQueryParam (DT.pack txId, outputIndex)
+    iop <- liftIO $ query conn (Q.RqQuery $ Q.Query qstr p)
     if length iop == 0
         then return Nothing
         else do
@@ -276,7 +275,7 @@ xGetTxOutputSpendStatus txId outputIndex = do
                 else do
                     let siop = L.sortBy (\(x, _, _) (y, _, _) -> compare x y) iop
                         (_, (_, spendingTxBlkHeight, _), other) = siop !! 0
-                        ((spendingTxID, _), spendingTxIndex, _) = head $ DCP.fromSet other
+                        ((spendingTxID, _), spendingTxIndex, _) = head $ Q.fromSet other
                     return $
                         Just $
                         TxOutputSpendStatus
@@ -302,7 +301,7 @@ xRelayTx rawTx = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    let conn = keyValDB (dbe)
+    let conn = connection (dbe)
     -- broadcast Tx
     case runGetState (getConfirmedTx) (rawTx) 0 of
         Left e -> do
@@ -323,8 +322,8 @@ xRelayTx rawTx = do
                                          str :: Q.QueryString Q.R (Identity DT.Text) ( DT.Text
                                                                                      , (DT.Text, Int32, Int32)
                                                                                      , Blob)
-                                     p = Q.defQueryParams Q.One $ Identity $ (txid)
-                                 iop <- Q.runClient conn (Q.query qstr p)
+                                     p = getSimpleQueryParam $ Identity $ (txid)
+                                 iop <- liftIO $ query conn (Q.RqQuery $ Q.Query qstr p)
                                  if length iop == 0
                                      then do
                                          debug lg $ LG.msg $ "not found" ++ show txid
