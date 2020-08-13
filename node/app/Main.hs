@@ -85,9 +85,7 @@ import Data.Version
 import Data.Word (Word32)
 import Data.Word
 import qualified Database.Bolt as BT
-import Database.CQL.Protocol as CQ
-import qualified Database.CQL.IO as Q
-import qualified Database.XCQL.Protocol as DCP
+import qualified Database.XCQL.Protocol as Q
 import Network.Simple.TCP
 import Network.Socket
 import Network.Xoken.Node.AriviService
@@ -206,20 +204,11 @@ makeGraphDBResPool uname pwd = do
     putStrLn $ "Connected to Neo4j database, version " ++ show (a !! 0)
     return gdbState
 
-runThreads ::
-       Config.Config
-    -> NC.NodeConfig
-    -> BitcoinP2P
-    -> Q.ClientState
-    -> LG.Logger
-    -> (P2PEnv AppM ServiceResource ServiceTopic RPCMessage PubNotifyMessage)
-    -> [FilePath]
-    -> IO ()
-runThreads config nodeConf bp2p conn lg p2pEnv certPaths = do
-    gdbState <- makeGraphDBResPool (neo4jUsername nodeConf) (neo4jPassword nodeConf)
+makeCqlPool :: IO (CqlConnection)
+makeCqlPool = do
     let hints = defaultHints {addrFlags = [AI_NUMERICHOST, AI_NUMERICSERV], addrSocketType = Stream}
-        startCql :: DCP.Request k () ()
-        startCql = DCP.RqStartup $ DCP.Startup DCP.Cqlv300 (DCP.algorithm DCP.noCompression) --(DCP.CqlVersion "3.4.4") DCP.None
+        startCql :: Q.Request k () ()
+        startCql = Q.RqStartup $ Q.Startup Q.Cqlv300 (Q.algorithm Q.noCompression) --(Q.CqlVersion "3.4.4") Q.None
     (addr:_) <- getAddrInfo (Just hints) (Just "127.0.0.1") (Just "9042")
     connPool <-
         createPool
@@ -229,7 +218,20 @@ runThreads config nodeConf bp2p conn lg p2pEnv certPaths = do
             1
             (1800000000000)
             200
-    let dbh = DatabaseHandles conn gdbState connPool
+    return connPool
+
+runThreads ::
+       Config.Config
+    -> NC.NodeConfig
+    -> BitcoinP2P
+    -> CqlConnection
+    -> LG.Logger
+    -> (P2PEnv AppM ServiceResource ServiceTopic RPCMessage PubNotifyMessage)
+    -> [FilePath]
+    -> IO ()
+runThreads config nodeConf bp2p conn lg p2pEnv certPaths = do
+    gdbState <- makeGraphDBResPool (neo4jUsername nodeConf) (neo4jPassword nodeConf)
+    let dbh = DatabaseHandles gdbState conn
     let allegoryEnv = AllegoryEnv $ allegoryVendorSecretKey nodeConf
     let xknEnv = XokenNodeEnv bp2p dbh lg allegoryEnv
     let serviceEnv = ServiceEnv xknEnv p2pEnv
@@ -261,8 +263,8 @@ runThreads config nodeConf bp2p conn lg p2pEnv certPaths = do
                                             withAsync runWatchDog $ \z -> do
                                                 _ <- LA.wait z
                                                 return ())
-    liftIO $ Q.shutdown conn
     liftIO $ destroyAllResources $ pool gdbState
+    liftIO $ destroyAllResources $ conn
     liftIO $ putStrLn $ "node recovering from fatal DB connection failure!"
     return ()
 
@@ -291,7 +293,7 @@ runWatchDog = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    let conn = keyValDB (dbe)
+    let conn = connection (dbe)
     LG.debug lg $ LG.msg $ LG.val "Starting watchdog"
     continue <- liftIO $ newIORef True
     whileM_ (liftIO $ readIORef continue) $ do
@@ -305,17 +307,17 @@ runWatchDog = do
                 tm <- liftIO $ getCurrentTime
                 let ttime = (floor $ utcTimeToPOSIXSeconds tm) :: Int64
                     str = "insert INTO xoken.transactions ( tx_id, block_info, tx_serialized ) values (?, ?, ?)"
-                    qstr = str :: Q.QueryString Q.W (T.Text, ((T.Text, Int32), Int32), CQ.Blob) ()
+                    qstr = str :: Q.QueryString Q.W (T.Text, ((T.Text, Int32), Int32), Q.Blob) ()
                     par =
-                        Q.defQueryParams Q.One ("watchdog-last-check", ((T.pack $ show ttime, 0), 0), CQ.Blob $ CL.pack "")
+                        getSimpleQueryParam ("watchdog-last-check", ((T.pack $ show ttime, 0), 0), Q.Blob $ CL.pack "")
                 ores <-
                     LA.race
                         (liftIO $ threadDelay (3000000)) -- worst case of 3 secs
-                        (liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr) par))
+                        (liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par))
                 case ores of
                     Right (eth) -> do
                         case eth of
-                            Right () -> return ()
+                            Right _ -> return ()
                             Left (SomeException e) -> do
                                 LG.err lg $ LG.msg ("Error: unable to insert, watchdog raise alert " ++ show e)
                                 liftIO $ writeIORef continue False
@@ -323,7 +325,7 @@ runWatchDog = do
                         LG.err lg $ LG.msg $ LG.val "Error: insert timed-out, watchdog raise alert "
                         liftIO $ writeIORef continue False
 
-runNode :: Config.Config -> NC.NodeConfig -> Q.ClientState -> BitcoinP2P -> [FilePath] -> IO ()
+runNode :: Config.Config -> NC.NodeConfig -> CqlConnection -> BitcoinP2P -> [FilePath] -> IO ()
 runNode config nodeConf conn bp2p certPaths = do
     p2pEnv <- mkP2PEnv config globalHandlerRpc globalHandlerPubSub [AriviService] []
     lg <-
@@ -349,12 +351,12 @@ defNetwork = bsvTest
 netNames :: String
 netNames = intercalate "|" (Data.List.map getNetworkName allNets)
 
-defaultAdminUser :: Q.ClientState -> IO ()
+defaultAdminUser :: CqlConnection -> IO ()
 defaultAdminUser conn = do
     let qstr =
             " SELECT password from xoken.user_permission where username = 'admin' " :: Q.QueryString Q.R () (Identity T.Text)
-        p = Q.defQueryParams Q.One ()
-    op <- Q.runClient conn (Q.query qstr p)
+        p = getSimpleQueryParam ()
+    op <- query conn (Q.RqQuery $ Q.Query qstr p)
     if length op == 1
         then return ()
         else do
@@ -374,18 +376,6 @@ defaultAdminUser conn = do
             putStrLn $ "  Please note down admin password NOW, will not be shown again."
             putStrLn $ "  Password : " ++ (aurPassword $ fromJust usr)
             putStrLn $ "******************************************************************* "
-
-makeKeyValDBConn :: IO (Q.ClientState)
-makeKeyValDBConn = do
-    let logg = Q.stdoutLogger Q.LogWarn
-        stng = Q.setMaxStreams 2048 $ Q.setMaxConnections 256 $ Q.setPoolStripes 12 $ Q.setLogger logg Q.defSettings
-        stng2 = Q.setRetrySettings Q.eagerRetrySettings stng
-        qstr = "SELECT cql_version from system.local" :: Q.QueryString Q.R () (Identity T.Text)
-        p = Q.defQueryParams Q.One ()
-    conn <- Q.init stng2
-    op <- Q.runClient conn (Q.query qstr p)
-    putStrLn $ "Connected to Cassandra database, version " ++ show (runIdentity (op !! 0))
-    return conn
 
 defBitcoinP2P :: NodeConfig -> IO (BitcoinP2P)
 defBitcoinP2P nodeCnf = do
@@ -411,7 +401,7 @@ defBitcoinP2P nodeCnf = do
 initNexa :: IO ()
 initNexa = do
     putStrLn $ "Starting Xoken Nexa"
-    conn <- makeKeyValDBConn
+    conn <- makeCqlPool
     defaultAdminUser conn
     b <- doesFileExist "arivi-config.yaml"
     unless b defaultConfig

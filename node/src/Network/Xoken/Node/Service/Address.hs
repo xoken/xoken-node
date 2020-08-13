@@ -77,8 +77,7 @@ import Data.Time.Clock.POSIX
 import Data.Word
 import Data.Yaml
 import qualified Database.Bolt as BT
-import qualified Database.CQL.IO as Q
-import Database.CQL.Protocol as DCP
+import Database.XCQL.Protocol as Q
 import qualified Network.Simple.TCP.TLS as TLS
 import Network.Xoken.Address.Base58
 import Network.Xoken.Block.Common
@@ -103,7 +102,7 @@ getTxOutputsData :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => (DT.Text,
 getTxOutputsData (txid, index) = do
     dbe <- getDB
     lg <- getLogger
-    let conn = keyValDB (dbe)
+    let conn = connection (dbe)
         toStr = "SELECT block_info,is_recv,other,value,address FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
         toQStr =
             toStr :: Q.QueryString Q.R (DT.Text, Int32) ( (DT.Text, Int32, Int32)
@@ -111,8 +110,8 @@ getTxOutputsData (txid, index) = do
                                                         , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
                                                         , Int64
                                                         , DT.Text)
-        top = Q.defQueryParams Q.One (txid, index)
-    toRes <- LE.try $ Q.runClient conn (Q.query toQStr top)
+        top = getSimpleQueryParam (txid, index)
+    toRes <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query toQStr top)
     case toRes of
         Right es -> do
             if length es == 0
@@ -141,7 +140,7 @@ xGetOutputsAddress address pgSize mbNomTxInd = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    let conn = keyValDB (dbe)
+    let conn = connection (dbe)
         net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
         nominalTxIndex =
             case mbNomTxInd of
@@ -150,17 +149,17 @@ xGetOutputsAddress address pgSize mbNomTxInd = do
         sh = convertToScriptHash net address
         str = "SELECT nominal_tx_index,output FROM xoken.script_hash_outputs WHERE script_hash=? AND nominal_tx_index<?"
         qstr = str :: Q.QueryString Q.R (DT.Text, Int64) (Int64, (DT.Text, Int32))
-        aop = Q.defQueryParams Q.One (DT.pack address, nominalTxIndex)
-        shp = Q.defQueryParams Q.One (maybe "" DT.pack sh, nominalTxIndex)
+        aop = getSimpleQueryParam (DT.pack address, nominalTxIndex)
+        shp = getSimpleQueryParam (maybe "" DT.pack sh, nominalTxIndex)
     res <-
         LE.try $
         LA.concurrently
             (case sh of
                  Nothing -> return []
-                 Just s -> Q.runClient conn (Q.query qstr (shp {pageSize = pgSize})))
+                 Just s -> liftIO $ query conn (Q.RqQuery $ Q.Query qstr (shp {pageSize = pgSize})))
             (case address of
                  ('3':_) -> return []
-                 _ -> Q.runClient conn (Q.query qstr (aop {pageSize = pgSize})))
+                 _ -> liftIO $ query conn (Q.RqQuery $ Q.Query qstr (aop {pageSize = pgSize})))
     case res of
         Right (sr, ar) -> do
             let iops =
@@ -210,7 +209,7 @@ xGetUTXOsAddress address pgSize mbFromOutput = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    let conn = keyValDB (dbe)
+    let conn = connection (dbe)
         net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
         sh = convertToScriptHash net address
         fromOutput =
@@ -219,17 +218,17 @@ xGetUTXOsAddress address pgSize mbFromOutput = do
                 Nothing -> maxBoundOutput
         str = "SELECT output FROM xoken.script_hash_unspent_outputs WHERE script_hash=? AND output<?"
         qstr = str :: Q.QueryString Q.R (DT.Text, (DT.Text, Int32)) (Identity (DT.Text, Int32))
-        aop = Q.defQueryParams Q.One (DT.pack address, fromOutput)
-        shp = Q.defQueryParams Q.One (maybe "" DT.pack sh, fromOutput)
+        aop = getSimpleQueryParam (DT.pack address, fromOutput)
+        shp = getSimpleQueryParam (maybe "" DT.pack sh, fromOutput)
     res <-
         LE.try $
         LA.concurrently
             (case sh of
                  Nothing -> return []
-                 Just s -> Q.runClient conn (Q.query qstr (shp {pageSize = pgSize})))
+                 Just s -> liftIO $ query conn (Q.RqQuery $ Q.Query qstr (shp {pageSize = pgSize})))
             (case address of
                  ('3':_) -> return []
-                 _ -> Q.runClient conn (Q.query qstr (aop {pageSize = pgSize})))
+                 _ -> liftIO $ query conn (Q.RqQuery $ Q.Query qstr (aop {pageSize = pgSize})))
     case res of
         Right (sr, ar) -> do
             let iops =
@@ -278,7 +277,7 @@ xGetOutputsScriptHash ::
 xGetOutputsScriptHash scriptHash pgSize mbNomTxInd = do
     dbe <- getDB
     lg <- getLogger
-    let conn = keyValDB (dbe)
+    let conn = connection (dbe)
         nominalTxIndex =
             case mbNomTxInd of
                 (Just n) -> n
@@ -286,8 +285,8 @@ xGetOutputsScriptHash scriptHash pgSize mbNomTxInd = do
         str =
             "SELECT script_hash,nominal_tx_index,output FROM xoken.script_hash_outputs WHERE script_hash=? AND nominal_tx_index<?"
         qstr = str :: Q.QueryString Q.R (DT.Text, Int64) (DT.Text, Int64, (DT.Text, Int32))
-        par = Q.defQueryParams Q.One (DT.pack scriptHash, nominalTxIndex)
-    res <- LE.try $ Q.runClient conn (Q.query qstr (par {pageSize = pgSize}))
+        par = getSimpleQueryParam (DT.pack scriptHash, nominalTxIndex)
+    res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr (par {pageSize = pgSize}))
     case res of
         Right iop -> do
             if length iop == 0
@@ -323,15 +322,15 @@ xGetUTXOsScriptHash ::
 xGetUTXOsScriptHash scriptHash pgSize mbFromOutput = do
     dbe <- getDB
     lg <- getLogger
-    let conn = keyValDB (dbe)
+    let conn = connection (dbe)
         fromOutput =
             case mbFromOutput of
                 (Just n) -> n
                 Nothing -> maxBoundOutput
         str = "SELECT script_hash,output FROM xoken.script_hash_unspent_outputs WHERE script_hash=? AND output<?"
         qstr = str :: Q.QueryString Q.R (DT.Text, (DT.Text, Int32)) (DT.Text, (DT.Text, Int32))
-        par = Q.defQueryParams Q.One (DT.pack scriptHash, fromOutput)
-    res <- LE.try $ Q.runClient conn (Q.query qstr (par {pageSize = pgSize}))
+        par = getSimpleQueryParam (DT.pack scriptHash, fromOutput)
+    res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr (par {pageSize = pgSize}))
     case res of
         Right iop -> do
             if length iop == 0

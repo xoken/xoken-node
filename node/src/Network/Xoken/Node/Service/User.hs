@@ -77,8 +77,7 @@ import Data.Time.Clock.POSIX
 import Data.Word
 import Data.Yaml
 import qualified Database.Bolt as BT
-import qualified Database.CQL.IO as Q
-import Database.CQL.Protocol as DCP
+import Database.XCQL.Protocol as Q
 import qualified Network.Simple.TCP.TLS as TLS
 import Network.Xoken.Address.Base58
 import Network.Xoken.Block.Common
@@ -104,7 +103,7 @@ xGetUserByUsername name = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    let conn = keyValDB (dbe)
+    let conn = connection (dbe)
         str =
             "SELECT username,password,first_name,last_name,emailid,permissions,api_quota,api_used,api_expiry_time,session_key,session_key_expiry_time from xoken.user_permission where username = ?"
         qstr =
@@ -119,8 +118,8 @@ xGetUserByUsername name = do
                                                         , UTCTime
                                                         , DT.Text
                                                         , UTCTime)
-        p = Q.defQueryParams Q.One $ Identity name
-    res <- LE.try $ Q.runClient conn (Q.query qstr p)
+        p = getSimpleQueryParam $ Identity name
+    res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr p)
     case res of
         Right iop -> do
             if length iop == 0
@@ -138,7 +137,7 @@ xGetUserByUsername name = do
                                 (DT.unpack fname)
                                 (DT.unpack lname)
                                 (DT.unpack email)
-                                (DT.unpack <$> (DCP.fromSet roles))
+                                (DT.unpack <$> (Q.fromSet roles))
                                 (fromIntegral apiQ)
                                 (fromIntegral used)
                                 apiE
@@ -153,7 +152,7 @@ xGetUserByUsername name = do
                                 (DT.unpack fname)
                                 (DT.unpack lname)
                                 (DT.unpack email)
-                                (DT.unpack <$> (DCP.fromSet roles))
+                                (DT.unpack <$> (Q.fromSet roles))
                                 (fromIntegral apiQ)
                                 (fromIntegral apiU)
                                 apiE
@@ -168,13 +167,13 @@ xDeleteUserByUsername name = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    let conn = keyValDB (dbe)
+    let conn = connection (dbe)
         str = "DELETE FROM xoken.user_permission WHERE username=?"
         qstr = str :: Q.QueryString Q.W (Identity DT.Text) ()
-        par = Q.defQueryParams Q.One (Identity name)
-    res <- liftIO $ try $ Q.runClient conn (Q.write qstr par)
+        par = getSimpleQueryParam (Identity name)
+    res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
     case res of
-        Right () -> do
+        Right _ -> do
             cacheList <- liftIO $ (H.toList $ userDataCache bp2pEnv)
             liftIO $
                 mapM_
@@ -195,25 +194,24 @@ xUpdateUserByUsername name (UpdateUserByUsername' {..}) = do
     res <- LE.try $ xGetUserByUsername name
     case res of
         Right (Just (User {..})) -> do
-            let conn = keyValDB (dbe)
+            let conn = connection (dbe)
                 str =
                     "UPDATE xoken.user_permission SET password=?,first_name=?,last_name=?,emailid=?,api_quota=?,permissions=?,api_expiry_time=? WHERE username=?"
                 qstr =
                     str :: Q.QueryString Q.W (DT.Text, DT.Text, DT.Text, DT.Text, Int32, Set DT.Text, UTCTime, DT.Text) ()
                 par =
-                    Q.defQueryParams
-                        Q.One
+                    getSimpleQueryParam
                         ( fromMaybe (DT.pack uHashedPassword) ((encodeHex . S.encode . sha256 . BC.pack) <$> uuPassword)
                         , DT.pack $ fromMaybe uFirstName uuFirstName
                         , DT.pack $ fromMaybe uLastName uuLastName
                         , DT.pack $ fromMaybe uEmail uuEmail
                         , fromMaybe (fromIntegral uApiQuota) uuApiQuota
-                        , DCP.Set $ fmap DT.pack $ fromMaybe uRoles uuRoles
+                        , Q.Set $ fmap DT.pack $ fromMaybe uRoles uuRoles
                         , fromMaybe uApiExpiryTime uuApiExpiryTime
                         , name)
-            res' <- liftIO $ try $ Q.runClient conn (Q.write qstr par)
+            res' <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
             case res' of
-                Right () -> do
+                Right _ -> do
                     if isJust uuPassword
                         then do
                             tm <- liftIO $ getCurrentTime
@@ -222,10 +220,10 @@ xUpdateUserByUsername name (UpdateUserByUsername' {..}) = do
                                     "UPDATE xoken.user_permission SET session_key=?, session_key_expiry_time=? WHERE username=?"
                                 qstr' = str' :: Q.QueryString Q.W (DT.Text, UTCTime, DT.Text) ()
                                 skTime = (addUTCTime (nominalDay * 30) tm)
-                                par' = Q.defQueryParams Q.One (newSessionKey, skTime, name)
-                            res'' <- liftIO $ try $ Q.runClient conn (Q.write qstr' par')
+                                par' = getSimpleQueryParam (newSessionKey, skTime, name)
+                            res'' <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr' par')
                             case res'' of
-                                Right () -> do
+                                Right _ -> do
                                     cacheList <- liftIO $ (H.toList $ userDataCache bp2pEnv)
                                     liftIO $
                                         mapM_
@@ -271,7 +269,7 @@ xGetUserBySessionKey skey = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    let conn = keyValDB (dbe)
+    let conn = connection (dbe)
         str =
             "SELECT username,first_name,last_name,emailid,permissions,api_quota,api_used,api_expiry_time,session_key,session_key_expiry_time from xoken.user_permission where session_key = ? ALLOW FILTERING "
         qstr =
@@ -285,8 +283,8 @@ xGetUserBySessionKey skey = do
                                                         , UTCTime
                                                         , DT.Text
                                                         , UTCTime)
-        p = Q.defQueryParams Q.One $ Identity skey
-    res <- LE.try $ Q.runClient conn (Q.query qstr p)
+        p = getSimpleQueryParam $ Identity skey
+    res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr p)
     case res of
         Right iop -> do
             if length iop == 0
@@ -304,7 +302,7 @@ xGetUserBySessionKey skey = do
                                 (DT.unpack fname)
                                 (DT.unpack lname)
                                 (DT.unpack email)
-                                (DT.unpack <$> (DCP.fromSet roles))
+                                (DT.unpack <$> (Q.fromSet roles))
                                 (fromIntegral apiQ)
                                 (fromIntegral used)
                                 apiE
@@ -319,7 +317,7 @@ xGetUserBySessionKey skey = do
                                 (DT.unpack fname)
                                 (DT.unpack lname)
                                 (DT.unpack email)
-                                (DT.unpack <$> (DCP.fromSet roles))
+                                (DT.unpack <$> (Q.fromSet roles))
                                 (fromIntegral apiQ)
                                 (fromIntegral apiU)
                                 apiE
@@ -334,13 +332,13 @@ login user pass = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    let conn = keyValDB dbe
+    let conn = connection dbe
         hashedPasswd = encodeHex ((S.encode $ sha256 pass))
         str =
             " SELECT password, api_quota, api_used, session_key, session_key_expiry_time, permissions FROM xoken.user_permission WHERE username = ? "
         qstr = str :: Q.QueryString Q.R (Identity DT.Text) (DT.Text, Int32, Int32, DT.Text, UTCTime, Set DT.Text)
-        p = Q.defQueryParams Q.One $ Identity $ user
-    res <- liftIO $ try $ Q.runClient conn (Q.query (Q.prepared qstr) p)
+        p = getSimpleQueryParam $ Identity $ user
+    res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr p)
     case res of
         Left (SomeException e) -> do
             err lg $ LG.msg $ "Error: SELECT'ing from 'user_permission': " ++ show e
@@ -360,12 +358,10 @@ login user pass = do
                                             "UPDATE xoken.user_permission SET session_key = ?, session_key_expiry_time = ? WHERE username = ? "
                                         qstr1 = str1 :: Q.QueryString Q.W (DT.Text, UTCTime, DT.Text) ()
                                         par1 =
-                                            Q.defQueryParams
-                                                Q.One
-                                                (newSessionKey, (addUTCTime (nominalDay * 30) tm), user)
-                                    res1 <- liftIO $ try $ Q.runClient conn (Q.write (qstr1) par1)
+                                            getSimpleQueryParam (newSessionKey, (addUTCTime (nominalDay * 30) tm), user)
+                                    res1 <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query (qstr1) par1)
                                     case res1 of
-                                        Right () -> do
+                                        Right _ -> do
                                             userData <- liftIO $ H.lookup (userDataCache bp2pEnv) (sk)
                                             case userData of
                                                 Just (n, q, u, e, r) -> do
@@ -389,7 +385,7 @@ login user pass = do
                                                             , quota
                                                             , used
                                                             , (addUTCTime (nominalDay * 30) tm)
-                                                            , DCP.fromSet roles)
+                                                            , Q.fromSet roles)
                                                     return $
                                                         AuthResp
                                                             (Just $ DT.unpack newSessionKey)

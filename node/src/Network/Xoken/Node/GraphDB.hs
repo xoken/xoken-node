@@ -38,7 +38,6 @@ import Data.Text (Text, append, concat, filter, intercalate, isInfixOf, map, nul
 import Data.Time.Clock
 import Data.Word
 import Database.Bolt as BT
-import qualified Database.CQL.IO as Q
 import GHC.Generics
 import Network.Socket hiding (send)
 import Network.Xoken.Crypto.Hash

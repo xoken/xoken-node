@@ -77,8 +77,7 @@ import Data.Time.Clock.POSIX
 import Data.Word
 import Data.Yaml
 import qualified Database.Bolt as BT
-import qualified Database.CQL.IO as Q
-import Database.CQL.Protocol as DCP
+import Database.XCQL.Protocol as Q
 import qualified Network.Simple.TCP.TLS as TLS
 import Network.Xoken.Address.Base58
 import Network.Xoken.Block.Common
@@ -237,7 +236,7 @@ xGetPartiallySignedAllegoryTx payips (nameArr, isProducer) owner change = do
 --     bp2pEnv <- getBitcoinP2P
 --     lg <- getLogger
 --     alg <- getAllegory
---     let conn = keyValDB (dbe)
+--     let conn = connection (dbe)
 --     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
 --     -- check if name (of given type) exists
 --     let name = DT.pack $ L.map (\x -> chr x) (nameArr)

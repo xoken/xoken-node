@@ -21,7 +21,6 @@ import Data.Pool
 import Data.Time.Clock
 import Data.Word
 import Database.Bolt as BT
-import qualified Database.CQL.IO as Q
 import Network.Socket hiding (send)
 import Network.Xoken.Block
 import Network.Xoken.Constants
@@ -44,8 +43,7 @@ type CqlConnection = Pool Socket
 
 data DatabaseHandles =
     DatabaseHandles
-        { keyValDB :: !Q.ClientState
-        , graphDB :: !ServerState
+        { graphDB :: !ServerState
         , connection :: !(CqlConnection)
         }
 

@@ -36,7 +36,6 @@ import Data.Text as T
 import Data.Time.Clock
 import Data.Time.Clock.POSIX
 import Data.X509.CertificateStore
-import qualified Database.CQL.IO as Q
 import GHC.Generics
 import qualified Network.Simple.TCP.TLS as TLS
 import Network.Socket

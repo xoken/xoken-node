@@ -847,8 +847,8 @@ getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait = do
 -- getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs = do
 --     let str = "SELECT tx_serialized from xoken.transactions where tx_id = ?"
 --         qstr = str :: Q.QueryString Q.R (Identity Text) (Identity Blob)
---         p = Q.defQueryParams Q.One $ Identity $ txHashToHex $ outPointHash outPoint
---     res <- liftIO $ try $ Q.runClient conn (Q.query qstr p)
+--         p = getSimpleQueryParam $ Identity $ txHashToHex $ outPointHash outPoint
+--     res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr p)
 --     case res of
 --         Left (e :: SomeException) -> do
 --             err lg $ LG.msg ("Error: getScriptHashFromOutpoint: " ++ show e)

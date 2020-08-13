@@ -295,7 +295,7 @@ processHeaders hdrs = do
                                      err lg $ LG.msg ("Error: INSERT into 'blocks_hash' failed: " ++ show e)
                                      throw KeyValueDBInsertException
                          res2 <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query q2 p2)
-                         --res1 <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr2) par2)
+                         --res1 <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query (Q.prepared qstr2) par2)
                          case res2 of
                              Right _ -> return ()
                              Left (e :: SomeException) -> do

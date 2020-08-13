@@ -43,8 +43,7 @@ import qualified Data.Text.Encoding as T
 import qualified Data.Text.Lazy as T.Lazy
 import Data.Time.Clock (UTCTime)
 import Data.Word
-import qualified Database.CQL.IO as Q
-import Database.CQL.Protocol as DCP
+import Database.XCQL.Protocol as Q
 import GHC.Generics
 import Network.Socket (SockAddr(SockAddrUnix))
 import Network.Xoken.Address.Base58
@@ -913,9 +912,9 @@ type TxIdOutputs = ((T.Text, Int32, Int32), Bool, Set ((T.Text, Int32), Int32, (
 
 genTxOutputData :: (T.Text, Int32, TxIdOutputs, Maybe TxIdOutputs) -> TxOutputData
 genTxOutputData (txId, txIndex, ((hs, ht, ind), _, inps, val, addr), Nothing) =
-    TxOutputData txId txIndex addr val (BlockInfo' (T.unpack hs) ht ind) (DCP.fromSet inps) Nothing
+    TxOutputData txId txIndex addr val (BlockInfo' (T.unpack hs) ht ind) (Q.fromSet inps) Nothing
 genTxOutputData (txId, txIndex, ((hs, ht, ind), _, inps, val, addr), Just ((shs, sht, sind), _, oth, _, _)) =
-    let other = DCP.fromSet oth
+    let other = Q.fromSet oth
         ((stid, _), stidx, _) = head $ other
         si = (\((_, soi), _, (ad, vl)) -> SpendInfo' soi ad vl) <$> other
      in TxOutputData
@@ -924,7 +923,7 @@ genTxOutputData (txId, txIndex, ((hs, ht, ind), _, inps, val, addr), Just ((shs,
             addr
             val
             (BlockInfo' (T.unpack hs) ht ind)
-            (DCP.fromSet inps)
+            (Q.fromSet inps)
             (Just $ SpendInfo (T.unpack stid) stidx (BlockInfo' (T.unpack shs) sht sind) si)
 
 txOutputDataToOutput :: TxOutputData -> TxOutput
