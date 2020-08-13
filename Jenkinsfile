@@ -11,7 +11,7 @@ pipeline {
 
         sh 'mkdir -p xoken-core'
         dir(path: 'xoken-core') {
-          git(url: 'https://github.com/xoken/xoken-core/', branch: 'master')
+          git(url: 'https://github.com/xoken/xoken-core/', branch: 'testnet-sync')
         }
 
         sh 'mkdir -p xoken-node'
