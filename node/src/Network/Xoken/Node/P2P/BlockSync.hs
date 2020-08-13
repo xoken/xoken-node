@@ -233,7 +233,7 @@ runEgressBlockSync =
                                      else return ())
                 --
             sortedPeers
-        liftIO $ threadDelay (500000) -- 0.5 sec
+        liftIO $ threadDelay (10000) -- 0.01 sec
         return ()
 
 runPeerSync :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
