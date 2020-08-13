@@ -1,10 +1,9 @@
 resolver: lts-14.7
 allow-newer: true
 packages:
-    - node
+  - node
 
 extra-deps:
-
     - ../arivi-core/utils
     - ../arivi-core/crypto
     - ../arivi-core/p2p

@@ -341,8 +341,7 @@ runBlockCacheQueue =
                                  Nothing -> debug lg $ LG.msg $ ("bsh did-not-find : " ++ show bsh)
                                  Just (vvv, www) -> do
                                      eee <- liftIO $ TSH.toList vvv
-                                     debug lg $
-                                         LG.msg $ ("bsh: " ++ (show bsh) ++ " " ++ (show $ L.length eee) ++ (show www)))
+                                     debug lg $ LG.msg $ ("bsh: " ++ (show bsh) ++ " " ++ (show eee) ++ (show www)))
                         syt
                     --
                     mapM
@@ -351,7 +350,7 @@ runBlockCacheQueue =
                              case valx of
                                  Just xv -> do
                                      siza <- liftIO $ TSH.toList (fst xv)
-                                     if (L.length siza == snd xv)
+                                     if ((sum $ snd $ unzip siza) == snd xv)
                                          then do
                                              liftIO $
                                                  TSH.insert
@@ -585,7 +584,7 @@ commitTxPage txhash bhash page = do
             throw KeyValueDBInsertException
 
 processConfTransaction :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Tx -> BlockHash -> Int -> Int -> m ()
-processConfTransaction tx bhash txind blkht = do
+processConfTransaction tx bhash blkht txind = do
     dbe' <- getDB
     bp2pEnv <- getBitcoinP2P
     lg <- getLogger
