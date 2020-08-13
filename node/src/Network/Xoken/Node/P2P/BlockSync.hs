@@ -316,10 +316,7 @@ getNextBlockToSync tm = do
             (hash, ht) <- fetchBestSyncedBlock conn net
             allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
             let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
-            let cacheInd =
-                    if L.length connPeers > 4
-                        then getBatchSize (fromIntegral $ maxBitcoinPeerCount $ nodeConfig bp2pEnv) ht
-                        else [1]
+            let cacheInd = getBatchSize (fromIntegral $ maxBitcoinPeerCount $ nodeConfig bp2pEnv) ht
             let !bks = map (\x -> ht + x) cacheInd
             let str = "SELECT block_height, block_hash from xoken.blocks_by_height where block_height in ?"
                 qstr = str :: Q.QueryString Q.R (Identity [Int32]) ((Int32, T.Text))
