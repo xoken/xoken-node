@@ -57,7 +57,6 @@ import qualified Database.Bolt as BT
 import Database.XCQL.Protocol as Q
 import GHC.Natural
 import Network.Socket
-import qualified Network.Socket.ByteString as SB (recv)
 import qualified Network.Socket.ByteString.Lazy as LB (recv, sendAll)
 import Network.Xoken.Block.Common
 import Network.Xoken.Block.Headers
@@ -260,20 +259,20 @@ setupPeerConnection saddr = do
                                      return Nothing
 
 -- Helper Functions
-recvAll :: (MonadIO m) => Socket -> Int -> m B.ByteString
+recvAll :: (MonadIO m) => Socket -> Int64 -> m BSL.ByteString
 recvAll sock len = do
     if len > 0
         then do
-            res <- liftIO $ try $ SB.recv sock len
+            res <- liftIO $ try $ LB.recv sock len
             case res of
                 Left (e :: IOException) -> throw SocketReadException
                 Right mesg ->
-                    if B.length mesg == len
+                    if BSL.length mesg == len
                         then return mesg
-                        else if B.length mesg == 0
+                        else if BSL.length mesg == 0
                                  then throw ZeroLengthSocketReadException
-                                 else B.append mesg <$> recvAll sock (len - B.length mesg)
-        else return (B.empty)
+                                 else BSL.append mesg <$> recvAll sock (len - BSL.length mesg)
+        else return (BSL.empty)
 
 hashPair :: Hash256 -> Hash256 -> Hash256
 hashPair a b = doubleSHA256 $ encode a `B.append` encode b
@@ -411,8 +410,8 @@ resilientRead sock !blin = do
     debug lg $ msg (" | Tx payload left " ++ show (binTxPayloadLeft blin))
     debug lg $ msg (" | Bytes prev unspent " ++ show (LC.length $ binUnspentBytes blin))
     debug lg $ msg (" | Bytes to read " ++ show delta)
-    nbyt <- recvAll sock (fromIntegral delta)
-    let !txbyt = (binUnspentBytes blin) `LC.append` (LC.fromStrict nbyt)
+    nbyt <- recvAll sock delta
+    let !txbyt = (binUnspentBytes blin) `LC.append` (nbyt)
     case runGetLazyState (getConfirmedTxBatch) txbyt of
         Left e -> do
             err lg $ msg $ "1st attempt|" ++ show e
@@ -421,8 +420,8 @@ resilientRead sock !blin = do
                     if binTxPayloadLeft blin > chunkSizeFB
                         then chunkSizeFB - ((LC.length $ binUnspentBytes blin) + delta)
                         else (binTxPayloadLeft blin) - ((LC.length $ binUnspentBytes blin) + delta)
-            nbyt2 <- recvAll sock (fromIntegral deltaNew)
-            let !txbyt2 = txbyt `LC.append` (LC.fromStrict nbyt2)
+            nbyt2 <- recvAll sock deltaNew
+            let !txbyt2 = txbyt `LC.append` (nbyt2)
             case runGetLazyState (getConfirmedTxBatch) txbyt2 of
                 Left e -> do
                     err lg $ msg $ "2nd attempt|" ++ show e
@@ -631,7 +630,7 @@ readNextMessage net sock ingss = do
             return (Just $ MConfTx txns, Just $ IngressStreamState bio (issBlockInfo iss))
         Nothing -> do
             hdr <- recvAll sock 24
-            case (decode hdr) of
+            case (decodeLazy hdr) of
                 Left e -> do
                     err lg $ msg ("Error decoding incoming message header: " ++ e)
                     throw MessageParsingException
@@ -641,7 +640,7 @@ readNextMessage net sock ingss = do
                             if cmd == MCBlock
                                 then do
                                     byts <- recvAll sock (88) -- 80 byte Block header + VarInt (max 8 bytes) Tx count
-                                    case runGetLazyState (getDeflatedBlock) (LC.fromStrict byts) of
+                                    case runGetLazyState (getDeflatedBlock) (byts) of
                                         Left e -> do
                                             err lg $ msg ("Error, unexpected message header: " ++ e)
                                             throw MessageParsingException
@@ -670,8 +669,8 @@ readNextMessage net sock ingss = do
                                             then return hdr
                                             else do
                                                 b <- recvAll sock (fromIntegral len)
-                                                return (hdr `B.append` b)
-                                    case runGet (getMessage net) byts of
+                                                return (hdr `BSL.append` b)
+                                    case runGetLazy (getMessage net) byts of
                                         Left e -> throw MessageParsingException
                                         Right mg -> do
                                             debug lg $ msg ("Message recv' : " ++ (show $ msgType mg))
@@ -929,9 +928,9 @@ readNextMessage' peer readLock = do
                                 Just bi -> do
                                     tm <- liftIO $ getCurrentTime
                                     liftIO $ writeIORef (ptLastTxRecvTime tracker) $ Just tm
-                                    liftIO $ modifyIORef' (ptBlockFetchWindow tracker) (\z -> z - 1)
                                     if binTxTotalCount ingst == binTxIngested ingst
                                         then do
+                                            liftIO $ modifyIORef' (ptBlockFetchWindow tracker) (\z -> z - 1)
                                             liftIO $
                                                 TSH.insert
                                                     (blockSyncStatusMap bp2pEnv)
