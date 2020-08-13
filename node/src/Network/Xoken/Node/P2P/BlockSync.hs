@@ -174,7 +174,7 @@ runEgressBlockSync =
                  let staleTime = fromInteger $ fromIntegral (unresponsivePeerConnTimeoutSecs $ nodeConfig bp2pEnv)
                  case recvtm of
                      Just rt -> do
-                         if (fw < 20) && (diffUTCTime tm rt < staleTime)
+                         if (fw < 50) && (diffUTCTime tm rt < staleTime)
                              then do
                                  mmsg <- produceGetDataMessage tm
                                  case mmsg of
@@ -213,7 +213,7 @@ runEgressBlockSync =
                                              atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress peer))
                                      else liftIO $ threadDelay (100000)
                              Nothing -> do
-                                 if (fw < 20)
+                                 if (fw < 50)
                                      then do
                                          mmsg <- produceGetDataMessage tm
                                          case mmsg of
