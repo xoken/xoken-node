@@ -147,7 +147,7 @@ peerBlockSync peer =
         let staleTime = fromInteger $ fromIntegral (unresponsivePeerConnTimeoutSecs $ nodeConfig bp2pEnv)
         case recvtm of
             Just rt -> do
-                if (fw == 0) && (diffUTCTime tm rt < staleTime)
+                if (fw < 2) && (diffUTCTime tm rt < staleTime)
                     then do
                         msg <- produceGetDataMessage peer
                         res <- LE.try $ sendRequestMessages peer msg
@@ -181,7 +181,7 @@ peerBlockSync peer =
                                 throw UnresponsivePeerException
                             else return ()
                     Nothing -> do
-                        if (fw == 0)
+                        if (fw < 2)
                             then do
                                 msg <- produceGetDataMessage peer
                                 res <- LE.try $ sendRequestMessages peer msg
@@ -194,7 +194,7 @@ peerBlockSync peer =
                                         err lg $ LG.msg ("[ERROR] peerBlockSync " ++ show e)
                                         throw e
                             else return ()
-        liftIO $ threadDelay (500000) -- 0.5 sec
+        liftIO $ threadDelay (100000) -- 0.1 sec
         return ()
 
 runPeerSync :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
@@ -291,17 +291,14 @@ runBlockCacheQueue =
         allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
         let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
         syt' <- liftIO $ TSH.toList (blockSyncStatusMap bp2pEnv)
-        let syt = L.sortBy (\(_,(_,h)) (_,(_,h')) -> compare h h') syt'
+        let syt = L.sortBy (\(_, (_, h)) (_, (_, h')) -> compare h h') syt'
             sysz = fromIntegral $ L.length syt
         -- reload cache
         retn <-
             if sysz == 0
                 then do
                     (hash, ht) <- fetchBestSyncedBlock conn net
-                    let cacheInd =
-                            if L.length connPeers > 4
-                                then getBatchSize (fromIntegral $ maxBitcoinPeerCount $ nodeConfig bp2pEnv) ht
-                                else [1]
+                    let cacheInd = [1 .. 4]
                     let !bks = map (\x -> ht + x) cacheInd
                     let qstr :: Q.QueryString Q.R (Identity [Int32]) ((Int32, T.Text))
                         qstr = "SELECT block_height, block_hash from xoken.blocks_by_height where block_height in ?"
@@ -370,7 +367,7 @@ runBlockCacheQueue =
                                          RequestSent _ -> True
                                          otherwise -> False)
                                 syt
-                    let recvNotStarted = L.filter (\(_, ((RequestSent t), _)) -> (diffUTCTime tm t > 5)) sent
+                    let recvNotStarted = L.filter (\(_, ((RequestSent t), _)) -> (diffUTCTime tm t > 3)) sent
                     let receiveInProgress =
                             L.filter
                                 (\x ->
@@ -380,7 +377,7 @@ runBlockCacheQueue =
                                 syt
                     let recvTimedOut =
                             L.filter
-                                (\(_, ((RecentTxReceiveTime (t, c)), _)) -> (diffUTCTime tm t > 30))
+                                (\(_, ((RecentTxReceiveTime (t, c)), _)) -> (diffUTCTime tm t > 10))
                                 receiveInProgress
                     let recvComplete =
                             L.filter
@@ -390,7 +387,7 @@ runBlockCacheQueue =
                                          otherwise -> False)
                                 syt
                     let processingIncomplete =
-                            L.filter (\(_, ((BlockReceiveComplete t), _)) -> (diffUTCTime tm t > 120)) recvComplete
+                            L.filter (\(_, ((BlockReceiveComplete t), _)) -> (diffUTCTime tm t > 60)) recvComplete
                     -- all blocks received, empty the cache, cache-miss gracefully
                     trace lg $ LG.msg $ ("blockSyncStatusMap size: " ++ (show sysz))
                     trace lg $ LG.msg $ ("blockSyncStatusMap (list): " ++ (show syt))
