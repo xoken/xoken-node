@@ -50,7 +50,7 @@ import Network.Xoken.Node.Data
     )
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.HTTP.Types
-import Network.Xoken.Node.P2P.Common (addNewUser, generateSessionKey, getSimpleQueryParam, query)
+import Network.Xoken.Node.P2P.Common (addNewUser, generateSessionKey, getSimpleQueryParam, query, write)
 import Network.Xoken.Node.P2P.Types
 import Network.Xoken.Node.Service
 import Snap
@@ -632,7 +632,7 @@ testAuthHeader env (Just sessionKey) role = do
                             let str = " UPDATE xoken.user_permission SET api_used = ? WHERE username = ? "
                                 qstr = str :: Q.QueryString Q.W (Int32, DT.Text) ()
                                 p = getSimpleQueryParam (used + 1, name)
-                            res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr p)
+                            res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr p)
                             case res of
                                 Left (SomeException e) -> do
                                     err lg $ LG.msg $ "Error: UPDATE'ing into 'user_permission': " ++ show e

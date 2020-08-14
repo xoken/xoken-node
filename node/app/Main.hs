@@ -313,7 +313,7 @@ runWatchDog = do
                 ores <-
                     LA.race
                         (liftIO $ threadDelay (3000000)) -- worst case of 3 secs
-                        (liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par))
+                        (liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr par))
                 case ores of
                     Right (eth) -> do
                         case eth of

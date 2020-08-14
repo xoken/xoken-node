@@ -538,7 +538,7 @@ updateBlocks bhash blkht bsize txcount cbase = do
                 , fromIntegral bsize
                 , fromIntegral txcount
                 , Blob $ runPutLazy $ putLazyByteString $ encodeLazy $ cbase)
-    res1 <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query q1 p1)
+    res1 <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query q1 p1)
     case res1 of
         Right _ -> do
             debug lg $ LG.msg $ "Updated blocks_by_hash for block_hash " ++ show bhash
@@ -546,7 +546,7 @@ updateBlocks bhash blkht bsize txcount cbase = do
         Left (e :: SomeException) -> do
             err lg $ LG.msg ("Error: INSERT into 'blocks_by_hash' failed: " ++ show e)
             throw KeyValueDBInsertException
-    res2 <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query q2 p2)
+    res2 <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query q2 p2)
     case res2 of
         Right _ -> do
             debug lg $ LG.msg $ "Updated blocks_by_height for block_height " ++ show blkht

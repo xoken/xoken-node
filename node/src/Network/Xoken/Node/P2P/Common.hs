@@ -269,7 +269,7 @@ addNewUser conn uname fname lname email roles api_quota api_expiry_time = do
                         , (fromMaybe (addUTCTime (nominalDay * 365) tm) api_expiry_time)
                         , tempSessionKey
                         , (addUTCTime (nominalDay * 30) tm))
-            res1 <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query (qstr) par)
+            res1 <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query (qstr) par)
             case res1 of
                 Right _ -> do
                     putStrLn $ "Added user: " ++ (T.unpack uname)
@@ -317,7 +317,7 @@ calculateChainWork blks conn = do
                             liftIO $ print $ "decode failed for blockrecord: " <> show err
                             return (-1)
         Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: xGetBlockHeights: " ++ show e
+            err lg $ LG.msg $ "Error: calculateChainWork: " ++ show e ++ "\n" ++ show blks
             throw KeyValueDBLookupException
 
 stripScriptHash :: ((Text, Int32), Int32, (Text, Text, Int64)) -> ((Text, Int32), Int32, (Text, Int64))
@@ -336,15 +336,23 @@ splitList xs = (f 1 xs, f 0 xs)
 getSimpleQueryParam :: Tuple a => a -> QueryParams a
 getSimpleQueryParam a = Q.QueryParams Q.One False a Nothing Nothing Nothing Nothing
 
-query :: (Tuple a, Tuple b) => CqlConnection -> Request k a b -> IO [b]
+query :: (Tuple a, Tuple b) => CqlConnection -> Request Q.R a b -> IO [b]
 query ps req = do
     resp <- queryResp ps req
     case resp of
         (Q.RsResult _ _ (Q.RowsResult _ r)) -> return r
-        response
-            --print $ "[Error] Query: Not a RowsResult!!"
-         -> do
-            return []
+        response -> do
+            print $ "[Error] Query: Not a RowsResult!!"
+            throw KeyValPoolException
+
+write :: (Tuple a, Tuple b) => CqlConnection -> Request Q.W a b -> IO ()
+write ps req = do
+    resp <- queryResp ps req
+    case resp of
+        (Q.RsResult _ _ (Q.VoidResult)) -> return ()
+        response -> do
+            print $ "[Error] Query: Not a VoidResult!!"
+            throw KeyValPoolException
 
 queryResp :: (Tuple a, Tuple b) => CqlConnection -> Request k a b -> IO (Response k a b)
 queryResp ps req = do
@@ -369,7 +377,7 @@ queryResp ps req = do
                                 x <- LB.recv sock (fromIntegral len)
                                 case Q.unpack noCompression h x of
                                     Left e -> do
-                                        print "[Error] Query: unpack"
+                                        print $ "[Error] Query: unpack " ++ show e
                                         throw KeyValPoolException
                                     Right (RsError _ _ e) -> do
                                         print $ "[Error] Query: RsError: " ++ show e

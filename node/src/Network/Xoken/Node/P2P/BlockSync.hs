@@ -230,7 +230,7 @@ markBestSyncedBlock hash height conn = do
         q = Q.QueryString "insert INTO xoken.misc_store (key, value) values (? , ?)"
         p :: Q.QueryParams (Text, (Maybe Bool, Int32, Maybe Int64, Text))
         p = getSimpleQueryParam ("best-synced", (Nothing, height, Nothing, hash))
-    res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query q p)
+    res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query q p)
     case res of
         Right _ -> return ()
         Left (e :: SomeException) -> do
@@ -495,7 +495,7 @@ commitScriptHashOutputs conn sh output blockInfo = do
         qstrAddrOuts :: Q.QueryString Q.W (Text, Int64, (Text, Int32)) ()
         qstrAddrOuts = "INSERT INTO xoken.script_hash_outputs (script_hash, nominal_tx_index, output) VALUES (?,?,?)"
         parAddrOuts = getSimpleQueryParam (sh, nominalTxIndex, output)
-    resAddrOuts <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstrAddrOuts parAddrOuts)
+    resAddrOuts <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstrAddrOuts parAddrOuts)
     case resAddrOuts of
         Right _ -> return ()
         Left (e :: SomeException) -> do
@@ -508,7 +508,7 @@ commitScriptHashUnspentOutputs conn sh output = do
     let qstr :: Q.QueryString Q.W (Text, (Text, Int32)) ()
         qstr = "INSERT INTO xoken.script_hash_unspent_outputs (script_hash, output) VALUES (?,?)"
         par = getSimpleQueryParam (sh, output)
-    res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
+    res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr par)
     case res of
         Right _ -> return ()
         Left (e :: SomeException) -> do
@@ -522,7 +522,7 @@ deleteScriptHashUnspentOutputs conn sh output = do
         qstr = "DELETE FROM xoken.script_hash_unspent_outputs WHERE script_hash=? AND output=?"
         par = getSimpleQueryParam (sh, output)
     return ()
-    res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
+    res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr par)
     case res of
         Right _ -> return ()
         Left (e :: SomeException) -> do
@@ -554,7 +554,7 @@ insertTxIdOutputs conn (txid, outputIndex) address scriptHash isRecv blockInfo o
         qstr =
             "INSERT INTO xoken.txid_outputs (txid,output_index,address,script_hash,is_recv,block_info,other,value) VALUES (?,?,?,?,?,?,?,?)"
         par = getSimpleQueryParam (txid, outputIndex, address, scriptHash, isRecv, blockInfo, other, value)
-    res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
+    res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr par)
     case res of
         Right _ -> return ()
         Left (e :: SomeException) -> do
@@ -576,7 +576,7 @@ commitTxPage txhash bhash page = do
         qstr :: Q.QueryString Q.W (Text, Int32, [Text]) ()
         qstr = "insert INTO xoken.blockhash_txids (block_hash, page_number, txids) values (?, ?, ?)"
         par = getSimpleQueryParam (blockHashToHex bhash, page, txids)
-    res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
+    res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr par)
     case res of
         Right _ -> return ()
         Left (e :: SomeException) -> do
@@ -765,7 +765,7 @@ processConfTransaction tx bhash blkht txind = do
                 , Blob $ runPutLazy $ putLazyByteString $ S.encodeLazy tx
                 , (stripScriptHash <$> inputs)
                 , fees)
-    res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
+    res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr par)
     case res of
         Right _ -> return ()
         Left (e :: SomeException) -> do

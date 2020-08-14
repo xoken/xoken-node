@@ -157,7 +157,7 @@ markBestBlock hash height conn = do
         q = Q.QueryString "insert INTO xoken.misc_store (key, value) values (? , ?)"
         p :: Q.QueryParams (Text, (Maybe Bool, Int32, Maybe Int64, Text))
         p = getSimpleQueryParam ("best_chain_tip", (Nothing, height, Nothing, hash))
-    res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query q p)
+    res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query q p)
     case res of
         Right _ -> return ()
         Left (e :: SomeException) -> do
@@ -287,15 +287,14 @@ processHeaders hdrs = do
                              hdrJson = T.pack $ LC.unpack $ A.encode $ fst $ snd y
                          let p1 = getSimpleQueryParam (hdrHash, hdrJson, fst y, nextHdrHash)
                              p2 = getSimpleQueryParam (fst y, hdrHash, hdrJson, nextHdrHash)
-                         res1 <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query q1 p1)
+                         res1 <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query q1 p1)
                          case res1 of
                              Right _ -> return ()
                              Left (e :: SomeException) ->
                                  liftIO $ do
                                      err lg $ LG.msg ("Error: INSERT into 'blocks_hash' failed: " ++ show e)
                                      throw KeyValueDBInsertException
-                         res2 <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query q2 p2)
-                         --res1 <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query (Q.prepared qstr2) par2)
+                         res2 <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query q2 p2)
                          case res2 of
                              Right _ -> return ()
                              Left (e :: SomeException) -> do
@@ -313,14 +312,14 @@ processHeaders hdrs = do
                                 let nextHdrHash = blockHashToHex $ headerHash $ fst $ snd $ head indexed
                                     p3 = getSimpleQueryParam (nextHdrHash, T.pack $ rbHash b)
                                     p4 = getSimpleQueryParam (nextHdrHash, height)
-                                res3 <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query q3 p3)
+                                res3 <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query q3 p3)
                                 case res3 of
                                     Right _ -> return ()
                                     Left (e :: SomeException) ->
                                         liftIO $ do
                                             err lg $ LG.msg ("Error: UPDATE into 'blocks_by_hash' failed: " ++ show e)
                                             throw KeyValueDBInsertException
-                                res4 <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query q4 p4)
+                                res4 <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query q4 p4)
                                 case res4 of
                                     Right _ -> return ()
                                     Left (e :: SomeException) -> do
@@ -390,7 +389,7 @@ updateChainWork indexed conn = do
                                 par1 =
                                     getSimpleQueryParam
                                         ("chain-work", (Nothing, updatedBlock, Nothing, updatedChainwork))
-                            res1 <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr1 par1)
+                            res1 <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr1 par1)
                             case res1 of
                                 Right _ -> do
                                     debug lg $

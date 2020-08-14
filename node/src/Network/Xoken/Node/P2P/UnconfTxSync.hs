@@ -160,7 +160,7 @@ runEpochSwitcher =
                 let str = "DELETE from xoken.ep_transactions where epoch = ?"
                     qstr = str :: Q.QueryString Q.W (Identity Bool) ()
                     p = getSimpleQueryParam $ Identity (not epoch)
-                res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr p)
+                res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr p)
                 case res of
                     Right _ -> return ()
                     Left (e :: SomeException) -> do
@@ -169,7 +169,7 @@ runEpochSwitcher =
                 let str = "DELETE from xoken.ep_script_hash_outputs where epoch = ?"
                     qstr = str :: Q.QueryString Q.W (Identity Bool) ()
                     p = getSimpleQueryParam $ Identity (not epoch)
-                res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr p)
+                res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr p)
                 case res of
                     Right _ -> return ()
                     Left (e :: SomeException) -> do
@@ -178,7 +178,7 @@ runEpochSwitcher =
                 let str = "DELETE from xoken.ep_txid_outputs where epoch = ?"
                     qstr = str :: Q.QueryString Q.W (Identity Bool) ()
                     p = getSimpleQueryParam $ Identity (not epoch)
-                res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr p)
+                res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr p)
                 case res of
                     Right _ -> return ()
                     Left (e :: SomeException) -> do
@@ -200,7 +200,7 @@ commitEpochScriptHashOutputs conn epoch sh output = do
     let strAddrOuts = "INSERT INTO xoken.ep_script_hash_outputs (epoch, script_hash, output) VALUES (?,?,?)"
         qstrAddrOuts = strAddrOuts :: Q.QueryString Q.W (Bool, Text, (Text, Int32)) ()
         parAddrOuts = getSimpleQueryParam (epoch, sh, output)
-    resAddrOuts <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query (qstrAddrOuts) parAddrOuts)
+    resAddrOuts <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query (qstrAddrOuts) parAddrOuts)
     case resAddrOuts of
         Right _ -> return ()
         Left (e :: SomeException) -> do
@@ -214,7 +214,7 @@ commitEpochScriptHashUnspentOutputs conn epoch sh output = do
     let str = "INSERT INTO xoken.ep_script_hash_unspent_outputs (epoch, script_hash, output) VALUES (?,?,?)"
         qstr = str :: Q.QueryString Q.W (Bool, Text, (Text, Int32)) ()
         par = getSimpleQueryParam (epoch, sh, output)
-    res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
+    res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr par)
     case res of
         Right _ -> return ()
         Left (e :: SomeException) -> do
@@ -228,7 +228,7 @@ deleteEpochScriptHashUnspentOutputs conn epoch sh output = do
     let str = "DELETE FROM xoken.ep_script_hash_unspent_outputs WHERE epoch=? AND script_hash=? AND output=?"
         qstr = str :: Q.QueryString Q.W (Bool, Text, (Text, Int32)) ()
         par = getSimpleQueryParam (epoch, sh, output)
-    res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
+    res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr par)
     case res of
         Right _ -> return ()
         Left (e :: SomeException) -> do
@@ -260,7 +260,7 @@ insertEpochTxIdOutputs conn epoch (txid, outputIndex) address scriptHash isRecv 
                                      , [((Text, Int32), Int32, (Text, Int64))]
                                      , Int64) ()
         par = getSimpleQueryParam (epoch, txid, outputIndex, address, scriptHash, isRecv, other, value)
-    res <- liftIO $ try $ query conn $ (Q.RqQuery $ Q.Query qstr par)
+    res <- liftIO $ try $ write conn $ (Q.RqQuery $ Q.Query qstr par)
     case res of
         Right _ -> return ()
         Left (e :: SomeException) -> do
@@ -379,7 +379,7 @@ processUnconfTransaction tx = do
                 , Blob $ runPutLazy $ putLazyByteString $ S.encodeLazy tx
                 , (stripScriptHash <$> inputs)
                 , fees)
-    res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
+    res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr par)
     case res of
         Right _ -> return ()
         Left (e :: SomeException) -> do

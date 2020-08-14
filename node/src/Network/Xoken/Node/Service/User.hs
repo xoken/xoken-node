@@ -171,7 +171,7 @@ xDeleteUserByUsername name = do
         str = "DELETE FROM xoken.user_permission WHERE username=?"
         qstr = str :: Q.QueryString Q.W (Identity DT.Text) ()
         par = getSimpleQueryParam (Identity name)
-    res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
+    res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr par)
     case res of
         Right _ -> do
             cacheList <- liftIO $ (H.toList $ userDataCache bp2pEnv)
@@ -209,7 +209,7 @@ xUpdateUserByUsername name (UpdateUserByUsername' {..}) = do
                         , Q.Set $ fmap DT.pack $ fromMaybe uRoles uuRoles
                         , fromMaybe uApiExpiryTime uuApiExpiryTime
                         , name)
-            res' <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
+            res' <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr par)
             case res' of
                 Right _ -> do
                     if isJust uuPassword
@@ -221,7 +221,7 @@ xUpdateUserByUsername name (UpdateUserByUsername' {..}) = do
                                 qstr' = str' :: Q.QueryString Q.W (DT.Text, UTCTime, DT.Text) ()
                                 skTime = (addUTCTime (nominalDay * 30) tm)
                                 par' = getSimpleQueryParam (newSessionKey, skTime, name)
-                            res'' <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr' par')
+                            res'' <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr' par')
                             case res'' of
                                 Right _ -> do
                                     cacheList <- liftIO $ (H.toList $ userDataCache bp2pEnv)
@@ -359,7 +359,7 @@ login user pass = do
                                         qstr1 = str1 :: Q.QueryString Q.W (DT.Text, UTCTime, DT.Text) ()
                                         par1 =
                                             getSimpleQueryParam (newSessionKey, (addUTCTime (nominalDay * 30) tm), user)
-                                    res1 <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query (qstr1) par1)
+                                    res1 <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query (qstr1) par1)
                                     case res1 of
                                         Right _ -> do
                                             userData <- liftIO $ H.lookup (userDataCache bp2pEnv) (sk)
