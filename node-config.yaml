@@ -34,8 +34,6 @@ maxTMTQueueSize: 1024
 
 txProcInputDependenciesWait: 240
 
-txProcTimeoutSecs : 250
-
 tlsCertificatePath : ./example.crt
 
 tlsKeyfilePath : ./example.key
@@ -55,3 +53,9 @@ allegoryTxFeeSatsOwnerAction : 200
 txOutputValuesCacheKeyBits : 20
 
 unconfirmedTxCacheKeyBits : 16
+
+getDataResponseTimeout : 3
+
+recentTxReceiveTimeout : 10
+
+blockProcessingTimeout : 60

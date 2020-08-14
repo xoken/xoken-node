@@ -43,7 +43,6 @@ data NodeConfig =
         , maxTMTBuilderThreads :: Int
         , maxTMTQueueSize :: Int
         , txProcInputDependenciesWait :: Int
-        , txProcTimeoutSecs :: Int
         , tlsCertificatePath :: FilePath
         , tlsKeyfilePath :: FilePath
         , tlsCertificateStorePath :: FilePath
@@ -54,6 +53,9 @@ data NodeConfig =
         , allegoryTxFeeSatsOwnerAction :: Int
         , txOutputValuesCacheKeyBits :: Word8
         , unconfirmedTxCacheKeyBits :: Word8
+        , blockProcessingTimeout :: Int
+        , recentTxReceiveTimeout :: Int
+        , getDataResponseTimeout :: Int
         }
     deriving (Show, Generic)
 
