@@ -270,7 +270,9 @@ recvAll sock len = do
                     if BSL.length mesg == len
                         then return mesg
                         else if BSL.length mesg == 0
-                                 then throw ZeroLengthSocketReadException
+                                 then do
+                                     liftIO $ threadDelay (200000) -- 0.2 sec
+                                     recvAll sock len
                                  else BSL.append mesg <$> recvAll sock (len - BSL.length mesg)
         else return (BSL.empty)
 

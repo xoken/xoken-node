@@ -138,7 +138,7 @@ peerBlockSync peer =
     forever $ do
         lg <- getLogger
         bp2pEnv <- getBitcoinP2P
-        debug lg $ LG.msg $ ("peer block sync : " ++ (show peer))
+        trace lg $ LG.msg $ ("peer block sync : " ++ (show peer))
         !tm <- liftIO $ getCurrentTime
         let tracker = statsTracker peer
         fw <- liftIO $ readIORef $ ptBlockFetchWindow tracker
@@ -194,7 +194,7 @@ peerBlockSync peer =
                                         err lg $ LG.msg ("[ERROR] peerBlockSync " ++ show e)
                                         throw e
                             else return ()
-        liftIO $ threadDelay (100000) -- 0.1 sec
+        liftIO $ threadDelay (10000) -- 0.01 sec
         return ()
 
 runPeerSync :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
@@ -217,7 +217,7 @@ runPeerSync =
                                      debug lg $ LG.msg ("sending GetAddr to " ++ show pr)
                                      res <- liftIO $ try $ sendEncMessage (bpWriteMsgLock pr) s (BSL.fromStrict em)
                                      case res of
-                                         Right () -> liftIO $ threadDelay (120 * 1000000)
+                                         Right () -> liftIO $ threadDelay (60 * 1000000)
                                          Left (e :: SomeException) -> err lg $ LG.msg ("[ERROR] runPeerSync " ++ show e)
                                  Nothing -> err lg $ LG.msg $ val "Error sending, no connections available")
                         (connPeers)
@@ -440,7 +440,7 @@ runBlockCacheQueue =
             Nothing -> do
                 trace lg $ LG.msg $ "nothing yet" ++ ""
         --
-        liftIO $ threadDelay (100000) -- 0.1 sec
+        liftIO $ threadDelay (10000) -- 0.01 sec
         return ()
   where
     getHead l = head $ L.sortOn (snd . snd) (l)
