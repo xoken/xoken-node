@@ -426,15 +426,19 @@ runBlockCacheQueue =
                          if ltst
                              then do
                                  trace lg $ LG.msg $ "try putting mvar.. " ++ (show bbi)
-                                 liftIO $ atomically $ writeTBQueue (blockFetchQueue pr) bbi
-                                 trace lg $ LG.msg $ "done putting mvar.. " ++ (show bbi)
-                                 !tm <- liftIO $ getCurrentTime
-                                 liftIO $
-                                     TSH.insert
-                                         (blockSyncStatusMap bp2pEnv)
-                                         (biBlockHash bbi)
-                                         (RequestSent tm, biBlockHeight bbi)
-                                 liftIO $ writeIORef latest False
+                                 full <- liftIO $ atomically $ isFullTBQueue (blockFetchQueue pr)
+                                 if full
+                                     then return ()
+                                     else do
+                                        liftIO $ atomically $ writeTBQueue (blockFetchQueue pr) bbi
+                                        trace lg $ LG.msg $ "done putting mvar.. " ++ (show bbi)
+                                        !tm <- liftIO $ getCurrentTime
+                                        liftIO $
+                                            TSH.insert
+                                                (blockSyncStatusMap bp2pEnv)
+                                                (biBlockHash bbi)
+                                                (RequestSent tm, biBlockHeight bbi)
+                                        liftIO $ writeIORef latest False
                              else return ())
                     (sortedPeers)
             Nothing -> do
