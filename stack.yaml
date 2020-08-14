@@ -9,7 +9,7 @@ extra-deps:
     - ../arivi-core/p2p
     - ../arivi-core/network
     - ../xoken-core/core
-    - ../cql
+    - ../xcql
     - serialise-0.2.0.0
     - cborg-0.2.0.0
     - timers-updatable-0.2.0.2
