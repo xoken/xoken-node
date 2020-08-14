@@ -285,7 +285,7 @@ runBlockCacheQueue =
         bp2pEnv <- getBitcoinP2P
         dbe <- getDB
         !tm <- liftIO $ getCurrentTime
-        debug lg $ LG.msg $ val "runBlockCacheQueue loop..."
+        trace lg $ LG.msg $ val "runBlockCacheQueue loop..."
         let net = bitcoinNetwork $ nodeConfig bp2pEnv
             conn = connection dbe
         allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
@@ -338,10 +338,10 @@ runBlockCacheQueue =
                         (\(bsh, (_, ht)) -> do
                              q <- liftIO $ TSH.lookup (blockTxProcessingLeftMap bp2pEnv) (bsh)
                              case q of
-                                 Nothing -> debug lg $ LG.msg $ ("bsh did-not-find : " ++ show bsh)
+                                 Nothing -> trace lg $ LG.msg $ ("bsh did-not-find : " ++ show bsh)
                                  Just (vvv, www) -> do
                                      eee <- liftIO $ TSH.toList vvv
-                                     debug lg $ LG.msg $ ("bsh: " ++ (show bsh) ++ " " ++ (show eee) ++ (show www)))
+                                     trace lg $ LG.msg $ ("bsh: " ++ (show bsh) ++ " " ++ (show eee) ++ (show www)))
                         syt
                     --
                     mapM
@@ -369,7 +369,7 @@ runBlockCacheQueue =
                                          RequestSent _ -> True
                                          otherwise -> False)
                                 syt
-                    let recvNotStarted = L.filter (\(_, ((RequestSent t), _)) -> (diffUTCTime tm t > 10)) sent
+                    let recvNotStarted = L.filter (\(_, ((RequestSent t), _)) -> (diffUTCTime tm t > 5)) sent
                     let receiveInProgress =
                             L.filter
                                 (\x ->
@@ -391,8 +391,8 @@ runBlockCacheQueue =
                     let processingIncomplete =
                             L.filter (\(_, ((BlockReceiveComplete t), _)) -> (diffUTCTime tm t > 120)) recvComplete
                     -- all blocks received, empty the cache, cache-miss gracefully
-                    debug lg $ LG.msg $ ("blockSyncStatusMap size: " ++ (show sysz))
-                    debug lg $ LG.msg $ ("blockSyncStatusMap (list): " ++ (show syt))
+                    trace lg $ LG.msg $ ("blockSyncStatusMap size: " ++ (show sysz))
+                    trace lg $ LG.msg $ ("blockSyncStatusMap (list): " ++ (show syt))
                     if L.length sent == 0 &&
                        L.length unsent == 0 && L.length receiveInProgress == 0 && L.length recvComplete == 0
                         then do
@@ -442,7 +442,7 @@ runBlockCacheQueue =
             Nothing -> do
                 trace lg $ LG.msg $ "nothing yet" ++ ""
         --
-        liftIO $ threadDelay (250000) -- 0.25 sec
+        liftIO $ threadDelay (100000) -- 0.1 sec
         return ()
   where
     getHead l = head $ L.sortOn (snd . snd) (l)
