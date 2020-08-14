@@ -174,7 +174,7 @@ runEgressBlockSync =
                  let staleTime = fromInteger $ fromIntegral (unresponsivePeerConnTimeoutSecs $ nodeConfig bp2pEnv)
                  case recvtm of
                      Just rt -> do
-                         if (fw < 50) && (diffUTCTime tm rt < staleTime)
+                         if (fw < 4) && (diffUTCTime tm rt < staleTime)
                              then do
                                  mmsg <- produceGetDataMessage tm
                                  case mmsg of
@@ -213,7 +213,7 @@ runEgressBlockSync =
                                              atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress peer))
                                      else liftIO $ threadDelay (100000)
                              Nothing -> do
-                                 if (fw < 50)
+                                 if (fw < 4)
                                      then do
                                          mmsg <- produceGetDataMessage tm
                                          case mmsg of
@@ -301,7 +301,7 @@ checkBlocksFullySynced conn = do
             return False
 
 getBatchSize :: Int32 -> Int32 -> [Int32]
-getBatchSize peerCount n = [1 :: Int32 .. 100]
+getBatchSize peerCount n = [1 :: Int32 .. 4]
 
 getNextBlockToSync :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => UTCTime -> m (Maybe BlockInfo)
 getNextBlockToSync tm = do
