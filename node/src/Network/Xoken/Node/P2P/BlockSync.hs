@@ -286,7 +286,8 @@ runBlockCacheQueue =
         dbe <- getDB
         !tm <- liftIO $ getCurrentTime
         trace lg $ LG.msg $ val "runBlockCacheQueue loop..."
-        let net = bitcoinNetwork $ nodeConfig bp2pEnv
+        let nc = nodeConfig bp2pEnv
+            net = bitcoinNetwork $ nc
             conn = connection dbe
         allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
         let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
@@ -367,7 +368,7 @@ runBlockCacheQueue =
                                          RequestSent _ -> True
                                          otherwise -> False)
                                 syt
-                    let recvNotStarted = L.filter (\(_, ((RequestSent t), _)) -> (diffUTCTime tm t > 3)) sent
+                    let recvNotStarted = L.filter (\(_, ((RequestSent t), _)) -> (diffUTCTime tm t > (fromIntegral $ getDataResponseTimeout nc))) sent
                     let receiveInProgress =
                             L.filter
                                 (\x ->
@@ -377,7 +378,7 @@ runBlockCacheQueue =
                                 syt
                     let recvTimedOut =
                             L.filter
-                                (\(_, ((RecentTxReceiveTime (t, c)), _)) -> (diffUTCTime tm t > 10))
+                                (\(_, ((RecentTxReceiveTime (t, c)), _)) -> (diffUTCTime tm t > (fromIntegral $ recentTxReceiveTimeout nc)))
                                 receiveInProgress
                     let recvComplete =
                             L.filter
@@ -387,7 +388,7 @@ runBlockCacheQueue =
                                          otherwise -> False)
                                 syt
                     let processingIncomplete =
-                            L.filter (\(_, ((BlockReceiveComplete t), _)) -> (diffUTCTime tm t > 60)) recvComplete
+                            L.filter (\(_, ((BlockReceiveComplete t), _)) -> (diffUTCTime tm t > (fromIntegral $ blockProcessingTimeout nc))) recvComplete
                     -- all blocks received, empty the cache, cache-miss gracefully
                     trace lg $ LG.msg $ ("blockSyncStatusMap size: " ++ (show sysz))
                     trace lg $ LG.msg $ ("blockSyncStatusMap (list): " ++ (show syt))
