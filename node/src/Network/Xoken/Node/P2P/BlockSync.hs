@@ -105,7 +105,7 @@ produceGetDataMessage peer = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
     debug lg $ LG.msg $ "Block - produceGetDataMessage - called." ++ (show peer)
-    bl <- liftIO $ atomically $ readTBQueue (blockFetchQueue peer)
+    bl <- liftIO $ takeMVar (blockFetchQueue peer)
     trace lg $ LG.msg $ "took mvar.. " ++ (show bl) ++ (show peer)
     let gd = GetData $ [InvVector InvBlock $ getBlockHash $ biBlockHash bl]
     debug lg $ LG.msg $ "GetData req: " ++ show gd
@@ -290,8 +290,7 @@ runBlockCacheQueue =
             conn = connection dbe
         allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
         let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
-        syt' <- liftIO $ TSH.toList (blockSyncStatusMap bp2pEnv)
-        let syt = L.sortBy (\(s,h) (s',h') -> compare h h') syt'
+        syt <- liftIO $ TSH.toList (blockSyncStatusMap bp2pEnv)
         let sysz = fromIntegral $ L.length syt
         -- reload cache
         retn <-
@@ -426,15 +425,18 @@ runBlockCacheQueue =
                          if ltst
                              then do
                                  trace lg $ LG.msg $ "try putting mvar.. " ++ (show bbi)
-                                 liftIO $ atomically $ writeTBQueue (blockFetchQueue pr) bbi
-                                 trace lg $ LG.msg $ "done putting mvar.. " ++ (show bbi)
-                                 !tm <- liftIO $ getCurrentTime
-                                 liftIO $
-                                     TSH.insert
-                                         (blockSyncStatusMap bp2pEnv)
-                                         (biBlockHash bbi)
-                                         (RequestSent tm, biBlockHeight bbi)
-                                 liftIO $ writeIORef latest False
+                                 fl <- liftIO $ tryPutMVar (blockFetchQueue pr) bbi
+                                 if fl
+                                     then do
+                                         trace lg $ LG.msg $ "done putting mvar.. " ++ (show bbi)
+                                         !tm <- liftIO $ getCurrentTime
+                                         liftIO $
+                                             TSH.insert
+                                                 (blockSyncStatusMap bp2pEnv)
+                                                 (biBlockHash bbi)
+                                                 (RequestSent tm, biBlockHeight bbi)
+                                         liftIO $ writeIORef latest False
+                                     else return ()
                              else return ())
                     (sortedPeers)
             Nothing -> do

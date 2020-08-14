@@ -169,7 +169,7 @@ setupSeedPeerConnection =
                                                   res <- LE.try $ liftIO $ createSocket y
                                                   trk <- liftIO $ getNewTracker
                                                   ms <- liftIO $ MSN.new $ maxTxProcThreads $ nodeConfig bp2pEnv
-                                                  bfq <- liftIO $ newTBQueueIO 4
+                                                  bfq <- liftIO $ newEmptyMVar
                                                   case res of
                                                       Right (sock) -> do
                                                           case sock of
@@ -244,7 +244,7 @@ setupPeerConnection saddr = do
                                      fw <- liftIO $ newTVarIO 0
                                      ms <- liftIO $ MSN.new $ maxTxProcThreads $ nodeConfig bp2pEnv
                                      trk <- liftIO $ getNewTracker
-                                     bfq <- liftIO $ newTBQueueIO 4
+                                     bfq <- liftIO $ newEmptyMVar
                                      case sock of
                                          Just sx -> do
                                              debug lg $ LG.msg ("Discovered Net-Address: " ++ (show $ saddr))
