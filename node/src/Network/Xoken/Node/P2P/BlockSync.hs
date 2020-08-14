@@ -291,7 +291,7 @@ runBlockCacheQueue =
         allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
         let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
         syt' <- liftIO $ TSH.toList (blockSyncStatusMap bp2pEnv)
-        let syt = L.sortBy (\(_,(_,h)) (_,(_,h')) -> compare h h') syt'
+        let syt = L.sortBy (\(s,h) (s',h') -> compare h h') syt'
         let sysz = fromIntegral $ L.length syt
         -- reload cache
         retn <-
