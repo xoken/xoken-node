@@ -100,16 +100,15 @@ createSocketWithOptions options addr = do
 
 createSocketFromSockAddr :: SockAddr -> IO (Maybe Socket)
 createSocketFromSockAddr saddr = do
-    (host, srv) <- getNameInfo [NI_NUMERICHOST, NI_NUMERICSERV] True True $ saddr
-    sock <-
-        case L.findIndex (\c -> c == '.') (fromJust host) of
-            Nothing -> socket AF_INET6 Stream defaultProtocol
-            Just ind -> socket AF_INET Stream defaultProtocol
-    res <- try $ connect sock saddr
-    case res of
-        Right () -> return $ Just sock
+    ss <-
+        case saddr of
+            SockAddrInet pn ha -> socket AF_INET Stream defaultProtocol
+            SockAddrInet6 pn6 _ ha6 _ -> socket AF_INET6 Stream defaultProtocol
+    rs <- try $ connect ss saddr
+    case rs of
+        Right () -> return $ Just ss
         Left (e :: IOException) -> do
-            liftIO $ Network.Socket.close sock
+            liftIO $ Network.Socket.close ss
             throw $ SocketConnectException (saddr)
 
 setupSeedPeerConnection :: (HasXokenNodeEnv env m, MonadIO m) => m ()
