@@ -33,7 +33,7 @@ import Control.Concurrent.Event as EV
 import Control.Concurrent.MSem as MS
 import Control.Concurrent.MVar
 import Control.Concurrent.QSem
-import Control.Concurrent.STM.TBQueue as TB
+import Control.Concurrent.STM.TQueue as TB
 import Control.Concurrent.STM.TVar
 import Control.Exception (throw)
 import Control.Monad
@@ -386,12 +386,12 @@ defBitcoinP2P nodeCnf = do
     st <- TSH.new 1
     tl <- TSH.new 1
     ep <- newTVarIO False
-    tc <- H.new
-    vc <- H.new
+    tc <- TSH.new 1
+    vc <- TSH.new 1
     rpf <- newEmptyMVar
     rpc <- newTVarIO 0
-    mq <- SM.newIO
-    ts <- SM.newIO
+    mq <- TSH.new 1
+    ts <- TSH.new 1
     tbt <- MS.new $ maxTMTBuilderThreads nodeCnf
     iut <- newTVarIO False
     udc <- H.new
@@ -431,6 +431,5 @@ relaunch =
 
 main :: IO ()
 main = do
-    initNexa
-    -- let pid = "/tmp/nexa.pid.0"
-    -- runDetached (Just pid) (ToFile "nexa.log") relaunch
+    let pid = "/tmp/nexa.pid.0"
+    runDetached (Just pid) (ToFile "nexa.log") relaunch

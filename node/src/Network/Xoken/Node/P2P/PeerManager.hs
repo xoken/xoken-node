@@ -21,6 +21,7 @@ import qualified Control.Concurrent.MSemN as MSN
 import Control.Concurrent.MVar
 import Control.Concurrent.QSem
 import Control.Concurrent.STM.TBQueue
+import Control.Concurrent.STM.TQueue
 import Control.Concurrent.STM.TSem
 import Control.Concurrent.STM.TVar
 import Control.Exception
@@ -167,7 +168,6 @@ setupSeedPeerConnection =
                                                   fw <- liftIO $ newTVarIO 0
                                                   res <- LE.try $ liftIO $ createSocket y
                                                   trk <- liftIO $ getNewTracker
-                                                  ms <- liftIO $ MSN.new $ maxTxProcThreads $ nodeConfig bp2pEnv
                                                   bfq <- liftIO $ newEmptyMVar
                                                   case res of
                                                       Right (sock) -> do
@@ -241,7 +241,6 @@ setupPeerConnection saddr = do
                                      rc <- liftIO $ newTVarIO Nothing
                                      st <- liftIO $ newTVarIO Nothing
                                      fw <- liftIO $ newTVarIO 0
-                                     ms <- liftIO $ MSN.new $ maxTxProcThreads $ nodeConfig bp2pEnv
                                      trk <- liftIO $ getNewTracker
                                      bfq <- liftIO $ newEmptyMVar
                                      case sock of
@@ -431,7 +430,7 @@ resilientRead sock !blin = do
 
 merkleTreeBuilder ::
        (HasBitcoinP2P m, HasLogger m, HasDatabaseHandles m, MonadBaseControl IO m, MonadIO m)
-    => TBQueue (TxHash, Bool)
+    => TQueue (TxHash, Bool)
     -> BlockHash
     -> Int8
     -> m ()
@@ -445,7 +444,7 @@ merkleTreeBuilder tque blockHash treeHt = do
     tv <- liftIO $ atomically $ newTVar (M.empty, [])
     whileM_ (liftIO $ readIORef continue) $ do
         hcstate <- liftIO $ readTVarIO tv
-        ores <- LA.race (liftIO $ threadDelay (1000000 * 60)) (liftIO $ atomically $ readTBQueue tque)
+        ores <- LA.race (liftIO $ threadDelay (1000000 * 60)) (liftIO $ atomically $ readTQueue tque)
         case ores of
             Left ()
                 -- likely the peer conn terminated, just end this thread
@@ -584,9 +583,7 @@ readNextMessage net sock ingss = do
                                                 (blockTxProcessingLeftMap p2pEnv)
                                                 (biBlockHash $ bf)
                                                 (ar, (binTxTotalCount blin))
-                                qq <-
-                                    liftIO $
-                                    atomically $ newTBQueue $ intToNatural (maxTMTQueueSize $ nodeConfig p2pEnv)
+                                qq <- liftIO $ atomically $ newTQueue
                                         -- wait for TMT threads alloc
                                 liftIO $ MS.wait (maxTMTBuilderThreadLock p2pEnv)
                                 liftIO $ TSH.insert (merkleQueueMap p2pEnv) (biBlockHash $ bf) qq
@@ -615,7 +612,7 @@ readNextMessage net sock ingss = do
                                  if isLastBatch
                                      then txct == ct
                                      else False
-                         writeTBQueue qe ((txHash tx), isLast))
+                         writeTQueue qe ((txHash tx), isLast))
                     (zip txns [1 ..])
             let bio =
                     BlockIngestState

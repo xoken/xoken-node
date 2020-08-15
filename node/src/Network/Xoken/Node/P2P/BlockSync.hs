@@ -29,7 +29,7 @@ import Control.Concurrent.Async.Lifted as LA (async, concurrently_)
 import Control.Concurrent.Event as EV
 import Control.Concurrent.MVar
 import Control.Concurrent.QSem
-import Control.Concurrent.STM.TBQueue as TB
+import Control.Concurrent.STM.TQueue as TB
 import Control.Concurrent.STM.TVar
 import Control.Exception
 import qualified Control.Exception.Extra as EX

@@ -12,7 +12,7 @@ import Codec.Serialise
 import Control.Concurrent.Event
 import Control.Concurrent.MSem
 import Control.Concurrent.MVar
-import Control.Concurrent.STM.TBQueue
+import Control.Concurrent.STM.TQueue
 import Control.Concurrent.STM.TVar
 import Control.Monad.Catch
 import Control.Monad.Reader
@@ -77,7 +77,7 @@ data BitcoinP2P =
         , unconfirmedTxCache :: !(TSH.TSHashTable TxShortHash (Bool, TxHash))
         , txOutputValuesCache :: !(TSH.TSHashTable TxShortHash (TxHash, [(Int16, (Text, Text, Int64))]))
         , peerReset :: !(MVar Bool, TVar Int)
-        , merkleQueueMap :: !(TSH.TSHashTable BlockHash (TBQueue (TxHash, Bool)))
+        , merkleQueueMap :: !(TSH.TSHashTable BlockHash (TQueue (TxHash, Bool)))
         , txSynchronizer :: !(TSH.TSHashTable TxHash Event)
         , maxTMTBuilderThreadLock :: !(MSem Int)
         , indexUnconfirmedTx :: !(TVar Bool)

@@ -16,8 +16,6 @@ endPointHTTPSListenIP: 127.0.0.1
 
 endPointHTTPSListenPort: 9091
 
-maxTxProcThreads: 80
-
 maxBitcoinPeerCount: 10
 
 unresponsivePeerConnTimeoutSecs: 180
@@ -28,34 +26,32 @@ staticPeerList: []
 
 allegoryVendorSecretKey: 1435cf8e437d789eac332c3c66b2a51876e58c21db4b4da15488c3decb1a8b57
 
-maxTMTBuilderThreads: 20
-
-maxTMTQueueSize: 1024
+maxTMTBuilderThreads: 200
 
 txProcInputDependenciesWait: 240
 
-tlsCertificatePath : ./example.crt
+tlsCertificatePath: ./example.crt
 
-tlsKeyfilePath : ./example.key
+tlsKeyfilePath: ./example.key
 
-tlsCertificateStorePath : ./
+tlsCertificateStorePath: ./
 
-neo4jUsername : neo4j
+neo4jUsername: neo4j
 
-neo4jPassword : neo4j
+neo4jPassword: neo4j
 
 allegoryNameUtxoSatoshis: 5555
 
-allegoryTxFeeSatsProducerAction : 400
+allegoryTxFeeSatsProducerAction: 400
 
-allegoryTxFeeSatsOwnerAction : 200
+allegoryTxFeeSatsOwnerAction: 200
 
-txOutputValuesCacheKeyBits : 20
+txOutputValuesCacheKeyBits: 20
 
-unconfirmedTxCacheKeyBits : 16
+unconfirmedTxCacheKeyBits: 16
 
-getDataResponseTimeout : 3
+getDataResponseTimeout: 5
 
-recentTxReceiveTimeout : 10
+recentTxReceiveTimeout: 10
 
-blockProcessingTimeout : 60
+blockProcessingTimeout: 60

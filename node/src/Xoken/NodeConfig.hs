@@ -36,12 +36,10 @@ data NodeConfig =
         , endPointHTTPSListenIP :: String
         , endPointHTTPSListenPort :: PortNumber
         , allegoryVendorSecretKey :: SecKey
-        , maxTxProcThreads :: Int
         , maxBitcoinPeerCount :: Int
         , unresponsivePeerConnTimeoutSecs :: Int
         , acivatePeerDiscovery :: Bool
         , maxTMTBuilderThreads :: Int
-        , maxTMTQueueSize :: Int
         , txProcInputDependenciesWait :: Int
         , tlsCertificatePath :: FilePath
         , tlsKeyfilePath :: FilePath
