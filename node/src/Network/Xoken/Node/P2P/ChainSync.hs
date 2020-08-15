@@ -377,28 +377,33 @@ updateChainWork indexed conn = do
                                 0 -> (Nothing, 0, Nothing, "4295032833") -- 4295032833 (0x100010001) is chainwork for genesis block
                                 _ -> runIdentity $ iop !! 0
                         lag = [(height + 1) .. ((fst $ head indexed) - (1 + lenOffset))]
-                    if L.null lag
-                        then return ()
-                        else do
-                            lagCW <- calculateChainWork lag conn
-                            let updatedChainwork = T.pack $ show $ lagCW + indexedCW + (read . T.unpack $ chainWork)
-                                updatedBlock =
-                                    if L.null lagIndexed
-                                        then last lag
-                                        else fst $ last lagIndexed
-                                par1 =
-                                    getSimpleQueryParam
-                                        ("chain-work", (Nothing, updatedBlock, Nothing, updatedChainwork))
-                            res1 <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr1 par1)
-                            case res1 of
-                                Right _ -> do
-                                    debug lg $
-                                        LG.msg $
-                                        val $ ("updateChainWork: updated till block: " <> (C.pack $ show updatedBlock))
-                                    return ()
-                                Left (e :: SomeException) -> do
-                                    err lg $ LG.msg ("Error: INSERT 'chain-work' into 'misc_store' failed: " ++ show e)
-                                    throw KeyValueDBInsertException
+                    (par1, ub) <-
+                        if L.null lag
+                            then do
+                                let updatedBlock = fst $ last lagIndexed
+                                return $
+                                    ( getSimpleQueryParam
+                                          ("chain-work", (Nothing, updatedBlock, Nothing, T.pack $ show $ indexedCW))
+                                    , updatedBlock)
+                            else do
+                                lagCW <- calculateChainWork lag conn
+                                let updatedChainwork = T.pack $ show $ lagCW + indexedCW + (read . T.unpack $ chainWork)
+                                    updatedBlock =
+                                        if L.null lagIndexed
+                                            then last lag
+                                            else fst $ last lagIndexed
+                                return
+                                    ( getSimpleQueryParam
+                                          ("chain-work", (Nothing, updatedBlock, Nothing, updatedChainwork))
+                                    , updatedBlock)
+                    res1 <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr1 par1)
+                    case res1 of
+                        Right _ -> do
+                            debug lg $ LG.msg $ "updateChainWork: updated till block: " ++ show ub
+                            return ()
+                        Left (e :: SomeException) -> do
+                            err lg $ LG.msg ("Error: INSERT 'chain-work' into 'misc_store' failed: " ++ show e)
+                            throw KeyValueDBInsertException
                 Left (e :: SomeException) -> do
                     err lg $ LG.msg ("Error: SELECT from 'misc_store' failed: " ++ show e)
                     throw KeyValueDBLookupException
