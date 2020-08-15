@@ -147,7 +147,7 @@ peerBlockSync peer =
         let staleTime = fromInteger $ fromIntegral (unresponsivePeerConnTimeoutSecs $ nodeConfig bp2pEnv)
         case recvtm of
             Just rt -> do
-                if (fw < 2) && (diffUTCTime tm rt < staleTime)
+                if (fw == 0) && (diffUTCTime tm rt < staleTime)
                     then do
                         msg <- produceGetDataMessage peer
                         res <- LE.try $ sendRequestMessages peer msg
@@ -181,7 +181,7 @@ peerBlockSync peer =
                                 throw UnresponsivePeerException
                             else return ()
                     Nothing -> do
-                        if (fw < 2)
+                        if (fw == 0)
                             then do
                                 msg <- produceGetDataMessage peer
                                 res <- LE.try $ sendRequestMessages peer msg
@@ -299,7 +299,10 @@ runBlockCacheQueue =
             if sysz == 0
                 then do
                     (hash, ht) <- fetchBestSyncedBlock conn net
-                    let cacheInd = [1 .. 4]
+                    let cacheInd =
+                            if L.length connPeers > 4
+                                then getBatchSize (fromIntegral $ maxBitcoinPeerCount $ nodeConfig bp2pEnv) ht
+                                else [1]
                     let !bks = map (\x -> ht + x) cacheInd
                     let qstr :: Q.QueryString Q.R (Identity [Int32]) ((Int32, T.Text))
                         qstr = "SELECT block_height, block_hash from xoken.blocks_by_height where block_height in ?"
@@ -368,7 +371,11 @@ runBlockCacheQueue =
                                          RequestSent _ -> True
                                          otherwise -> False)
                                 syt
-                    let recvNotStarted = L.filter (\(_, ((RequestSent t), _)) -> (diffUTCTime tm t > (fromIntegral $ getDataResponseTimeout nc))) sent
+                    let recvNotStarted =
+                            L.filter
+                                (\(_, ((RequestSent t), _)) ->
+                                     (diffUTCTime tm t > (fromIntegral $ getDataResponseTimeout nc)))
+                                sent
                     let receiveInProgress =
                             L.filter
                                 (\x ->
@@ -378,7 +385,8 @@ runBlockCacheQueue =
                                 syt
                     let recvTimedOut =
                             L.filter
-                                (\(_, ((RecentTxReceiveTime (t, c)), _)) -> (diffUTCTime tm t > (fromIntegral $ recentTxReceiveTimeout nc)))
+                                (\(_, ((RecentTxReceiveTime (t, c)), _)) ->
+                                     (diffUTCTime tm t > (fromIntegral $ recentTxReceiveTimeout nc)))
                                 receiveInProgress
                     let recvComplete =
                             L.filter
@@ -388,7 +396,10 @@ runBlockCacheQueue =
                                          otherwise -> False)
                                 syt
                     let processingIncomplete =
-                            L.filter (\(_, ((BlockReceiveComplete t), _)) -> (diffUTCTime tm t > (fromIntegral $ blockProcessingTimeout nc))) recvComplete
+                            L.filter
+                                (\(_, ((BlockReceiveComplete t), _)) ->
+                                     (diffUTCTime tm t > (fromIntegral $ blockProcessingTimeout nc)))
+                                recvComplete
                     -- all blocks received, empty the cache, cache-miss gracefully
                     trace lg $ LG.msg $ ("blockSyncStatusMap size: " ++ (show sysz))
                     trace lg $ LG.msg $ ("blockSyncStatusMap (list): " ++ (show syt))
@@ -610,7 +621,7 @@ processConfTransaction tx bhash blkht txind = do
             (\(b, j) -> do
                  tuple <-
                      liftIO $
-                     H.lookup
+                     TSH.lookup
                          (txOutputValuesCache bp2pEnv)
                          (getTxShortHash (outPointHash $ prevOutput b) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
                  val <-
@@ -698,7 +709,7 @@ processConfTransaction tx bhash blkht txind = do
                 outAddrs
     trace lg $ LG.msg $ "processing Tx " ++ show (txHash tx) ++ ": compiled output value(s): " ++ (show ovs)
     liftIO $
-        H.insert
+        TSH.insert
             (txOutputValuesCache bp2pEnv)
             (getTxShortHash (txHash tx) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
             (txHash tx, ovs)
@@ -781,7 +792,7 @@ processConfTransaction tx bhash blkht txind = do
     trace lg $ LG.msg $ "processing Tx " ++ show (txHash tx) ++ ": handled Allegory Tx"
     -- signal 'done' event for tx's that were processed out of sequence 
     --
-    vall <- liftIO $ atomically $ SM.lookup (txHash tx) (txSynchronizer bp2pEnv)
+    vall <- liftIO $ TSH.lookup (txSynchronizer bp2pEnv) (txHash tx)
     case vall of
         Just ev -> liftIO $ EV.signal $ ev
         Nothing -> return ()
@@ -789,7 +800,7 @@ processConfTransaction tx bhash blkht txind = do
 
 getSatsValueFromOutpoint ::
        CqlConnection
-    -> SM.Map TxHash EV.Event
+    -> TSH.TSHashTable TxHash EV.Event
     -> Logger
     -> Network
     -> OutPoint
@@ -808,19 +819,19 @@ getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait = do
                     debug lg $
                         LG.msg $
                         "Tx not found: " ++ (show $ txHashToHex $ outPointHash outPoint) ++ " _waiting_ for event"
-                    valx <- liftIO $ atomically $ SM.lookup (outPointHash outPoint) txSync
+                    valx <- liftIO $ TSH.lookup txSync (outPointHash outPoint)
                     event <-
                         case valx of
                             Just evt -> return evt
                             Nothing -> EV.new
-                    liftIO $ atomically $ SM.insert event (outPointHash outPoint) txSync
+                    liftIO $ TSH.insert txSync (outPointHash outPoint) event
                     tofl <- waitTimeout event (1000 * (fromIntegral wait))
                     if tofl == False
                         then if (wait < 66000)
                                  then do
                                      getSatsValueFromOutpoint conn txSync lg net outPoint (2 * wait) maxWait
                                  else do
-                                     liftIO $ atomically $ SM.delete (outPointHash outPoint) txSync
+                                     liftIO $ TSH.delete txSync (outPointHash outPoint)
                                      debug lg $
                                          LG.msg $
                                          "TxIDNotFoundException: While querying txid_outputs for (TxID, Index): " ++

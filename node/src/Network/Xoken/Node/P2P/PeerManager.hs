@@ -270,9 +270,7 @@ recvAll sock len = do
                     if BSL.length mesg == len
                         then return mesg
                         else if BSL.length mesg == 0
-                                 then do
-                                     liftIO $ threadDelay (200000) -- 0.2 sec
-                                     recvAll sock len
+                                 then throw ZeroLengthSocketReadException
                                  else BSL.append mesg <$> recvAll sock (len - BSL.length mesg)
         else return (BSL.empty)
 
@@ -404,7 +402,7 @@ resilientRead ::
        (HasLogger m, MonadBaseControl IO m, MonadIO m) => Socket -> BlockIngestState -> m (([Tx], LC.ByteString), Int64)
 resilientRead sock !blin = do
     lg <- getLogger
-    let chunkSize = (400 * 1024)
+    let chunkSize = (40000 * 1024)
         !delta =
             if binTxPayloadLeft blin > chunkSize
                 then chunkSize - ((LC.length $ binUnspentBytes blin))
@@ -512,7 +510,7 @@ merkleTreeBuilder tque blockHash treeHt = do
                             LA.async $ commitTxPage txHashes blockHash pgn
                             return ()
                     liftIO $ writeIORef continue False
-                    liftIO $ atomically $ SM.delete blockHash (merkleQueueMap p2pEnv)
+                    liftIO $ TSH.delete (merkleQueueMap p2pEnv) blockHash
                     liftIO $ MS.signal (maxTMTBuilderThreadLock p2pEnv)
 
 updateBlocks :: (HasLogger m, HasDatabaseHandles m, MonadIO m) => BlockHash -> BlockHeight -> Int -> Int -> Tx -> m ()
@@ -592,7 +590,7 @@ readNextMessage net sock ingss = do
                                     atomically $ newTBQueue $ intToNatural (maxTMTQueueSize $ nodeConfig p2pEnv)
                                         -- wait for TMT threads alloc
                                 liftIO $ MS.wait (maxTMTBuilderThreadLock p2pEnv)
-                                liftIO $ atomically $ SM.insert qq (biBlockHash $ bf) (merkleQueueMap p2pEnv)
+                                liftIO $ TSH.insert (merkleQueueMap p2pEnv) (biBlockHash $ bf) qq
                                 LA.async $
                                     merkleTreeBuilder qq (biBlockHash $ bf) (computeTreeHeight $ binTxTotalCount blin)
                                 updateBlocks
@@ -603,7 +601,7 @@ readNextMessage net sock ingss = do
                                     (txns !! 0)
                                 return qq
                             else do
-                                valx <- liftIO $ atomically $ SM.lookup (biBlockHash $ bf) (merkleQueueMap p2pEnv)
+                                valx <- liftIO $ TSH.lookup (merkleQueueMap p2pEnv) (biBlockHash $ bf)
                                 case valx of
                                     Just q -> return q
                                     Nothing -> throw MerkleQueueNotFoundException

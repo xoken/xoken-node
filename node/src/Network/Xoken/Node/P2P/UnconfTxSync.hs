@@ -65,6 +65,7 @@ import Network.Xoken.Crypto.Hash
 import Network.Xoken.Network.Common
 import Network.Xoken.Network.Message
 import Network.Xoken.Node.Data
+import qualified Network.Xoken.Node.Data.ThreadSafeHashTable as TSH
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.GraphDB
 import Network.Xoken.Node.P2P.BlockSync
@@ -95,7 +96,7 @@ processTxGetData pr txHash = do
             bp2pEnv <- getBitcoinP2P
             tuple <-
                 liftIO $
-                H.lookup
+                TSH.lookup
                     (unconfirmedTxCache bp2pEnv)
                     (getTxShortHash (TxHash txHash) (unconfirmedTxCacheKeyBits $ nodeConfig bp2pEnv))
             case tuple of
@@ -105,7 +106,7 @@ processTxGetData pr txHash = do
                             liftIO $ threadDelay (1000000 * 30)
                             tuple2 <-
                                 liftIO $
-                                H.lookup
+                                TSH.lookup
                                     (unconfirmedTxCache bp2pEnv)
                                     (getTxShortHash (TxHash txHash) (unconfirmedTxCacheKeyBits $ nodeConfig bp2pEnv))
                             case tuple2 of
@@ -132,7 +133,7 @@ sendTxGetData pr txHash = do
             case res of
                 Right _ ->
                     liftIO $
-                    H.insert
+                    TSH.insert
                         (unconfirmedTxCache bp2pEnv)
                         (getTxShortHash (TxHash txHash) (unconfirmedTxCacheKeyBits $ nodeConfig bp2pEnv))
                         (False, TxHash txHash)
@@ -295,7 +296,7 @@ processUnconfTransaction tx = do
             (\(b, j) -> do
                  tuple <-
                      liftIO $
-                     H.lookup
+                     TSH.lookup
                          (txOutputValuesCache bp2pEnv)
                          (getTxShortHash (txHash tx) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
                  val <-
@@ -343,7 +344,7 @@ processUnconfTransaction tx = do
                      , (a, (txHashToHex $ TxHash $ sha256 (scriptOutput o)), fromIntegral $ outValue o)))
                 outAddrs
     liftIO $
-        H.insert
+        TSH.insert
             (txOutputValuesCache bp2pEnv)
             (getTxShortHash (txHash tx) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
             (txHash tx, ovs)
@@ -386,7 +387,7 @@ processUnconfTransaction tx = do
             liftIO $ err lg $ LG.msg $ "Error: INSERTing into 'xoken.ep_transactions':" ++ show e
             throw KeyValueDBInsertException
     --
-    vall <- liftIO $ atomically $ SM.lookup (txHash tx) (txSynchronizer bp2pEnv)
+    vall <- liftIO $ TSH.lookup (txSynchronizer bp2pEnv) (txHash tx)
     case vall of
         Just ev -> liftIO $ EV.signal $ ev
         Nothing -> return ()
@@ -394,7 +395,7 @@ processUnconfTransaction tx = do
 getSatsValueFromEpochOutpoint ::
        CqlConnection
     -> Bool
-    -> (SM.Map TxHash EV.Event)
+    -> (TSH.TSHashTable TxHash EV.Event)
     -> Logger
     -> Network
     -> OutPoint
@@ -414,16 +415,16 @@ getSatsValueFromEpochOutpoint conn epoch txSync lg net outPoint waitSecs = do
                         LG.msg $
                         "[Unconfirmed] Tx not found: " ++
                         (show $ txHashToHex $ outPointHash outPoint) ++ "... waiting for event"
-                    valx <- liftIO $ atomically $ SM.lookup (outPointHash outPoint) txSync
+                    valx <- liftIO $ TSH.lookup txSync (outPointHash outPoint)
                     event <-
                         case valx of
                             Just evt -> return evt
                             Nothing -> EV.new
-                    liftIO $ atomically $ SM.insert event (outPointHash outPoint) txSync
+                    liftIO $ TSH.insert txSync (outPointHash outPoint) event
                     tofl <- waitTimeout event (1000000 * (fromIntegral waitSecs))
                     if tofl == False
                         then do
-                            liftIO $ atomically $ SM.delete (outPointHash outPoint) txSync
+                            liftIO $ TSH.delete txSync (outPointHash outPoint)
                             debug lg $
                                 LG.msg $
                                 "[Unconfirmed] TxIDNotFoundException: " ++ (show $ txHashToHex $ outPointHash outPoint)
