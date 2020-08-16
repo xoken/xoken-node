@@ -619,11 +619,11 @@ processConfTransaction tx bhash blkht txind = do
     inputs <-
         mapM
             (\(b, j) -> do
-                 tuple <-
-                     liftIO $
-                     TSH.lookup
-                         (txOutputValuesCache bp2pEnv)
-                         (getTxShortHash (outPointHash $ prevOutput b) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
+                 tuple <- return Nothing
+                    --  liftIO $
+                    --  TSH.lookup
+                    --      (txOutputValuesCache bp2pEnv)
+                    --      (getTxShortHash (outPointHash $ prevOutput b) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
                  val <-
                      case tuple of
                          Just (ftxh, indexvals) ->
@@ -708,11 +708,11 @@ processConfTransaction tx bhash blkht txind = do
                      , (a, (txHashToHex $ TxHash $ sha256 (scriptOutput o)), fromIntegral $ outValue o)))
                 outAddrs
     trace lg $ LG.msg $ "processing Tx " ++ show (txHash tx) ++ ": compiled output value(s): " ++ (show ovs)
-    liftIO $
-        TSH.insert
-            (txOutputValuesCache bp2pEnv)
-            (getTxShortHash (txHash tx) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
-            (txHash tx, ovs)
+    -- liftIO $
+    --     TSH.insert
+    --         (txOutputValuesCache bp2pEnv)
+    --         (getTxShortHash (txHash tx) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
+    --         (txHash tx, ovs)
     --
     trace lg $ LG.msg $ "processing Tx " ++ show (txHash tx) ++ ": added outputvals to cache"
     -- update outputs and scripthash tables

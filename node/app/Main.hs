@@ -121,16 +121,8 @@ import Xoken.Node
 import Xoken.NodeConfig as NC
 
 newtype AppM a =
-    AppM (ReaderT (ServiceEnv AppM ServiceResource ServiceTopic RPCMessage PubNotifyMessage) (LoggingT IO) a)
-    deriving ( Functor
-             , Applicative
-             , Monad
-             , MonadReader (ServiceEnv AppM ServiceResource ServiceTopic RPCMessage PubNotifyMessage)
-             , MonadIO
-             , MonadThrow
-             , MonadCatch
-             , MonadLogger
-             )
+    AppM (ReaderT (ServiceEnv) (IO) a)
+    deriving (Functor, Applicative, Monad, MonadReader (ServiceEnv), MonadIO, MonadThrow, MonadCatch)
 
 deriving instance MonadBase IO AppM
 
@@ -148,31 +140,25 @@ instance HasAllegoryEnv AppM where
 instance HasLogger AppM where
     getLogger = asks (loggerEnv . xokenNodeEnv)
 
-instance HasNetworkEnv AppM where
-    getEnv = asks (ariviNetworkEnv . nodeEndpointEnv . p2pEnv)
-
-instance HasSecretKey AppM
-
-instance HasKbucket AppM where
-    getKb = asks (kbucket . kademliaEnv . p2pEnv)
-
-instance HasStatsdClient AppM where
-    getStatsdClient = asks (statsdClient . p2pEnv)
-
-instance HasNodeEndpoint AppM where
-    getEndpointEnv = asks (nodeEndpointEnv . p2pEnv)
-    getNetworkConfig = asks (PE._networkConfig . nodeEndpointEnv . p2pEnv)
-    getHandlers = asks (handlers . nodeEndpointEnv . p2pEnv)
-    getNodeIdPeerMapTVarP2PEnv = asks (tvarNodeIdPeerMap . nodeEndpointEnv . p2pEnv)
-
-instance HasPRT AppM where
-    getPeerReputationHistoryTableTVar = asks (tvPeerReputationHashTable . prtEnv . p2pEnv)
-    getServicesReputationHashMapTVar = asks (tvServicesReputationHashMap . prtEnv . p2pEnv)
-    getP2PReputationHashMapTVar = asks (tvP2PReputationHashMap . prtEnv . p2pEnv)
-    getReputedVsOtherTVar = asks (tvReputedVsOther . prtEnv . p2pEnv)
-    getKClosestVsRandomTVar = asks (tvKClosestVsRandom . prtEnv . p2pEnv)
-
-runAppM :: ServiceEnv AppM ServiceResource ServiceTopic RPCMessage PubNotifyMessage -> AppM a -> LoggingT IO a
+-- instance HasNetworkEnv AppM where
+--     getEnv = asks (ariviNetworkEnv . nodeEndpointEnv . p2pEnv)
+-- instance HasSecretKey AppM
+-- instance HasKbucket AppM where
+--     getKb = asks (kbucket . kademliaEnv . p2pEnv)
+-- instance HasStatsdClient AppM where
+--     getStatsdClient = asks (statsdClient . p2pEnv)
+-- instance HasNodeEndpoint AppM where
+--     getEndpointEnv = asks (nodeEndpointEnv . p2pEnv)
+--     getNetworkConfig = asks (PE._networkConfig . nodeEndpointEnv . p2pEnv)
+--     getHandlers = asks (handlers . nodeEndpointEnv . p2pEnv)
+--     getNodeIdPeerMapTVarP2PEnv = asks (tvarNodeIdPeerMap . nodeEndpointEnv . p2pEnv)
+-- instance HasPRT AppM where
+--     getPeerReputationHistoryTableTVar = asks (tvPeerReputationHashTable . prtEnv . p2pEnv)
+--     getServicesReputationHashMapTVar = asks (tvServicesReputationHashMap . prtEnv . p2pEnv)
+--     getP2PReputationHashMapTVar = asks (tvP2PReputationHashMap . prtEnv . p2pEnv)
+--     getReputedVsOtherTVar = asks (tvReputedVsOther . prtEnv . p2pEnv)
+--     getKClosestVsRandomTVar = asks (tvKClosestVsRandom . prtEnv . p2pEnv)
+runAppM :: ServiceEnv -> AppM a -> IO a
 runAppM env (AppM app) = runReaderT app env
 
 data ConfigException
@@ -226,15 +212,15 @@ runThreads ::
     -> BitcoinP2P
     -> CqlConnection
     -> LG.Logger
-    -> (P2PEnv AppM ServiceResource ServiceTopic RPCMessage PubNotifyMessage)
+    -- -> (P2PEnv AppM ServiceResource ServiceTopic RPCMessage PubNotifyMessage)
     -> [FilePath]
     -> IO ()
-runThreads config nodeConf bp2p conn lg p2pEnv certPaths = do
+runThreads config nodeConf bp2p conn lg certPaths = do
     gdbState <- makeGraphDBResPool (neo4jUsername nodeConf) (neo4jPassword nodeConf)
     let dbh = DatabaseHandles gdbState conn
     let allegoryEnv = AllegoryEnv $ allegoryVendorSecretKey nodeConf
     let xknEnv = XokenNodeEnv bp2p dbh lg allegoryEnv
-    let serviceEnv = ServiceEnv xknEnv p2pEnv
+    let serviceEnv = ServiceEnv xknEnv -- p2pEnv
     epHandler <- newTLSEndpointServiceHandler
     -- start TLS endpoint
     async $ startTLSEndpoint epHandler (endPointTLSListenIP nodeConf) (endPointTLSListenPort nodeConf) certPaths
@@ -248,21 +234,21 @@ runThreads config nodeConf bp2p conn lg p2pEnv certPaths = do
     async $ Snap.serveSnaplet snapConfig (appInit xknEnv)
     withResource (pool $ graphDB dbh) (`BT.run` initAllegoryRoot genesisTx)
     -- run main workers
-    runFileLoggingT (toS $ Config.logFile config) $
-        runAppM
-            serviceEnv
-            (do initP2P config
-                bp2pEnv <- getBitcoinP2P
-                withAsync runEpochSwitcher $ \_ -> do
-                    withAsync setupSeedPeerConnection $ \_ -> do
-                        withAsync runEgressChainSync $ \_ -> do
-                            withAsync runBlockCacheQueue $ \_ -> do
-                                withAsync (handleNewConnectionRequest epHandler) $ \_ -> do
-                                    withAsync runPeerSync $ \_ -> do
-                                        withAsync runSyncStatusChecker $ \_ -> do
-                                            withAsync runWatchDog $ \z -> do
-                                                _ <- LA.wait z
-                                                return ())
+    -- runFileLoggingT (toS $ Config.logFile config) $
+    runAppM
+        serviceEnv
+                -- initP2P config
+        (do bp2pEnv <- getBitcoinP2P
+            withAsync runEpochSwitcher $ \_ -> do
+                withAsync setupSeedPeerConnection $ \_ -> do
+                    withAsync runEgressChainSync $ \_ -> do
+                        withAsync runBlockCacheQueue $ \_ -> do
+                            withAsync (handleNewConnectionRequest epHandler) $ \_ -> do
+                                withAsync runPeerSync $ \_ -> do
+                                    withAsync runSyncStatusChecker $ \_ -> do
+                                        withAsync runWatchDog $ \z -> do
+                                            _ <- LA.wait z
+                                            return ())
     liftIO $ destroyAllResources $ pool gdbState
     liftIO $ destroyAllResources $ conn
     liftIO $ putStrLn $ "node recovering from fatal DB connection failure!"
@@ -326,14 +312,15 @@ runWatchDog = do
                         liftIO $ writeIORef continue False
 
 runNode :: Config.Config -> NC.NodeConfig -> CqlConnection -> BitcoinP2P -> [FilePath] -> IO ()
-runNode config nodeConf conn bp2p certPaths = do
-    p2pEnv <- mkP2PEnv config globalHandlerRpc globalHandlerPubSub [AriviService] []
+runNode config nodeConf conn bp2p certPaths
+    -- p2pEnv <- mkP2PEnv config globalHandlerRpc globalHandlerPubSub [AriviService] []
+ = do
     lg <-
         LG.new
             (LG.setOutput
                  (LG.Path $ T.unpack $ NC.logFileName nodeConf)
                  (LG.setLogLevel (logLevel nodeConf) LG.defSettings))
-    runThreads config nodeConf bp2p conn lg p2pEnv certPaths
+    runThreads config nodeConf bp2p conn lg certPaths
 
 data Config =
     Config
@@ -431,5 +418,6 @@ relaunch =
 
 main :: IO ()
 main = do
-    let pid = "/tmp/nexa.pid.0"
-    runDetached (Just pid) (ToFile "nexa.log") relaunch
+    initNexa
+    -- let pid = "/tmp/nexa.pid.0"
+    -- runDetached (Just pid) (ToFile "nexa.log") relaunch

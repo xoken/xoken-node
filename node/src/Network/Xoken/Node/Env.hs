@@ -97,10 +97,10 @@ class HasDatabaseHandles m where
 class HasAllegoryEnv m where
     getAllegory :: m (AllegoryEnv)
 
-data ServiceEnv m r t rmsg pmsg =
+data ServiceEnv =
     ServiceEnv
         { xokenNodeEnv :: !XokenNodeEnv
-        , p2pEnv :: !(P2PEnv m r t rmsg pmsg)
+        -- , p2pEnv :: !(P2PEnv m r t rmsg pmsg)
         }
 
 data ServiceResource =
