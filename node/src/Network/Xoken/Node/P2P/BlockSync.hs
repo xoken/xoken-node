@@ -117,21 +117,18 @@ sendRequestMessages pr msg = do
     bp2pEnv <- getBitcoinP2P
     let net = bitcoinNetwork $ nodeConfig bp2pEnv
     debug lg $ LG.msg $ val "Block - sendRequestMessages - called."
-    case msg of
-        MGetData gd -> do
-            case (bpSocket pr) of
-                Just s -> do
-                    let em = runPut . putMessage net $ msg
-                    res <- liftIO $ try $ sendEncMessage (bpWriteMsgLock pr) s (BSL.fromStrict em)
-                    case res of
-                        Right () -> return ()
-                        Left (e :: SomeException) -> do
-                            case fromException e of
-                                Just (t :: AsyncCancelled) -> throw e
-                                otherwise -> debug lg $ LG.msg $ "Error, sending out data: " ++ show e
-                    debug lg $ LG.msg $ "sending out GetData: " ++ show (bpAddress pr)
-                Nothing -> err lg $ LG.msg $ val "Error sending, no connections available"
-        ___ -> return ()
+    case (bpSocket pr) of
+        Just s -> do
+            let em = runPut . putMessage net $ msg
+            res <- liftIO $ try $ sendEncMessage (bpWriteMsgLock pr) s (BSL.fromStrict em)
+            case res of
+                Right () -> return ()
+                Left (e :: SomeException) -> do
+                    case fromException e of
+                        Just (t :: AsyncCancelled) -> throw e
+                        otherwise -> debug lg $ LG.msg $ "Error, sending out data: " ++ show e
+            debug lg $ LG.msg $ "sending out GetData: " ++ show (bpAddress pr)
+        Nothing -> err lg $ LG.msg $ val "Error sending, no connections available"
 
 peerBlockSync :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BitcoinPeer -> m ()
 peerBlockSync peer =
