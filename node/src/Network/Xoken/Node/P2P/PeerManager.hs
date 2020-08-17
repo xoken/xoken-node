@@ -400,20 +400,20 @@ resilientRead ::
        (HasLogger m, MonadBaseControl IO m, MonadIO m) => Socket -> BlockIngestState -> m (([Tx], LC.ByteString), Int64)
 resilientRead sock !blin = do
     lg <- getLogger
-    let chunkSize = (40000 * 1024)
+    let chunkSize = 100 * 1000 -- 100 KB
         !delta =
             if binTxPayloadLeft blin > chunkSize
                 then chunkSize - ((LC.length $ binUnspentBytes blin))
                 else (binTxPayloadLeft blin) - (LC.length $ binUnspentBytes blin)
-    debug lg $ msg (" | Tx payload left " ++ show (binTxPayloadLeft blin))
-    debug lg $ msg (" | Bytes prev unspent " ++ show (LC.length $ binUnspentBytes blin))
-    debug lg $ msg (" | Bytes to read " ++ show delta)
+    trace lg $ msg (" | Tx payload left " ++ show (binTxPayloadLeft blin))
+    trace lg $ msg (" | Bytes prev unspent " ++ show (LC.length $ binUnspentBytes blin))
+    trace lg $ msg (" | Bytes to read " ++ show delta)
     nbyt <- recvAll sock delta
     let !txbyt = (binUnspentBytes blin) `LC.append` (nbyt)
     case runGetLazyState (getConfirmedTxBatch) txbyt of
         Left e -> do
-            err lg $ msg $ "1st attempt|" ++ show e
-            let chunkSizeFB = (1024 * 1024 * 1024)
+            trace lg $ msg $ "1st attempt|" ++ show e
+            let chunkSizeFB = 10 * 1000 * 1000 -- 10 MB
                 !deltaNew =
                     if binTxPayloadLeft blin > chunkSizeFB
                         then chunkSizeFB - ((LC.length $ binUnspentBytes blin) + delta)
