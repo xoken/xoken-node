@@ -133,7 +133,7 @@ getTxOutputsData (txid, index) = do
 xGetOutputsAddress ::
        (HasXokenNodeEnv env m, MonadIO m)
     => String
-    -> Maybe Int32
+    -> Int32
     -> Maybe Int64
     -> m ([ResultWithCursor AddressOutputs Int64])
 xGetOutputsAddress address pgSize mbNomTxInd = do
@@ -156,10 +156,10 @@ xGetOutputsAddress address pgSize mbNomTxInd = do
         LA.concurrently
             (case sh of
                  Nothing -> return []
-                 Just s -> liftIO $ query conn (Q.RqQuery $ Q.Query qstr (shp {pageSize = pgSize})))
+                 Just s -> liftIO $ query conn (Q.RqQuery $ Q.Query qstr (shp {pageSize = Just pgSize})))
             (case address of
                  ('3':_) -> return []
-                 _ -> liftIO $ query conn (Q.RqQuery $ Q.Query qstr (aop {pageSize = pgSize})))
+                 _ -> liftIO $ query conn (Q.RqQuery $ Q.Query qstr (aop {pageSize = Just pgSize})))
     case res of
         Right (sr, ar) -> do
             let iops =
@@ -171,10 +171,7 @@ xGetOutputsAddress address pgSize mbNomTxInd = do
                                  then GT
                                  else LT)
                         (sr ++ ar)
-                iop =
-                    case pgSize of
-                        Nothing -> iops
-                        (Just pg) -> L.take (fromIntegral pg) iops
+                iop = L.take (fromIntegral pgSize) iops
             if length iop == 0
                 then return []
                 else do
@@ -202,7 +199,7 @@ xGetOutputsAddress address pgSize mbNomTxInd = do
 xGetUTXOsAddress ::
        (HasXokenNodeEnv env m, MonadIO m)
     => String
-    -> Maybe Int32
+    -> Int32
     -> Maybe (DT.Text, Int32)
     -> m ([ResultWithCursor AddressOutputs (DT.Text, Int32)])
 xGetUTXOsAddress address pgSize mbFromOutput = do
@@ -225,10 +222,10 @@ xGetUTXOsAddress address pgSize mbFromOutput = do
         LA.concurrently
             (case sh of
                  Nothing -> return []
-                 Just s -> liftIO $ query conn (Q.RqQuery $ Q.Query qstr (shp {pageSize = pgSize})))
+                 Just s -> liftIO $ query conn (Q.RqQuery $ Q.Query qstr (shp {pageSize = Just pgSize})))
             (case address of
                  ('3':_) -> return []
-                 _ -> liftIO $ query conn (Q.RqQuery $ Q.Query qstr (aop {pageSize = pgSize})))
+                 _ -> liftIO $ query conn (Q.RqQuery $ Q.Query qstr (aop {pageSize = Just pgSize})))
     case res of
         Right (sr, ar) -> do
             let iops =
@@ -240,10 +237,7 @@ xGetUTXOsAddress address pgSize mbFromOutput = do
                                  then GT
                                  else LT)
                         (sr ++ ar)
-                iop =
-                    case pgSize of
-                        Nothing -> iops
-                        (Just pg) -> L.take (fromIntegral pg) iops
+                iop = L.take (fromIntegral pgSize) iops
             if length iop == 0
                 then return []
                 else do
@@ -271,7 +265,7 @@ xGetUTXOsAddress address pgSize mbFromOutput = do
 xGetOutputsScriptHash ::
        (HasXokenNodeEnv env m, MonadIO m)
     => String
-    -> Maybe Int32
+    -> Int32
     -> Maybe Int64
     -> m ([ResultWithCursor ScriptOutputs Int64])
 xGetOutputsScriptHash scriptHash pgSize mbNomTxInd = do
@@ -286,7 +280,7 @@ xGetOutputsScriptHash scriptHash pgSize mbNomTxInd = do
             "SELECT script_hash,nominal_tx_index,output FROM xoken.script_hash_outputs WHERE script_hash=? AND nominal_tx_index<?"
         qstr = str :: Q.QueryString Q.R (DT.Text, Int64) (DT.Text, Int64, (DT.Text, Int32))
         par = getSimpleQueryParam (DT.pack scriptHash, nominalTxIndex)
-    res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr (par {pageSize = pgSize}))
+    res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr (par {pageSize = Just pgSize}))
     case res of
         Right iop -> do
             if length iop == 0
@@ -316,7 +310,7 @@ xGetOutputsScriptHash scriptHash pgSize mbNomTxInd = do
 xGetUTXOsScriptHash ::
        (HasXokenNodeEnv env m, MonadIO m)
     => String
-    -> Maybe Int32
+    -> Int32
     -> Maybe (DT.Text, Int32)
     -> m ([ResultWithCursor ScriptOutputs (DT.Text, Int32)])
 xGetUTXOsScriptHash scriptHash pgSize mbFromOutput = do
@@ -330,7 +324,7 @@ xGetUTXOsScriptHash scriptHash pgSize mbFromOutput = do
         str = "SELECT script_hash,output FROM xoken.script_hash_unspent_outputs WHERE script_hash=? AND output<?"
         qstr = str :: Q.QueryString Q.R (DT.Text, (DT.Text, Int32)) (DT.Text, (DT.Text, Int32))
         par = getSimpleQueryParam (DT.pack scriptHash, fromOutput)
-    res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr (par {pageSize = pgSize}))
+    res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr (par {pageSize = Just pgSize}))
     case res of
         Right iop -> do
             if length iop == 0
@@ -359,19 +353,14 @@ xGetUTXOsScriptHash scriptHash pgSize mbFromOutput = do
 
 runWithManyInputs ::
        (HasXokenNodeEnv env m, MonadIO m, Ord c, Eq r, Integral p, Bounded p)
-    => (i -> Maybe p -> Maybe c -> m ([ResultWithCursor r c]))
+    => (i -> p -> Maybe c -> m ([ResultWithCursor r c]))
     -> [i]
-    -> Maybe p
+    -> p
     -> Maybe c
     -> m ([ResultWithCursor r c])
-runWithManyInputs fx inputs mbPgSize cursor = do
-    let pgSize =
-            fromIntegral $
-            case mbPgSize of
-                Just ps -> ps
-                Nothing -> maxBound
-    li <- LA.mapConcurrently (\input -> fx input mbPgSize cursor) inputs
-    return $ (L.take pgSize . sort . concat $ li)
+runWithManyInputs fx inputs pgSize cursor = do
+    li <- LA.mapConcurrently (\input -> fx input pgSize cursor) inputs
+    return $ (L.take (fromIntegral pgSize) . sort . concat $ li)
 
 convertToScriptHash :: Network -> String -> Maybe String
 convertToScriptHash net s = do

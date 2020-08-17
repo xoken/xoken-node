@@ -196,42 +196,42 @@ data RPCReqParams'
           }
     | GetOutputsByAddress
           { gaAddrOutputs :: String
-          , gaPageSize :: Maybe Int32
+          , gaPageSize :: Int32
           , gaCursor :: Maybe String
           }
     | GetOutputsByAddresses
           { gasAddrOutputs :: [String]
-          , gasPageSize :: Maybe Int32
+          , gasPageSize :: Int32
           , gasCursor :: Maybe String
           }
     | GetOutputsByScriptHash
           { gaScriptHashOutputs :: String
-          , gaScriptHashPageSize :: Maybe Int32
+          , gaScriptHashPageSize :: Int32
           , gaScriptHashCursor :: Maybe String
           }
     | GetOutputsByScriptHashes
           { gasScriptHashOutputs :: [String]
-          , gasScriptHashPageSize :: Maybe Int32
+          , gasScriptHashPageSize :: Int32
           , gasScriptHashCursor :: Maybe String
           }
     | GetUTXOsByAddress
           { guaAddrOutputs :: String
-          , guaPageSize :: Maybe Int32
+          , guaPageSize :: Int32
           , guaCursor :: Maybe String
           }
     | GetUTXOsByScriptHash
           { guScriptHashOutputs :: String
-          , guScriptHashPageSize :: Maybe Int32
+          , guScriptHashPageSize :: Int32
           , guScriptHashCursor :: Maybe String
           }
     | GetUTXOsByAddresses
           { guasAddrOutputs :: [String]
-          , guasPageSize :: Maybe Int32
+          , guasPageSize :: Int32
           , guasCursor :: Maybe String
           }
     | GetUTXOsByScriptHashes
           { gusScriptHashOutputs :: [String]
-          , gusScriptHashPageSize :: Maybe Int32
+          , gusScriptHashPageSize :: Int32
           , gusScriptHashCursor :: Maybe String
           }
     | GetMerkleBranchByTxID
@@ -273,14 +273,14 @@ instance FromJSON RPCReqParams' where
         (GetTransactionsByTxIDs <$> o .: "txids") <|>
         (GetRawTransactionByTxID <$> o .: "txid") <|>
         (GetRawTransactionsByTxIDs <$> o .: "txids") <|>
-        (GetOutputsByAddress <$> o .: "address" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
-        (GetOutputsByAddresses <$> o .: "addresses" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
-        (GetOutputsByScriptHash <$> o .: "scriptHash" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
-        (GetOutputsByScriptHashes <$> o .: "scriptHashes" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
-        (GetUTXOsByAddress <$> o .: "address" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
-        (GetUTXOsByAddresses <$> o .: "addresses" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
-        (GetUTXOsByScriptHash <$> o .: "scriptHash" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
-        (GetUTXOsByScriptHashes <$> o .: "scriptHashes" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
+        (GetOutputsByAddress <$> o .: "address" <*> o .:? "pageSize" .!= 100 <*> o .:? "cursor") <|>
+        (GetOutputsByAddresses <$> o .: "addresses" <*> o .:? "pageSize" .!= 100 <*> o .:? "cursor") <|>
+        (GetOutputsByScriptHash <$> o .: "scriptHash" <*> o .:? "pageSize" .!= 100 <*> o .:? "cursor") <|>
+        (GetOutputsByScriptHashes <$> o .: "scriptHashes" <*> o .:? "pageSize" .!= 100 <*> o .:? "cursor") <|>
+        (GetUTXOsByAddress <$> o .: "address" <*> o .:? "pageSize" .!= 100 <*> o .:? "cursor") <|>
+        (GetUTXOsByAddresses <$> o .: "addresses" <*> o .:? "pageSize" .!= 100 <*> o .:? "cursor") <|>
+        (GetUTXOsByScriptHash <$> o .: "scriptHash" <*> o .:? "pageSize" .!= 100 <*> o .:? "cursor") <|>
+        (GetUTXOsByScriptHashes <$> o .: "scriptHashes" <*> o .:? "pageSize" .!= 100 <*> o .:? "cursor") <|>
         (GetMerkleBranchByTxID <$> o .: "txid") <|>
         (GetAllegoryNameBranch <$> o .: "name" <*> o .: "isProducer") <|>
         (RelayTx . BL.toStrict . GZ.decompress . B64L.decodeLenient . BL.fromStrict . T.encodeUtf8 <$> o .: "rawTx") <|>

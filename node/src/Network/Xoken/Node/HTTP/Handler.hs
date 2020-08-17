@@ -288,7 +288,7 @@ getOutputsByAddr = do
     bp2pEnv <- getBitcoinP2P
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
     lg <- getLogger
-    res <- LE.try $ xGetOutputsAddress (fromJust addr) pgSize (decodeNTI cursor)
+    res <- LE.try $ xGetOutputsAddress (fromJust addr) (fromMaybe 100 pgSize) (decodeNTI cursor)
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetOutputsAddress: " ++ show e
@@ -310,7 +310,7 @@ getOutputsByAddrs = do
             bp2pEnv <- getBitcoinP2P
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
             lg <- getLogger
-            res <- LE.try $ runWithManyInputs xGetOutputsAddress addrs pgSize (decodeNTI cursor)
+            res <- LE.try $ runWithManyInputs xGetOutputsAddress addrs (fromMaybe 100 pgSize) (decodeNTI cursor)
             case res of
                 Left (e :: SomeException) -> do
                     err lg $ LG.msg $ "Error: xGetOutputsAddresses: " ++ show e
@@ -332,7 +332,7 @@ getOutputsByScriptHash = do
     bp2pEnv <- getBitcoinP2P
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
     lg <- getLogger
-    res <- LE.try $ xGetOutputsScriptHash (fromJust sh) pgSize (decodeNTI cursor)
+    res <- LE.try $ xGetOutputsScriptHash (fromJust sh) (fromMaybe 100 pgSize) (decodeNTI cursor)
     case res of
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
@@ -354,7 +354,7 @@ getOutputsByScriptHashes = do
             bp2pEnv <- getBitcoinP2P
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
             lg <- getLogger
-            res <- LE.try $ runWithManyInputs xGetOutputsScriptHash sh pgSize (decodeNTI cursor)
+            res <- LE.try $ runWithManyInputs xGetOutputsScriptHash sh (fromMaybe 100 pgSize) (decodeNTI cursor)
             case res of
                 Left (e :: SomeException) -> do
                     modifyResponse $ setResponseStatus 500 "Internal Server Error"
@@ -375,7 +375,7 @@ getUTXOsByAddr = do
     pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     bp2pEnv <- getBitcoinP2P
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
-    res <- LE.try $ xGetUTXOsAddress (fromJust addr) pgSize (decodeOP cursor)
+    res <- LE.try $ xGetUTXOsAddress (fromJust addr) (fromMaybe 100 pgSize) (decodeOP cursor)
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetUTXOsAddress: " ++ show e
@@ -397,7 +397,7 @@ getUTXOsByAddrs = do
             bp2pEnv <- getBitcoinP2P
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
             lg <- getLogger
-            res <- LE.try $ runWithManyInputs xGetUTXOsAddress addrs pgSize (decodeOP cursor)
+            res <- LE.try $ runWithManyInputs xGetUTXOsAddress addrs (fromMaybe 100 pgSize) (decodeOP cursor)
             case res of
                 Left (e :: SomeException) -> do
                     err lg $ LG.msg $ "Error: xGetUTXOsAddress: " ++ show e
@@ -419,7 +419,7 @@ getUTXOsByScriptHash = do
     bp2pEnv <- getBitcoinP2P
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
     lg <- getLogger
-    res <- LE.try $ xGetUTXOsScriptHash (fromJust sh) pgSize (decodeOP cursor)
+    res <- LE.try $ xGetUTXOsScriptHash (fromJust sh) (fromMaybe 100 pgSize) (decodeOP cursor)
     case res of
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
@@ -440,7 +440,7 @@ getUTXOsByScriptHashes = do
             bp2pEnv <- getBitcoinP2P
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
             lg <- getLogger
-            res <- LE.try $ runWithManyInputs xGetUTXOsScriptHash sh pgSize (decodeOP cursor)
+            res <- LE.try $ runWithManyInputs xGetUTXOsScriptHash sh (fromMaybe 100 pgSize) (decodeOP cursor)
             case res of
                 Left (e :: SomeException) -> do
                     modifyResponse $ setResponseStatus 500 "Internal Server Error"
