@@ -223,13 +223,15 @@ runPeerSync =
                         (connPeers)
             else liftIO $ threadDelay (60 * 1000000)
 
-markBestSyncedBlock :: (HasLogger m, MonadIO m) => Text -> Int32 -> CqlConnection -> m ()
+markBestSyncedBlock :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BlockHash -> Int32 -> CqlConnection -> m ()
 markBestSyncedBlock hash height conn = do
     lg <- getLogger
+    bp2pEnv <- getBitcoinP2P
+    liftIO $ atomically $ writeTVar (bestSyncedBlock bp2pEnv) (Just $ BlockInfo hash $ fromIntegral height)
     let q :: Q.QueryString Q.W (Text, (Maybe Bool, Int32, Maybe Int64, Text)) ()
         q = Q.QueryString "insert INTO xoken.misc_store (key, value) values (? , ?)"
         p :: Q.QueryParams (Text, (Maybe Bool, Int32, Maybe Int64, Text))
-        p = getSimpleQueryParam ("best-synced", (Nothing, height, Nothing, hash))
+        p = getSimpleQueryParam ("best-synced", (Nothing, height, Nothing, (blockHashToHex hash)))
     res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query q p)
     case res of
         Right _ -> return ()
@@ -408,7 +410,7 @@ runBlockCacheQueue =
                         then do
                             let !lelm = last $ L.sortOn (snd . snd) (syt)
                             debug lg $ LG.msg $ ("marking best synced " ++ show (blockHashToHex $ fst $ lelm))
-                            markBestSyncedBlock (blockHashToHex $ fst $ lelm) (fromIntegral $ snd $ snd $ lelm) conn
+                            markBestSyncedBlock (fst $ lelm) (fromIntegral $ snd $ snd $ lelm) conn
                             mapM
                                 (\(k, _) -> do
                                      liftIO $ TSH.delete (blockSyncStatusMap bp2pEnv) k
@@ -471,29 +473,36 @@ sortPeers peers = do
             peers
     return $ snd $ unzip $ L.sortBy (\(a, _) (b, _) -> compare b a) (zip ts peers)
 
-fetchBestSyncedBlock :: (HasLogger m, MonadIO m) => CqlConnection -> Network -> m ((BlockHash, Int32))
+fetchBestSyncedBlock ::
+       (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => CqlConnection -> Network -> m ((BlockHash, Int32))
 fetchBestSyncedBlock conn net = do
     lg <- getLogger
-    let qstr :: Q.QueryString Q.R (Identity Text) (Identity (Maybe Bool, Maybe Int32, Maybe Int64, Maybe T.Text))
-        qstr = "SELECT value from xoken.misc_store where key = ?"
-        p = getSimpleQueryParam $ Identity "best-synced"
-    iop <- liftIO $ query conn (Q.RqQuery $ Q.Query qstr p)
-    if L.length iop == 0
-        then do
-            debug lg $ LG.msg $ val "Best-synced-block is genesis."
-            return ((headerHash $ getGenesisHeader net), 0)
-        else do
-            let record = runIdentity $ iop !! 0
-            debug lg $ LG.msg $ "Best-synced-block from DB: " ++ (show record)
-            case getTextVal record of
-                Just tx -> do
-                    case (hexToBlockHash $ tx) of
-                        Just x -> do
-                            case getIntVal record of
-                                Just y -> return (x, y)
-                                Nothing -> throw InvalidMetaDataException
-                        Nothing -> throw InvalidBlockHashException
-                Nothing -> throw InvalidMetaDataException
+    bp2pEnv <- getBitcoinP2P
+    binfo <- liftIO $ atomically $ readTVar (bestSyncedBlock bp2pEnv)
+    case binfo of
+        Just bi -> return $ (biBlockHash bi, fromIntegral $ biBlockHeight bi)
+        Nothing -> do
+            let qstr ::
+                       Q.QueryString Q.R (Identity Text) (Identity (Maybe Bool, Maybe Int32, Maybe Int64, Maybe T.Text))
+                qstr = "SELECT value from xoken.misc_store where key = ?"
+                p = getSimpleQueryParam $ Identity "best-synced"
+            iop <- liftIO $ query conn (Q.RqQuery $ Q.Query qstr p)
+            if L.length iop == 0
+                then do
+                    debug lg $ LG.msg $ val "Best-synced-block is genesis."
+                    return ((headerHash $ getGenesisHeader net), 0)
+                else do
+                    let record = runIdentity $ iop !! 0
+                    debug lg $ LG.msg $ "Best-synced-block from DB: " ++ (show record)
+                    case getTextVal record of
+                        Just tx -> do
+                            case (hexToBlockHash $ tx) of
+                                Just x -> do
+                                    case getIntVal record of
+                                        Just y -> return (x, y)
+                                        Nothing -> throw InvalidMetaDataException
+                                Nothing -> throw InvalidBlockHashException
+                        Nothing -> throw InvalidMetaDataException
 
 commitScriptHashOutputs ::
        (HasLogger m, MonadIO m) => CqlConnection -> Text -> (Text, Int32) -> (Text, Int32, Int32) -> m ()

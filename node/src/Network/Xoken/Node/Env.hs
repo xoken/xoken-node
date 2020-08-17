@@ -83,6 +83,7 @@ data BitcoinP2P =
         , indexUnconfirmedTx :: !(TVar Bool)
         , userDataCache :: !(HashTable Text (Text, Int32, Int32, UTCTime, [Text])) -- (name, quota, used, expiry time, roles)
         , txProcFailAttempts :: !(TVar Int)
+        , bestSyncedBlock :: !(TVar (Maybe BlockInfo))
         }
 
 class HasBitcoinP2P m where
