@@ -20,6 +20,7 @@ module Network.Xoken.Node.P2P.BlockSync
     , sendRequestMessages
     , handleIfAllegoryTx
     , commitTxPage
+    , getScriptHashFromOutpoint
     ) where
 
 import Codec.Serialise
@@ -855,60 +856,58 @@ getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait = do
             err lg $ LG.msg $ "Error: getSatsValueFromOutpoint: " ++ show e
             throw e
 
---
---
---
--- getScriptHashFromOutpoint ::
---        Q.ClientState -> (SM.Map TxHash EV.Event) -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Text)
--- getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs = do
---     let str = "SELECT tx_serialized from xoken.transactions where tx_id = ?"
---         qstr = str :: Q.QueryString Q.R (Identity Text) (Identity Blob)
---         p = getSimpleQueryParam $ Identity $ txHashToHex $ outPointHash outPoint
---     res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr p)
---     case res of
---         Left (e :: SomeException) -> do
---             err lg $ LG.msg ("Error: getScriptHashFromOutpoint: " ++ show e)
---             throw e
---         Right (iop) -> do
---             if L.length iop == 0
---                 then do
---                     debug lg $
---                         LG.msg ("TxID not found: (waiting for event) " ++ (show $ txHashToHex $ outPointHash outPoint))
---                     --
---                     -- tmap <- liftIO $ takeMVar (txSync)
---                     valx <- liftIO $ atomically $ SM.lookup (outPointHash outPoint) txSync
---                     event <-
---                         case valx of
---                             Just evt -> return evt
---                             Nothing -> EV.new
---                     -- liftIO $ putMVar (txSync) (M.insert (outPointHash outPoint) event tmap)
---                     liftIO $ atomically $ SM.insert event (outPointHash outPoint) txSync
---                     tofl <- waitTimeout event (1000000 * (fromIntegral waitSecs))
---                     if tofl == False -- False indicates a timeout occurred.
---                             -- tmap <- liftIO $ takeMVar (txSync)
---                             -- liftIO $ putMVar (txSync) (M.delete (outPointHash outPoint) tmap)
---                         then do
---                             liftIO $ atomically $ SM.delete (outPointHash outPoint) txSync
---                             debug lg $ LG.msg ("TxIDNotFoundException" ++ (show $ txHashToHex $ outPointHash outPoint))
---                             throw TxIDNotFoundException
---                         else getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs -- if being signalled, try again to success
---                     --
---                     return Nothing
---                 else do
---                     let txbyt = runIdentity $ iop !! 0
---                     case runGetLazy (getConfirmedTx) (fromBlob txbyt) of
---                         Left e -> do
---                             debug lg $ LG.msg (encodeHex $ BSL.toStrict $ fromBlob txbyt)
---                             throw DBTxParseException
---                         Right (txd) -> do
---                             case txd of
---                                 Just tx ->
---                                     if (fromIntegral $ outPointIndex outPoint) > (L.length $ txOut tx)
---                                         then throw InvalidOutpointException
---                                         else do
---                                             let output = (txOut tx) !! (fromIntegral $ outPointIndex outPoint)
---                                             return $ Just $ txHashToHex $ TxHash $ sha256 (scriptOutput output)
---                                 Nothing -> return Nothing
+getScriptHashFromOutpoint ::
+       CqlConnection -> TSH.TSHashTable TxHash EV.Event -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Text)
+getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs = do
+    let str = "SELECT tx_serialized from xoken.transactions where tx_id = ?"
+        qstr = str :: Q.QueryString Q.R (Identity Text) (Identity Blob)
+        p = getSimpleQueryParam $ Identity $ txHashToHex $ outPointHash outPoint
+    res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr p)
+    case res of
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg ("Error: getScriptHashFromOutpoint: " ++ show e)
+            throw e
+        Right (iop) -> do
+            if L.length iop == 0
+                then do
+                    debug lg $
+                        LG.msg ("TxID not found: (waiting for event) " ++ (show $ txHashToHex $ outPointHash outPoint))
+                    --
+                    -- tmap <- liftIO $ takeMVar (txSync)
+                    valx <- liftIO $ TSH.lookup txSync (outPointHash outPoint)
+                    event <-
+                        case valx of
+                            Just evt -> return evt
+                            Nothing -> EV.new
+                    -- liftIO $ putMVar (txSync) (M.insert (outPointHash outPoint) event tmap)
+                    liftIO $ TSH.insert txSync (outPointHash outPoint) event
+                    tofl <- waitTimeout event (1000000 * (fromIntegral waitSecs))
+                    if tofl == False -- False indicates a timeout occurred.
+                            -- tmap <- liftIO $ takeMVar (txSync)
+                            -- liftIO $ putMVar (txSync) (M.delete (outPointHash outPoint) tmap)
+                        then do
+                            liftIO $ TSH.delete txSync (outPointHash outPoint)
+                            debug lg $ LG.msg ("TxIDNotFoundException" ++ (show $ txHashToHex $ outPointHash outPoint))
+                            throw TxIDNotFoundException
+                        else getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs -- if being signalled, try again to success
+                    --
+                    return Nothing
+                else do
+                    let txbyt = runIdentity $ iop !! 0
+                    case runGetLazy (getConfirmedTx) (fromBlob txbyt) of
+                        Left e -> do
+                            debug lg $ LG.msg (encodeHex $ BSL.toStrict $ fromBlob txbyt)
+                            throw DBTxParseException
+                        Right (txd) -> do
+                            case txd of
+                                Just tx ->
+                                    if (fromIntegral $ outPointIndex outPoint) > (L.length $ txOut tx)
+                                        then throw InvalidOutpointException
+                                        else do
+                                            let output = (txOut tx) !! (fromIntegral $ outPointIndex outPoint)
+                                            return $ Just $ txHashToHex $ TxHash $ sha256 (scriptOutput output)
+                                Nothing -> return Nothing
+
 processBlock :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => DefBlock -> m ()
 processBlock dblk = do
     lg <- getLogger
