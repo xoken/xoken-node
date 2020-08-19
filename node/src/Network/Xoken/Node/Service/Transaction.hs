@@ -302,6 +302,9 @@ xRelayTx rawTx = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
     let conn = connection (dbe)
+        bheight = 100000
+        bhash = hexToBlockHash "0000000000000000000000000000000000000000000000000000000000000000"
+    debug lg $ LG.msg $ "relayTx bhash " ++ show bhash 
     -- broadcast Tx
     case runGetState (getConfirmedTx) (rawTx) 0 of
         Left e -> do
@@ -354,6 +357,7 @@ xRelayTx rawTx = do
                     let !connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
                     debug lg $ LG.msg $ val $ "transaction verified - broadcasting tx"
                     mapM_ (\(_, peer) -> do sendRequestMessages peer (MTx (fromJust $ fst res))) connPeers
+                    processConfTransaction tx (fromJust bhash) bheight 0
                     eres <- LE.try $ handleIfAllegoryTx tx True -- MUST be False
                     case eres of
                         Right (flg) -> return True
