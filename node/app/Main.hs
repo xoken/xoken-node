@@ -232,7 +232,9 @@ runThreads config nodeConf bp2p conn lg certPaths = do
             Snap.setSSLCert (head certPaths) &
             Snap.setSSLChainCert False
     async $ Snap.serveSnaplet snapConfig (appInit xknEnv)
+    print "AAA initAllegory"
     withResource (pool $ graphDB dbh) (`BT.run` initAllegoryRoot genesisTx)
+    print "BBB initAllegory"
     -- run main workers
     -- runFileLoggingT (toS $ Config.logFile config) $
     runAppM

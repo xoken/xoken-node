@@ -89,6 +89,7 @@ import Network.Xoken.Node.GraphDB
 import Network.Xoken.Node.P2P.BlockSync
 import Network.Xoken.Node.P2P.Common
 import Network.Xoken.Node.P2P.Types
+import Network.Xoken.Node.Service.Address
 import Network.Xoken.Node.Service.Transaction
 import Network.Xoken.Util (bsToInteger, integerToBS)
 import Numeric (showHex)
@@ -183,11 +184,24 @@ createCommitImplictTx nameArr = do
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
     (nameip, existed) <- getOrMakeProducer (init nameArr)
     let anutxos = NC.allegoryNameUtxoSatoshis $ nodeConfig $ bp2pEnv
-    let ins =
+    let prAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
+    let prScript = addressToScriptBS prAddr
+    let addr' = case addrToString net prAddr of
+                    Nothing -> ""
+                    Just t -> DT.unpack t
+    let ins' =
             L.map
                 (\(x, s) ->
                      TxIn (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x)) (fromJust $ decodeHex s) 0)
                 ([nameip])
+    utxos <- xGetUTXOsAddress addr' (Just 200) Nothing
+    let (ins,fval) = case L.filter (\y -> aoValue y >= 100000) (res <$> utxos) of
+                    [] -> (ins',0)
+                    (x:xs) ->
+                        let op = aoOutput x
+                        in (ins' ++ [TxIn (OutPoint (fromString $ opTxHash op) (fromIntegral $ opIndex op)) prScript 0], aoValue x)
+    liftIO $ debug lg $ LG.msg $ "allegory TxIn ins: " <> show ins
+    liftIO $ debug lg $ LG.msg $ "allegory TxIn fval: " <> show fval
         -- construct OP_RETURN
     let al =
             Allegory
@@ -204,16 +218,16 @@ createCommitImplictTx nameArr = do
                      ])
     let opRetScript = frameOpReturn $ C.toStrict $ serialise al
         -- derive producer's Address
-    let prAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
-    let prScript = addressToScriptBS prAddr
     let !outs = [TxOut 0 opRetScript] ++ L.map (\_ -> TxOut (fromIntegral anutxos) prScript) [1, 2, 3]
-    let !sigInputs =
-            L.map
-                (\x -> do SigInput (addressToOutput x) (fromIntegral anutxos) (prevOutput $ head ins) sigHashAll Nothing)
-                [prAddr, prAddr]
+    debug lg $ LG.msg $ "allegory tx createCommitTx: " ++ show outs
+    let !sigInputs = [ SigInput (addressToOutput prAddr) (fromIntegral anutxos) (prevOutput $ head ins) (setForkIdFlag sigHashAll) Nothing
+                     , SigInput (addressToOutput prAddr) (fromIntegral fval) (prevOutput $ ins !! 1) (setForkIdFlag sigHashAll) Nothing
+                     ]
     let psatx = Tx version ins outs locktime
-    case signTx net psatx sigInputs [allegorySecretKey alg] of
+    debug lg $ LG.msg $ "allegory psatx before sign createCommitTx: " ++ show psatx
+    case signTx net psatx sigInputs [allegorySecretKey alg,allegorySecretKey alg] of
         Right tx -> do
+            debug lg $ LG.msg $ "allegory psatx after sign createCommitTx: " ++ show tx
             xRelayTx $ Data.Serialize.encode tx
             return ()
         Left err -> do
@@ -263,20 +277,27 @@ xGetPartiallySignedAllegoryTx payips (nameArr, isProducer) owner change = do
                      Nothing -> do
                          debug lg $ LG.msg $ val "allegory case index of : Nothing"
                          throw KeyValueDBLookupException
-     inputHash <-
-         liftIO $
-         traverse
-             (\(w, _) -> do
-                  let op = OutPoint (fromString $ opTxHash w) (fromIntegral $ opIndex w)
-                  sh <- getScriptHashFromOutpoint conn (txSynchronizer bp2pEnv) lg net op 0
-                  return $ (w, ) <$> sh)
-             payips
+    -- inputHash <-
+    --     liftIO $
+    --     traverse
+    --         (\(w, _) -> do
+    --              let op = OutPoint (fromString $ opTxHash w) (fromIntegral $ opIndex w)
+    --              debug lg $ LG.msg $ val "allegory inputhash before : getScriptHashFromOutpoint"
+    --              sh <- getScriptHashFromOutpoint conn (txSynchronizer bp2pEnv) lg net op 0
+    --              debug lg $ LG.msg $ "allegory inputhash after : getScriptHashFromOutpoint: " ++ show sh
+    --              return $ (w, ) <$> sh)
+    --         payips
+     let prAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
+     let prScript = encodeHex $ addressToScriptBS prAddr
+     let inputHash = fmap (\(w,_) -> (w,prScript)) payips
      let totalEffectiveInputSats = sum $ snd $ unzip payips
+     debug lg $ LG.msg $ val "allegory AAA"
      let ins =
              L.map
                  (\(x, s) ->
                       TxIn (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x)) (fromJust $ decodeHex s) 0)
-                 ([nameip] ++ (catMaybes inputHash))
+                 ([nameip] ++ (inputHash))
+     debug lg $ LG.msg $ val "allegory BBB"
      sigInputs <-
          mapM
              (\(x, s) -> do
@@ -288,16 +309,17 @@ xGetPartiallySignedAllegoryTx payips (nameArr, isProducer) owner change = do
                                    show name ++ " " ++ show (x, s) ++ " | " ++ show ((fst . B16.decode) (E.encodeUtf8 s)))
                           throw KeyValueDBLookupException
                       Right scr -> do
+                          debug lg $ LG.msg $ val "allegory CCC"
                           return $
                               SigInput
                                   scr
                                   (fromIntegral $ anutxos)
                                   (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x))
-                                  sigHashAll
+                                  (setForkIdFlag sigHashAll)
                                   Nothing)
              [nameip]
      --
-     let outs =
+     outs <-
              if existed
                  then if isProducer
                           then do
@@ -311,19 +333,21 @@ xGetPartiallySignedAllegoryTx payips (nameArr, isProducer) owner change = do
                                                Nothing
                                                [])
                               let opRetScript = frameOpReturn $ C.toStrict $ serialise al
-                             -- derive producer's Address
+                              -- derive producer's Address
                               let prAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
                               let prScript = addressToScriptBS prAddr
                               let payAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
                               let payScript = addressToScriptBS payAddr
                               let paySats = 1000000
                               let changeSats = totalEffectiveInputSats - (paySats + feeSatsCreate)
-                              [TxOut 0 opRetScript] ++
+                              liftIO $ debug lg $ LG.msg $ "allegory sats A: changesats" ++ show changeSats ++ " teInputSats: " ++ show totalEffectiveInputSats ++ " paySats: 1000000 feeStasCreate: " ++ show feeSatsCreate
+                              return $ [TxOut 0 opRetScript] ++
                                   (L.map
                                        (\x -> do
                                             let addr =
                                                     case stringToAddr net (DT.pack $ fst x) of
-                                                        Just a -> a
+                                                        Just a -> do
+                                                            a
                                                         Nothing -> throw InvalidOutputAddressException
                                             let script = addressToScriptBS addr
                                             TxOut (fromIntegral $ snd x) script)
@@ -348,7 +372,8 @@ xGetPartiallySignedAllegoryTx payips (nameArr, isProducer) owner change = do
                               let payScript = addressToScriptBS payAddr
                               let paySats = 1000000
                               let changeSats = totalEffectiveInputSats - (paySats + feeSatsTransfer)
-                              [TxOut 0 opRetScript] ++
+                              debug lg $ LG.msg $ "allegory sats B: changesats" ++ show changeSats ++ " teInputSats: " ++ show totalEffectiveInputSats ++ " paySats: 1000000 feeSatsTransfer: " ++ show feeSatsTransfer
+                              return $ [TxOut 0 opRetScript] ++
                                   (L.map
                                        (\x -> do
                                             let addr =
@@ -380,7 +405,8 @@ xGetPartiallySignedAllegoryTx payips (nameArr, isProducer) owner change = do
                      let payScript = addressToScriptBS payAddr
                      let paySats = 1000000
                      let changeSats = totalEffectiveInputSats - ((fromIntegral $ anutxos) + paySats + feeSatsCreate)
-                     [TxOut 0 opRetScript] ++
+                     debug lg $ LG.msg $ "allegory sats : changesats" ++ show changeSats ++ " teInputSats: " ++ show totalEffectiveInputSats ++ " paySats: 1000000 feeSatsCreate: " ++ show feeSatsCreate ++ " anutxos: " ++ show anutxos
+                     return $ [TxOut 0 opRetScript] ++
                          [TxOut (fromIntegral anutxos) prScript] ++
                          (L.map
                               (\x -> do
@@ -393,9 +419,12 @@ xGetPartiallySignedAllegoryTx payips (nameArr, isProducer) owner change = do
                               [(owner, (fromIntegral $ anutxos)), (change, changeSats)]) ++
                          [TxOut ((fromIntegral paySats) :: Word64) payScript] -- the charge for the name transfer
      --
+     debug lg $ LG.msg $ "allegory DDD" ++ show outs
      let psatx = Tx version ins outs locktime
-     case signTx net psatx sigInputs [allegorySecretKey alg] of
+     debug lg $ LG.msg $ "allegory tx before sign" ++ show psatx
+     case signTx net psatx sigInputs [allegorySecretKey alg, allegorySecretKey alg] of
          Right tx -> do
+             debug lg $ LG.msg $ "allegory tx after sign" ++ show tx
              return $ BSL.toStrict $ A.encode $ tx
          Left err -> do
              liftIO $ print $ "error occurred while signing the Tx: " <> show err
