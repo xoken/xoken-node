@@ -195,11 +195,14 @@ createCommitImplictTx nameArr = do
                      TxIn (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x)) (fromJust $ decodeHex s) 0)
                 ([nameip])
     utxos <- xGetUTXOsAddress addr' (Just 200) Nothing
-    let (ins,fval) = case L.filter (\y -> aoValue y >= 100000) (res <$> utxos) of
-                    [] -> (ins',0)
-                    (x:xs) ->
-                        let op = aoOutput x
-                        in (ins' ++ [TxIn (OutPoint (fromString $ opTxHash op) (fromIntegral $ opIndex op)) prScript 0], aoValue x)
+    (ins,fval) <- case L.filter (\y -> aoValue y >= 100000) (res <$> utxos) of
+                    [] -> return (ins',0)
+                    xs -> do
+                        let l = L.length xs
+                        r <- liftIO $ randomRIO (0,l)
+                        let x = xs !! r
+                            op = aoOutput x
+                        return $ (ins' ++ [TxIn (OutPoint (fromString $ opTxHash op) (fromIntegral $ opIndex op)) prScript 0], aoValue x)
     liftIO $ debug lg $ LG.msg $ "allegory TxIn ins: " <> show ins
     liftIO $ debug lg $ LG.msg $ "allegory TxIn fval: " <> show fval
         -- construct OP_RETURN
@@ -277,20 +280,25 @@ xGetPartiallySignedAllegoryTx payips (nameArr, isProducer) owner change = do
                      Nothing -> do
                          debug lg $ LG.msg $ val "allegory case index of : Nothing"
                          throw KeyValueDBLookupException
-     inputHash <-
-         liftIO $
-         traverse
-             (\(w, _) -> do
-                  let op = OutPoint (fromString $ opTxHash w) (fromIntegral $ opIndex w)
-                  sh <- getScriptHashFromOutpoint conn (txSynchronizer bp2pEnv) lg net op 0
-                  return $ (w, ) <$> sh)
-             payips
+    -- inputHash <-
+    --     liftIO $
+    --     traverse
+    --         (\(w, _) -> do
+    --              let op = OutPoint (fromString $ opTxHash w) (fromIntegral $ opIndex w)
+    --              debug lg $ LG.msg $ val "allegory inputhash before : getScriptHashFromOutpoint"
+    --              sh <- getScriptHashFromOutpoint conn (txSynchronizer bp2pEnv) lg net op 0
+    --              debug lg $ LG.msg $ "allegory inputhash after : getScriptHashFromOutpoint: " ++ show sh
+    --              return $ (w, ) <$> sh)
+    --         payips
+     let prAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
+     let prScript = encodeHex $ addressToScriptBS prAddr
+     let inputHash = fmap (\(w,_) -> (w,prScript)) payips
      let totalEffectiveInputSats = sum $ snd $ unzip payips
      let ins =
              L.map
                  (\(x, s) ->
                       TxIn (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x)) (fromJust $ decodeHex s) 0)
-                 ([nameip] ++ (catMaybes inputHash))
+                 ([nameip] ++ (inputHash))
      sigInputs <-
          mapM
              (\(x, s) -> do
@@ -309,9 +317,9 @@ xGetPartiallySignedAllegoryTx payips (nameArr, isProducer) owner change = do
                                   (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x))
                                   (setForkIdFlag sigHashAll)
                                   Nothing)
-             [nameip]
+             ([nameip] ++ inputHash)
      --
-     let outs =
+     outs <-
              if existed
                  then if isProducer
                           then do
@@ -332,7 +340,8 @@ xGetPartiallySignedAllegoryTx payips (nameArr, isProducer) owner change = do
                               let payScript = addressToScriptBS payAddr
                               let paySats = 1000000
                               let changeSats = totalEffectiveInputSats - (paySats + feeSatsCreate)
-                              [TxOut 0 opRetScript] ++
+                              liftIO $ debug lg $ LG.msg $ "allegory sats A: changesats" ++ show changeSats ++ " teInputSats: " ++ show totalEffectiveInputSats ++ " paySats: 1000000 feeStasCreate: " ++ show feeSatsCreate
+                              return $ [TxOut 0 opRetScript] ++
                                   (L.map
                                        (\x -> do
                                             let addr =
@@ -362,7 +371,8 @@ xGetPartiallySignedAllegoryTx payips (nameArr, isProducer) owner change = do
                               let payScript = addressToScriptBS payAddr
                               let paySats = 1000000
                               let changeSats = totalEffectiveInputSats - (paySats + feeSatsTransfer)
-                              [TxOut 0 opRetScript] ++
+                              debug lg $ LG.msg $ "allegory sats B: changesats" ++ show changeSats ++ " teInputSats: " ++ show totalEffectiveInputSats ++ " paySats: 1000000 feeSatsTransfer: " ++ show feeSatsTransfer
+                              return $ [TxOut 0 opRetScript] ++
                                   (L.map
                                        (\x -> do
                                             let addr =
@@ -394,7 +404,8 @@ xGetPartiallySignedAllegoryTx payips (nameArr, isProducer) owner change = do
                      let payScript = addressToScriptBS payAddr
                      let paySats = 1000000
                      let changeSats = totalEffectiveInputSats - ((fromIntegral $ anutxos) + paySats + feeSatsCreate)
-                     [TxOut 0 opRetScript] ++
+                     debug lg $ LG.msg $ "allegory sats : changesats" ++ show changeSats ++ " teInputSats: " ++ show totalEffectiveInputSats ++ " paySats: 1000000 feeSatsCreate: " ++ show feeSatsCreate ++ " anutxos: " ++ show anutxos
+                     return $ [TxOut 0 opRetScript] ++
                          [TxOut (fromIntegral anutxos) prScript] ++
                          (L.map
                               (\x -> do

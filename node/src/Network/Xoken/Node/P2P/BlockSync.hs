@@ -701,6 +701,7 @@ processConfTransaction tx bhash blkht txind = do
                                                  show (txHashToHex $ outPointHash (prevOutput b)) ++
                                                  ", " ++ show (outPointIndex $ prevOutput b) ++ ")"
                                              throw e
+                 debug lg $ LG.msg $ "getSats val: " ++ show val
                  return
                      ((txHashToHex $ outPointHash $ prevOutput b, fromIntegral $ outPointIndex $ prevOutput b), j, val))
             inAddrs
@@ -851,6 +852,7 @@ getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait = do
                             getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait
                 else do
                     let (addr, scriptHash, val) = head $ results
+                    debug lg $ LG.msg $ "getSats res: " ++ show (head results)
                     return $ (addr, scriptHash, val)
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: getSatsValueFromOutpoint: " ++ show e
