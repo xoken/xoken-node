@@ -16,6 +16,7 @@ module Network.Xoken.Node.P2P.UnconfTxSync
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (mapConcurrently, race_)
+import Control.Concurrent.Async.Lifted (concurrently_)
 import Control.Concurrent.Async.Lifted as LA (async)
 import Control.Concurrent.Event as EV
 import Control.Concurrent.MVar
@@ -71,6 +72,7 @@ import Network.Xoken.Node.GraphDB
 import Network.Xoken.Node.P2P.BlockSync
 import Network.Xoken.Node.P2P.Common
 import Network.Xoken.Node.P2P.Types
+import Network.Xoken.Script
 import Network.Xoken.Script.Standard
 import Network.Xoken.Transaction.Common
 import Network.Xoken.Util
@@ -353,18 +355,43 @@ processUnconfTransaction tx = do
         (\(a, o, i) -> do
              let sh = txHashToHex $ TxHash $ sha256 (scriptOutput o)
              let output = (txHashToHex $ txHash tx, i)
-             insertEpochTxIdOutputs conn epoch output a sh True (stripScriptHash <$> inputs) (fromIntegral $ outValue o)
-             commitEpochScriptHashOutputs conn epoch sh output
-             commitEpochScriptHashUnspentOutputs conn epoch sh output
-             return ())
+             concurrently_
+                 (insertEpochTxIdOutputs
+                      conn
+                      epoch
+                      output
+                      a
+                      sh
+                      True
+                      (stripScriptHash <$> inputs)
+                      (fromIntegral $ outValue o))
+                 (concurrently_
+                      (concurrently_
+                           (commitEpochScriptHashOutputs conn epoch sh output)
+                           (commitEpochScriptHashUnspentOutputs conn epoch sh output))
+                      (case decodeOutputBS $ scriptOutput o of
+                           (Right so) ->
+                               if isPayPK so
+                                   then do
+                                       concurrently_
+                                           (commitEpochScriptHashOutputs conn epoch a output)
+                                           (commitEpochScriptHashUnspentOutputs conn epoch a output)
+                                   else return ()
+                           (Left e) -> return ())))
         outAddrs
     mapM_
         (\((o, i), (a, sh)) -> do
              let prevOutpoint = (txHashToHex $ outPointHash $ prevOutput o, fromIntegral $ outPointIndex $ prevOutput o)
              let output = (txHashToHex $ txHash tx, i)
              let spendInfo = (\ov -> ((txHashToHex $ txHash tx, fromIntegral $ fst ov), i, snd $ ov)) <$> ovs
-             insertEpochTxIdOutputs conn epoch prevOutpoint a sh False (stripScriptHash <$> spendInfo) 0
-             deleteEpochScriptHashUnspentOutputs conn epoch sh prevOutpoint)
+             if a == "" || sh == ""
+                 then return ()
+                 else do
+                     concurrently_
+                         (insertEpochTxIdOutputs conn epoch prevOutpoint a sh False (stripScriptHash <$> spendInfo) 0)
+                         (concurrently_
+                              (deleteEpochScriptHashUnspentOutputs conn epoch sh prevOutpoint)
+                              (deleteEpochScriptHashUnspentOutputs conn epoch a prevOutpoint)))
         (zip inAddrs (map (\x -> (fst3 $ thd3 x, snd3 $ thd3 x)) inputs))
     --
     let ipSum = foldl (+) 0 $ (\(_, _, (_, _, val)) -> val) <$> inputs
