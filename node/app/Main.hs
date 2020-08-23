@@ -199,8 +199,8 @@ makeCqlPool = do
     connPool <-
         createPool
             (socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr) >>= \s ->
-                 Network.Socket.connect s (addrAddress addr) >> connHandshake s startCql >> return s)
-            (Network.Socket.close)
+                 Network.Socket.connect s (addrAddress addr) >> connHandshake s startCql >> TSH.new 20 >>= \t -> return (t, s))
+            (Network.Socket.close . snd)
             1
             (1800000000000)
             200

@@ -20,12 +20,14 @@ import qualified Data.Map.Strict as M
 import Data.Pool
 import Data.Time.Clock
 import Data.Word
+import qualified Database.XCQL.Protocol as Q
 import Database.Bolt as BT
 import Network.Socket hiding (send)
 import Network.Xoken.Block
 import Network.Xoken.Constants
 import Network.Xoken.Crypto.Hash
 import Network.Xoken.Network
+import qualified Network.Xoken.Node.Data.ThreadSafeHashTable as TSH
 import Network.Xoken.Transaction
 import System.Random
 import Text.Read
@@ -39,7 +41,8 @@ type Host = String
 -- | Type alias for a port number.
 type Port = Int
 
-type CqlConnection = Pool Socket
+type CqlConn = (TSH.TSHashTable Int (MVar (Q.Header, LB.ByteString)), Socket)
+type CqlConnection = Pool (CqlConn)
 
 data DatabaseHandles =
     DatabaseHandles
