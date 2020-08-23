@@ -270,12 +270,12 @@ getBatchSize peerCount n
             else [1 .. peerCount]
     | n >= 200000 && n < 500000 =
         if peerCount > 4
-            then [1 .. 4]
-            else [1 .. peerCount]
-    | n >= 500000 && n < 640000 =
-        if peerCount > 2
             then [1 .. 2]
-            else [1 .. peerCount]
+            else [1]
+    | n >= 500000 && n < 640000 =
+        if peerCount > 4
+            then [1 .. 2]
+            else [1]
     | otherwise = [1]
 
 runBlockCacheQueue :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
@@ -299,10 +299,7 @@ runBlockCacheQueue =
             if sysz == 0
                 then do
                     (hash, ht) <- fetchBestSyncedBlock conn net
-                    let cacheInd =
-                            if L.length connPeers > 4
-                                then getBatchSize (fromIntegral $ maxBitcoinPeerCount $ nodeConfig bp2pEnv) ht
-                                else [1]
+                    let cacheInd = getBatchSize (fromIntegral $ L.length connPeers) ht
                     let !bks = map (\x -> ht + x) cacheInd
                     let qstr :: Q.QueryString Q.R (Identity [Int32]) ((Int32, T.Text))
                         qstr = "SELECT block_height, block_hash from xoken.blocks_by_height where block_height in ?"
@@ -605,9 +602,10 @@ processConfTransaction tx bhash blkht txind = do
     dbe' <- getDB
     bp2pEnv <- getBitcoinP2P
     lg <- getLogger
+    let !txhs = txHash tx
     let net = bitcoinNetwork $ nodeConfig bp2pEnv
         conn = connection dbe'
-    debug lg $ LG.msg $ "processing Tx " ++ show (txHash tx)
+    debug lg $ LG.msg $ "processing Tx " ++ show (txhs)
     let !inAddrs = zip (txIn tx) [0 :: Int32 ..]
     let !outAddrs =
             zip3
@@ -668,7 +666,7 @@ processConfTransaction tx bhash blkht txind = do
                                                      err lg $
                                                          LG.msg $
                                                          "Error: [pCT calling gSVFO] WHILE Processing TxID " ++
-                                                         show (txHashToHex $ txHash tx) ++
+                                                         show (txHashToHex txhs) ++
                                                          ", getting value for dependent input (TxID,Index): (" ++
                                                          show (txHashToHex $ outPointHash (prevOutput b)) ++
                                                          ", " ++ show (outPointIndex $ prevOutput b) ++ ")"
@@ -696,7 +694,7 @@ processConfTransaction tx bhash blkht txind = do
                                              err lg $
                                                  LG.msg $
                                                  "Error: [pCT calling gSVFO] WHILE Processing TxID " ++
-                                                 show (txHashToHex $ txHash tx) ++
+                                                 show (txHashToHex txhs) ++
                                                  ", getting value for dependent input (TxID,Index): (" ++
                                                  show (txHashToHex $ outPointHash (prevOutput b)) ++
                                                  ", " ++ show (outPointIndex $ prevOutput b) ++ ")"
@@ -705,7 +703,7 @@ processConfTransaction tx bhash blkht txind = do
                  return
                      ((txHashToHex $ outPointHash $ prevOutput b, fromIntegral $ outPointIndex $ prevOutput b), j, val))
             inAddrs
-    trace lg $ LG.msg $ "processing Tx " ++ show (txHash tx) ++ ": fetched input(s): " ++ show inputs
+    trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": fetched input(s): " ++ show inputs
     --
     -- cache compile output values 
     -- imp: order is (address, scriptHash, value)
@@ -715,20 +713,20 @@ processConfTransaction tx bhash blkht txind = do
                      ( fromIntegral $ i
                      , (a, (txHashToHex $ TxHash $ sha256 (scriptOutput o)), fromIntegral $ outValue o)))
                 outAddrs
-    trace lg $ LG.msg $ "processing Tx " ++ show (txHash tx) ++ ": compiled output value(s): " ++ (show ovs)
+    trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": compiled output value(s): " ++ (show ovs)
     -- liftIO $
     --     TSH.insert
     --         (txOutputValuesCache bp2pEnv)
     --         (getTxShortHash (txHash tx) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
     --         (txHash tx, ovs)
     --
-    trace lg $ LG.msg $ "processing Tx " ++ show (txHash tx) ++ ": added outputvals to cache"
+    trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": added outputvals to cache"
     -- update outputs and scripthash tables
     mapM_
         (\(a, o, i) -> do
              let sh = txHashToHex $ TxHash $ sha256 (scriptOutput o)
              let bi = (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
-             let output = (txHashToHex $ txHash tx, i)
+             let output = (txHashToHex txhs, i)
              concurrently_
                  (insertTxIdOutputs conn output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o))
                  (concurrently_
@@ -749,13 +747,13 @@ processConfTransaction tx bhash blkht txind = do
                                    else return ()
                            (Left e) -> return ())))
         outAddrs
-    trace lg $ LG.msg $ "processing Tx " ++ show (txHash tx) ++ ": committed scripthash,txid_outputs tables"
+    trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": committed scripthash,txid_outputs tables"
     mapM_
         (\((o, i), (a, sh)) -> do
              let bi = (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
              let blockHeight = fromIntegral blkht
              let prevOutpoint = (txHashToHex $ outPointHash $ prevOutput o, fromIntegral $ outPointIndex $ prevOutput o)
-             let spendInfo = (\ov -> ((txHashToHex $ txHash tx, fromIntegral $ fst $ ov), i, snd $ ov)) <$> ovs
+             let spendInfo = (\ov -> ((txHashToHex txhs, fromIntegral $ fst $ ov), i, snd $ ov)) <$> ovs
              if a == "" || sh == "" -- likely coinbase txns
                  then return ()
                  else do
@@ -766,19 +764,19 @@ processConfTransaction tx bhash blkht txind = do
                               (deleteScriptHashUnspentOutputs conn a prevOutpoint)))
         (zip (inAddrs) (map (\x -> (fst3 $ thd3 x, snd3 $ thd3 $ x)) inputs))
     --
-    trace lg $ LG.msg $ "processing Tx " ++ show (txHash tx) ++ ": updated spend info for inputs"
+    trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": updated spend info for inputs"
     -- calculate Tx fees
     let ipSum = foldl (+) 0 $ (\(_, _, (_, _, val)) -> val) <$> inputs
         opSum = foldl (+) 0 $ (\(_, o, _) -> fromIntegral $ outValue o) <$> outAddrs
         fees = ipSum - opSum
     --
-    trace lg $ LG.msg $ "processing Tx " ++ show (txHash tx) ++ ": calculated fees"
+    trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": calculated fees"
     -- persist tx
     let qstr :: Q.QueryString Q.W (Text, (Text, Int32, Int32), Blob, [((Text, Int32), Int32, (Text, Int64))], Int64) ()
         qstr = "insert INTO xoken.transactions (tx_id, block_info, tx_serialized , inputs, fees) values (?, ?, ?, ?, ?)"
         par =
             getSimpleQueryParam
-                ( txHashToHex $ txHash tx
+                ( txHashToHex txhs
                 , (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
                 , Blob $ runPutLazy $ putLazyByteString $ S.encodeLazy tx
                 , (stripScriptHash <$> inputs)
@@ -790,21 +788,21 @@ processConfTransaction tx bhash blkht txind = do
             liftIO $ err lg $ LG.msg ("Error: INSERTing into 'xoken.transactions': " ++ show e)
             throw KeyValueDBInsertException
     --
-    trace lg $ LG.msg $ "processing Tx " ++ show (txHash tx) ++ ": persisted in DB"
+    trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": persisted in DB"
     -- handle allegory
     eres <- LE.try $ handleIfAllegoryTx tx True
     case eres of
         Right (flg) -> return ()
         Left (e :: SomeException) -> err lg $ LG.msg ("Error: " ++ show e)
     --
-    trace lg $ LG.msg $ "processing Tx " ++ show (txHash tx) ++ ": handled Allegory Tx"
+    trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": handled Allegory Tx"
     -- signal 'done' event for tx's that were processed out of sequence 
     --
-    vall <- liftIO $ TSH.lookup (txSynchronizer bp2pEnv) (txHash tx)
+    vall <- liftIO $ TSH.lookup (txSynchronizer bp2pEnv) txhs
     case vall of
         Just ev -> liftIO $ EV.signal $ ev
         Nothing -> return ()
-    debug lg $ LG.msg $ "processing Tx " ++ show (txHash tx) ++ ": end of processing signaled " ++ show bhash
+    debug lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": end of processing signaled " ++ show bhash
 
 getSatsValueFromOutpoint ::
        CqlConnection
