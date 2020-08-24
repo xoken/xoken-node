@@ -440,9 +440,9 @@ getInputsForUnconfirmedTx op = do
     bp2pEnv <- getBitcoinP2P
     let conn = connection (dbe)
         (txid, index) = (opTxHash op, opIndex op)
-        str = "SELECT other FROM xoken.ep_txid_outputs WHERE epoch IN (True,False) AND txid=? AND output_index=?"
-        qstr = str :: Q.QueryString Q.R (DT.Text, Int32) (Identity ((DT.Text, Int32), Int32, (DT.Text, Int64)))
-        par = getSimpleQueryParam (DT.pack txid, index)
+        str = "SELECT other FROM xoken.ep_txid_outputs WHERE epoch IN (True,False) AND txid=?"
+        qstr = str :: Q.QueryString Q.R (Identity DT.Text) (Identity ((DT.Text, Int32), Int32, (DT.Text, Int64)))
+        par = getSimpleQueryParam (Identity $ DT.pack txid)
     res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
     case res of
         Left (e :: SomeException) -> do
@@ -455,6 +455,5 @@ getFundingUtxos :: (HasXokenNodeEnv env m, MonadIO m) => String -> m [AddressOut
 getFundingUtxos addr = do
     res <- xGetUTXOsAddress addr (Just 200) Nothing
     let utxos = (\(ResultWithCursor ao _) -> ao) <$> res
-    let inputs = (\(AddressOutputs _ outpoint _ _ _ _) -> outpoint) <$> utxos
-    possiblySpentInputs <- liftM concat $ sequence $ getInputsForUnconfirmedTx <$> inputs
-    return $ L.filter (\(AddressOutputs _ op _ _ _ _) -> (op `L.elem` possiblySpentInputs)) utxos
+    possiblySpentInputs <- liftM concat $ sequence $ getInputsForUnconfirmedTx <$> aoOutput <$> utxos
+    return $ L.filter (\utxo -> (aoOutput utxo `L.elem` possiblySpentInputs)) utxos
