@@ -89,6 +89,7 @@ import Network.Xoken.Node.GraphDB
 import Network.Xoken.Node.P2P.BlockSync
 import Network.Xoken.Node.P2P.Common
 import Network.Xoken.Node.P2P.Types
+import Network.Xoken.Node.P2P.UnconfTxSync
 import Network.Xoken.Node.Service.Address
 import Network.Xoken.Node.Service.Transaction
 import Network.Xoken.Util (bsToInteger, integerToBS)
@@ -195,9 +196,9 @@ createCommitImplictTx nameArr = do
                 (\(x, s) ->
                      TxIn (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x)) (fromJust $ decodeHex s) 0)
                 ([nameip])
-    utxos <- xGetUTXOsAddress addr' (Just 200) Nothing
+    utxos <- getFundingUtxos addr'
     let (ins, fval) =
-            case L.filter (\y -> aoValue y >= 100000) (res <$> utxos) of
+            case L.filter (\y -> aoValue y >= 100000) utxos of
                 [] -> (ins', 0)
                 (x:xs) ->
                     let op = aoOutput x
@@ -242,6 +243,7 @@ createCommitImplictTx nameArr = do
     case signTx net psatx sigInputs [allegorySecretKey alg, allegorySecretKey alg] of
         Right tx -> do
             debug lg $ LG.msg $ "allegory psatx after sign createCommitTx: " ++ show tx
+            processUnconfTransaction tx
             xRelayTx $ Data.Serialize.encode tx
             return ()
         Left err -> do
