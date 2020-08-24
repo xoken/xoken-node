@@ -114,7 +114,7 @@ xGetBlockHash hash = do
                                                         , Maybe Int32
                                                         , Maybe Blob)
         p = getSimpleQueryParam $ Identity hash
-    res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr p)
+    res <- liftIO $ LE.liftIO $ try $ query (Q.RqQuery $ Q.Query qstr p)
     case res of
         Right iop -> do
             if length iop == 0
@@ -158,7 +158,7 @@ xGetBlocksHashes hashes = do
                                                           , Maybe Int32
                                                           , Maybe Blob)
         p = getSimpleQueryParam $ Identity $ hashes
-    res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr p)
+    res <- liftIO $ LE.liftIO $ try $ query (Q.RqQuery $ Q.Query qstr p)
     case res of
         Right iop -> do
             if length iop == 0
@@ -205,7 +205,7 @@ xGetBlockHeight height = do
                                                       , Maybe Int32
                                                       , Maybe Blob)
         p = getSimpleQueryParam $ Identity height
-    res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr p)
+    res <- liftIO $ LE.liftIO $ try $ query (Q.RqQuery $ Q.Query qstr p)
     case res of
         Right iop -> do
             if length iop == 0
@@ -249,7 +249,7 @@ xGetBlocksHeights heights = do
                                                         , Maybe Int32
                                                         , Maybe Blob)
         p = getSimpleQueryParam $ Identity $ heights
-    res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr p)
+    res <- liftIO $ LE.liftIO $ try $ query (Q.RqQuery $ Q.Query qstr p)
     case res of
         Right iop -> do
             if length iop == 0

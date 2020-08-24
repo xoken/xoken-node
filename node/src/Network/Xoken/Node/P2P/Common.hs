@@ -215,9 +215,10 @@ generateSessionKey = do
 
 maskAfter :: Int -> String -> String
 maskAfter n skey = (\x -> take n x ++ fmap (const '*') (drop n x)) skey
-
+{-
 addNewUser ::
-       XCQLServerState k a b
+       (HasDatabaseHandles m, MonadIO m)
+    => XCQLServerState k a b
     -> T.Text
     -> T.Text
     -> T.Text
@@ -225,12 +226,12 @@ addNewUser ::
     -> Maybe [String]
     -> Maybe Int32
     -> Maybe UTCTime
-    -> IO (Maybe AddUserResp)
+    -> m (Maybe AddUserResp)
 addNewUser conn uname fname lname email roles api_quota api_expiry_time = do
     let qstr =
             " SELECT password from xoken.user_permission where username = ? " :: Q.QueryString Q.R (Identity T.Text) (Identity T.Text)
         p = getSimpleQueryParam (Identity uname)
-    op <- query conn (Q.RqQuery $ Q.Query qstr p)
+    op <- query (Q.RqQuery $ Q.Query qstr p)
     tm <- liftIO $ getCurrentTime
     if L.length op == 1
         then return Nothing
@@ -269,10 +270,10 @@ addNewUser conn uname fname lname email roles api_quota api_expiry_time = do
                         , (fromMaybe (addUTCTime (nominalDay * 365) tm) api_expiry_time)
                         , tempSessionKey
                         , (addUTCTime (nominalDay * 30) tm))
-            res1 <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query (qstr) par)
+            res1 <- liftIO $ try $ write (Q.RqQuery $ Q.Query (qstr) par)
             case res1 of
                 Right _ -> do
-                    putStrLn $ "Added user: " ++ (T.unpack uname)
+                    liftIO $ putStrLn $ "Added user: " ++ (T.unpack uname)
                     return $
                         Just $
                         AddUserResp
@@ -290,17 +291,17 @@ addNewUser conn uname fname lname email roles api_quota api_expiry_time = do
                                  (addUTCTime (nominalDay * 30) tm))
                             (C.unpack passwd)
                 Left (SomeException e) -> do
-                    putStrLn $ "Error: INSERTing into 'user_permission': " ++ show e
+                    liftIO $ putStrLn $ "Error: INSERTing into 'user_permission': " ++ show e
                     throw e
 
 -- | Calculates sum of chainworks for blocks with blockheight in input list
-calculateChainWork :: (HasLogger m, MonadIO m) => [Int32] -> XCQLServerState k a b -> m Integer
+calculateChainWork :: (HasDatabaseHandles m, HasLogger m, MonadIO m) => [Int32] -> XCQLServerState k a b -> m Integer
 calculateChainWork blks conn = do
     lg <- getLogger
     let qstr :: Q.QueryString Q.R (Identity [Int32]) (Int32, Text)
         qstr = "SELECT block_height,block_header from xoken.blocks_by_height where block_height in ?"
         p = getSimpleQueryParam $ Identity $ blks
-    res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr p)
+    res <- liftIO $ try $ query (Q.RqQuery $ Q.Query qstr p)
     case res of
         Right iop -> do
             if L.length iop == 0
@@ -319,7 +320,7 @@ calculateChainWork blks conn = do
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: calculateChainWork: " ++ show e ++ "\n" ++ show blks
             throw KeyValueDBLookupException
-
+-}
 stripScriptHash :: ((Text, Int32), Int32, (Text, Text, Int64)) -> ((Text, Int32), Int32, (Text, Int64))
 stripScriptHash (op, ii, (addr, scriptHash, satValue)) = (op, ii, (addr, satValue))
 
@@ -336,29 +337,29 @@ splitList xs = (f 1 xs, f 0 xs)
 getSimpleQueryParam :: Tuple a => a -> QueryParams a
 getSimpleQueryParam a = Q.QueryParams Q.One False a Nothing Nothing Nothing Nothing
 
-query :: (Tuple a, Tuple b) => XCQLServerState k a b -> Request Q.R a b -> IO [b]
-query ps req = do
-    resp <- queryResp ps req
+query :: (HasDatabaseHandles m, MonadIO m, Tuple a, Tuple b) => Request Q.R a b -> m [b]
+query req = do
+    resp <- queryResp req
     case resp of
         (Q.RsResult _ _ (Q.RowsResult _ r)) -> return r
         response -> do
-            print $ "[Error] Query: Not a RowsResult!!"
+            liftIO $ print $ "[Error] Query: Not a RowsResult!!"
             throw KeyValPoolException
 
-write :: (Tuple a, Tuple b) => XCQLServerState k a b -> Request Q.W a b -> IO ()
-write ps req = do
-    resp <- queryResp ps req
+write :: (HasDatabaseHandles m, MonadIO m, Tuple a, Tuple b) => Request Q.W a b -> m ()
+write req = do
+    resp <- queryResp req
     case resp of
         (Q.RsResult _ _ (Q.VoidResult)) -> return ()
         response -> do
-            print $ "[Error] Query: Not a VoidResult!!"
+            liftIO $ print $ "[Error] Query: Not a VoidResult!!"
             throw KeyValPoolException
 
-queryResp :: (Tuple a, Tuple b) => XCQLServerState k a b -> Request k a b -> IO (Response k a b)
-queryResp ps req = do
+queryResp :: (HasDatabaseHandles m, MonadIO m, Tuple a, Tuple b) => Request k a b -> m (Response k a b)
+queryResp req = do
+    ps <- connection <$> getDB
     let i = mkStreamId 0
-    withResource ps $ \(ht,sock) -> do
-        foreverReadSocket (ht,sock)
+    liftIO $ withResource ps $ \(ht,sock) -> do
         case (Q.pack Q.V3 noCompression False i req) of
             Right qp -> do
                 LB.sendAll sock qp
@@ -366,26 +367,26 @@ queryResp ps req = do
                 h' <- return $ header Q.V3 b
                 case h' of
                     Left s -> do
-                        print $ "[Error] Query: header error: " ++ s
+                        liftIO $ print $ "[Error] Query: header error: " ++ s
                         throw KeyValPoolException
                     Right h -> do
                         case headerType h of
                             RqHeader -> do
-                                print "[Error] Query: RqHeader"
+                                liftIO $ print "[Error] Query: RqHeader"
                                 throw KeyValPoolException
                             RsHeader -> do
                                 let len = lengthRepr (bodyLength h)
                                 x <- LB.recv sock (fromIntegral len)
                                 case Q.unpack noCompression h x of
                                     Left e -> do
-                                        print $ "[Error] Query: unpack " ++ show e
+                                        liftIO $ print $ "[Error] Query: unpack " ++ show e
                                         throw KeyValPoolException
                                     Right (RsError _ _ e) -> do
-                                        print $ "[Error] Query: RsError: " ++ show e
+                                        liftIO $ print $ "[Error] Query: RsError: " ++ show e
                                         throw KeyValPoolException
                                     Right response -> return response
             Left _ -> do
-                print "[Error] Query: pack"
+                liftIO $ print "[Error] Query: pack"
                 throw KeyValPoolException
 
 connHandshake :: (Tuple a, Tuple b) => Socket -> Request k a b -> IO (Response k a b)
@@ -421,8 +422,8 @@ connHandshake sock req = do
             print "[Error] Query: pack"
             throw KeyValPoolException
 
-foreverReadSocket :: (Tuple a, Tuple b) => CqlConn k a b -> IO ()
-foreverReadSocket (ht,sock) = forever $ do
+foreverReadSocket :: (MonadIO m, Tuple a, Tuple b) => CqlConn k a b -> m ()
+foreverReadSocket (ht,sock) = liftIO $ forever $ do
     b <- LB.recv sock 9
     h' <- return $ header Q.V3 b
     case h' of

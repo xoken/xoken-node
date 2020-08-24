@@ -107,7 +107,7 @@ xGetChainInfo = do
         str = "SELECT key,value from xoken.misc_store"
         qstr = str :: Q.QueryString Q.R () (DT.Text, (Maybe Bool, Int32, Maybe Int64, DT.Text))
         p = getSimpleQueryParam ()
-    res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr p)
+    res <- liftIO $ LE.liftIO $ try $ query (Q.RqQuery $ Q.Query qstr p)
     case res of
         Right iop -> do
             if L.length iop < 3
@@ -139,7 +139,7 @@ xGetChainHeaders sblk pgsize = do
         str = "SELECT block_hash,block_height,tx_count,block_header from xoken.blocks_by_height where block_height in ?"
         qstr = str :: Q.QueryString Q.R (Identity [Int32]) (DT.Text, Int32, Maybe Int32, DT.Text)
         p = getSimpleQueryParam $ Identity (L.take pgsize [sblk ..])
-    res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr p)
+    res <- liftIO $ LE.liftIO $ try $ query (Q.RqQuery $ Q.Query qstr p)
     case res of
         Right iop -> do
             if length iop == 0

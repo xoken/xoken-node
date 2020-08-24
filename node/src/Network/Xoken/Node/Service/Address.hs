@@ -111,7 +111,7 @@ getTxOutputsData (txid, index) = do
                                                         , Int64
                                                         , DT.Text)
         top = getSimpleQueryParam (txid, index)
-    toRes <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query toQStr top)
+    toRes <- liftIO $ LE.liftIO $ try $ query (Q.RqQuery $ Q.Query toQStr top)
     case toRes of
         Right es -> do
             if length es == 0
@@ -156,10 +156,10 @@ xGetOutputsAddress address pgSize mbNomTxInd = do
         LA.concurrently
             (case sh of
                  Nothing -> return []
-                 Just s -> liftIO $ query conn (Q.RqQuery $ Q.Query qstr (shp {pageSize = pgSize})))
+                 Just s -> liftIO $ query (Q.RqQuery $ Q.Query qstr (shp {pageSize = pgSize})))
             (case address of
                  ('3':_) -> return []
-                 _ -> liftIO $ query conn (Q.RqQuery $ Q.Query qstr (aop {pageSize = pgSize})))
+                 _ -> liftIO $ query (Q.RqQuery $ Q.Query qstr (aop {pageSize = pgSize})))
     case res of
         Right (sr, ar) -> do
             let iops =
@@ -225,10 +225,10 @@ xGetUTXOsAddress address pgSize mbFromOutput = do
         LA.concurrently
             (case sh of
                  Nothing -> return []
-                 Just s -> liftIO $ query conn (Q.RqQuery $ Q.Query qstr (shp {pageSize = pgSize})))
+                 Just s -> liftIO $ query (Q.RqQuery $ Q.Query qstr (shp {pageSize = pgSize})))
             (case address of
                  ('3':_) -> return []
-                 _ -> liftIO $ query conn (Q.RqQuery $ Q.Query qstr (aop {pageSize = pgSize})))
+                 _ -> liftIO $ query (Q.RqQuery $ Q.Query qstr (aop {pageSize = pgSize})))
     case res of
         Right (sr, ar) -> do
             let iops =
@@ -286,7 +286,7 @@ xGetOutputsScriptHash scriptHash pgSize mbNomTxInd = do
             "SELECT script_hash,nominal_tx_index,output FROM xoken.script_hash_outputs WHERE script_hash=? AND nominal_tx_index<?"
         qstr = str :: Q.QueryString Q.R (DT.Text, Int64) (DT.Text, Int64, (DT.Text, Int32))
         par = getSimpleQueryParam (DT.pack scriptHash, nominalTxIndex)
-    res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr (par {pageSize = pgSize}))
+    res <- liftIO $ LE.liftIO $ try $ query (Q.RqQuery $ Q.Query qstr (par {pageSize = pgSize}))
     case res of
         Right iop -> do
             if length iop == 0
@@ -330,7 +330,7 @@ xGetUTXOsScriptHash scriptHash pgSize mbFromOutput = do
         str = "SELECT script_hash,output FROM xoken.script_hash_unspent_outputs WHERE script_hash=? AND output<?"
         qstr = str :: Q.QueryString Q.R (DT.Text, (DT.Text, Int32)) (DT.Text, (DT.Text, Int32))
         par = getSimpleQueryParam (DT.pack scriptHash, fromOutput)
-    res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr (par {pageSize = pgSize}))
+    res <- liftIO $ LE.liftIO $ try $ query (Q.RqQuery $ Q.Query qstr (par {pageSize = pgSize}))
     case res of
         Right iop -> do
             if length iop == 0

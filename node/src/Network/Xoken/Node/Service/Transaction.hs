@@ -116,7 +116,7 @@ xGetTxHash hash = do
     res <-
         LE.try $
         LA.concurrently
-            (LA.concurrently (liftIO $ query conn (Q.RqQuery $ Q.Query qstr p)) (getTxOutputsFromTxId hash))
+            (LA.concurrently (liftIO $ query (Q.RqQuery $ Q.Query qstr p)) (getTxOutputsFromTxId hash))
             (xGetMerkleBranch $ DT.unpack hash)
     case res of
         Right ((iop, outs), mrkl) ->
@@ -159,7 +159,7 @@ xGetTxHashes hashes = do
                                                           , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
                                                           , Int64)
         p = getSimpleQueryParam $ Identity $ hashes
-    res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr p)
+    res <- liftIO $ LE.liftIO $ try $ query (Q.RqQuery $ Q.Query qstr p)
     case res of
         Right iop -> do
             txRecs <-
@@ -208,7 +208,7 @@ getTxOutputsFromTxId txid = do
                                                           , Int64
                                                           , DT.Text)
         par = getSimpleQueryParam (Identity txid)
-    res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query toQStr par)
+    res <- liftIO $ LE.liftIO $ try $ query (Q.RqQuery $ Q.Query toQStr par)
     case res of
         Right t -> do
             if length t == 0
@@ -248,7 +248,7 @@ xGetTxIDsByBlockHash hash pgSize pgNum = do
         str = "SELECT page_number, txids from xoken.blockhash_txids where block_hash = ? and page_number in ? "
         qstr = str :: Q.QueryString Q.R (DT.Text, [Int32]) (Int32, [DT.Text])
         p = getSimpleQueryParam $ (DT.pack hash, [firstPage .. lastPage])
-    res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr p)
+    res <- liftIO $ try $ query (Q.RqQuery $ Q.Query qstr p)
     case res of
         Right iop ->
             return . L.take (fromIntegral pgSize) . L.drop txDropFromFirst . L.concat $ (fmap DT.unpack . snd) <$> iop
@@ -266,7 +266,7 @@ xGetTxOutputSpendStatus txId outputIndex = do
                                                       , (DT.Text, Int32, Int32)
                                                       , Set ((DT.Text, Int32), Int32, (DT.Text, Int64)))
         p = getSimpleQueryParam (DT.pack txId, outputIndex)
-    iop <- liftIO $ query conn (Q.RqQuery $ Q.Query qstr p)
+    iop <- liftIO $ query (Q.RqQuery $ Q.Query qstr p)
     if length iop == 0
         then return Nothing
         else do
@@ -326,7 +326,7 @@ xRelayTx rawTx = do
                                                                                      , (DT.Text, Int32, Int32)
                                                                                      , Blob)
                                      p = getSimpleQueryParam $ Identity $ (txid)
-                                 iop <- liftIO $ query conn (Q.RqQuery $ Q.Query qstr p)
+                                 iop <- liftIO $ query (Q.RqQuery $ Q.Query qstr p)
                                  if length iop == 0
                                      then do
                                          debug lg $ LG.msg $ "not found" ++ show txid

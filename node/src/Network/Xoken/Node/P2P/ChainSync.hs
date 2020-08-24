@@ -157,7 +157,7 @@ markBestBlock hash height conn = do
         q = Q.QueryString "insert INTO xoken.misc_store (key, value) values (? , ?)"
         p :: Q.QueryParams (Text, (Maybe Bool, Int32, Maybe Int64, Text))
         p = getSimpleQueryParam ("best_chain_tip", (Nothing, height, Nothing, hash))
-    res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query q p)
+    res <- liftIO $ try $ write (Q.RqQuery $ Q.Query q p)
     case res of
         Right _ -> return ()
         Left (e :: SomeException) -> do
@@ -172,7 +172,7 @@ getBlockLocator conn net = do
         qstr :: Q.QueryString Q.R (Identity [Int32]) ((Int32, T.Text))
         qstr = "SELECT block_height, block_hash from xoken.blocks_by_height where block_height in ?"
         p = getSimpleQueryParam $ Identity bl
-    op <- liftIO $ query conn (Q.RqQuery $ Q.Query qstr p)
+    op <- liftIO $ query (Q.RqQuery $ Q.Query qstr p)
     if L.null op
         then return [headerHash $ getGenesisHeader net]
         else do
@@ -185,7 +185,7 @@ fetchBestBlock conn net = do
     let qstr :: Q.QueryString Q.R (Identity Text) (Identity (Maybe Bool, Maybe Int32, Maybe Int64, Maybe T.Text))
         qstr = "SELECT value from xoken.misc_store where key = ?"
         p = getSimpleQueryParam "best_chain_tip"
-    res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr p)
+    res <- liftIO $ try $ query (Q.RqQuery $ Q.Query qstr p)
     case res of
         (Right iop) -> do
             if L.null iop
@@ -287,14 +287,14 @@ processHeaders hdrs = do
                              hdrJson = T.pack $ LC.unpack $ A.encode $ fst $ snd y
                          let p1 = getSimpleQueryParam (hdrHash, hdrJson, fst y, nextHdrHash)
                              p2 = getSimpleQueryParam (fst y, hdrHash, hdrJson, nextHdrHash)
-                         res1 <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query q1 p1)
+                         res1 <- liftIO $ try $ write (Q.RqQuery $ Q.Query q1 p1)
                          case res1 of
                              Right _ -> return ()
                              Left (e :: SomeException) ->
                                  liftIO $ do
                                      err lg $ LG.msg ("Error: INSERT into 'blocks_hash' failed: " ++ show e)
                                      throw KeyValueDBInsertException
-                         res2 <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query q2 p2)
+                         res2 <- liftIO $ try $ write (Q.RqQuery $ Q.Query q2 p2)
                          case res2 of
                              Right _ -> return ()
                              Left (e :: SomeException) -> do
@@ -312,14 +312,14 @@ processHeaders hdrs = do
                                 let nextHdrHash = blockHashToHex $ headerHash $ fst $ snd $ head indexed
                                     p3 = getSimpleQueryParam (nextHdrHash, T.pack $ rbHash b)
                                     p4 = getSimpleQueryParam (nextHdrHash, height)
-                                res3 <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query q3 p3)
+                                res3 <- liftIO $ try $ write (Q.RqQuery $ Q.Query q3 p3)
                                 case res3 of
                                     Right _ -> return ()
                                     Left (e :: SomeException) ->
                                         liftIO $ do
                                             err lg $ LG.msg ("Error: UPDATE into 'blocks_by_hash' failed: " ++ show e)
                                             throw KeyValueDBInsertException
-                                res4 <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query q4 p4)
+                                res4 <- liftIO $ try $ write (Q.RqQuery $ Q.Query q4 p4)
                                 case res4 of
                                     Right _ -> return ()
                                     Left (e :: SomeException) -> do
@@ -341,7 +341,7 @@ fetchMatchBlockOffset conn net hashes = do
     let qstr :: Q.QueryString Q.R (Identity Text) (Int32, Text)
         qstr = "SELECT block_height, block_hash from xoken.blocks_by_hash where block_hash = ?"
         p = getSimpleQueryParam $ Identity hashes
-    iop <- liftIO $ query conn (Q.RqQuery $ Q.Query qstr p)
+    iop <- liftIO $ query (Q.RqQuery $ Q.Query qstr p)
     if L.null iop
         then return Nothing
         else do
@@ -369,7 +369,7 @@ updateChainWork indexed conn = do
                         else 0
                 lagIndexed = take (lenInd - 10) indexed
                 indexedCW = foldr (\x y -> y + (convertBitsToBlockWork $ blockBits $ fst $ snd $ x)) 0 lagIndexed
-            res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
+            res <- liftIO $ try $ query (Q.RqQuery $ Q.Query qstr par)
             case res of
                 Right iop -> do
                     let (_, height, _, chainWork) =
@@ -396,7 +396,7 @@ updateChainWork indexed conn = do
                                     ( getSimpleQueryParam
                                           ("chain-work", (Nothing, updatedBlock, Nothing, updatedChainwork))
                                     , updatedBlock)
-                    res1 <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr1 par1)
+                    res1 <- liftIO $ try $ write (Q.RqQuery $ Q.Query qstr1 par1)
                     case res1 of
                         Right _ -> do
                             debug lg $ LG.msg $ "updateChainWork: updated till block: " ++ show ub
