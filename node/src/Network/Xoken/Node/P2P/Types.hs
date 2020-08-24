@@ -42,12 +42,12 @@ type Host = String
 type Port = Int
 
 type CqlConn k a b = (TSH.TSHashTable Int (MVar (Either String (Q.Response k a b))), Socket)
-type CqlConnection k a b = Pool (CqlConn k a b)
+type XCQLServerState k a b = Pool (CqlConn k a b)
 
 data DatabaseHandles k a b =
     DatabaseHandles
         { graphDB :: !ServerState
-        , connection :: !(CqlConnection k a b)
+        , connection :: !(XCQLServerState k a b)
         }
 
 -- | Data structure representing an bitcoin peer.

@@ -221,7 +221,7 @@ runPeerSync =
                         (connPeers)
             else liftIO $ threadDelay (60 * 1000000)
 
-markBestSyncedBlock :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BlockHash -> Int32 -> CqlConnection k a b -> m ()
+markBestSyncedBlock :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BlockHash -> Int32 -> XCQLServerState k a b -> m ()
 markBestSyncedBlock hash height conn = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
@@ -237,7 +237,7 @@ markBestSyncedBlock hash height conn = do
             err lg $ LG.msg ("Error: Marking [Best-Synced] blockhash failed: " ++ show e)
             throw KeyValueDBInsertException
 
-checkBlocksFullySynced :: (HasLogger m, MonadIO m) => CqlConnection k a b -> m Bool
+checkBlocksFullySynced :: (HasLogger m, MonadIO m) => XCQLServerState k a b -> m Bool
 checkBlocksFullySynced conn = do
     lg <- getLogger
     let qstr :: Q.QueryString Q.R (Text, Text) (Identity (Maybe Bool, Int32, Maybe Int64, Text))
@@ -469,7 +469,7 @@ sortPeers peers = do
     return $ snd $ unzip $ L.sortBy (\(a, _) (b, _) -> compare b a) (zip ts peers)
 
 fetchBestSyncedBlock ::
-       (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => CqlConnection k a b -> Network -> m ((BlockHash, Int32))
+       (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => XCQLServerState k a b -> Network -> m ((BlockHash, Int32))
 fetchBestSyncedBlock conn net = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
@@ -500,7 +500,7 @@ fetchBestSyncedBlock conn net = do
                         Nothing -> throw InvalidMetaDataException
 
 commitScriptHashOutputs ::
-       (HasLogger m, MonadIO m) => CqlConnection k a b -> Text -> (Text, Int32) -> (Text, Int32, Int32) -> m ()
+       (HasLogger m, MonadIO m) => XCQLServerState k a b -> Text -> (Text, Int32) -> (Text, Int32, Int32) -> m ()
 commitScriptHashOutputs conn sh output blockInfo = do
     lg <- getLogger
     let blkHeight = fromIntegral $ snd3 blockInfo
@@ -516,7 +516,7 @@ commitScriptHashOutputs conn sh output blockInfo = do
             err lg $ LG.msg $ "Error: INSERTing into 'script_hash_outputs': " ++ show e
             throw KeyValueDBInsertException
 
-commitScriptHashUnspentOutputs :: (HasLogger m, MonadIO m) => CqlConnection k a b -> Text -> (Text, Int32) -> m ()
+commitScriptHashUnspentOutputs :: (HasLogger m, MonadIO m) => XCQLServerState k a b -> Text -> (Text, Int32) -> m ()
 commitScriptHashUnspentOutputs conn sh output = do
     lg <- getLogger
     let qstr :: Q.QueryString Q.W (Text, (Text, Int32)) ()
@@ -529,7 +529,7 @@ commitScriptHashUnspentOutputs conn sh output = do
             err lg $ LG.msg $ "Error: INSERTing into 'script_hash_unspent_outputs': " ++ show e
             throw KeyValueDBInsertException
 
-deleteScriptHashUnspentOutputs :: (HasLogger m, MonadIO m) => CqlConnection k a b -> Text -> (Text, Int32) -> m ()
+deleteScriptHashUnspentOutputs :: (HasLogger m, MonadIO m) => XCQLServerState k a b -> Text -> (Text, Int32) -> m ()
 deleteScriptHashUnspentOutputs conn sh output = do
     lg <- getLogger
     let qstr :: Q.QueryString Q.W (Text, (Text, Int32)) ()
@@ -545,7 +545,7 @@ deleteScriptHashUnspentOutputs conn sh output = do
 
 insertTxIdOutputs ::
        (HasLogger m, MonadIO m)
-    => CqlConnection k a b
+    => XCQLServerState k a b
     -> (Text, Int32)
     -> Text
     -> Text
@@ -805,7 +805,7 @@ processConfTransaction tx bhash blkht txind = do
     debug lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": end of processing signaled " ++ show bhash
 
 getSatsValueFromOutpoint ::
-       CqlConnection k a b
+       XCQLServerState k a b
     -> TSH.TSHashTable TxHash EV.Event
     -> Logger
     -> Network
@@ -857,7 +857,7 @@ getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait = do
             throw e
 
 getScriptHashFromOutpoint ::
-       CqlConnection k a b -> TSH.TSHashTable TxHash EV.Event -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Text)
+       XCQLServerState k a b -> TSH.TSHashTable TxHash EV.Event -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Text)
 getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs = do
     let str = "SELECT tx_serialized from xoken.transactions where tx_id = ?"
         qstr = str :: Q.QueryString Q.R (Identity Text) (Identity Blob)
