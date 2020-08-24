@@ -196,7 +196,11 @@ createCommitImplictTx nameArr = do
                 (\(x, s) ->
                      TxIn (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x)) (fromJust $ decodeHex s) 0)
                 ([nameip])
+    liftIO $
+        debug lg $
+        LG.msg $ "[FundingUtxos] createCommitImplicitTx: calling getFundingUtxos with arguments: address=" <> show addr'
     utxos <- getFundingUtxos addr'
+    liftIO $ debug lg $ LG.msg $ "[FundingUtxos] createCommitImplicitTx: getFundingUtxos returned: " <> show utxos
     let (ins, fval) =
             case L.filter (\y -> aoValue y >= 100000) utxos of
                 [] -> (ins', 0)
@@ -448,6 +452,7 @@ getInputsForUnconfirmedTx op = do
     res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
     case res of
         Left (e :: SomeException) -> do
+            debug lg $ LG.msg $ "[FundingUtxos] getInputsForUnconfirmedTx: encountered error: " <> show e
             err lg $ LG.msg $ "Error: getInputsForUnconfirmedTx: " ++ show e
             throw KeyValueDBLookupException
         Right others -> do
@@ -455,7 +460,20 @@ getInputsForUnconfirmedTx op = do
 
 getFundingUtxos :: (HasXokenNodeEnv env m, MonadIO m) => String -> m [AddressOutputs]
 getFundingUtxos addr = do
+    lg <- getLogger
+    liftIO $
+        debug lg $
+        LG.msg $ "[FundingUtxos] getFundingUtxos: calling xGetUTXOsAddress with arguments: address=" <> show addr
     res <- xGetUTXOsAddress addr (Just 200) Nothing
     let utxos = (\(ResultWithCursor ao _) -> ao) <$> res
+    liftIO $ debug lg $ LG.msg $ "[FundingUtxos] getFundingUtxos: xGetUTXOsAddress returned: " <> show utxos
+    liftIO $
+        debug lg $
+        LG.msg $
+        "[FundingUtxos] getFundingUtxos: calling getInputsForUnconfirmedTx with arguments [input]=" <>
+        (show $ aoOutput <$> utxos)
     possiblySpentInputs <- liftM concat $ sequence $ getInputsForUnconfirmedTx <$> aoOutput <$> utxos
+    liftIO $
+        debug lg $
+        LG.msg $ "[FundingUtxos] getFundingUtxos: getInputsForUnconfirmedTx returned: " <> show possiblySpentInputs
     return $ L.filter (\utxo -> (aoOutput utxo `L.elem` possiblySpentInputs)) utxos
