@@ -338,8 +338,24 @@ splitList xs = (f 1 xs, f 0 xs)
 getSimpleQueryParam :: Tuple a => a -> QueryParams a
 getSimpleQueryParam a = Q.QueryParams Q.One False a Nothing Nothing Nothing Nothing
 
-query :: (Tuple a, Tuple b) => CqlConnection -> Request Q.R a b -> IO [b]
+query :: (Tuple a, Tuple b) => CqlConnection -> Request k a b -> IO [b]
 query ps req = do
+    res <- query' ps req
+    case res of
+        Left e -> do
+            print $ "[Error] Query: unpack " ++ show e
+            throw KeyValPoolException
+        Right (RsError _ _ e) -> do
+            print $ "[Error] Query: RsError: " ++ show e
+            throw KeyValPoolException
+        Right response -> case response of
+                            (Q.RsResult _ _ (Q.RowsResult _ r)) -> return r
+                            response -> do
+                                print $ "[Error] Query: Not a RowsResult!!"
+                                throw KeyValPoolException
+
+query' :: (Tuple a, Tuple b) => CqlConnection -> Request k a b -> IO (Either String (Response k a b))
+query' ps req = do
     withResource ps $ \(ht,sock) -> do
         -- getstreamid
         let i = 0
@@ -351,18 +367,7 @@ query ps req = do
                 case resp' of
                     Just resp'' -> do
                         (h,x) <- takeMVar resp''
-                        case Q.unpack noCompression h x of
-                            Left e -> do
-                                print $ "[Error] Query: unpack " ++ show e
-                                throw KeyValPoolException
-                            Right (RsError _ _ e) -> do
-                                print $ "[Error] Query: RsError: " ++ show e
-                                throw KeyValPoolException
-                            Right response -> case response of
-                                                (Q.RsResult _ _ (Q.RowsResult _ r)) -> return r
-                                                response -> do
-                                                    print $ "[Error] Query: Not a RowsResult!!"
-                                                    throw KeyValPoolException
+                        return $ Q.unpack noCompression h x
                     Nothing -> do
                         print $ "[Error] Query: Nothing in hashtable"
                         throw KeyValPoolException
@@ -370,8 +375,25 @@ query ps req = do
                 print "[Error] Query: pack"
                 throw KeyValPoolException
 
-write :: (Q.Cql a, Tuple a) => CqlConnection -> Request Q.W a () -> IO ()
+write :: (Tuple a, Tuple b) => CqlConnection -> Request k a b -> IO ()
 write ps req = do
+    res <- write' ps req
+    case res of
+        Left e -> do
+            print $ "[Error] Query: unpack " ++ show e
+            throw KeyValPoolException
+        Right (RsError _ _ e) -> do
+            print $ "[Error] Query: RsError: " ++ show e
+            throw KeyValPoolException
+        Right response -> case response of
+                            (Q.RsResult _ _ (Q.VoidResult)) -> return ()
+                            response -> do
+                                print $ "[Error] Query: Not a VoidResult!!"
+                                throw KeyValPoolException
+
+
+write' :: (Tuple a, Tuple b) => CqlConnection -> Request k a b -> IO (Either String (Response k a b))
+write' ps req = do
     withResource ps $ \(ht,sock) -> do
         -- getstreamid
         let i = 0
@@ -383,18 +405,7 @@ write ps req = do
                 case resp' of
                     Just resp'' -> do
                         (h,x) <- takeMVar resp''
-                        case Q.unpack noCompression h x of
-                            Left e -> do
-                                print $ "[Error] Query: unpack " ++ show e
-                                throw KeyValPoolException
-                            Right (RsError _ _ e) -> do
-                                print $ "[Error] Query: RsError: " ++ show e
-                                throw KeyValPoolException
-                            Right response -> case response of
-                                                (Q.RsResult _ _ (Q.VoidResult)) -> return ()
-                                                response -> do
-                                                    print $ "[Error] Query: Not a VoidResult!!"
-                                                    throw KeyValPoolException
+                        return $ Q.unpack noCompression h x
                     Nothing -> do
                         print $ "[Error] Query: Nothing in hashtable"
                         throw KeyValPoolException
