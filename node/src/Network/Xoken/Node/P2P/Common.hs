@@ -364,11 +364,12 @@ query' ps req = do
             sid = mkStreamId i
         case (Q.pack Q.V3 noCompression False sid req) of
             Right reqp -> do
-                queryResp xcs reqp i
+                sendQueryReq xcs reqp i
                 resp' <- TSH.lookup ht i -- logic issue
                 case resp' of
                     Just resp'' -> do
                         (XCqlResponse h x) <- takeMVar resp''
+                        TSH.delete ht i
                         return $ Q.unpack noCompression h x
                     Nothing -> do
                         print $ "[Error] Query: Nothing in hashtable"
@@ -403,11 +404,12 @@ write' ps req = do
             sid = mkStreamId i
         case (Q.pack Q.V3 noCompression False sid req) of
             Right reqp -> do
-                queryResp xcs reqp i
+                sendQueryReq xcs reqp i
                 resp' <- TSH.lookup ht i -- logic issue
                 case resp' of
                     Just resp'' -> do
                         (XCqlResponse h x) <- takeMVar resp''
+                        TSH.delete ht i
                         return $ Q.unpack noCompression h x
                     Nothing -> do
                         print $ "[Error] Query: Nothing in hashtable"
@@ -435,6 +437,15 @@ queryResp (XCQLConnection ht lock sock) req sid = do
                     x <- LB.recv sock (fromIntegral len)
                     mv <- newMVar (XCqlResponse h x)
                     TSH.insert ht sid mv
+
+sendQueryReq :: XCQLConnection -> LC.ByteString -> Int -> IO ()
+sendQueryReq (XCQLConnection ht writeLock sock) msg i = do
+    a <- takeMVar writeLock
+    print "TOOK MVAR sendQueryReq"
+    mv <- newEmptyMVar
+    TSH.insert ht i mv
+    (LB.sendAll sock msg) `catch` (\(e :: IOException) -> putStrLn ("caught sendQueryReq: " ++ show e))
+    putMVar writeLock a
 
 connHandshake :: (Tuple a, Tuple b) => Socket -> Request k a b -> IO (Response k a b)
 connHandshake sock req = do
