@@ -103,7 +103,7 @@ xGetUserByUsername name = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    let conn = connection (dbe)
+    let conn = xCqlClientState dbe
         str =
             "SELECT username,password,first_name,last_name,emailid,permissions,api_quota,api_used,api_expiry_time,session_key,session_key_expiry_time from xoken.user_permission where username = ?"
         qstr =
@@ -167,7 +167,7 @@ xDeleteUserByUsername name = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    let conn = connection (dbe)
+    let conn = xCqlClientState dbe
         str = "DELETE FROM xoken.user_permission WHERE username=?"
         qstr = str :: Q.QueryString Q.W (Identity DT.Text) ()
         par = getSimpleQueryParam (Identity name)
@@ -194,7 +194,7 @@ xUpdateUserByUsername name (UpdateUserByUsername' {..}) = do
     res <- LE.try $ xGetUserByUsername name
     case res of
         Right (Just (User {..})) -> do
-            let conn = connection (dbe)
+            let conn = xCqlClientState dbe
                 str =
                     "UPDATE xoken.user_permission SET password=?,first_name=?,last_name=?,emailid=?,api_quota=?,permissions=?,api_expiry_time=? WHERE username=?"
                 qstr =
@@ -269,7 +269,7 @@ xGetUserBySessionKey skey = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    let conn = connection (dbe)
+    let conn = xCqlClientState dbe
         str =
             "SELECT username,first_name,last_name,emailid,permissions,api_quota,api_used,api_expiry_time,session_key,session_key_expiry_time from xoken.user_permission where session_key = ? ALLOW FILTERING "
         qstr =
@@ -332,7 +332,7 @@ login user pass = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    let conn = connection dbe
+    let conn = xCqlClientState dbe
         hashedPasswd = encodeHex ((S.encode $ sha256 pass))
         str =
             " SELECT password, api_quota, api_used, session_key, session_key_expiry_time, permissions FROM xoken.user_permission WHERE username = ? "

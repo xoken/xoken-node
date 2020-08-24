@@ -190,7 +190,7 @@ makeGraphDBResPool uname pwd = do
     putStrLn $ "Connected to Neo4j database, version " ++ show (a !! 0)
     return gdbState
 
-makeCqlPool :: IO (CqlConnection)
+makeCqlPool :: IO (XCqlClientState)
 makeCqlPool = do
     let hints = defaultHints {addrFlags = [AI_NUMERICHOST, AI_NUMERICSERV], addrSocketType = Stream}
         startCql :: Q.Request k () ()
@@ -199,8 +199,9 @@ makeCqlPool = do
     connPool <-
         createPool
             (socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr) >>= \s ->
-                 Network.Socket.connect s (addrAddress addr) >> connHandshake s startCql >> TSH.new 20 >>= \t -> return (t, s))
-            (Network.Socket.close . snd)
+                 Network.Socket.connect s (addrAddress addr) >> connHandshake s startCql >> TSH.new 20 >>= \t ->
+                     newMVar True >>= \l -> return $ XCQLConnection t l s)
+            (Network.Socket.close . xCqlSocket)
             1
             (1800000000000)
             200
@@ -210,7 +211,7 @@ runThreads ::
        Config.Config
     -> NC.NodeConfig
     -> BitcoinP2P
-    -> CqlConnection
+    -> XCqlClientState
     -> LG.Logger
     -- -> (P2PEnv AppM ServiceResource ServiceTopic RPCMessage PubNotifyMessage)
     -> [FilePath]
@@ -258,7 +259,7 @@ runSyncStatusChecker :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
 runSyncStatusChecker = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    conn <- connection <$> getDB
+    conn <- xCqlClientState <$> getDB
     -- wait 300 seconds before first check
     liftIO $ threadDelay (300 * 1000000)
     forever $ do
@@ -279,7 +280,7 @@ runWatchDog = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    let conn = connection (dbe)
+    let conn = xCqlClientState (dbe)
     LG.debug lg $ LG.msg $ LG.val "Starting watchdog"
     continue <- liftIO $ newIORef True
     whileM_ (liftIO $ readIORef continue) $ do
@@ -311,7 +312,7 @@ runWatchDog = do
                         LG.err lg $ LG.msg $ LG.val "Error: insert timed-out, watchdog raise alert "
                         liftIO $ writeIORef continue False
 
-runNode :: Config.Config -> NC.NodeConfig -> CqlConnection -> BitcoinP2P -> [FilePath] -> IO ()
+runNode :: Config.Config -> NC.NodeConfig -> XCqlClientState -> BitcoinP2P -> [FilePath] -> IO ()
 runNode config nodeConf conn bp2p certPaths
     -- p2pEnv <- mkP2PEnv config globalHandlerRpc globalHandlerPubSub [AriviService] []
  = do
@@ -338,7 +339,7 @@ defNetwork = bsvTest
 netNames :: String
 netNames = intercalate "|" (Data.List.map getNetworkName allNets)
 
-defaultAdminUser :: CqlConnection -> IO ()
+defaultAdminUser :: XCqlClientState -> IO ()
 defaultAdminUser conn = do
     let qstr =
             " SELECT password from xoken.user_permission where username = 'admin' " :: Q.QueryString Q.R () (Identity T.Text)

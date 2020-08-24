@@ -515,7 +515,7 @@ updateBlocks :: (HasLogger m, HasDatabaseHandles m, MonadIO m) => BlockHash -> B
 updateBlocks bhash blkht bsize txcount cbase = do
     lg <- getLogger
     dbe' <- getDB
-    let conn = connection $ dbe'
+    let conn = xCqlClientState $ dbe'
     let q1 :: Q.QueryString Q.W (T.Text, Int32, Int32, Blob) ()
         q1 =
             Q.QueryString

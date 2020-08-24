@@ -219,7 +219,7 @@ maskAfter :: Int -> String -> String
 maskAfter n skey = (\x -> take n x ++ fmap (const '*') (drop n x)) skey
 
 addNewUser ::
-       CqlConnection
+       XCqlClientState
     -> T.Text
     -> T.Text
     -> T.Text
@@ -296,7 +296,7 @@ addNewUser conn uname fname lname email roles api_quota api_expiry_time = do
                     throw e
 
 -- | Calculates sum of chainworks for blocks with blockheight in input list
-calculateChainWork :: (HasLogger m, MonadIO m) => [Int32] -> CqlConnection -> m Integer
+calculateChainWork :: (HasLogger m, MonadIO m) => [Int32] -> XCqlClientState -> m Integer
 calculateChainWork blks conn = do
     lg <- getLogger
     let qstr :: Q.QueryString Q.R (Identity [Int32]) (Int32, Text)
@@ -338,7 +338,7 @@ splitList xs = (f 1 xs, f 0 xs)
 getSimpleQueryParam :: Tuple a => a -> QueryParams a
 getSimpleQueryParam a = Q.QueryParams Q.One False a Nothing Nothing Nothing Nothing
 
-query :: (Tuple a, Tuple b) => CqlConnection -> Request k a b -> IO [b]
+query :: (Tuple a, Tuple b) => XCqlClientState -> Request k a b -> IO [b]
 query ps req = do
     res <- query' ps req
     case res of
@@ -348,25 +348,27 @@ query ps req = do
         Right (RsError _ _ e) -> do
             print $ "[Error] Query: RsError: " ++ show e
             throw KeyValPoolException
-        Right response -> case response of
-                            (Q.RsResult _ _ (Q.RowsResult _ r)) -> return r
-                            response -> do
-                                print $ "[Error] Query: Not a RowsResult!!"
-                                throw KeyValPoolException
+        Right response ->
+            case response of
+                (Q.RsResult _ _ (Q.RowsResult _ r)) -> return r
+                response -> do
+                    print $ "[Error] Query: Not a RowsResult!!"
+                    throw KeyValPoolException
 
-query' :: (Tuple a, Tuple b) => CqlConnection -> Request k a b -> IO (Either String (Response k a b))
+query' :: (Tuple a, Tuple b) => XCqlClientState -> Request k a b -> IO (Either String (Response k a b))
 query' ps req = do
-    withResource ps $ \(ht,sock) -> do
+    withResource ps $ \xcs@(XCQLConnection ht lock sock)
         -- getstreamid
+     -> do
         let i = 0
             sid = mkStreamId i
         case (Q.pack Q.V3 noCompression False sid req) of
             Right reqp -> do
-                queryResp (ht,sock) reqp i
+                queryResp xcs reqp i
                 resp' <- TSH.lookup ht i -- logic issue
                 case resp' of
                     Just resp'' -> do
-                        (h,x) <- takeMVar resp''
+                        (XCqlResponse h x) <- takeMVar resp''
                         return $ Q.unpack noCompression h x
                     Nothing -> do
                         print $ "[Error] Query: Nothing in hashtable"
@@ -375,7 +377,7 @@ query' ps req = do
                 print "[Error] Query: pack"
                 throw KeyValPoolException
 
-write :: (Tuple a, Tuple b) => CqlConnection -> Request k a b -> IO ()
+write :: (Tuple a, Tuple b) => XCqlClientState -> Request k a b -> IO ()
 write ps req = do
     res <- write' ps req
     case res of
@@ -385,26 +387,27 @@ write ps req = do
         Right (RsError _ _ e) -> do
             print $ "[Error] Query: RsError: " ++ show e
             throw KeyValPoolException
-        Right response -> case response of
-                            (Q.RsResult _ _ (Q.VoidResult)) -> return ()
-                            response -> do
-                                print $ "[Error] Query: Not a VoidResult!!"
-                                throw KeyValPoolException
+        Right response ->
+            case response of
+                (Q.RsResult _ _ (Q.VoidResult)) -> return ()
+                response -> do
+                    print $ "[Error] Query: Not a VoidResult!!"
+                    throw KeyValPoolException
 
-
-write' :: (Tuple a, Tuple b) => CqlConnection -> Request k a b -> IO (Either String (Response k a b))
+write' :: (Tuple a, Tuple b) => XCqlClientState -> Request k a b -> IO (Either String (Response k a b))
 write' ps req = do
-    withResource ps $ \(ht,sock) -> do
+    withResource ps $ \xcs@(XCQLConnection ht lock sock)
         -- getstreamid
+     -> do
         let i = 0
             sid = mkStreamId i
         case (Q.pack Q.V3 noCompression False sid req) of
             Right reqp -> do
-                queryResp (ht,sock) reqp i
+                queryResp xcs reqp i
                 resp' <- TSH.lookup ht i -- logic issue
                 case resp' of
                     Just resp'' -> do
-                        (h,x) <- takeMVar resp''
+                        (XCqlResponse h x) <- takeMVar resp''
                         return $ Q.unpack noCompression h x
                     Nothing -> do
                         print $ "[Error] Query: Nothing in hashtable"
@@ -412,10 +415,9 @@ write' ps req = do
             Left _ -> do
                 print "[Error] Query: pack"
                 throw KeyValPoolException
-            
 
-queryResp :: CqlConn -> LC.ByteString -> Int -> IO ()
-queryResp (ht,sock) req sid = do
+queryResp :: XCQLConnection -> LC.ByteString -> Int -> IO ()
+queryResp (XCQLConnection ht lock sock) req sid = do
     LB.sendAll sock req
     b <- LB.recv sock 9
     h' <- return $ header Q.V3 b
@@ -431,9 +433,8 @@ queryResp (ht,sock) req sid = do
                 RsHeader -> do
                     let len = lengthRepr (bodyLength h)
                     x <- LB.recv sock (fromIntegral len)
-                    mv <- newMVar (h,x)
+                    mv <- newMVar (XCqlResponse h x)
                     TSH.insert ht sid mv
-
 
 connHandshake :: (Tuple a, Tuple b) => Socket -> Request k a b -> IO (Response k a b)
 connHandshake sock req = do

@@ -20,8 +20,8 @@ import qualified Data.Map.Strict as M
 import Data.Pool
 import Data.Time.Clock
 import Data.Word
-import qualified Database.XCQL.Protocol as Q
 import Database.Bolt as BT
+import qualified Database.XCQL.Protocol as Q
 import Network.Socket hiding (send)
 import Network.Xoken.Block
 import Network.Xoken.Constants
@@ -41,13 +41,25 @@ type Host = String
 -- | Type alias for a port number.
 type Port = Int
 
-type CqlConn = (TSH.TSHashTable Int (MVar (Q.Header, LB.ByteString)), Socket)
-type CqlConnection = Pool (CqlConn)
+data XCqlResponse =
+    XCqlResponse
+        { xheader :: Q.Header
+        , xpayload :: LB.ByteString
+        }
+
+data XCQLConnection =
+    XCQLConnection
+        { xCqlHashTable :: TSH.TSHashTable Int (MVar XCqlResponse)
+        , xCqlWriteLock :: MVar Bool
+        , xCqlSocket :: Socket
+        }
+
+type XCqlClientState = Pool (XCQLConnection)
 
 data DatabaseHandles =
     DatabaseHandles
         { graphDB :: !ServerState
-        , connection :: !(CqlConnection)
+        , xCqlClientState :: !(XCqlClientState)
         }
 
 -- | Data structure representing an bitcoin peer.

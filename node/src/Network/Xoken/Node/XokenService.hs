@@ -130,7 +130,7 @@ delegateRequest encReq epConn net = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    let conn = connection (dbe)
+    let conn = xCqlClientState (dbe)
     case rqParams encReq of
         (AuthenticateReq _ _ pretty) -> authLoginClient encReq net epConn pretty
         (GeneralReq sessionKey pretty _) -> do
@@ -203,7 +203,7 @@ goGetResource msg net roles sessKey pretty = do
     dbe <- getDB
     lg <- getLogger
     let grdb = graphDB (dbe)
-        conn = connection (dbe)
+        conn = xCqlClientState (dbe)
     case rqMethod msg of
         "ADD_USER" -> do
             case methodParams $ rqParams msg of

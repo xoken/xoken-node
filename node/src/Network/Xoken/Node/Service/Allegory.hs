@@ -231,175 +231,175 @@ xGetPartiallySignedAllegoryTx ::
     -> (String)
     -> m (BC.ByteString)
 xGetPartiallySignedAllegoryTx payips (nameArr, isProducer) owner change = do
-     dbe <- getDB
-     bp2pEnv <- getBitcoinP2P
-     lg <- getLogger
-     alg <- getAllegory
-     let conn = connection (dbe)
-     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
+    dbe <- getDB
+    bp2pEnv <- getBitcoinP2P
+    lg <- getLogger
+    alg <- getAllegory
+    let conn = xCqlClientState dbe
+    let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
      -- check if name (of given type) exists
-     let name = DT.pack $ L.map (\x -> chr x) (nameArr)
+    let name = DT.pack $ L.map (\x -> chr x) (nameArr)
      -- read from config file
-     let anutxos = NC.allegoryNameUtxoSatoshis $ nodeConfig $ bp2pEnv
-     let feeSatsCreate = NC.allegoryTxFeeSatsProducerAction $ nodeConfig $ bp2pEnv
-     let feeSatsTransfer = NC.allegoryTxFeeSatsOwnerAction $ nodeConfig $ bp2pEnv
-     res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameScriptOp (name) isProducer)
-     (nameip, existed) <-
-         case res of
-             Left (e :: SomeException) -> do
-                 err lg $ LG.msg $ "error fetching allegory name input :" ++ show e
-                 throw e
-             Right [] -> do
-                 debug lg $ LG.msg $ "allegory name not found, get or make interim producers recursively : " <> name
-                 getOrMakeProducer (init nameArr)
-             Right nb -> do
-                 debug lg $ LG.msg $ "allegory name found! : " <> name
-                 let sp = DT.split (== ':') $ fst (head nb)
-                 let txid = DT.unpack $ sp !! 0
-                 let index = readMaybe (DT.unpack $ sp !! 1) :: Maybe Int32
-                 case index of
-                     Just i -> do
-                         return $ ((OutPoint' txid i, (snd $ head nb)), True)
-                     Nothing -> do
-                         debug lg $ LG.msg $ val "allegory case index of : Nothing"
+    let anutxos = NC.allegoryNameUtxoSatoshis $ nodeConfig $ bp2pEnv
+    let feeSatsCreate = NC.allegoryTxFeeSatsProducerAction $ nodeConfig $ bp2pEnv
+    let feeSatsTransfer = NC.allegoryTxFeeSatsOwnerAction $ nodeConfig $ bp2pEnv
+    res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameScriptOp (name) isProducer)
+    (nameip, existed) <-
+        case res of
+            Left (e :: SomeException) -> do
+                err lg $ LG.msg $ "error fetching allegory name input :" ++ show e
+                throw e
+            Right [] -> do
+                debug lg $ LG.msg $ "allegory name not found, get or make interim producers recursively : " <> name
+                getOrMakeProducer (init nameArr)
+            Right nb -> do
+                debug lg $ LG.msg $ "allegory name found! : " <> name
+                let sp = DT.split (== ':') $ fst (head nb)
+                let txid = DT.unpack $ sp !! 0
+                let index = readMaybe (DT.unpack $ sp !! 1) :: Maybe Int32
+                case index of
+                    Just i -> do
+                        return $ ((OutPoint' txid i, (snd $ head nb)), True)
+                    Nothing -> do
+                        debug lg $ LG.msg $ val "allegory case index of : Nothing"
+                        throw KeyValueDBLookupException
+    inputHash <-
+        liftIO $
+        traverse
+            (\(w, _) -> do
+                 let op = OutPoint (fromString $ opTxHash w) (fromIntegral $ opIndex w)
+                 sh <- getScriptHashFromOutpoint conn (txSynchronizer bp2pEnv) lg net op 0
+                 return $ (w, ) <$> sh)
+            payips
+    let totalEffectiveInputSats = sum $ snd $ unzip payips
+    let ins =
+            L.map
+                (\(x, s) ->
+                     TxIn (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x)) (fromJust $ decodeHex s) 0)
+                ([nameip] ++ (catMaybes inputHash))
+    sigInputs <-
+        mapM
+            (\(x, s) -> do
+                 case (decodeOutputBS ((fst . B16.decode) (E.encodeUtf8 s))) of
+                     Left e -> do
+                         liftIO $
+                             print
+                                 ("error (allegory) unable to decode scriptOutput! | " ++
+                                  show name ++ " " ++ show (x, s) ++ " | " ++ show ((fst . B16.decode) (E.encodeUtf8 s)))
                          throw KeyValueDBLookupException
-     inputHash <-
-         liftIO $
-         traverse
-             (\(w, _) -> do
-                  let op = OutPoint (fromString $ opTxHash w) (fromIntegral $ opIndex w)
-                  sh <- getScriptHashFromOutpoint conn (txSynchronizer bp2pEnv) lg net op 0
-                  return $ (w, ) <$> sh)
-             payips
-     let totalEffectiveInputSats = sum $ snd $ unzip payips
-     let ins =
-             L.map
-                 (\(x, s) ->
-                      TxIn (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x)) (fromJust $ decodeHex s) 0)
-                 ([nameip] ++ (catMaybes inputHash))
-     sigInputs <-
-         mapM
-             (\(x, s) -> do
-                  case (decodeOutputBS ((fst . B16.decode) (E.encodeUtf8 s))) of
-                      Left e -> do
-                          liftIO $
-                              print
-                                  ("error (allegory) unable to decode scriptOutput! | " ++
-                                   show name ++ " " ++ show (x, s) ++ " | " ++ show ((fst . B16.decode) (E.encodeUtf8 s)))
-                          throw KeyValueDBLookupException
-                      Right scr -> do
-                          return $
-                              SigInput
-                                  scr
-                                  (fromIntegral $ anutxos)
-                                  (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x))
-                                  sigHashAll
-                                  Nothing)
-             [nameip]
+                     Right scr -> do
+                         return $
+                             SigInput
+                                 scr
+                                 (fromIntegral $ anutxos)
+                                 (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x))
+                                 sigHashAll
+                                 Nothing)
+            [nameip]
      --
-     let outs =
-             if existed
-                 then if isProducer
-                          then do
-                              let al =
-                                      Allegory
-                                          1
-                                          (init nameArr)
-                                          (ProducerAction
-                                               (Index 0)
-                                               (ProducerOutput (Index 1) (Just $ Endpoint "XokenP2P" "someuri_1"))
-                                               Nothing
-                                               [])
-                              let opRetScript = frameOpReturn $ C.toStrict $ serialise al
+    let outs =
+            if existed
+                then if isProducer
+                         then do
+                             let al =
+                                     Allegory
+                                         1
+                                         (init nameArr)
+                                         (ProducerAction
+                                              (Index 0)
+                                              (ProducerOutput (Index 1) (Just $ Endpoint "XokenP2P" "someuri_1"))
+                                              Nothing
+                                              [])
+                             let opRetScript = frameOpReturn $ C.toStrict $ serialise al
                              -- derive producer's Address
-                              let prAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
-                              let prScript = addressToScriptBS prAddr
-                              let payAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
-                              let payScript = addressToScriptBS payAddr
-                              let paySats = 1000000
-                              let changeSats = totalEffectiveInputSats - (paySats + feeSatsCreate)
-                              [TxOut 0 opRetScript] ++
-                                  (L.map
-                                       (\x -> do
-                                            let addr =
-                                                    case stringToAddr net (DT.pack $ fst x) of
-                                                        Just a -> a
-                                                        Nothing -> throw InvalidOutputAddressException
-                                            let script = addressToScriptBS addr
-                                            TxOut (fromIntegral $ snd x) script)
-                                       [(owner, (fromIntegral $ anutxos)), (change, changeSats)]) ++
-                                  [TxOut ((fromIntegral paySats) :: Word64) payScript] -- the charge for the name transfer
-                          else do
-                              let al =
-                                      Allegory
-                                          1
-                                          (nameArr)
-                                          (OwnerAction
-                                               (Index 0)
-                                               (OwnerOutput (Index 1) (Just $ Endpoint "XokenP2P" "someuri_1"))
-                                               [ ProxyProvider
-                                                     "AllPay"
-                                                     "Public"
-                                                     (Endpoint "XokenP2P" "someuri_2")
-                                                     (Registration "addrCommit" "utxoCommit" "signature" 876543)
-                                               ])
-                              let opRetScript = frameOpReturn $ C.toStrict $ serialise al
-                              let payAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
-                              let payScript = addressToScriptBS payAddr
-                              let paySats = 1000000
-                              let changeSats = totalEffectiveInputSats - (paySats + feeSatsTransfer)
-                              [TxOut 0 opRetScript] ++
-                                  (L.map
-                                       (\x -> do
-                                            let addr =
-                                                    case stringToAddr net (DT.pack $ fst x) of
-                                                        Just a -> a
-                                                        Nothing -> throw InvalidOutputAddressException
-                                            let script = addressToScriptBS addr
-                                            TxOut (fromIntegral $ snd x) script)
-                                       [(owner, (fromIntegral $ anutxos)), (change, changeSats)]) ++
-                                  [TxOut (fromIntegral anutxos) payScript] -- the charge for the name transfer
-                 else do
-                     let al =
-                             Allegory
-                                 1
-                                 (init nameArr)
-                                 (ProducerAction
-                                      (Index 0)
-                                      (ProducerOutput (Index 1) (Just $ Endpoint "XokenP2P" "someuri_1"))
-                                      Nothing
-                                      [ OwnerExtension
-                                            (OwnerOutput (Index 2) (Just $ Endpoint "XokenP2P" "someuri_3"))
-                                            (last nameArr)
-                                      ])
-                     let opRetScript = frameOpReturn $ C.toStrict $ serialise al
+                             let prAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
+                             let prScript = addressToScriptBS prAddr
+                             let payAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
+                             let payScript = addressToScriptBS payAddr
+                             let paySats = 1000000
+                             let changeSats = totalEffectiveInputSats - (paySats + feeSatsCreate)
+                             [TxOut 0 opRetScript] ++
+                                 (L.map
+                                      (\x -> do
+                                           let addr =
+                                                   case stringToAddr net (DT.pack $ fst x) of
+                                                       Just a -> a
+                                                       Nothing -> throw InvalidOutputAddressException
+                                           let script = addressToScriptBS addr
+                                           TxOut (fromIntegral $ snd x) script)
+                                      [(owner, (fromIntegral $ anutxos)), (change, changeSats)]) ++
+                                 [TxOut ((fromIntegral paySats) :: Word64) payScript] -- the charge for the name transfer
+                         else do
+                             let al =
+                                     Allegory
+                                         1
+                                         (nameArr)
+                                         (OwnerAction
+                                              (Index 0)
+                                              (OwnerOutput (Index 1) (Just $ Endpoint "XokenP2P" "someuri_1"))
+                                              [ ProxyProvider
+                                                    "AllPay"
+                                                    "Public"
+                                                    (Endpoint "XokenP2P" "someuri_2")
+                                                    (Registration "addrCommit" "utxoCommit" "signature" 876543)
+                                              ])
+                             let opRetScript = frameOpReturn $ C.toStrict $ serialise al
+                             let payAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
+                             let payScript = addressToScriptBS payAddr
+                             let paySats = 1000000
+                             let changeSats = totalEffectiveInputSats - (paySats + feeSatsTransfer)
+                             [TxOut 0 opRetScript] ++
+                                 (L.map
+                                      (\x -> do
+                                           let addr =
+                                                   case stringToAddr net (DT.pack $ fst x) of
+                                                       Just a -> a
+                                                       Nothing -> throw InvalidOutputAddressException
+                                           let script = addressToScriptBS addr
+                                           TxOut (fromIntegral $ snd x) script)
+                                      [(owner, (fromIntegral $ anutxos)), (change, changeSats)]) ++
+                                 [TxOut (fromIntegral anutxos) payScript] -- the charge for the name transfer
+                else do
+                    let al =
+                            Allegory
+                                1
+                                (init nameArr)
+                                (ProducerAction
+                                     (Index 0)
+                                     (ProducerOutput (Index 1) (Just $ Endpoint "XokenP2P" "someuri_1"))
+                                     Nothing
+                                     [ OwnerExtension
+                                           (OwnerOutput (Index 2) (Just $ Endpoint "XokenP2P" "someuri_3"))
+                                           (last nameArr)
+                                     ])
+                    let opRetScript = frameOpReturn $ C.toStrict $ serialise al
                      -- derive producer's Address
-                     let prAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
-                     let prScript = addressToScriptBS prAddr
-                     let payAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
-                     let payScript = addressToScriptBS payAddr
-                     let paySats = 1000000
-                     let changeSats = totalEffectiveInputSats - ((fromIntegral $ anutxos) + paySats + feeSatsCreate)
-                     [TxOut 0 opRetScript] ++
-                         [TxOut (fromIntegral anutxos) prScript] ++
-                         (L.map
-                              (\x -> do
-                                   let addr =
-                                           case stringToAddr net (DT.pack $ fst x) of
-                                               Just a -> a
-                                               Nothing -> throw InvalidOutputAddressException
-                                   let script = addressToScriptBS addr
-                                   TxOut (fromIntegral $ snd x) script)
-                              [(owner, (fromIntegral $ anutxos)), (change, changeSats)]) ++
-                         [TxOut ((fromIntegral paySats) :: Word64) payScript] -- the charge for the name transfer
+                    let prAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
+                    let prScript = addressToScriptBS prAddr
+                    let payAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
+                    let payScript = addressToScriptBS payAddr
+                    let paySats = 1000000
+                    let changeSats = totalEffectiveInputSats - ((fromIntegral $ anutxos) + paySats + feeSatsCreate)
+                    [TxOut 0 opRetScript] ++
+                        [TxOut (fromIntegral anutxos) prScript] ++
+                        (L.map
+                             (\x -> do
+                                  let addr =
+                                          case stringToAddr net (DT.pack $ fst x) of
+                                              Just a -> a
+                                              Nothing -> throw InvalidOutputAddressException
+                                  let script = addressToScriptBS addr
+                                  TxOut (fromIntegral $ snd x) script)
+                             [(owner, (fromIntegral $ anutxos)), (change, changeSats)]) ++
+                        [TxOut ((fromIntegral paySats) :: Word64) payScript] -- the charge for the name transfer
      --
-     let psatx = Tx version ins outs locktime
-     case signTx net psatx sigInputs [allegorySecretKey alg] of
-         Right tx -> do
-             return $ BSL.toStrict $ A.encode $ tx
-         Left err -> do
-             liftIO $ print $ "error occurred while signing the Tx: " <> show err
-             return $ BC.empty
-   where
-     version = 1
-     locktime = 0
+    let psatx = Tx version ins outs locktime
+    case signTx net psatx sigInputs [allegorySecretKey alg] of
+        Right tx -> do
+            return $ BSL.toStrict $ A.encode $ tx
+        Left err -> do
+            liftIO $ print $ "error occurred while signing the Tx: " <> show err
+            return $ BC.empty
+  where
+    version = 1
+    locktime = 0
