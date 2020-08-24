@@ -456,4 +456,5 @@ getFundingUtxos addr = do
     res <- xGetUTXOsAddress addr (Just 200) Nothing
     let utxos = (\(ResultWithCursor ao _) -> ao) <$> res
     let inputs = (\(AddressOutputs _ outpoint _ _ _ _) -> outpoint) <$> utxos
-    return $ L.filter (\(AddressOutputs _ outpoint _ _ _ _) -> True) utxos
+    possiblySpentInputs <- liftM concat $ sequence $ getInputsForUnconfirmedTx <$> inputs
+    return $ L.filter (\(AddressOutputs _ op _ _ _ _) -> (op `L.elem` possiblySpentInputs)) utxos
