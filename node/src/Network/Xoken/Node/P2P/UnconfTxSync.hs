@@ -191,7 +191,7 @@ runEpochSwitcher =
 
 commitEpochScriptHashOutputs ::
        (HasLogger m, MonadIO m)
-    => CqlConnection
+    => CqlConnection k a b
     -> Bool -- epoch
     -> Text -- scriptHash
     -> (Text, Int32) -- output (txid, index)
@@ -209,7 +209,7 @@ commitEpochScriptHashOutputs conn epoch sh output = do
             throw KeyValueDBInsertException
 
 commitEpochScriptHashUnspentOutputs ::
-       (HasLogger m, MonadIO m) => CqlConnection -> Bool -> Text -> (Text, Int32) -> m ()
+       (HasLogger m, MonadIO m) => CqlConnection k a b -> Bool -> Text -> (Text, Int32) -> m ()
 commitEpochScriptHashUnspentOutputs conn epoch sh output = do
     lg <- getLogger
     let str = "INSERT INTO xoken.ep_script_hash_unspent_outputs (epoch, script_hash, output) VALUES (?,?,?)"
@@ -223,7 +223,7 @@ commitEpochScriptHashUnspentOutputs conn epoch sh output = do
             throw KeyValueDBInsertException
 
 deleteEpochScriptHashUnspentOutputs ::
-       (HasLogger m, MonadIO m) => CqlConnection -> Bool -> Text -> (Text, Int32) -> m ()
+       (HasLogger m, MonadIO m) => CqlConnection k a b -> Bool -> Text -> (Text, Int32) -> m ()
 deleteEpochScriptHashUnspentOutputs conn epoch sh output = do
     lg <- getLogger
     let str = "DELETE FROM xoken.ep_script_hash_unspent_outputs WHERE epoch=? AND script_hash=? AND output=?"
@@ -238,7 +238,7 @@ deleteEpochScriptHashUnspentOutputs conn epoch sh output = do
 
 insertEpochTxIdOutputs ::
        (HasLogger m, MonadIO m)
-    => CqlConnection
+    => CqlConnection k a b
     -> Bool
     -> (Text, Int32)
     -> Text
@@ -393,7 +393,7 @@ processUnconfTransaction tx = do
         Nothing -> return ()
 
 getSatsValueFromEpochOutpoint ::
-       CqlConnection
+       CqlConnection k a b
     -> Bool
     -> (TSH.TSHashTable TxHash EV.Event)
     -> Logger
@@ -438,7 +438,7 @@ getSatsValueFromEpochOutpoint conn epoch txSync lg net outPoint waitSecs = do
             throw e
 
 -- sourceSatValuesFromOutpoint ::
---        CqlConnection -> (SM.Map TxHash EV.Event) -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Text)
+--        CqlConnection k a b -> (SM.Map TxHash EV.Event) -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Text)
 -- sourceSatValuesFromOutpoint conn txSync lg net outPoint waitSecs = do
 --     res <- liftIO $ try $ getSatsValueFromOutpoint conn txSync lg net outPoint waitSecs
 --     case res of
@@ -451,7 +451,7 @@ getSatsValueFromEpochOutpoint conn epoch txSync lg net outPoint waitSecs = do
 --
 --
 -- sourceScriptHashFromOutpoint ::
---        CqlConnection -> (SM.Map TxHash EV.Event) -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Text)
+--        CqlConnection k a b -> (SM.Map TxHash EV.Event) -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Text)
 -- sourceScriptHashFromOutpoint conn txSync lg net outPoint waitSecs = do
 --     res <- liftIO $ try $ getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs
 --     case res of
@@ -464,7 +464,7 @@ getSatsValueFromEpochOutpoint conn epoch txSync lg net outPoint waitSecs = do
 --
 --
 -- getEpochScriptHashFromOutpoint ::
---        CqlConnection -> (SM.Map TxHash EV.Event) -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Text)
+--        CqlConnection k a b -> (SM.Map TxHash EV.Event) -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Text)
 -- getEpochScriptHashFromOutpoint conn txSync lg net outPoint waitSecs = do
 --     let str = "SELECT tx_serialized from xoken.ep_transactions where tx_id = ?"
 --         qstr = str :: Q.QueryString Q.R (Identity Text) (Identity Blob)

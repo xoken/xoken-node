@@ -21,11 +21,13 @@ import Data.Pool
 import Data.Time.Clock
 import Data.Word
 import Database.Bolt as BT
+import qualified Database.XCQL.Protocol as Q
 import Network.Socket hiding (send)
 import Network.Xoken.Block
 import Network.Xoken.Constants
 import Network.Xoken.Crypto.Hash
 import Network.Xoken.Network
+import qualified Network.Xoken.Node.Data.ThreadSafeHashTable as TSH
 import Network.Xoken.Transaction
 import System.Random
 import Text.Read
@@ -39,12 +41,13 @@ type Host = String
 -- | Type alias for a port number.
 type Port = Int
 
-type CqlConnection = Pool Socket
+type CqlConn k a b = (TSH.TSHashTable Int (MVar (Either String (Q.Response k a b))), Socket)
+type CqlConnection k a b = Pool (CqlConn k a b)
 
-data DatabaseHandles =
+data DatabaseHandles k a b =
     DatabaseHandles
         { graphDB :: !ServerState
-        , connection :: !(CqlConnection)
+        , connection :: !(CqlConnection k a b)
         }
 
 -- | Data structure representing an bitcoin peer.

@@ -16,7 +16,7 @@ import Snap
 
 data App =
     App
-        { _env :: XokenNodeEnv
+        { _env :: XokenNodeEnv k a b
         }
 
 instance HasBitcoinP2P (Handler App App) where

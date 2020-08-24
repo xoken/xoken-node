@@ -26,6 +26,7 @@ import qualified Data.Map.Strict as M
 import Data.Text
 import Data.Time.Clock
 import Data.Word
+import qualified Database.XCQL.Protocol as Q
 import GHC.Generics
 import Network.Socket hiding (send)
 import Network.Xoken.Block.Common
@@ -51,10 +52,10 @@ type HasXokenNodeEnv env m
        , MonadBaseControl IO m
        , MonadThrow m)
 
-data XokenNodeEnv =
+data XokenNodeEnv k a b =
     XokenNodeEnv
         { bitcoinP2PEnv :: !BitcoinP2P
-        , dbHandles :: !DatabaseHandles
+        , dbHandles :: !(DatabaseHandles k a b)
         , loggerEnv :: !Logger
         , allegoryEnv :: !AllegoryEnv
         }
@@ -93,14 +94,14 @@ class HasLogger m where
     getLogger :: m (Logger)
 
 class HasDatabaseHandles m where
-    getDB :: m (DatabaseHandles)
+    getDB :: m (DatabaseHandles k a b)
 
 class HasAllegoryEnv m where
     getAllegory :: m (AllegoryEnv)
 
-data ServiceEnv =
+data ServiceEnv k a b =
     ServiceEnv
-        { xokenNodeEnv :: !XokenNodeEnv
+        { xokenNodeEnv :: !(XokenNodeEnv k a b)
         -- , p2pEnv :: !(P2PEnv m r t rmsg pmsg)
         }
 

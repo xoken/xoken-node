@@ -190,7 +190,7 @@ makeGraphDBResPool uname pwd = do
     putStrLn $ "Connected to Neo4j database, version " ++ show (a !! 0)
     return gdbState
 
-makeCqlPool :: IO (CqlConnection)
+makeCqlPool :: IO (CqlConnection k a b)
 makeCqlPool = do
     let hints = defaultHints {addrFlags = [AI_NUMERICHOST, AI_NUMERICSERV], addrSocketType = Stream}
         startCql :: Q.Request k () ()
@@ -210,7 +210,7 @@ runThreads ::
        Config.Config
     -> NC.NodeConfig
     -> BitcoinP2P
-    -> CqlConnection
+    -> CqlConnection k a b
     -> LG.Logger
     -- -> (P2PEnv AppM ServiceResource ServiceTopic RPCMessage PubNotifyMessage)
     -> [FilePath]
@@ -311,7 +311,7 @@ runWatchDog = do
                         LG.err lg $ LG.msg $ LG.val "Error: insert timed-out, watchdog raise alert "
                         liftIO $ writeIORef continue False
 
-runNode :: Config.Config -> NC.NodeConfig -> CqlConnection -> BitcoinP2P -> [FilePath] -> IO ()
+runNode :: Config.Config -> NC.NodeConfig -> CqlConnection k a b -> BitcoinP2P -> [FilePath] -> IO ()
 runNode config nodeConf conn bp2p certPaths
     -- p2pEnv <- mkP2PEnv config globalHandlerRpc globalHandlerPubSub [AriviService] []
  = do
@@ -338,7 +338,7 @@ defNetwork = bsvTest
 netNames :: String
 netNames = intercalate "|" (Data.List.map getNetworkName allNets)
 
-defaultAdminUser :: CqlConnection -> IO ()
+defaultAdminUser :: CqlConnection k a b -> IO ()
 defaultAdminUser conn = do
     let qstr =
             " SELECT password from xoken.user_permission where username = 'admin' " :: Q.QueryString Q.R () (Identity T.Text)

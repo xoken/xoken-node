@@ -217,7 +217,7 @@ maskAfter :: Int -> String -> String
 maskAfter n skey = (\x -> take n x ++ fmap (const '*') (drop n x)) skey
 
 addNewUser ::
-       CqlConnection
+       CqlConnection k a b
     -> T.Text
     -> T.Text
     -> T.Text
@@ -294,7 +294,7 @@ addNewUser conn uname fname lname email roles api_quota api_expiry_time = do
                     throw e
 
 -- | Calculates sum of chainworks for blocks with blockheight in input list
-calculateChainWork :: (HasLogger m, MonadIO m) => [Int32] -> CqlConnection -> m Integer
+calculateChainWork :: (HasLogger m, MonadIO m) => [Int32] -> CqlConnection k a b -> m Integer
 calculateChainWork blks conn = do
     lg <- getLogger
     let qstr :: Q.QueryString Q.R (Identity [Int32]) (Int32, Text)
@@ -336,7 +336,7 @@ splitList xs = (f 1 xs, f 0 xs)
 getSimpleQueryParam :: Tuple a => a -> QueryParams a
 getSimpleQueryParam a = Q.QueryParams Q.One False a Nothing Nothing Nothing Nothing
 
-query :: (Tuple a, Tuple b) => CqlConnection -> Request Q.R a b -> IO [b]
+query :: (Tuple a, Tuple b) => CqlConnection k a b -> Request Q.R a b -> IO [b]
 query ps req = do
     resp <- queryResp ps req
     case resp of
@@ -345,7 +345,7 @@ query ps req = do
             print $ "[Error] Query: Not a RowsResult!!"
             throw KeyValPoolException
 
-write :: (Tuple a, Tuple b) => CqlConnection -> Request Q.W a b -> IO ()
+write :: (Tuple a, Tuple b) => CqlConnection k a b -> Request Q.W a b -> IO ()
 write ps req = do
     resp <- queryResp ps req
     case resp of
@@ -354,7 +354,7 @@ write ps req = do
             print $ "[Error] Query: Not a VoidResult!!"
             throw KeyValPoolException
 
-queryResp :: (Tuple a, Tuple b) => CqlConnection -> Request k a b -> IO (Response k a b)
+queryResp :: (Tuple a, Tuple b) => CqlConnection k a b -> Request k a b -> IO (Response k a b)
 queryResp ps req = do
     let i = mkStreamId 0
     withResource ps $ \sock -> do
@@ -419,3 +419,28 @@ connHandshake sock req = do
         Left _ -> do
             print "[Error] Query: pack"
             throw KeyValPoolException
+
+foreverReadSocket :: (Tuple a, Tuple b) => Socket -> IO ()
+foreverReadSocket sock = forever $ do
+    b <- LB.recv sock 9
+    h' <- return $ header Q.V3 b
+    case h' of
+        Left s -> do
+            print $ "[Error] Query: header error: " ++ s
+            throw KeyValPoolException
+        Right h -> do
+            case headerType h of
+                RqHeader -> do
+                    print "[Error] Query: RqHeader"
+                    throw KeyValPoolException
+                RsHeader -> do
+                    let len = lengthRepr (bodyLength h)
+                    x <- LB.recv sock (fromIntegral len)
+                    case (Q.unpack noCompression h x) :: Either String (Q.Response k a b) of
+                        Left e -> do
+                            print $ "[Error] Query: unpack " ++ show e
+                            throw KeyValPoolException
+                        Right (RsError _ _ e) -> do
+                            print $ "[Error] Query: RsError: " ++ show e
+                            throw KeyValPoolException
+                        Right response -> return response
