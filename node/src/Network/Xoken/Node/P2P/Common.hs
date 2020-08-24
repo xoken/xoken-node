@@ -357,11 +357,11 @@ query ps req = do
 
 query' :: (Tuple a, Tuple b) => XCqlClientState -> Request k a b -> IO (Either String (Response k a b))
 query' ps req = do
-    withResource ps $ \xcs@(XCQLConnection ht lock sock)
+    withResource ps $ \(xcs@(XCQLConnection ht lock sock),_)
         -- getstreamid
      -> do
-        let i = 0
-            sid = mkStreamId i
+        i <- randomRIO (0,100000)
+        let sid = mkStreamId i
         case (Q.pack Q.V3 noCompression False sid req) of
             Right reqp -> do
                 sendQueryReq xcs reqp i
@@ -397,7 +397,7 @@ write ps req = do
 
 write' :: (Tuple a, Tuple b) => XCqlClientState -> Request k a b -> IO (Either String (Response k a b))
 write' ps req = do
-    withResource ps $ \xcs@(XCQLConnection ht lock sock)
+    withResource ps $ \(xcs@(XCQLConnection ht lock sock),_)
         -- getstreamid
      -> do
         let i = 0
@@ -418,9 +418,8 @@ write' ps req = do
                 print "[Error] Query: pack"
                 throw KeyValPoolException
 
-queryResp :: XCQLConnection -> LC.ByteString -> Int -> IO ()
-queryResp (XCQLConnection ht lock sock) req sid = do
-    LB.sendAll sock req
+readResponse :: XCQLConnection -> IO ()
+readResponse (XCQLConnection ht lock sock) = forever $ do
     b <- LB.recv sock 9
     h' <- return $ header Q.V3 b
     case h' of
@@ -436,16 +435,18 @@ queryResp (XCQLConnection ht lock sock) req sid = do
                     let len = lengthRepr (bodyLength h)
                     x <- LB.recv sock (fromIntegral len)
                     mv <- newMVar (XCqlResponse h x)
-                    TSH.insert ht sid mv
+                    TSH.insert ht (fromStreamId $ streamId h) mv
 
 sendQueryReq :: XCQLConnection -> LC.ByteString -> Int -> IO ()
 sendQueryReq (XCQLConnection ht writeLock sock) msg i = do
     a <- takeMVar writeLock
-    print "TOOK MVAR sendQueryReq"
+    print "TOOK LOCK sendQueryReq"
     mv <- newEmptyMVar
+    print "NEWEMPTYMVAR sendQueryReq"
     TSH.insert ht i mv
     (LB.sendAll sock msg) `catch` (\(e :: IOException) -> putStrLn ("caught sendQueryReq: " ++ show e))
     putMVar writeLock a
+    print "PUT LOCK sendQueryReq"
 
 connHandshake :: (Tuple a, Tuple b) => Socket -> Request k a b -> IO (Response k a b)
 connHandshake sock req = do

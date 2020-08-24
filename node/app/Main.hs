@@ -12,6 +12,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE BlockArguments #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 import Arivi.Crypto.Utils.PublicKey.Signature as ACUPS
 import Arivi.Crypto.Utils.PublicKey.Utils
@@ -196,15 +197,17 @@ makeCqlPool = do
         startCql :: Q.Request k () ()
         startCql = Q.RqStartup $ Q.Startup Q.Cqlv300 (Q.algorithm Q.noCompression) --(Q.CqlVersion "3.4.4") Q.None
     (addr:_) <- getAddrInfo (Just hints) (Just "127.0.0.1") (Just "9042")
+    print "BEFORE CONNPOOL"
     connPool <-
         createPool
             (socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr) >>= \s ->
                  Network.Socket.connect s (addrAddress addr) >> connHandshake s startCql >> TSH.new 20 >>= \t ->
-                     newMVar True >>= \l -> return $ XCQLConnection t l s)
-            (Network.Socket.close . xCqlSocket)
+                     newMVar True >>= \l -> (forkIO $ readResponse (XCQLConnection t l s)) >>= \tid -> return (XCQLConnection t l s, tid))
+            (\((XCQLConnection t l s), tid) -> Network.Socket.close s >> killThread tid)
             1
             (1800000000000)
             200
+    print "AFTER CONNPOOL"
     return connPool
 
 runThreads ::
@@ -236,7 +239,7 @@ runThreads config nodeConf bp2p conn lg certPaths = do
     withResource (pool $ graphDB dbh) (`BT.run` initAllegoryRoot genesisTx)
     -- run main workers
     -- runFileLoggingT (toS $ Config.logFile config) $
-    runAppM
+    res <- try $ runAppM
         serviceEnv
                 -- initP2P config
         (do bp2pEnv <- getBitcoinP2P
@@ -250,6 +253,9 @@ runThreads config nodeConf bp2p conn lg certPaths = do
                                         withAsync runWatchDog $ \z -> do
                                             _ <- LA.wait z
                                             return ())
+    case res of
+        Left (e :: SomeException) -> print $ "runThreads: " ++ show e
+        _ -> return ()
     liftIO $ destroyAllResources $ pool gdbState
     liftIO $ destroyAllResources $ conn
     liftIO $ putStrLn $ "node recovering from fatal DB connection failure!"
@@ -405,6 +411,7 @@ initNexa = do
     csfp <- doesDirectoryExist csrFP
     unless (cfp && kfp && csfp) $ P.error "Error: missing TLS certificate or keyfile"
     -- launch node --
+    print "LAUNCHING NODE"
     runNode cnf nodeCnf conn bp2p [certFP, keyFP, csrFP]
 
 relaunch :: IO ()
