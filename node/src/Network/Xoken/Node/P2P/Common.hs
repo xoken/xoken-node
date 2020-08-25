@@ -357,10 +357,10 @@ query ps req = do
 
 query' :: (Tuple a, Tuple b) => XCqlClientState -> Request k a b -> IO (Either String (Response k a b))
 query' ps req = do
-    withResource ps $ \(xcs@(XCQLConnection ht lock sock),_)
+    withResource ps $ \xcs@(XCQLConnection ht lock sock)
         -- getstreamid
      -> do
-        i <- randomRIO (0,100000)
+        i <- randomRIO (0,maxBound :: Int16)
         let sid = mkStreamId i
         case (Q.pack Q.V3 noCompression False sid req) of
             Right reqp -> do
@@ -368,9 +368,10 @@ query' ps req = do
                 resp' <- TSH.lookup ht i -- logic issue
                 case resp' of
                     Just resp'' -> do
-                        (XCqlResponse h x) <- takeMVar resp''
+                        print $ "AAA query' 1"
+                        (XCqlResponse h x) <- takeMVar resp'' ---
                         TSH.delete ht i
-                        print $ "AAA query'"
+                        print $ "AAA query' 2"
                         return $ Q.unpack noCompression h x
                     Nothing -> do
                         print $ "[Error] Query: Nothing in hashtable"
@@ -398,20 +399,21 @@ write ps req = do
 
 write' :: (Tuple a, Tuple b) => XCqlClientState -> Request k a b -> IO (Either String (Response k a b))
 write' ps req = do
-    withResource ps $ \(xcs@(XCQLConnection ht lock sock),_)
+    withResource ps $ \xcs@(XCQLConnection ht lock sock)
         -- getstreamid
      -> do
-        let i = 0
-            sid = mkStreamId i
+        i <- randomRIO (0,maxBound :: Int16)
+        let sid = mkStreamId i
         case (Q.pack Q.V3 noCompression False sid req) of
             Right reqp -> do
                 sendQueryReq xcs reqp i
                 resp' <- TSH.lookup ht i -- logic issue
                 case resp' of
                     Just resp'' -> do
+                        print $ "AAA write' 1"
                         (XCqlResponse h x) <- takeMVar resp''
                         TSH.delete ht i
-                        print $ "AAA write'"
+                        print $ "AAA write' 2"
                         return $ Q.unpack noCompression h x
                     Nothing -> do
                         print $ "[Error] Query: Nothing in hashtable"
@@ -424,6 +426,7 @@ readResponse :: XCQLConnection -> IO ()
 readResponse (XCQLConnection ht lock sock) = forever $ do
     b <- LB.recv sock 9
     h' <- return $ header Q.V3 b
+    print $ "readResponse " ++ show b
     case h' of
         Left s -> do
             print $ "[Error] Query: header error: " ++ s
@@ -435,17 +438,24 @@ readResponse (XCQLConnection ht lock sock) = forever $ do
                     throw KeyValPoolException
                 RsHeader -> do
                     let len = lengthRepr (bodyLength h)
-                        sid = fromStreamId $ streamId h
+                        sid = fromIntegral $ fromStreamId $ streamId h
+                    print $ "readResponse sid: " ++ show sid
                     x <- LB.recv sock (fromIntegral len)
+                    print $ "readResponse " ++ show x
                     mmv <- TSH.lookup ht sid
                     case mmv of
                         Just mv -> do
+                            print "readResponse before putMvar"
                             putMVar mv (XCqlResponse h x)
+                            print "readResponse after putMvar"
                             TSH.insert ht sid mv
-                        Nothing -> return ()
+                        Nothing -> do
+                            print "readResponse Nothing"
+                            return ()
 
-sendQueryReq :: XCQLConnection -> LC.ByteString -> Int -> IO ()
+sendQueryReq :: XCQLConnection -> LC.ByteString -> Int16 -> IO ()
 sendQueryReq (XCQLConnection ht writeLock sock) msg i = do
+    print $ "sendQueryReq sid: " ++ show i
     a <- takeMVar writeLock
     print "TOOK LOCK sendQueryReq"
     mv <- newEmptyMVar

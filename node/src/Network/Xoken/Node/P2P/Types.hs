@@ -50,12 +50,12 @@ data XCqlResponse =
 
 data XCQLConnection =
     XCQLConnection
-        { xCqlHashTable :: TSH.TSHashTable Int (MVar XCqlResponse)
-        , xCqlWriteLock :: MVar Bool
+        { xCqlHashTable :: TSH.TSHashTable Int16 (MVar XCqlResponse)
+        , xCqlWriteLock :: MVar Int16
         , xCqlSocket :: Socket
         }
 
-type XCqlClientState = Pool (XCQLConnection, ThreadId)
+type XCqlClientState = Pool (XCQLConnection)
 
 data DatabaseHandles =
     DatabaseHandles

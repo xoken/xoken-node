@@ -197,13 +197,20 @@ makeCqlPool = do
         startCql :: Q.Request k () ()
         startCql = Q.RqStartup $ Q.Startup Q.Cqlv300 (Q.algorithm Q.noCompression) --(Q.CqlVersion "3.4.4") Q.None
     (addr:_) <- getAddrInfo (Just hints) (Just "127.0.0.1") (Just "9042")
+    let createResource = do
+          s <- socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)
+          Network.Socket.connect s (addrAddress addr)
+          connHandshake s startCql
+          t <- TSH.new 200
+          l <- newMVar (1 :: Int16)
+          withAsync (readResponse (XCQLConnection t l s)) (\_ -> return $ XCQLConnection t l s)
+        killResource (XCQLConnection t l s) = do
+            Network.Socket.close s
     print "BEFORE CONNPOOL"
     connPool <-
         createPool
-            (socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr) >>= \s ->
-                 Network.Socket.connect s (addrAddress addr) >> connHandshake s startCql >> TSH.new 20 >>= \t ->
-                     newMVar True >>= \l -> (forkIO $ readResponse (XCQLConnection t l s)) >>= \tid -> return (XCQLConnection t l s, tid))
-            (\((XCQLConnection t l s), tid) -> Network.Socket.close s >> killThread tid)
+            createResource
+            killResource
             1
             (1800000000000)
             200
