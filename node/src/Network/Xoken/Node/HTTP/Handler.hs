@@ -99,6 +99,7 @@ addUser _ = throwBadRequest
 
 getChainInfo :: Handler App App ()
 getChainInfo = do
+    liftIO $ print $ "getChainInfo: function was called by HTTP handler!"
     lg <- getLogger
     pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     res <- LE.try $ xGetChainInfo
@@ -478,8 +479,11 @@ getOutpointsByName = do
 
 relayTx :: RPCReqParams' -> Handler App App ()
 relayTx RelayTx {..} = do
+    liftIO $ print $ "relayTx: function was called by HTTP handler!"
     pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    liftIO $ print $ "relayTx: calling xRelayTx with parameters tx=" <> show rTx
     res <- LE.try $ xRelayTx rTx
+    liftIO $ print $ "relayTx: xRelayTx returned: " <> show res
     case res of
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
