@@ -446,9 +446,9 @@ getInputsForUnconfirmedTx op = do
     bp2pEnv <- getBitcoinP2P
     let conn = connection (dbe)
         (txid, index) = (opTxHash op, opIndex op)
-        str = "SELECT other FROM xoken.ep_txid_outputs WHERE epoch IN (True,False) AND txid=?"
-        qstr = str :: Q.QueryString Q.R (Identity DT.Text) (Identity ((DT.Text, Int32), Int32, (DT.Text, Int64)))
-        par = getSimpleQueryParam (Identity $ DT.pack txid)
+        str = "SELECT other FROM xoken.ep_txid_outputs WHERE epoch IN (True,False)"
+        qstr = str :: Q.QueryString Q.R () (Identity ((DT.Text, Int32), Int32, (DT.Text, Int64)))
+        par = getSimpleQueryParam ()
     res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
     case res of
         Left (e :: SomeException) -> do
