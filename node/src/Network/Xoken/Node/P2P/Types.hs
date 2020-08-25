@@ -5,6 +5,7 @@
 module Network.Xoken.Node.P2P.Types where
 
 import Control.Concurrent (ThreadId)
+import Control.Concurrent.Async (Async)
 import Control.Concurrent.MSem as MS
 import Control.Concurrent.MSemN as MSN
 import Control.Concurrent.MVar
@@ -55,7 +56,7 @@ data XCQLConnection =
         , xCqlSocket :: Socket
         }
 
-type XCqlClientState = Pool (XCQLConnection)
+type XCqlClientState = Pool (XCQLConnection, Async ())
 
 data DatabaseHandles =
     DatabaseHandles

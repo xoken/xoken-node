@@ -357,7 +357,7 @@ query ps req = do
 
 query' :: (Tuple a, Tuple b) => XCqlClientState -> Request k a b -> IO (Either String (Response k a b))
 query' ps req = do
-    withResource ps $ \xcs@(XCQLConnection ht lock sock)
+    withResource ps $ \(xcs@(XCQLConnection ht lock sock),_)
         -- getstreamid
      -> do
         i <- randomRIO (0,maxBound :: Int16)
@@ -399,7 +399,7 @@ write ps req = do
 
 write' :: (Tuple a, Tuple b) => XCqlClientState -> Request k a b -> IO (Either String (Response k a b))
 write' ps req = do
-    withResource ps $ \xcs@(XCQLConnection ht lock sock)
+    withResource ps $ \(xcs@(XCQLConnection ht lock sock),_)
         -- getstreamid
      -> do
         i <- randomRIO (0,maxBound :: Int16)

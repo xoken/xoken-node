@@ -29,6 +29,7 @@ import Arivi.P2P.ServiceRegistry
 import Control.Arrow
 import Control.Concurrent (threadDelay)
 import Control.Concurrent
+import qualified Control.Concurrent.Async as A (async, uninterruptibleCancel)
 import Control.Concurrent.Async.Lifted as LA (async, race, wait, withAsync)
 import Control.Concurrent.Event as EV
 import Control.Concurrent.MSem as MS
@@ -201,11 +202,13 @@ makeCqlPool = do
           s <- socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)
           Network.Socket.connect s (addrAddress addr)
           connHandshake s startCql
-          t <- TSH.new 200
+          t <- TSH.new 1
           l <- newMVar (1 :: Int16)
-          withAsync (readResponse (XCQLConnection t l s)) (\_ -> return $ XCQLConnection t l s)
-        killResource (XCQLConnection t l s) = do
+          a <- A.async (readResponse (XCQLConnection t l s))
+          return (XCQLConnection t l s, a)
+        killResource (XCQLConnection t l s, a) = do
             Network.Socket.close s
+            A.uninterruptibleCancel a
     print "BEFORE CONNPOOL"
     connPool <-
         createPool
