@@ -341,7 +341,7 @@ getSimpleQueryParam a = Q.QueryParams Q.One False a Nothing Nothing Nothing Noth
 
 query :: (Tuple a, Tuple b) => XCqlClientState -> Request k a b -> IO [b]
 query ps req = do
-    res <- query' ps req
+    res <- execQuery ps req
     case res of
         Left e -> do
             print $ "[Error] Query: unpack " ++ show e
@@ -356,41 +356,9 @@ query ps req = do
                     print $ "[Error] Query: Not a RowsResult!!"
                     throw KeyValPoolException
 
-query' :: (Tuple a, Tuple b) => XCqlClientState -> Request k a b -> IO (Either String (Response k a b))
-query' ps req = do
-    withResource ps $ \(xcs@(XCQLConnection ht lock sock msem), _)
-        -- getstreamid
-     -> do
-        MS.wait msem
-        a <- takeMVar lock
-        let i =
-                if a == maxBound
-                    then 1
-                    else (a + 1)
-            sid = mkStreamId i
-        case (Q.pack Q.V3 noCompression False sid req) of
-            Right reqp -> do
-                sendQueryReq xcs reqp i
-                putMVar lock (a + 1)
-                resp' <- TSH.lookup ht i -- logic issue
-                case resp' of
-                    Just resp'' -> do
-                        print $ "AAA query' 1"
-                        (XCqlResponse h x) <- takeMVar resp'' ---
-                        TSH.delete ht i
-                        print $ "AAA query' 2"
-                        return $ Q.unpack noCompression h x
-                    Nothing -> do
-                        print $ "[Error] Query: Nothing in hashtable"
-                        throw KeyValPoolException
-            Left _ -> do
-                print "[Error] Query: pack"
-                putMVar lock a
-                throw KeyValPoolException
-
 write :: (Tuple a, Tuple b) => XCqlClientState -> Request k a b -> IO ()
 write ps req = do
-    res <- write' ps req
+    res <- execQuery ps req
     case res of
         Left e -> do
             print $ "[Error] Query: unpack " ++ show e
@@ -405,8 +373,8 @@ write ps req = do
                     print $ "[Error] Query: Not a VoidResult!!"
                     throw KeyValPoolException
 
-write' :: (Tuple a, Tuple b) => XCqlClientState -> Request k a b -> IO (Either String (Response k a b))
-write' ps req = do
+execQuery :: (Tuple a, Tuple b) => XCqlClientState -> Request k a b -> IO (Either String (Response k a b))
+execQuery ps req = do
     withResource ps $ \(xcs@(XCQLConnection ht lock sock msem), _)
         -- getstreamid
      -> do
@@ -419,8 +387,11 @@ write' ps req = do
             sid = mkStreamId i
         case (Q.pack Q.V3 noCompression False sid req) of
             Right reqp -> do
-                sendQueryReq xcs reqp i
-                putMVar lock (a + 1)
+                print $ "sendQueryReq sid: " ++ show i
+                mv <- newEmptyMVar
+                TSH.insert ht i mv
+                (LB.sendAll sock reqp) `catch` (\(e :: IOException) -> putStrLn ("caught sendQueryReq: " ++ show e))
+                putMVar lock i
                 resp' <- TSH.lookup ht i -- logic issue
                 case resp' of
                     Just resp'' -> do
@@ -434,7 +405,7 @@ write' ps req = do
                         throw KeyValPoolException
             Left _ -> do
                 print "[Error] Query: pack"
-                putMVar lock a
+                putMVar lock i
                 throw KeyValPoolException
 
 readResponse :: XCQLConnection -> IO ()
@@ -447,13 +418,17 @@ readResponse (XCQLConnection ht lock sock msem) =
             Left s -> do
                 print $ "[Error] Query: header error: " ++ s
                 MS.signal msem
-                throw KeyValPoolException
+                print "readResponse error parsing header. closing socket."
+                Network.Socket.close sock
+                --throw KeyValPoolException
             Right h -> do
                 case headerType h of
                     RqHeader -> do
                         print "[Error] Query: RqHeader"
                         MS.signal msem
-                        throw KeyValPoolException
+                        print "readResponse error request header. closing socket."
+                        Network.Socket.close sock
+                        --throw KeyValPoolException
                     RsHeader -> do
                         let len = lengthRepr (bodyLength h)
                             sid = fromIntegral $ fromStreamId $ streamId h
@@ -471,13 +446,6 @@ readResponse (XCQLConnection ht lock sock msem) =
                                 print "readResponse Nothing"
                                 return ()
                         MS.signal msem
-
-sendQueryReq :: XCQLConnection -> LC.ByteString -> Int16 -> IO ()
-sendQueryReq (XCQLConnection ht writeLock sock msem) msg i = do
-    print $ "sendQueryReq sid: " ++ show i
-    mv <- newEmptyMVar
-    TSH.insert ht i mv
-    (LB.sendAll sock msg) `catch` (\(e :: IOException) -> putStrLn ("caught sendQueryReq: " ++ show e))
 
 connHandshake :: (Tuple a, Tuple b) => Socket -> Request k a b -> IO (Response k a b)
 connHandshake sock req = do
