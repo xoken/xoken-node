@@ -370,6 +370,7 @@ query' ps req = do
                     Just resp'' -> do
                         (XCqlResponse h x) <- takeMVar resp''
                         TSH.delete ht i
+                        print $ "AAA query'"
                         return $ Q.unpack noCompression h x
                     Nothing -> do
                         print $ "[Error] Query: Nothing in hashtable"
@@ -410,6 +411,7 @@ write' ps req = do
                     Just resp'' -> do
                         (XCqlResponse h x) <- takeMVar resp''
                         TSH.delete ht i
+                        print $ "AAA write'"
                         return $ Q.unpack noCompression h x
                     Nothing -> do
                         print $ "[Error] Query: Nothing in hashtable"
@@ -433,9 +435,14 @@ readResponse (XCQLConnection ht lock sock) = forever $ do
                     throw KeyValPoolException
                 RsHeader -> do
                     let len = lengthRepr (bodyLength h)
+                        sid = fromStreamId $ streamId h
                     x <- LB.recv sock (fromIntegral len)
-                    mv <- newMVar (XCqlResponse h x)
-                    TSH.insert ht (fromStreamId $ streamId h) mv
+                    mmv <- TSH.lookup ht sid
+                    case mmv of
+                        Just mv -> do
+                            putMVar mv (XCqlResponse h x)
+                            TSH.insert ht sid mv
+                        Nothing -> return ()
 
 sendQueryReq :: XCQLConnection -> LC.ByteString -> Int -> IO ()
 sendQueryReq (XCQLConnection ht writeLock sock) msg i = do
