@@ -199,24 +199,20 @@ makeCqlPool = do
         startCql = Q.RqStartup $ Q.Startup Q.Cqlv300 (Q.algorithm Q.noCompression) --(Q.CqlVersion "3.4.4") Q.None
     (addr:_) <- getAddrInfo (Just hints) (Just "127.0.0.1") (Just "9042")
     let createResource = do
-          s <- socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)
-          Network.Socket.connect s (addrAddress addr)
-          connHandshake s startCql
-          t <- TSH.new 1
-          l <- newMVar (1 :: Int16)
-          a <- A.async (readResponse (XCQLConnection t l s))
-          return (XCQLConnection t l s, a)
-        killResource (XCQLConnection t l s, a) = do
+            s <- socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)
+            Network.Socket.connect s (addrAddress addr)
+            connHandshake s startCql
+            t <- TSH.new 1
+            l <- newMVar (1 :: Int16)
+            m <- MS.new $ 32
+            let xcqlc = XCQLConnection t l s m
+            a <- A.async (readResponse xcqlc)
+            return (xcqlc, a)
+        killResource (XCQLConnection t l s m, a) = do
             Network.Socket.close s
             A.uninterruptibleCancel a
     print "BEFORE CONNPOOL"
-    connPool <-
-        createPool
-            createResource
-            killResource
-            1
-            (1800000000000)
-            200
+    connPool <- createPool createResource killResource 1 (5 * 60) 16
     print "AFTER CONNPOOL"
     return connPool
 
@@ -249,20 +245,22 @@ runThreads config nodeConf bp2p conn lg certPaths = do
     withResource (pool $ graphDB dbh) (`BT.run` initAllegoryRoot genesisTx)
     -- run main workers
     -- runFileLoggingT (toS $ Config.logFile config) $
-    res <- try $ runAppM
-        serviceEnv
+    res <-
+        try $
+        runAppM
+            serviceEnv
                 -- initP2P config
-        (do bp2pEnv <- getBitcoinP2P
-            withAsync runEpochSwitcher $ \_ -> do
-                withAsync setupSeedPeerConnection $ \_ -> do
-                    withAsync runEgressChainSync $ \_ -> do
-                        withAsync runBlockCacheQueue $ \_ -> do
-                            withAsync (handleNewConnectionRequest epHandler) $ \_ -> do
-                                withAsync runPeerSync $ \_ -> do
-                                    withAsync runSyncStatusChecker $ \_ -> do
-                                        withAsync runWatchDog $ \z -> do
-                                            _ <- LA.wait z
-                                            return ())
+            (do bp2pEnv <- getBitcoinP2P
+                withAsync runEpochSwitcher $ \_ -> do
+                    withAsync setupSeedPeerConnection $ \_ -> do
+                        withAsync runEgressChainSync $ \_ -> do
+                            withAsync runBlockCacheQueue $ \_ -> do
+                                withAsync (handleNewConnectionRequest epHandler) $ \_ -> do
+                                    withAsync runPeerSync $ \_ -> do
+                                        withAsync runSyncStatusChecker $ \_ -> do
+                                            withAsync runWatchDog $ \z -> do
+                                                _ <- LA.wait z
+                                                return ())
     case res of
         Left (e :: SomeException) -> print $ "runThreads: " ++ show e
         _ -> return ()

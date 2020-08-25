@@ -12,6 +12,7 @@ module Network.Xoken.Node.P2P.Common where
 
 import Control.Concurrent.Async (mapConcurrently)
 import Control.Concurrent.Async.Lifted as LA (async, wait)
+import Control.Concurrent.MSem as MS
 import Control.Concurrent.MVar
 import Control.Concurrent.STM.TVar
 import Control.Exception
@@ -357,14 +358,20 @@ query ps req = do
 
 query' :: (Tuple a, Tuple b) => XCqlClientState -> Request k a b -> IO (Either String (Response k a b))
 query' ps req = do
-    withResource ps $ \(xcs@(XCQLConnection ht lock sock),_)
+    withResource ps $ \(xcs@(XCQLConnection ht lock sock msem), _)
         -- getstreamid
      -> do
-        i <- randomRIO (0,maxBound :: Int16)
-        let sid = mkStreamId i
+        MS.wait msem
+        a <- takeMVar lock
+        let i =
+                if a == maxBound
+                    then 1
+                    else (a + 1)
+            sid = mkStreamId i
         case (Q.pack Q.V3 noCompression False sid req) of
             Right reqp -> do
                 sendQueryReq xcs reqp i
+                putMVar lock (a + 1)
                 resp' <- TSH.lookup ht i -- logic issue
                 case resp' of
                     Just resp'' -> do
@@ -378,6 +385,7 @@ query' ps req = do
                         throw KeyValPoolException
             Left _ -> do
                 print "[Error] Query: pack"
+                putMVar lock a
                 throw KeyValPoolException
 
 write :: (Tuple a, Tuple b) => XCqlClientState -> Request k a b -> IO ()
@@ -399,14 +407,20 @@ write ps req = do
 
 write' :: (Tuple a, Tuple b) => XCqlClientState -> Request k a b -> IO (Either String (Response k a b))
 write' ps req = do
-    withResource ps $ \(xcs@(XCQLConnection ht lock sock),_)
+    withResource ps $ \(xcs@(XCQLConnection ht lock sock msem), _)
         -- getstreamid
      -> do
-        i <- randomRIO (0,maxBound :: Int16)
-        let sid = mkStreamId i
+        MS.wait msem
+        a <- takeMVar lock
+        let i =
+                if a == maxBound
+                    then 1
+                    else (a + 1)
+            sid = mkStreamId i
         case (Q.pack Q.V3 noCompression False sid req) of
             Right reqp -> do
                 sendQueryReq xcs reqp i
+                putMVar lock (a + 1)
                 resp' <- TSH.lookup ht i -- logic issue
                 case resp' of
                     Just resp'' -> do
@@ -420,50 +434,50 @@ write' ps req = do
                         throw KeyValPoolException
             Left _ -> do
                 print "[Error] Query: pack"
+                putMVar lock a
                 throw KeyValPoolException
 
 readResponse :: XCQLConnection -> IO ()
-readResponse (XCQLConnection ht lock sock) = forever $ do
-    b <- LB.recv sock 9
-    h' <- return $ header Q.V3 b
-    print $ "readResponse " ++ show b
-    case h' of
-        Left s -> do
-            print $ "[Error] Query: header error: " ++ s
-            throw KeyValPoolException
-        Right h -> do
-            case headerType h of
-                RqHeader -> do
-                    print "[Error] Query: RqHeader"
-                    throw KeyValPoolException
-                RsHeader -> do
-                    let len = lengthRepr (bodyLength h)
-                        sid = fromIntegral $ fromStreamId $ streamId h
-                    print $ "readResponse sid: " ++ show sid
-                    x <- LB.recv sock (fromIntegral len)
-                    print $ "readResponse " ++ show x
-                    mmv <- TSH.lookup ht sid
-                    case mmv of
-                        Just mv -> do
-                            print "readResponse before putMvar"
-                            putMVar mv (XCqlResponse h x)
-                            print "readResponse after putMvar"
-                            TSH.insert ht sid mv
-                        Nothing -> do
-                            print "readResponse Nothing"
-                            return ()
+readResponse (XCQLConnection ht lock sock msem) =
+    forever $ do
+        b <- LB.recv sock 9
+        h' <- return $ header Q.V3 b
+        print $ "readResponse " ++ show b
+        case h' of
+            Left s -> do
+                print $ "[Error] Query: header error: " ++ s
+                MS.signal msem
+                throw KeyValPoolException
+            Right h -> do
+                case headerType h of
+                    RqHeader -> do
+                        print "[Error] Query: RqHeader"
+                        MS.signal msem
+                        throw KeyValPoolException
+                    RsHeader -> do
+                        let len = lengthRepr (bodyLength h)
+                            sid = fromIntegral $ fromStreamId $ streamId h
+                        print $ "readResponse sid: " ++ show sid
+                        x <- LB.recv sock (fromIntegral len)
+                        print $ "readResponse " ++ show x
+                        mmv <- TSH.lookup ht sid
+                        case mmv of
+                            Just mv -> do
+                                print "readResponse before putMvar"
+                                putMVar mv (XCqlResponse h x)
+                                print "readResponse after putMvar"
+                                TSH.insert ht sid mv
+                            Nothing -> do
+                                print "readResponse Nothing"
+                                return ()
+                        MS.signal msem
 
 sendQueryReq :: XCQLConnection -> LC.ByteString -> Int16 -> IO ()
-sendQueryReq (XCQLConnection ht writeLock sock) msg i = do
+sendQueryReq (XCQLConnection ht writeLock sock msem) msg i = do
     print $ "sendQueryReq sid: " ++ show i
-    a <- takeMVar writeLock
-    print "TOOK LOCK sendQueryReq"
     mv <- newEmptyMVar
-    print "NEWEMPTYMVAR sendQueryReq"
     TSH.insert ht i mv
     (LB.sendAll sock msg) `catch` (\(e :: IOException) -> putStrLn ("caught sendQueryReq: " ++ show e))
-    putMVar writeLock a
-    print "PUT LOCK sendQueryReq"
 
 connHandshake :: (Tuple a, Tuple b) => Socket -> Request k a b -> IO (Response k a b)
 connHandshake sock req = do

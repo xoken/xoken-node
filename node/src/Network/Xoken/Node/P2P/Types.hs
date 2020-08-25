@@ -54,6 +54,7 @@ data XCQLConnection =
         { xCqlHashTable :: TSH.TSHashTable Int16 (MVar XCqlResponse)
         , xCqlWriteLock :: MVar Int16
         , xCqlSocket :: Socket
+        , xCqlMSem :: MSem Int16
         }
 
 type XCqlClientState = Pool (XCQLConnection, Async ())
