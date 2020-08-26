@@ -45,7 +45,7 @@ import qualified Data.Text.Encoding as DTE
 import Data.Time.Clock
 import Data.Time.Clock.POSIX
 import Data.Word
-import qualified Database.CQL.IO as Q
+import qualified Database.XCQL.Protocol as Q
 import Network.Socket
 import qualified Network.Socket.ByteString as SB (recv)
 import qualified Network.Socket.ByteString.Lazy as LB (recv, sendAll)
@@ -76,8 +76,9 @@ produceGetHeadersMessage = do
     bp2pEnv <- getBitcoinP2P
     -- be blocked until a new best-block is updated in DB, or a set timeout.
     LA.race (liftIO $ threadDelay (15 * 1000000)) (liftIO $ takeMVar (bestBlockUpdated bp2pEnv))
-    conn <- keyValDB <$> getDB
+    dbe <- getDB
     let net = bitcoinNetwork $ nodeConfig bp2pEnv
+        conn = xCqlClientState dbe
     bl <- getBlockLocator conn net
     let gh =
             GetHeaders
@@ -91,10 +92,9 @@ produceGetHeadersMessage = do
 sendRequestMessages :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Message -> m ()
 sendRequestMessages msg = do
     lg <- getLogger
-    debug lg $ LG.msg $ val ("sendRequestMessages - called.")
+    debug lg $ LG.msg $ val ("Chain - sendRequestMessages - called.")
     bp2pEnv <- getBitcoinP2P
     dbe' <- getDB
-    let conn = keyValDB $ dbe'
     let net = bitcoinNetwork $ nodeConfig bp2pEnv
     case msg of
         MGetHeaders hdr -> do
@@ -139,8 +139,8 @@ msgOrder m1 m2 = do
 runEgressChainSync :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
 runEgressChainSync = do
     lg <- getLogger
-    res <- LE.try $ S.drain $ (S.repeatM produceGetHeadersMessage) & (S.mapM sendRequestMessages)
-    case res of
+    res1 <- LE.try $ forever $ do produceGetHeadersMessage >>= sendRequestMessages
+    case res1 of
         Right () -> return ()
         Left (e :: SomeException) -> err lg $ LG.msg $ "[ERROR] runEgressChainSync " ++ show e
 
@@ -150,57 +150,61 @@ validateChainedBlockHeaders hdrs = do
         pairs = zip xs (drop 1 xs)
     L.foldl' (\ac x -> ac && (headerHash $ fst (fst x)) == (prevBlock $ fst (snd x))) True pairs
 
-markBestBlock :: (HasLogger m, MonadIO m) => Text -> Int32 -> Q.ClientState -> m ()
+markBestBlock :: (HasLogger m, MonadIO m) => Text -> Int32 -> XCqlClientState -> m ()
 markBestBlock hash height conn = do
     lg <- getLogger
-    let str = "insert INTO xoken.misc_store (key, value) values (? , ?)"
-        qstr = str :: Q.QueryString Q.W (Text, (Maybe Bool, Int32, Maybe Int64, Text)) ()
-        par = Q.defQueryParams Q.One ("best_chain_tip", (Nothing, height, Nothing, hash))
-    res <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr) par)
+    let q :: Q.QueryString Q.W (Text, (Maybe Bool, Int32, Maybe Int64, Text)) ()
+        q = Q.QueryString "insert INTO xoken.misc_store (key, value) values (? , ?)"
+        p :: Q.QueryParams (Text, (Maybe Bool, Int32, Maybe Int64, Text))
+        p = getSimpleQueryParam ("best_chain_tip", (Nothing, height, Nothing, hash))
+    res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query q p)
     case res of
-        Right () -> return ()
+        Right _ -> return ()
         Left (e :: SomeException) -> do
             err lg $ LG.msg ("Error: Marking [Best] blockhash failed: " ++ show e)
             throw KeyValueDBInsertException
 
-getBlockLocator :: (HasLogger m, MonadIO m) => Q.ClientState -> Network -> m ([BlockHash])
+getBlockLocator :: (HasLogger m, MonadIO m) => XCqlClientState -> Network -> m ([BlockHash])
 getBlockLocator conn net = do
     lg <- getLogger
     (hash, ht) <- fetchBestBlock conn net
     let bl = L.insert ht $ filter (> 0) $ takeWhile (< ht) $ map (\x -> ht - (2 ^ x)) [0 .. 20] -- [1,2,4,8,16,32,64,... ,262144,524288,1048576]
-        str = "SELECT block_height, block_hash from xoken.blocks_by_height where block_height in ?"
-        qstr = str :: Q.QueryString Q.R (Identity [Int32]) ((Int32, T.Text))
-        p = Q.defQueryParams Q.One $ Identity bl
-    op <- Q.runClient conn (Q.query qstr p)
+        qstr :: Q.QueryString Q.R (Identity [Int32]) ((Int32, T.Text))
+        qstr = "SELECT block_height, block_hash from xoken.blocks_by_height where block_height in ?"
+        p = getSimpleQueryParam $ Identity bl
+    op <- liftIO $ query conn (Q.RqQuery $ Q.Query qstr p)
     if L.null op
         then return [headerHash $ getGenesisHeader net]
         else do
             debug lg $ LG.msg $ "Best-block from DB: " ++ (show $ last op)
             return $ reverse $ catMaybes $ map (hexToBlockHash . snd) op
 
-fetchBestBlock :: (HasLogger m, MonadIO m) => Q.ClientState -> Network -> m ((BlockHash, Int32))
+fetchBestBlock :: (HasLogger m, MonadIO m) => XCqlClientState -> Network -> m ((BlockHash, Int32))
 fetchBestBlock conn net = do
     lg <- getLogger
-    let str = "SELECT value from xoken.misc_store where key = ?"
-        qstr = str :: Q.QueryString Q.R (Identity Text) (Identity (Maybe Bool, Maybe Int32, Maybe Int64, Maybe T.Text))
-        p = Q.defQueryParams Q.One $ Identity "best_chain_tip"
-    iop <- Q.runClient conn (Q.query qstr p)
-    if L.null iop
-        then do
-            debug lg $ LG.msg $ val "Bestblock is genesis."
-            return ((headerHash $ getGenesisHeader net), 0)
-        else do
-            let record = runIdentity $ iop !! 0
-            debug lg $ LG.msg $ "Best-block from DB: " ++ show (record)
-            case getTextVal record of
-                Just tx -> do
-                    case (hexToBlockHash $ tx) of
-                        Just x -> do
-                            case getIntVal record of
-                                Just y -> return (x, y)
-                                Nothing -> throw InvalidMetaDataException
-                        Nothing -> throw InvalidBlockHashException
-                Nothing -> throw InvalidMetaDataException
+    let qstr :: Q.QueryString Q.R (Identity Text) (Identity (Maybe Bool, Maybe Int32, Maybe Int64, Maybe T.Text))
+        qstr = "SELECT value from xoken.misc_store where key = ?"
+        p = getSimpleQueryParam "best_chain_tip"
+    res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr p)
+    case res of
+        (Right iop) -> do
+            if L.null iop
+                then do
+                    debug lg $ LG.msg $ val "Bestblock is genesis."
+                    return ((headerHash $ getGenesisHeader net), 0)
+                else do
+                    let record = runIdentity $ iop !! 0
+                    debug lg $ LG.msg $ "Best-block from DB: " ++ show (record)
+                    case getTextVal record of
+                        Just tx -> do
+                            case (hexToBlockHash $ tx) of
+                                Just x -> do
+                                    case getIntVal record of
+                                        Just y -> return (x, y)
+                                        Nothing -> throw InvalidMetaDataException
+                                Nothing -> throw InvalidBlockHashException
+                        Nothing -> throw InvalidMetaDataException
+        Left (e :: SomeException) -> throw InvalidMetaDataException
 
 processHeaders :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Headers -> m ()
 processHeaders hdrs = do
@@ -216,7 +220,7 @@ processHeaders hdrs = do
         True -> do
             let net = bitcoinNetwork $ nodeConfig bp2pEnv
                 genesisHash = blockHashToHex $ headerHash $ getGenesisHeader net
-                conn = keyValDB $ dbe'
+                conn = xCqlClientState dbe'
                 headPrevHash = (blockHashToHex $ prevBlock $ fst $ head $ headersList hdrs)
                 hdrHash y = headerHash $ fst y
                 validate m = validateWithCheckPoint net (fromIntegral m) (hdrHash <$> (headersList hdrs))
@@ -258,16 +262,18 @@ processHeaders hdrs = do
                                                                  ("Does not match best-block, potential block re-org ")
                                                          return $ zip [(matchBHt + 1) ..] (headersList hdrs) -- potential re-org
                                              Nothing -> throw BlockHashNotFoundException
-            let str1 =
-                    "insert INTO xoken.blocks_by_hash (block_hash, block_header, block_height, next_block_hash) values (?, ? , ?, ?)"
-                qstr1 = str1 :: Q.QueryString Q.W (Text, Text, Int32, Text) ()
-                str2 =
-                    "insert INTO xoken.blocks_by_height (block_height, block_hash, block_header, next_block_hash) values (?, ? , ?, ?)"
-                qstr2 = str2 :: Q.QueryString Q.W (Int32, Text, Text, Text) ()
-                str3 = "UPDATE xoken.blocks_by_hash SET next_block_hash=? where block_hash=?"
-                qstr3 = str3 :: Q.QueryString Q.W (Text, Text) ()
-                str4 = "UPDATE xoken.blocks_by_height SET next_block_hash=? where block_height=?"
-                qstr4 = str4 :: Q.QueryString Q.W (Text, Int32) ()
+            let q1 :: Q.QueryString Q.W (Text, Text, Int32, Text) ()
+                q1 =
+                    Q.QueryString
+                        "insert INTO xoken.blocks_by_hash (block_hash, block_header, block_height, next_block_hash) values (?, ? , ?, ?)"
+                q2 :: Q.QueryString Q.W (Int32, Text, Text, Text) ()
+                q2 =
+                    Q.QueryString
+                        "insert INTO xoken.blocks_by_height (block_height, block_hash, block_header, next_block_hash) values (?, ? , ?, ?)"
+                q3 :: Q.QueryString Q.W (Text, Text) ()
+                q3 = Q.QueryString "UPDATE xoken.blocks_by_hash SET next_block_hash=? where block_hash=?"
+                q4 :: Q.QueryString Q.W (Text, Int32) ()
+                q4 = Q.QueryString "UPDATE xoken.blocks_by_height SET next_block_hash=? where block_height=?"
                 lenIndexed = L.length indexed
             debug lg $ LG.msg $ "indexed " ++ show (lenIndexed)
             liftIO $
@@ -279,18 +285,18 @@ processHeaders hdrs = do
                                      then ""
                                      else blockHashToHex $ headerHash $ fst $ snd $ (indexed !! (ind + 1))
                              hdrJson = T.pack $ LC.unpack $ A.encode $ fst $ snd y
-                         let par1 = Q.defQueryParams Q.One (hdrHash, hdrJson, fst y, nextHdrHash)
-                             par2 = Q.defQueryParams Q.One (fst y, hdrHash, hdrJson, nextHdrHash)
-                         res1 <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr1) par1)
+                         let p1 = getSimpleQueryParam (hdrHash, hdrJson, fst y, nextHdrHash)
+                             p2 = getSimpleQueryParam (fst y, hdrHash, hdrJson, nextHdrHash)
+                         res1 <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query q1 p1)
                          case res1 of
-                             Right () -> return ()
+                             Right _ -> return ()
                              Left (e :: SomeException) ->
                                  liftIO $ do
                                      err lg $ LG.msg ("Error: INSERT into 'blocks_hash' failed: " ++ show e)
                                      throw KeyValueDBInsertException
-                         res2 <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr2) par2)
+                         res2 <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query q2 p2)
                          case res2 of
-                             Right () -> return ()
+                             Right _ -> return ()
                              Left (e :: SomeException) -> do
                                  err lg $ LG.msg ("Error: INSERT into 'blocks_by_height' failed: " ++ show e)
                                  throw KeyValueDBInsertException)
@@ -304,18 +310,18 @@ processHeaders hdrs = do
                         case blk of
                             Just b -> do
                                 let nextHdrHash = blockHashToHex $ headerHash $ fst $ snd $ head indexed
-                                    par3 = Q.defQueryParams Q.One (nextHdrHash, T.pack $ rbHash b)
-                                    par4 = Q.defQueryParams Q.One (nextHdrHash, height)
-                                res1 <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr3) par3)
-                                case res1 of
-                                    Right () -> return ()
+                                    p3 = getSimpleQueryParam (nextHdrHash, T.pack $ rbHash b)
+                                    p4 = getSimpleQueryParam (nextHdrHash, height)
+                                res3 <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query q3 p3)
+                                case res3 of
+                                    Right _ -> return ()
                                     Left (e :: SomeException) ->
                                         liftIO $ do
                                             err lg $ LG.msg ("Error: UPDATE into 'blocks_by_hash' failed: " ++ show e)
                                             throw KeyValueDBInsertException
-                                res2 <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr4) par4)
-                                case res2 of
-                                    Right () -> return ()
+                                res4 <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query q4 p4)
+                                case res4 of
+                                    Right _ -> return ()
                                     Left (e :: SomeException) -> do
                                         err lg $ LG.msg ("Error: UPDATE into 'blocks_by_height' failed: " ++ show e)
                                         throw KeyValueDBInsertException
@@ -329,20 +335,20 @@ processHeaders hdrs = do
             err lg $ LG.msg $ val "Error: BlocksNotChainedException"
             throw BlocksNotChainedException
 
-fetchMatchBlockOffset :: (HasLogger m, MonadIO m) => Q.ClientState -> Network -> Text -> m (Maybe (Text, Int32))
+fetchMatchBlockOffset :: (HasLogger m, MonadIO m) => XCqlClientState -> Network -> Text -> m (Maybe (Text, Int32))
 fetchMatchBlockOffset conn net hashes = do
     lg <- getLogger
-    let str = "SELECT block_height, block_hash from xoken.blocks_by_hash where block_hash = ?"
-        qstr = str :: Q.QueryString Q.R (Identity Text) (Int32, Text)
-        p = Q.defQueryParams Q.One $ Identity hashes
-    iop <- Q.runClient conn (Q.query qstr p)
+    let qstr :: Q.QueryString Q.R (Identity Text) (Int32, Text)
+        qstr = "SELECT block_height, block_hash from xoken.blocks_by_hash where block_hash = ?"
+        p = getSimpleQueryParam $ Identity hashes
+    iop <- liftIO $ query conn (Q.RqQuery $ Q.Query qstr p)
     if L.null iop
         then return Nothing
         else do
             let (maxHt, bhash) = iop !! 0
             return $ Just (bhash, maxHt)
 
-updateChainWork :: (HasLogger m, MonadIO m) => [(Int32, BlockHeaderCount)] -> Q.ClientState -> m ()
+updateChainWork :: (HasLogger m, MonadIO m) => [(Int32, BlockHeaderCount)] -> XCqlClientState -> m ()
 updateChainWork indexed conn = do
     lg <- getLogger
     if L.length indexed == 0
@@ -350,11 +356,11 @@ updateChainWork indexed conn = do
             debug lg $ LG.msg $ val "updateChainWork: Input list empty. Nothing updated."
             return ()
         else do
-            let str = "SELECT value from xoken.misc_store where key = ?"
-                qstr = str :: Q.QueryString Q.R (Identity Text) (Identity (Maybe Bool, Int32, Maybe Int64, T.Text))
-                str1 = "insert INTO xoken.misc_store (key, value) values (?, ?)"
-                qstr1 = str1 :: Q.QueryString Q.W (Text, (Maybe Bool, Int32, Maybe Int64, Text)) ()
-                par = Q.defQueryParams Q.One $ Identity "chain-work"
+            let qstr :: Q.QueryString Q.R (Identity Text) (Identity (Maybe Bool, Int32, Maybe Int64, T.Text))
+                qstr = "SELECT value from xoken.misc_store where key = ?"
+                qstr1 :: Q.QueryString Q.W (Text, (Maybe Bool, Int32, Maybe Int64, Text)) ()
+                qstr1 = "insert INTO xoken.misc_store (key, value) values (?, ?)"
+                par = getSimpleQueryParam $ Identity "chain-work"
                 lenInd = L.length indexed
                 lenOffset =
                     fromIntegral $
@@ -363,7 +369,7 @@ updateChainWork indexed conn = do
                         else 0
                 lagIndexed = take (lenInd - 10) indexed
                 indexedCW = foldr (\x y -> y + (convertBitsToBlockWork $ blockBits $ fst $ snd $ x)) 0 lagIndexed
-            res <- liftIO $ try $ Q.runClient conn (Q.query qstr par)
+            res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
             case res of
                 Right iop -> do
                     let (_, height, _, chainWork) =
@@ -371,29 +377,33 @@ updateChainWork indexed conn = do
                                 0 -> (Nothing, 0, Nothing, "4295032833") -- 4295032833 (0x100010001) is chainwork for genesis block
                                 _ -> runIdentity $ iop !! 0
                         lag = [(height + 1) .. ((fst $ head indexed) - (1 + lenOffset))]
-                    if L.null lag
-                        then return ()
-                        else do
-                            lagCW <- calculateChainWork lag conn
-                            let updatedChainwork = T.pack $ show $ lagCW + indexedCW + (read . T.unpack $ chainWork)
-                                updatedBlock =
-                                    if L.null lagIndexed
-                                        then last lag
-                                        else fst $ last lagIndexed
-                                par1 =
-                                    Q.defQueryParams
-                                        Q.One
-                                        ("chain-work", (Nothing, updatedBlock, Nothing, updatedChainwork))
-                            res1 <- liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr1) par1)
-                            case res1 of
-                                Right () -> do
-                                    debug lg $
-                                        LG.msg $
-                                        val $ ("updateChainWork: updated till block: " <> (C.pack $ show updatedBlock))
-                                    return ()
-                                Left (e :: SomeException) -> do
-                                    err lg $ LG.msg ("Error: INSERT 'chain-work' into 'misc_store' failed: " ++ show e)
-                                    throw KeyValueDBInsertException
+                    (par1, ub) <-
+                        if L.null lag
+                            then do
+                                let updatedBlock = fst $ last lagIndexed
+                                return $
+                                    ( getSimpleQueryParam
+                                          ("chain-work", (Nothing, updatedBlock, Nothing, T.pack $ show $ indexedCW))
+                                    , updatedBlock)
+                            else do
+                                lagCW <- calculateChainWork lag conn
+                                let updatedChainwork = T.pack $ show $ lagCW + indexedCW + (read . T.unpack $ chainWork)
+                                    updatedBlock =
+                                        if L.null lagIndexed
+                                            then last lag
+                                            else fst $ last lagIndexed
+                                return
+                                    ( getSimpleQueryParam
+                                          ("chain-work", (Nothing, updatedBlock, Nothing, updatedChainwork))
+                                    , updatedBlock)
+                    res1 <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr1 par1)
+                    case res1 of
+                        Right _ -> do
+                            debug lg $ LG.msg $ "updateChainWork: updated till block: " ++ show ub
+                            return ()
+                        Left (e :: SomeException) -> do
+                            err lg $ LG.msg ("Error: INSERT 'chain-work' into 'misc_store' failed: " ++ show e)
+                            throw KeyValueDBInsertException
                 Left (e :: SomeException) -> do
                     err lg $ LG.msg ("Error: SELECT from 'misc_store' failed: " ++ show e)
                     throw KeyValueDBLookupException

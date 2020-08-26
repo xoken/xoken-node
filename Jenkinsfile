@@ -14,6 +14,11 @@ pipeline {
           git(url: 'https://github.com/xoken/xoken-core/', branch: 'master')
         }
 
+        sh 'mkdir -p xcql'
+        dir(path: 'xcql') {
+          git(url: 'https://github.com/xoken/xcql/', branch: 'master')
+        }
+
         sh 'mkdir -p xoken-node'
         dir(path: 'xoken-node') {
           git(url: 'https://github.com/xoken/xoken-node/', branch: "${env.BRANCH_NAME}")

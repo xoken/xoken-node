@@ -12,7 +12,7 @@ import Codec.Serialise
 import Control.Concurrent.Event
 import Control.Concurrent.MSem
 import Control.Concurrent.MVar
-import Control.Concurrent.STM.TBQueue
+import Control.Concurrent.STM.TQueue
 import Control.Concurrent.STM.TVar
 import Control.Monad.Catch
 import Control.Monad.Reader
@@ -26,13 +26,15 @@ import qualified Data.Map.Strict as M
 import Data.Text
 import Data.Time.Clock
 import Data.Word
-import qualified Database.CQL.IO as Q
 import GHC.Generics
 import Network.Socket hiding (send)
 import Network.Xoken.Block.Common
 import Network.Xoken.Node.Data
+import Network.Xoken.Node.Data.ThreadSafeHashTable as TSH
 import Network.Xoken.Node.P2P.Types
 import Network.Xoken.Transaction
+import StmContainers.Map as SM
+import StmContainers.Set as SS
 import System.Logger
 import System.Random
 import Text.Read
@@ -69,18 +71,19 @@ data BitcoinP2P =
         , blacklistedPeers :: !(TVar (M.Map SockAddr BitcoinPeer))
         , bestBlockUpdated :: !(MVar Bool)
         , headersWriteLock :: !(MVar Bool)
-        , blockSyncStatusMap :: !(MVar (M.Map BlockHash (BlockSyncStatus, BlockHeight)))
-        , blockTxProcessingLeftMap :: !(MVar (M.Map BlockHash [Bool]))
+        , blockSyncStatusMap :: !(TSH.TSHashTable BlockHash (BlockSyncStatus, BlockHeight))
+        , blockTxProcessingLeftMap :: !(TSH.TSHashTable BlockHash ((TSH.TSHashTable TxHash Int), Int))
         , epochType :: !(TVar Bool)
-        , unconfirmedTxCache :: !(HashTable TxShortHash (Bool, TxHash))
-        , txOutputValuesCache :: !(HashTable TxShortHash (TxHash, [(Int16, (Text, Text, Int64))]))
+        , unconfirmedTxCache :: !(TSH.TSHashTable TxShortHash (Bool, TxHash))
+        , txOutputValuesCache :: !(TSH.TSHashTable TxShortHash (TxHash, [(Int16, (Text, Text, Int64))]))
         , peerReset :: !(MVar Bool, TVar Int)
-        , merkleQueueMap :: !(TVar (M.Map BlockHash (TBQueue (TxHash, Bool))))
-        , txSynchronizer :: !(MVar (M.Map TxHash Event))
+        , merkleQueueMap :: !(TSH.TSHashTable BlockHash (TQueue (TxHash, Bool)))
+        , txSynchronizer :: !(TSH.TSHashTable TxHash Event)
         , maxTMTBuilderThreadLock :: !(MSem Int)
         , indexUnconfirmedTx :: !(TVar Bool)
         , userDataCache :: !(HashTable Text (Text, Int32, Int32, UTCTime, [Text])) -- (name, quota, used, expiry time, roles)
         , txProcFailAttempts :: !(TVar Int)
+        , bestSyncedBlock :: !(TVar (Maybe BlockInfo))
         }
 
 class HasBitcoinP2P m where
@@ -95,10 +98,10 @@ class HasDatabaseHandles m where
 class HasAllegoryEnv m where
     getAllegory :: m (AllegoryEnv)
 
-data ServiceEnv m r t rmsg pmsg =
+data ServiceEnv =
     ServiceEnv
         { xokenNodeEnv :: !XokenNodeEnv
-        , p2pEnv :: !(P2PEnv m r t rmsg pmsg)
+        -- , p2pEnv :: !(P2PEnv m r t rmsg pmsg)
         }
 
 data ServiceResource =

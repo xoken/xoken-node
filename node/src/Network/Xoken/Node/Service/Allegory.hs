@@ -77,8 +77,7 @@ import Data.Time.Clock.POSIX
 import Data.Word
 import Data.Yaml
 import qualified Database.Bolt as BT
-import qualified Database.CQL.IO as Q
-import Database.CQL.Protocol as DCP
+import Database.XCQL.Protocol as Q
 import qualified Network.Simple.TCP.TLS as TLS
 import Network.Xoken.Address.Base58
 import Network.Xoken.Block.Common
@@ -90,9 +89,11 @@ import Network.Xoken.Node.GraphDB
 import Network.Xoken.Node.P2P.BlockSync
 import Network.Xoken.Node.P2P.Common
 import Network.Xoken.Node.P2P.Types
+import Network.Xoken.Node.Service.Address
 import Network.Xoken.Node.Service.Transaction
 import Network.Xoken.Util (bsToInteger, integerToBS)
 import Numeric (showHex)
+import StmContainers.Map as SM
 import System.Logger as LG
 import System.Logger.Message
 import System.Random
@@ -183,11 +184,24 @@ createCommitImplictTx nameArr = do
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
     (nameip, existed) <- getOrMakeProducer (init nameArr)
     let anutxos = NC.allegoryNameUtxoSatoshis $ nodeConfig $ bp2pEnv
-    let ins =
+    let prAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
+    let prScript = addressToScriptBS prAddr
+    let addr' = case addrToString net prAddr of
+                    Nothing -> ""
+                    Just t -> DT.unpack t
+    let ins' =
             L.map
                 (\(x, s) ->
                      TxIn (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x)) (fromJust $ decodeHex s) 0)
                 ([nameip])
+    utxos <- xGetUTXOsAddress addr' (Just 200) Nothing
+    let (ins,fval) = case L.filter (\y -> aoValue y >= 100000) (res <$> utxos) of
+                    [] -> (ins',0)
+                    (x:xs) ->
+                        let op = aoOutput x
+                        in (ins' ++ [TxIn (OutPoint (fromString $ opTxHash op) (fromIntegral $ opIndex op)) prScript 0], aoValue x)
+    liftIO $ debug lg $ LG.msg $ "allegory TxIn ins: " <> show ins
+    liftIO $ debug lg $ LG.msg $ "allegory TxIn fval: " <> show fval
         -- construct OP_RETURN
     let al =
             Allegory
@@ -204,16 +218,16 @@ createCommitImplictTx nameArr = do
                      ])
     let opRetScript = frameOpReturn $ C.toStrict $ serialise al
         -- derive producer's Address
-    let prAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
-    let prScript = addressToScriptBS prAddr
     let !outs = [TxOut 0 opRetScript] ++ L.map (\_ -> TxOut (fromIntegral anutxos) prScript) [1, 2, 3]
-    let !sigInputs =
-            L.map
-                (\x -> do SigInput (addressToOutput x) (fromIntegral anutxos) (prevOutput $ head ins) sigHashAll Nothing)
-                [prAddr, prAddr]
+    debug lg $ LG.msg $ "allegory tx createCommitTx: " ++ show outs
+    let !sigInputs = [ SigInput (addressToOutput prAddr) (fromIntegral anutxos) (prevOutput $ head ins) (setForkIdFlag sigHashAll) Nothing
+                     , SigInput (addressToOutput prAddr) (fromIntegral fval) (prevOutput $ ins !! 1) (setForkIdFlag sigHashAll) Nothing
+                     ]
     let psatx = Tx version ins outs locktime
-    case signTx net psatx sigInputs [allegorySecretKey alg] of
+    debug lg $ LG.msg $ "allegory psatx before sign createCommitTx: " ++ show psatx
+    case signTx net psatx sigInputs [allegorySecretKey alg,allegorySecretKey alg] of
         Right tx -> do
+            debug lg $ LG.msg $ "allegory psatx after sign createCommitTx: " ++ show tx
             xRelayTx $ Data.Serialize.encode tx
             return ()
         Left err -> do
@@ -235,11 +249,11 @@ xGetPartiallySignedAllegoryTx payips (nameArr, isProducer) owner change = do
     bp2pEnv <- getBitcoinP2P
     lg <- getLogger
     alg <- getAllegory
-    let conn = keyValDB (dbe)
+    let conn = xCqlClientState dbe
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
-    -- check if name (of given type) exists
+     -- check if name (of given type) exists
     let name = DT.pack $ L.map (\x -> chr x) (nameArr)
-    -- read from config file
+     -- read from config file
     let anutxos = NC.allegoryNameUtxoSatoshis $ nodeConfig $ bp2pEnv
     let feeSatsCreate = NC.allegoryTxFeeSatsProducerAction $ nodeConfig $ bp2pEnv
     let feeSatsTransfer = NC.allegoryTxFeeSatsOwnerAction $ nodeConfig $ bp2pEnv
@@ -258,42 +272,45 @@ xGetPartiallySignedAllegoryTx payips (nameArr, isProducer) owner change = do
                 let txid = DT.unpack $ sp !! 0
                 let index = readMaybe (DT.unpack $ sp !! 1) :: Maybe Int32
                 case index of
-                    Just i -> return $ ((OutPoint' txid i, (snd $ head nb)), True)
-                    Nothing -> throw KeyValueDBLookupException
+                    Just i -> do
+                        return $ ((OutPoint' txid i, (snd $ head nb)), True)
+                    Nothing -> do
+                        debug lg $ LG.msg $ val "allegory case index of : Nothing"
+                        throw KeyValueDBLookupException
     inputHash <-
-        liftIO $
-        traverse
-            (\(w, _) -> do
-                 let op = OutPoint (fromString $ opTxHash w) (fromIntegral $ opIndex w)
-                 sh <- getScriptHashFromOutpoint conn (txSynchronizer bp2pEnv) lg net op 0
-                 return $ (w, ) <$> sh)
-            payips
+         liftIO $
+         traverse
+             (\(w, _) -> do
+                  let op = OutPoint (fromString $ opTxHash w) (fromIntegral $ opIndex w)
+                  sh <- getScriptHashFromOutpoint conn (txSynchronizer bp2pEnv) lg net op 0
+                  return $ (w, ) <$> sh)
+             payips
     let totalEffectiveInputSats = sum $ snd $ unzip payips
     let ins =
-            L.map
-                (\(x, s) ->
-                     TxIn (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x)) (fromJust $ decodeHex s) 0)
-                ([nameip] ++ (catMaybes inputHash))
+             L.map
+                 (\(x, s) ->
+                      TxIn (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x)) (fromJust $ decodeHex s) 0)
+                 ([nameip] ++ (catMaybes inputHash))
     sigInputs <-
-        mapM
-            (\(x, s) -> do
-                 case (decodeOutputBS ((fst . B16.decode) (E.encodeUtf8 s))) of
-                     Left e -> do
-                         liftIO $
-                             print
-                                 ("error (allegory) unable to decode scriptOutput! | " ++
-                                  show name ++ " " ++ show (x, s) ++ " | " ++ show ((fst . B16.decode) (E.encodeUtf8 s)))
-                         throw KeyValueDBLookupException
-                     Right scr -> do
-                         return $
-                             SigInput
-                                 scr
-                                 (fromIntegral $ anutxos)
-                                 (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x))
-                                 sigHashAll
-                                 Nothing)
-            [nameip]
-    --
+         mapM
+             (\(x, s) -> do
+                  case (decodeOutputBS ((fst . B16.decode) (E.encodeUtf8 s))) of
+                      Left e -> do
+                          liftIO $
+                              print
+                                  ("error (allegory) unable to decode scriptOutput! | " ++
+                                   show name ++ " " ++ show (x, s) ++ " | " ++ show ((fst . B16.decode) (E.encodeUtf8 s)))
+                          throw KeyValueDBLookupException
+                      Right scr -> do
+                          return $
+                              SigInput
+                                  scr
+                                  (fromIntegral $ anutxos)
+                                  (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x))
+                                  (setForkIdFlag sigHashAll)
+                                  Nothing)
+             [nameip]
+     --
     let outs =
             if existed
                 then if isProducer
@@ -308,7 +325,7 @@ xGetPartiallySignedAllegoryTx payips (nameArr, isProducer) owner change = do
                                               Nothing
                                               [])
                              let opRetScript = frameOpReturn $ C.toStrict $ serialise al
-                            -- derive producer's Address
+                             -- derive producer's Address
                              let prAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
                              let prScript = addressToScriptBS prAddr
                              let payAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
@@ -370,7 +387,7 @@ xGetPartiallySignedAllegoryTx payips (nameArr, isProducer) owner change = do
                                            (last nameArr)
                                      ])
                     let opRetScript = frameOpReturn $ C.toStrict $ serialise al
-                    -- derive producer's Address
+                     -- derive producer's Address
                     let prAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
                     let prScript = addressToScriptBS prAddr
                     let payAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
@@ -389,14 +406,14 @@ xGetPartiallySignedAllegoryTx payips (nameArr, isProducer) owner change = do
                                   TxOut (fromIntegral $ snd x) script)
                              [(owner, (fromIntegral $ anutxos)), (change, changeSats)]) ++
                         [TxOut ((fromIntegral paySats) :: Word64) payScript] -- the charge for the name transfer
-    --
+     --
     let psatx = Tx version ins outs locktime
-    case signTx net psatx sigInputs [allegorySecretKey alg] of
+    case signTx net psatx sigInputs [allegorySecretKey alg, allegorySecretKey alg] of
         Right tx -> do
             return $ BSL.toStrict $ A.encode $ tx
         Left err -> do
             liftIO $ print $ "error occurred while signing the Tx: " <> show err
             return $ BC.empty
-  where
-    version = 1
-    locktime = 0
+   where
+     version = 1
+     locktime = 0

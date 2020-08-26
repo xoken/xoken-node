@@ -12,6 +12,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE BlockArguments #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 import Arivi.Crypto.Utils.PublicKey.Signature as ACUPS
 import Arivi.Crypto.Utils.PublicKey.Utils
@@ -28,11 +29,13 @@ import Arivi.P2P.ServiceRegistry
 import Control.Arrow
 import Control.Concurrent (threadDelay)
 import Control.Concurrent
+import qualified Control.Concurrent.Async as A (async, uninterruptibleCancel)
 import Control.Concurrent.Async.Lifted as LA (async, race, wait, withAsync)
 import Control.Concurrent.Event as EV
 import Control.Concurrent.MSem as MS
 import Control.Concurrent.MVar
 import Control.Concurrent.QSem
+import Control.Concurrent.STM.TQueue as TB
 import Control.Concurrent.STM.TVar
 import Control.Exception (throw)
 import Control.Monad
@@ -84,12 +87,12 @@ import Data.Version
 import Data.Word (Word32)
 import Data.Word
 import qualified Database.Bolt as BT
-import qualified Database.CQL.IO as Q
-import Database.CQL.Protocol
+import qualified Database.XCQL.Protocol as Q
 import Network.Simple.TCP
 import Network.Socket
 import Network.Xoken.Node.AriviService
 import Network.Xoken.Node.Data
+import Network.Xoken.Node.Data.ThreadSafeHashTable as TSH
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.GraphDB
 import Network.Xoken.Node.HTTP.Server
@@ -104,6 +107,7 @@ import Options.Applicative
 import Paths_xoken_node as P
 import Prelude as P
 import qualified Snap as Snap
+import StmContainers.Map as SM
 import System.Directory (doesDirectoryExist, doesFileExist)
 import System.Environment (getArgs)
 import System.Exit
@@ -119,16 +123,8 @@ import Xoken.Node
 import Xoken.NodeConfig as NC
 
 newtype AppM a =
-    AppM (ReaderT (ServiceEnv AppM ServiceResource ServiceTopic RPCMessage PubNotifyMessage) (LoggingT IO) a)
-    deriving ( Functor
-             , Applicative
-             , Monad
-             , MonadReader (ServiceEnv AppM ServiceResource ServiceTopic RPCMessage PubNotifyMessage)
-             , MonadIO
-             , MonadThrow
-             , MonadCatch
-             , MonadLogger
-             )
+    AppM (ReaderT (ServiceEnv) (IO) a)
+    deriving (Functor, Applicative, Monad, MonadReader (ServiceEnv), MonadIO, MonadThrow, MonadCatch)
 
 deriving instance MonadBase IO AppM
 
@@ -146,31 +142,25 @@ instance HasAllegoryEnv AppM where
 instance HasLogger AppM where
     getLogger = asks (loggerEnv . xokenNodeEnv)
 
-instance HasNetworkEnv AppM where
-    getEnv = asks (ariviNetworkEnv . nodeEndpointEnv . p2pEnv)
-
-instance HasSecretKey AppM
-
-instance HasKbucket AppM where
-    getKb = asks (kbucket . kademliaEnv . p2pEnv)
-
-instance HasStatsdClient AppM where
-    getStatsdClient = asks (statsdClient . p2pEnv)
-
-instance HasNodeEndpoint AppM where
-    getEndpointEnv = asks (nodeEndpointEnv . p2pEnv)
-    getNetworkConfig = asks (PE._networkConfig . nodeEndpointEnv . p2pEnv)
-    getHandlers = asks (handlers . nodeEndpointEnv . p2pEnv)
-    getNodeIdPeerMapTVarP2PEnv = asks (tvarNodeIdPeerMap . nodeEndpointEnv . p2pEnv)
-
-instance HasPRT AppM where
-    getPeerReputationHistoryTableTVar = asks (tvPeerReputationHashTable . prtEnv . p2pEnv)
-    getServicesReputationHashMapTVar = asks (tvServicesReputationHashMap . prtEnv . p2pEnv)
-    getP2PReputationHashMapTVar = asks (tvP2PReputationHashMap . prtEnv . p2pEnv)
-    getReputedVsOtherTVar = asks (tvReputedVsOther . prtEnv . p2pEnv)
-    getKClosestVsRandomTVar = asks (tvKClosestVsRandom . prtEnv . p2pEnv)
-
-runAppM :: ServiceEnv AppM ServiceResource ServiceTopic RPCMessage PubNotifyMessage -> AppM a -> LoggingT IO a
+-- instance HasNetworkEnv AppM where
+--     getEnv = asks (ariviNetworkEnv . nodeEndpointEnv . p2pEnv)
+-- instance HasSecretKey AppM
+-- instance HasKbucket AppM where
+--     getKb = asks (kbucket . kademliaEnv . p2pEnv)
+-- instance HasStatsdClient AppM where
+--     getStatsdClient = asks (statsdClient . p2pEnv)
+-- instance HasNodeEndpoint AppM where
+--     getEndpointEnv = asks (nodeEndpointEnv . p2pEnv)
+--     getNetworkConfig = asks (PE._networkConfig . nodeEndpointEnv . p2pEnv)
+--     getHandlers = asks (handlers . nodeEndpointEnv . p2pEnv)
+--     getNodeIdPeerMapTVarP2PEnv = asks (tvarNodeIdPeerMap . nodeEndpointEnv . p2pEnv)
+-- instance HasPRT AppM where
+--     getPeerReputationHistoryTableTVar = asks (tvPeerReputationHashTable . prtEnv . p2pEnv)
+--     getServicesReputationHashMapTVar = asks (tvServicesReputationHashMap . prtEnv . p2pEnv)
+--     getP2PReputationHashMapTVar = asks (tvP2PReputationHashMap . prtEnv . p2pEnv)
+--     getReputedVsOtherTVar = asks (tvReputedVsOther . prtEnv . p2pEnv)
+--     getKClosestVsRandomTVar = asks (tvKClosestVsRandom . prtEnv . p2pEnv)
+runAppM :: ServiceEnv -> AppM a -> IO a
 runAppM env (AppM app) = runReaderT app env
 
 data ConfigException
@@ -202,21 +192,43 @@ makeGraphDBResPool uname pwd = do
     putStrLn $ "Connected to Neo4j database, version " ++ show (a !! 0)
     return gdbState
 
+makeCqlPool :: NC.NodeConfig -> IO (XCqlClientState)
+makeCqlPool nodeConf = do
+    let hints = defaultHints {addrFlags = [AI_NUMERICHOST, AI_NUMERICSERV], addrSocketType = Stream}
+        startCql :: Q.Request k () ()
+        startCql = Q.RqStartup $ Q.Startup Q.Cqlv300 (Q.algorithm Q.noCompression) --(Q.CqlVersion "3.4.4") Q.None
+    (addr:_) <- getAddrInfo (Just hints) (Just "127.0.0.1") (Just "9042")
+    let createResource = do
+            s <- socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)
+            Network.Socket.connect s (addrAddress addr)
+            connHandshake s startCql
+            t <- TSH.new 1
+            l <- newMVar (1 :: Int16)
+            m <- MS.new $ maxStreamsXCql nodeConf
+            let xcqlc = XCQLConnection t l s m
+            a <- A.async (readResponse xcqlc)
+            return (xcqlc, a)
+        killResource (XCQLConnection t l s m, a) = do
+            Network.Socket.close s
+            A.uninterruptibleCancel a
+    connPool <- createPool createResource killResource (stripesXCql nodeConf) (5 * 60) (maxConnectionsXCql nodeConf)
+    return connPool
+
 runThreads ::
        Config.Config
     -> NC.NodeConfig
     -> BitcoinP2P
-    -> Q.ClientState
+    -> XCqlClientState
     -> LG.Logger
-    -> (P2PEnv AppM ServiceResource ServiceTopic RPCMessage PubNotifyMessage)
+    -- -> (P2PEnv AppM ServiceResource ServiceTopic RPCMessage PubNotifyMessage)
     -> [FilePath]
     -> IO ()
-runThreads config nodeConf bp2p conn lg p2pEnv certPaths = do
+runThreads config nodeConf bp2p conn lg certPaths = do
     gdbState <- makeGraphDBResPool (neo4jUsername nodeConf) (neo4jPassword nodeConf)
-    let dbh = DatabaseHandles conn gdbState
+    let dbh = DatabaseHandles gdbState conn
     let allegoryEnv = AllegoryEnv $ allegoryVendorSecretKey nodeConf
     let xknEnv = XokenNodeEnv bp2p dbh lg allegoryEnv
-    let serviceEnv = ServiceEnv xknEnv p2pEnv
+    let serviceEnv = ServiceEnv xknEnv -- p2pEnv
     epHandler <- newTLSEndpointServiceHandler
     -- start TLS endpoint
     async $ startTLSEndpoint epHandler (endPointTLSListenIP nodeConf) (endPointTLSListenPort nodeConf) certPaths
@@ -230,23 +242,24 @@ runThreads config nodeConf bp2p conn lg p2pEnv certPaths = do
     async $ Snap.serveSnaplet snapConfig (appInit xknEnv)
     withResource (pool $ graphDB dbh) (`BT.run` initAllegoryRoot genesisTx)
     -- run main workers
-    runFileLoggingT (toS $ Config.logFile config) $
-        runAppM
-            serviceEnv
-            (do initP2P config
-                bp2pEnv <- getBitcoinP2P
-                withAsync runEpochSwitcher $ \_ -> do
-                    withAsync setupSeedPeerConnection $ \_ -> do
-                        withAsync runEgressChainSync $ \_ -> do
-                            withAsync runEgressBlockSync $ \_ -> do
-                                withAsync (handleNewConnectionRequest epHandler) $ \_ -> do
-                                    withAsync runPeerSync $ \_ -> do
-                                        withAsync runSyncStatusChecker $ \_ -> do
-                                            withAsync runWatchDog $ \z -> do
-                                                _ <- LA.wait z
-                                                return ())
-    liftIO $ Q.shutdown conn
+    -- runFileLoggingT (toS $ Config.logFile config) $
+
+    runAppM
+        serviceEnv
+            -- initP2P config
+        (do bp2pEnv <- getBitcoinP2P
+            withAsync runEpochSwitcher $ \_ -> do
+                withAsync setupSeedPeerConnection $ \_ -> do
+                    withAsync runEgressChainSync $ \_ -> do
+                        withAsync runBlockCacheQueue $ \_ -> do
+                            withAsync (handleNewConnectionRequest epHandler) $ \_ -> do
+                                withAsync runPeerSync $ \_ -> do
+                                    withAsync runSyncStatusChecker $ \_ -> do
+                                        withAsync runWatchDog $ \z -> do
+                                            _ <- LA.wait z
+                                            return ())
     liftIO $ destroyAllResources $ pool gdbState
+    liftIO $ destroyAllResources $ conn
     liftIO $ putStrLn $ "node recovering from fatal DB connection failure!"
     return ()
 
@@ -254,7 +267,7 @@ runSyncStatusChecker :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
 runSyncStatusChecker = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    conn <- keyValDB <$> getDB
+    conn <- xCqlClientState <$> getDB
     -- wait 300 seconds before first check
     liftIO $ threadDelay (300 * 1000000)
     forever $ do
@@ -275,7 +288,7 @@ runWatchDog = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    let conn = keyValDB (dbe)
+    let conn = xCqlClientState (dbe)
     LG.debug lg $ LG.msg $ LG.val "Starting watchdog"
     continue <- liftIO $ newIORef True
     whileM_ (liftIO $ readIORef continue) $ do
@@ -289,17 +302,17 @@ runWatchDog = do
                 tm <- liftIO $ getCurrentTime
                 let ttime = (floor $ utcTimeToPOSIXSeconds tm) :: Int64
                     str = "insert INTO xoken.transactions ( tx_id, block_info, tx_serialized ) values (?, ?, ?)"
-                    qstr = str :: Q.QueryString Q.W (T.Text, ((T.Text, Int32), Int32), Blob) ()
+                    qstr = str :: Q.QueryString Q.W (T.Text, ((T.Text, Int32), Int32), Q.Blob) ()
                     par =
-                        Q.defQueryParams Q.One ("watchdog-last-check", ((T.pack $ show ttime, 0), 0), Blob $ CL.pack "")
+                        getSimpleQueryParam ("watchdog-last-check", ((T.pack $ show ttime, 0), 0), Q.Blob $ CL.pack "")
                 ores <-
                     LA.race
                         (liftIO $ threadDelay (3000000)) -- worst case of 3 secs
-                        (liftIO $ try $ Q.runClient conn (Q.write (Q.prepared qstr) par))
+                        (liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr par))
                 case ores of
                     Right (eth) -> do
                         case eth of
-                            Right () -> return ()
+                            Right _ -> return ()
                             Left (SomeException e) -> do
                                 LG.err lg $ LG.msg ("Error: unable to insert, watchdog raise alert " ++ show e)
                                 liftIO $ writeIORef continue False
@@ -307,15 +320,16 @@ runWatchDog = do
                         LG.err lg $ LG.msg $ LG.val "Error: insert timed-out, watchdog raise alert "
                         liftIO $ writeIORef continue False
 
-runNode :: Config.Config -> NC.NodeConfig -> Q.ClientState -> BitcoinP2P -> [FilePath] -> IO ()
-runNode config nodeConf conn bp2p certPaths = do
-    p2pEnv <- mkP2PEnv config globalHandlerRpc globalHandlerPubSub [AriviService] []
+runNode :: Config.Config -> NC.NodeConfig -> XCqlClientState -> BitcoinP2P -> [FilePath] -> IO ()
+runNode config nodeConf conn bp2p certPaths
+    -- p2pEnv <- mkP2PEnv config globalHandlerRpc globalHandlerPubSub [AriviService] []
+ = do
     lg <-
         LG.new
             (LG.setOutput
                  (LG.Path $ T.unpack $ NC.logFileName nodeConf)
                  (LG.setLogLevel (logLevel nodeConf) LG.defSettings))
-    runThreads config nodeConf bp2p conn lg p2pEnv certPaths
+    runThreads config nodeConf bp2p conn lg certPaths
 
 data Config =
     Config
@@ -333,12 +347,12 @@ defNetwork = bsvTest
 netNames :: String
 netNames = intercalate "|" (Data.List.map getNetworkName allNets)
 
-defaultAdminUser :: Q.ClientState -> IO ()
+defaultAdminUser :: XCqlClientState -> IO ()
 defaultAdminUser conn = do
     let qstr =
             " SELECT password from xoken.user_permission where username = 'admin' " :: Q.QueryString Q.R () (Identity T.Text)
-        p = Q.defQueryParams Q.One ()
-    op <- Q.runClient conn (Q.query qstr p)
+        p = getSimpleQueryParam ()
+    op <- query conn (Q.RqQuery $ Q.Query qstr p)
     if length op == 1
         then return ()
         else do
@@ -359,48 +373,37 @@ defaultAdminUser conn = do
             putStrLn $ "  Password : " ++ (aurPassword $ fromJust usr)
             putStrLn $ "******************************************************************* "
 
-makeKeyValDBConn :: IO (Q.ClientState)
-makeKeyValDBConn = do
-    let logg = Q.stdoutLogger Q.LogWarn
-        stng = Q.setMaxStreams 2048 $ Q.setMaxConnections 256 $ Q.setPoolStripes 12 $ Q.setLogger logg Q.defSettings
-        stng2 = Q.setRetrySettings Q.eagerRetrySettings stng
-        qstr = "SELECT cql_version from system.local" :: Q.QueryString Q.R () (Identity T.Text)
-        p = Q.defQueryParams Q.One ()
-    conn <- Q.init stng2
-    op <- Q.runClient conn (Q.query qstr p)
-    putStrLn $ "Connected to Cassandra database, version " ++ show (runIdentity (op !! 0))
-    return conn
-
 defBitcoinP2P :: NodeConfig -> IO (BitcoinP2P)
 defBitcoinP2P nodeCnf = do
     g <- newTVarIO M.empty
     bp <- newTVarIO M.empty
     mv <- newMVar True
     hl <- newMVar True
-    st <- newMVar M.empty
-    tl <- newMVar M.empty
+    st <- TSH.new 1
+    tl <- TSH.new 1
     ep <- newTVarIO False
-    tc <- H.new
-    vc <- H.new
+    tc <- TSH.new 1
+    vc <- TSH.new 1
     rpf <- newEmptyMVar
     rpc <- newTVarIO 0
-    mq <- newTVarIO M.empty
-    ts <- newMVar M.empty
+    mq <- TSH.new 1
+    ts <- TSH.new 1
     tbt <- MS.new $ maxTMTBuilderThreads nodeCnf
     iut <- newTVarIO False
     udc <- H.new
     tpfa <- newTVarIO 0
-    return $ BitcoinP2P nodeCnf g bp mv hl st tl ep tc vc (rpf, rpc) mq ts tbt iut udc tpfa
+    bsb <- newTVarIO Nothing
+    return $ BitcoinP2P nodeCnf g bp mv hl st tl ep tc vc (rpf, rpc) mq ts tbt iut udc tpfa bsb
 
 initNexa :: IO ()
 initNexa = do
     putStrLn $ "Starting Xoken Nexa"
-    conn <- makeKeyValDBConn
-    defaultAdminUser conn
     b <- doesFileExist "arivi-config.yaml"
     unless b defaultConfig
     cnf <- Config.readConfig "arivi-config.yaml"
     nodeCnf <- NC.readConfig "node-config.yaml"
+    conn <- makeCqlPool nodeCnf
+    defaultAdminUser conn
     bp2p <- defBitcoinP2P nodeCnf
     let certFP = tlsCertificatePath nodeCnf
         keyFP = tlsKeyfilePath nodeCnf

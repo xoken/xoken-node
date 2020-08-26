@@ -6,11 +6,13 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
 
 module Network.Xoken.Node.P2P.Common where
 
 import Control.Concurrent.Async (mapConcurrently)
-import Control.Concurrent.Async.Lifted as LA (async)
+import Control.Concurrent.Async.Lifted as LA (async, wait)
+import Control.Concurrent.MSem as MS
 import Control.Concurrent.MVar
 import Control.Concurrent.STM.TVar
 import Control.Exception
@@ -36,6 +38,7 @@ import Data.Int
 import qualified Data.List as L
 import qualified Data.Map.Strict as M
 import Data.Maybe
+import Data.Pool
 import Data.Serialize
 import Data.Serialize as S
 import Data.String.Conversions
@@ -45,7 +48,7 @@ import qualified Data.Text.Encoding as DTE
 import Data.Time.Clock
 import Data.Time.Clock.POSIX
 import Data.Word
-import qualified Database.CQL.IO as Q
+import Database.XCQL.Protocol as Q hiding (Version)
 import Network.Socket
 import qualified Network.Socket.ByteString as SB (recv)
 import qualified Network.Socket.ByteString.Lazy as LB (recv, sendAll)
@@ -57,6 +60,7 @@ import Network.Xoken.Crypto.Hash
 import Network.Xoken.Network.Common -- (GetData(..), MessageCommand(..), NetworkAddress(..))
 import Network.Xoken.Network.Message
 import Network.Xoken.Node.Data
+import qualified Network.Xoken.Node.Data.ThreadSafeHashTable as TSH
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.P2P.Types
 import Network.Xoken.Transaction.Common
@@ -81,7 +85,7 @@ data BlockSyncException
     | InvalidBlockIngestStateException
     | InvalidMetaDataException
     | InvalidBlockHashException
-    | UnexpectedDuringBlockProcException
+    | UnexpectedDuringBlockProcException String
     | InvalidBlockSyncStatusMapException
     | InvalidBlockInfoException
     | OutpointAddressNotFoundException
@@ -110,6 +114,7 @@ data PeerMessageException
     | PeerSocketNotConnectedException
     | ZeroLengthSocketReadException
     | NetworkMagicMismatchException
+    | UnresponsivePeerException
     deriving (Show)
 
 instance Exception PeerMessageException
@@ -121,6 +126,20 @@ data AriviServiceException
     deriving (Show)
 
 instance Exception AriviServiceException
+
+data XCqlException
+    = XCqlPackException
+    | XCqlUnpackException
+    | XCqlInvalidRowsResultException
+    | XCqlInvalidVoidResultException
+    | XCqlQueryErrorException
+    | XCqlNotReadyException
+    | XCqlHeaderException
+    | XCqlInvalidHeaderException
+    | XCqlEmptyHashtableException
+    deriving (Show)
+
+instance Exception XCqlException
 
 --
 --
@@ -214,7 +233,7 @@ maskAfter :: Int -> String -> String
 maskAfter n skey = (\x -> take n x ++ fmap (const '*') (drop n x)) skey
 
 addNewUser ::
-       Q.ClientState
+       XCqlClientState
     -> T.Text
     -> T.Text
     -> T.Text
@@ -226,8 +245,8 @@ addNewUser ::
 addNewUser conn uname fname lname email roles api_quota api_expiry_time = do
     let qstr =
             " SELECT password from xoken.user_permission where username = ? " :: Q.QueryString Q.R (Identity T.Text) (Identity T.Text)
-        p = Q.defQueryParams Q.One (Identity uname)
-    op <- Q.runClient conn (Q.query qstr p)
+        p = getSimpleQueryParam (Identity uname)
+    op <- query conn (Q.RqQuery $ Q.Query qstr p)
     tm <- liftIO $ getCurrentTime
     if L.length op == 1
         then return Nothing
@@ -253,8 +272,7 @@ addNewUser conn uname fname lname email roles api_quota api_expiry_time = do
                                              , T.Text
                                              , UTCTime) ()
                 par =
-                    Q.defQueryParams
-                        Q.One
+                    getSimpleQueryParam
                         ( uname
                         , hashedPasswd
                         , fname
@@ -267,9 +285,9 @@ addNewUser conn uname fname lname email roles api_quota api_expiry_time = do
                         , (fromMaybe (addUTCTime (nominalDay * 365) tm) api_expiry_time)
                         , tempSessionKey
                         , (addUTCTime (nominalDay * 30) tm))
-            res1 <- liftIO $ try $ Q.runClient conn (Q.write (qstr) par)
+            res1 <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query (qstr) par)
             case res1 of
-                Right () -> do
+                Right _ -> do
                     putStrLn $ "Added user: " ++ (T.unpack uname)
                     return $
                         Just $
@@ -292,13 +310,13 @@ addNewUser conn uname fname lname email roles api_quota api_expiry_time = do
                     throw e
 
 -- | Calculates sum of chainworks for blocks with blockheight in input list
-calculateChainWork :: (HasLogger m, MonadIO m) => [Int32] -> Q.ClientState -> m Integer
+calculateChainWork :: (HasLogger m, MonadIO m) => [Int32] -> XCqlClientState -> m Integer
 calculateChainWork blks conn = do
     lg <- getLogger
-    let str = "SELECT block_height,block_header from xoken.blocks_by_height where block_height in ?"
-        qstr = str :: Q.QueryString Q.R (Identity [Int32]) (Int32, Text)
-        p = Q.defQueryParams Q.One $ Identity $ blks
-    res <- liftIO $ try $ Q.runClient conn (Q.query qstr p)
+    let qstr :: Q.QueryString Q.R (Identity [Int32]) (Int32, Text)
+        qstr = "SELECT block_height,block_header from xoken.blocks_by_height where block_height in ?"
+        p = getSimpleQueryParam $ Identity $ blks
+    res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr p)
     case res of
         Right iop -> do
             if L.length iop == 0
@@ -315,7 +333,7 @@ calculateChainWork blks conn = do
                             liftIO $ print $ "decode failed for blockrecord: " <> show err
                             return (-1)
         Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: xGetBlockHeights: " ++ show e
+            err lg $ LG.msg $ "Error: calculateChainWork: " ++ show e ++ "\n" ++ show blks
             throw KeyValueDBLookupException
 
 stripScriptHash :: ((Text, Int32), Int32, (Text, Text, Int64)) -> ((Text, Int32), Int32, (Text, Int64))
@@ -330,3 +348,123 @@ splitList :: [a] -> ([a], [a])
 splitList xs = (f 1 xs, f 0 xs)
   where
     f n a = map fst . filter (odd . snd) . zip a $ [n ..]
+
+getSimpleQueryParam :: Tuple a => a -> QueryParams a
+getSimpleQueryParam a = Q.QueryParams Q.One False a Nothing Nothing Nothing Nothing
+
+query :: (Tuple a, Tuple b) => XCqlClientState -> Request k a b -> IO [b]
+query ps req = do
+    res <- execQuery ps req
+    case res of
+        Left e -> do
+            throw XCqlUnpackException
+        Right (RsError _ _ e) -> do
+            throw XCqlQueryErrorException
+        Right response ->
+            case response of
+                (Q.RsResult _ _ (Q.RowsResult _ r)) -> return r
+                response -> do
+                    throw XCqlInvalidRowsResultException
+
+write :: (Tuple a, Tuple b) => XCqlClientState -> Request k a b -> IO ()
+write ps req = do
+    res <- execQuery ps req
+    case res of
+        Left e -> do
+            throw XCqlUnpackException
+        Right (RsError _ _ e) -> do
+            throw XCqlQueryErrorException
+        Right response ->
+            case response of
+                (Q.RsResult _ _ (Q.VoidResult)) -> return ()
+                response -> do
+                    throw XCqlInvalidVoidResultException
+
+execQuery :: (Tuple a, Tuple b) => XCqlClientState -> Request k a b -> IO (Either String (Response k a b))
+execQuery ps req = do
+    withResource ps $ \(xcs@(XCQLConnection ht lock sock msem), _)
+        -- getstreamid
+     -> do
+        MS.wait msem
+        a <- takeMVar lock
+        let i =
+                if a == maxBound
+                    then 1
+                    else (a + 1)
+            sid = mkStreamId i
+        case (Q.pack Q.V3 noCompression False sid req) of
+            Right reqp -> do
+                mv <- newEmptyMVar
+                TSH.insert ht i mv
+                (LB.sendAll sock reqp) `catch` (\(e :: IOException) -> putStrLn ("caught sendQueryReq: " ++ show e))
+                putMVar lock i
+                resp' <- TSH.lookup ht i -- logic issue
+                case resp' of
+                    Just resp'' -> do
+                        (XCqlResponse h x) <- takeMVar resp''
+                        TSH.delete ht i
+                        return $ Q.unpack noCompression h x
+                    Nothing -> do
+                        throw XCqlEmptyHashtableException
+            Left _ -> do
+                putMVar lock i
+                throw XCqlPackException
+
+readResponse :: XCQLConnection -> IO ()
+readResponse (XCQLConnection ht lock sock msem) =
+    forever $ do
+        b <- LB.recv sock 9
+        h' <- return $ header Q.V3 b
+        -- print $ "readResponse " ++ show b
+        case h' of
+            Left s -> do
+                print $ "[Error] Query: header error: " ++ s
+                MS.signal msem
+                Network.Socket.close sock
+                --throw KeyValPoolException
+            Right h -> do
+                case headerType h of
+                    RqHeader -> do
+                        print "[Error] Query: RqHeader"
+                        MS.signal msem
+                        Network.Socket.close sock
+                        --throw KeyValPoolException
+                    RsHeader -> do
+                        let len = lengthRepr (bodyLength h)
+                            sid = fromIntegral $ fromStreamId $ streamId h
+                        x <- LB.recv sock (fromIntegral len)
+                        mmv <- TSH.lookup ht sid
+                        case mmv of
+                            Just mv -> do
+                                putMVar mv (XCqlResponse h x)
+                                TSH.insert ht sid mv
+                            Nothing -> do
+                                return ()
+                        MS.signal msem
+
+connHandshake :: (Tuple a, Tuple b) => Socket -> Request k a b -> IO (Response k a b)
+connHandshake sock req = do
+    let i = mkStreamId 0
+    case (Q.pack Q.V3 noCompression False i req) of
+        Right qp -> do
+            LB.sendAll sock qp
+            b <- LB.recv sock 9
+            h' <- return $ header Q.V3 b
+            case h' of
+                Left s -> do
+                    throw XCqlHeaderException
+                Right h -> do
+                    case headerType h of
+                        RqHeader -> do
+                            throw XCqlInvalidHeaderException
+                        RsHeader -> do
+                            case Q.unpack noCompression h "" of
+                                Right r@(RsReady _ _ Ready) -> return r
+                                Left e -> do
+                                    throw XCqlUnpackException
+                                Right (RsError _ _ e) -> do
+                                    throw XCqlQueryErrorException
+                                Right _ -> do
+                                    throw XCqlNotReadyException
+        Left _ -> do
+            throw XCqlPackException

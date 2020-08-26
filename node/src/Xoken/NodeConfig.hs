@@ -16,6 +16,7 @@ import Data.ByteString.Char8 as C
 import Data.Maybe
 import Data.Text as T
 import qualified Data.Text.Encoding as E
+import Data.Int
 import Data.Word
 import Data.Yaml
 import GHC.Generics
@@ -36,14 +37,11 @@ data NodeConfig =
         , endPointHTTPSListenIP :: String
         , endPointHTTPSListenPort :: PortNumber
         , allegoryVendorSecretKey :: SecKey
-        , maxTxProcThreads :: Int
         , maxBitcoinPeerCount :: Int
         , unresponsivePeerConnTimeoutSecs :: Int
         , acivatePeerDiscovery :: Bool
         , maxTMTBuilderThreads :: Int
-        , maxTMTQueueSize :: Int
         , txProcInputDependenciesWait :: Int
-        , txProcTimeoutSecs :: Int
         , tlsCertificatePath :: FilePath
         , tlsKeyfilePath :: FilePath
         , tlsCertificateStorePath :: FilePath
@@ -54,6 +52,12 @@ data NodeConfig =
         , allegoryTxFeeSatsOwnerAction :: Int
         , txOutputValuesCacheKeyBits :: Word8
         , unconfirmedTxCacheKeyBits :: Word8
+        , blockProcessingTimeout :: Int
+        , recentTxReceiveTimeout :: Int
+        , getDataResponseTimeout :: Int
+        , maxStreamsXCql :: Int16
+        , stripesXCql :: Int
+        , maxConnectionsXCql :: Int
         }
     deriving (Show, Generic)
 

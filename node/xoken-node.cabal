@@ -52,6 +52,7 @@ executable xoken-nexa
       Network.Xoken.Node.Service.Chain
       Network.Xoken.Node.Service.Transaction
       Network.Xoken.Node.Service.User
+      Network.Xoken.Node.Data.ThreadSafeHashTable
 
   ghc-options:  -fprof-auto -fprof-cafs -rtsopts -O2 -threaded -with-rtsopts=-N
   hs-source-dirs:
@@ -111,14 +112,12 @@ executable xoken-nexa
     , transformers-base
     , exceptions
     , monad-control
-    , cql-io
     , tinylog
     , async
     , streamly
     , lifted-base
     , hasbolt >=0.1.3.6
     , resource-pool
-    , cql
     , hashtables
     , base16-bytestring
     , SafeSemaphore
@@ -132,6 +131,8 @@ executable xoken-nexa
     , daemons
     , snap
     , lens
+    , list-t
+    , xcql
   default-language: Haskell2010
 
 test-suite xoken-node-test
@@ -191,8 +192,6 @@ test-suite xoken-node-test
     , stm-containers
     , resource-pool
     , hasbolt >=0.1.3.6
-    , cql
-    , cql-io
     , serialise
     , exceptions
     , monad-control
@@ -209,6 +208,7 @@ test-suite xoken-node-test
     , utf8-string
     , yaml
     , secp256k1-haskell
+    , list-t
 
 
   default-language: Haskell2010

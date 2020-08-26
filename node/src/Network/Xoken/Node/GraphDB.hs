@@ -38,7 +38,6 @@ import Data.Text (Text, append, concat, filter, intercalate, isInfixOf, map, nul
 import Data.Time.Clock
 import Data.Word
 import Database.Bolt as BT
-import qualified Database.CQL.IO as Q
 import GHC.Generics
 import Network.Socket hiding (send)
 import Network.Xoken.Crypto.Hash
@@ -150,9 +149,9 @@ queryAllegoryNameScriptOp name isProducer = do
 
 initAllegoryRoot :: Tx -> BoltActionT IO ()
 initAllegoryRoot tx = do
-    let oops = pack $ "8c347368661ed9da465d3b925f80c2154d16bac7d658f3a63fd9df40a386d7a0" ++ ":" ++ show 0
+    let oops = pack $ "fe38e79e4067304d382b3ba8d67970f4f0cd26f988aac6c88bddffb4ec628daf" ++ ":" ++ show 0
     let scr =
-            "4104fd8074c838cd146b1c3f55f39c7bdbdd625cf3934307aac4471f26708c637982791c0e2cc7a91d473d3bdaa6caec21b83670945e61cbe91413084cdc6b18ec5fac"
+            "76a91447dc5f6dd425347e6aeacd226c3196b385394fb488ac"
     let cypher =
             " MERGE (rr:namestate {name:{dummyroot} })  " <>
             " MERGE (ns:namestate { name:{nsname}, type: {type} })-[r:REVISION]->(nu:nutxo { outpoint: {out_op}, name:{name}, producer:{isProducer} ,script: {scr} , root:{isInit}}) "
@@ -526,7 +525,7 @@ insertMerkleSubTree leaves inodes = do
 
 deleteMerkleSubTree :: [MerkleNode] -> BoltActionT IO ()
 deleteMerkleSubTree inodes = do
-    res <- LE.try $ query cypher
+    res <- LE.try $ BT.query cypher
     case res of
         Left (e :: SomeException)
             -- liftIO $ print ("[ERROR] deleteMerkleSubTree " ++ show e)
