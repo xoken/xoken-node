@@ -192,8 +192,8 @@ makeGraphDBResPool uname pwd = do
     putStrLn $ "Connected to Neo4j database, version " ++ show (a !! 0)
     return gdbState
 
-makeCqlPool :: IO (XCqlClientState)
-makeCqlPool = do
+makeCqlPool :: NC.NodeConfig -> IO (XCqlClientState)
+makeCqlPool nodeConf = do
     let hints = defaultHints {addrFlags = [AI_NUMERICHOST, AI_NUMERICSERV], addrSocketType = Stream}
         startCql :: Q.Request k () ()
         startCql = Q.RqStartup $ Q.Startup Q.Cqlv300 (Q.algorithm Q.noCompression) --(Q.CqlVersion "3.4.4") Q.None
@@ -204,7 +204,7 @@ makeCqlPool = do
             connHandshake s startCql
             t <- TSH.new 1
             l <- newMVar (1 :: Int16)
-            m <- MS.new $ 32
+            m <- MS.new $ maxStreamsXCql nodeConf
             let xcqlc = XCQLConnection t l s m
             a <- A.async (readResponse xcqlc)
             return (xcqlc, a)
@@ -212,7 +212,7 @@ makeCqlPool = do
             Network.Socket.close s
             A.uninterruptibleCancel a
     print "BEFORE CONNPOOL"
-    connPool <- createPool createResource killResource 1 (5 * 60) 16
+    connPool <- createPool createResource killResource (stripesXCql nodeConf) (5 * 60) (maxConnectionsXCql nodeConf)
     print "AFTER CONNPOOL"
     return connPool
 
@@ -404,12 +404,12 @@ defBitcoinP2P nodeCnf = do
 initNexa :: IO ()
 initNexa = do
     putStrLn $ "Starting Xoken Nexa"
-    conn <- makeCqlPool
-    defaultAdminUser conn
     b <- doesFileExist "arivi-config.yaml"
     unless b defaultConfig
     cnf <- Config.readConfig "arivi-config.yaml"
     nodeCnf <- NC.readConfig "node-config.yaml"
+    conn <- makeCqlPool nodeCnf
+    defaultAdminUser conn
     bp2p <- defBitcoinP2P nodeCnf
     let certFP = tlsCertificatePath nodeCnf
         keyFP = tlsKeyfilePath nodeCnf
