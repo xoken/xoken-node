@@ -77,7 +77,7 @@ import Network.Xoken.Transaction.Common
 import Network.Xoken.Util
 import StmContainers.Map as SM
 import StmContainers.Set as SS
-import Streamly
+import Streamly as S
 import Streamly.Prelude ((|:), drain, each, nil)
 import qualified Streamly.Prelude as S
 import System.Logger as LG
@@ -960,7 +960,7 @@ handleIncomingMessages pr = do
         LA.concurrently_
             (peerBlockSync pr) -- issue GetData msgs
             (S.drain $
-             serially $
+             S.aheadly $
              S.repeatM (readNextMessage' pr rlk) & -- read next msgs
              S.mapM (messageHandler pr) & -- handle read msgs
              S.mapM (logMessage pr) -- log msgs & collect stats

@@ -410,7 +410,7 @@ readResponse (XCQLConnection ht lock sock msem) =
     forever $ do
         b <- LB.recv sock 9
         h' <- return $ header Q.V3 b
-        print $ "readResponse " ++ show b
+        -- print $ "readResponse " ++ show b
         case h' of
             Left s -> do
                 print $ "[Error] Query: header error: " ++ s
