@@ -211,9 +211,7 @@ makeCqlPool nodeConf = do
         killResource (XCQLConnection t l s m, a) = do
             Network.Socket.close s
             A.uninterruptibleCancel a
-    print "BEFORE CONNPOOL"
     connPool <- createPool createResource killResource (stripesXCql nodeConf) (5 * 60) (maxConnectionsXCql nodeConf)
-    print "AFTER CONNPOOL"
     return connPool
 
 runThreads ::
@@ -245,25 +243,21 @@ runThreads config nodeConf bp2p conn lg certPaths = do
     withResource (pool $ graphDB dbh) (`BT.run` initAllegoryRoot genesisTx)
     -- run main workers
     -- runFileLoggingT (toS $ Config.logFile config) $
-    res <-
-        try $
-        runAppM
-            serviceEnv
-                -- initP2P config
-            (do bp2pEnv <- getBitcoinP2P
-                withAsync runEpochSwitcher $ \_ -> do
-                    withAsync setupSeedPeerConnection $ \_ -> do
-                        withAsync runEgressChainSync $ \_ -> do
-                            withAsync runBlockCacheQueue $ \_ -> do
-                                withAsync (handleNewConnectionRequest epHandler) $ \_ -> do
-                                    withAsync runPeerSync $ \_ -> do
-                                        withAsync runSyncStatusChecker $ \_ -> do
-                                            withAsync runWatchDog $ \z -> do
-                                                _ <- LA.wait z
-                                                return ())
-    case res of
-        Left (e :: SomeException) -> print $ "runThreads: " ++ show e
-        _ -> return ()
+
+    runAppM
+        serviceEnv
+            -- initP2P config
+        (do bp2pEnv <- getBitcoinP2P
+            withAsync runEpochSwitcher $ \_ -> do
+                withAsync setupSeedPeerConnection $ \_ -> do
+                    withAsync runEgressChainSync $ \_ -> do
+                        withAsync runBlockCacheQueue $ \_ -> do
+                            withAsync (handleNewConnectionRequest epHandler) $ \_ -> do
+                                withAsync runPeerSync $ \_ -> do
+                                    withAsync runSyncStatusChecker $ \_ -> do
+                                        withAsync runWatchDog $ \z -> do
+                                            _ <- LA.wait z
+                                            return ())
     liftIO $ destroyAllResources $ pool gdbState
     liftIO $ destroyAllResources $ conn
     liftIO $ putStrLn $ "node recovering from fatal DB connection failure!"
@@ -419,7 +413,6 @@ initNexa = do
     csfp <- doesDirectoryExist csrFP
     unless (cfp && kfp && csfp) $ P.error "Error: missing TLS certificate or keyfile"
     -- launch node --
-    print "LAUNCHING NODE"
     runNode cnf nodeCnf conn bp2p [certFP, keyFP, csrFP]
 
 relaunch :: IO ()
