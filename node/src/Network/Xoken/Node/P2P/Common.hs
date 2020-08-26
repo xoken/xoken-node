@@ -11,7 +11,7 @@ module Network.Xoken.Node.P2P.Common where
 
 import Control.Concurrent.Async (mapConcurrently)
 import Control.Concurrent.Async.Lifted as LA (async, wait)
---import Control.Concurrent.MSem as MS
+import Control.Concurrent.MSem as MS
 import Control.Concurrent.MVar
 import Control.Concurrent.STM.TVar
 import Control.Exception
@@ -381,8 +381,8 @@ write ps req = do
 
 execQuery :: (Tuple a, Tuple b) => XCqlClientState -> Request k a b -> IO (Either String (Response k a b))
 execQuery ps req = do
-    (hx, ind) <-
-        withResource ps $ \(xcs@(XCQLConnection ht lock sock), _) -> do
+    (hx, ind, ms) <-
+        withResource ps $ \(xcs@(XCQLConnection ht lock sock msem), _) -> do
             a <- takeMVar lock
             let i =
                     if a == maxBound
@@ -395,8 +395,8 @@ execQuery ps req = do
                     TSH.insert ht i mv
                     (LB.sendAll sock reqp) `catch` (\(e :: IOException) -> putStrLn ("caught sendQueryReq: " ++ show e))
                     putMVar lock i
-                    --MS.wait msem
-                    return (ht, i)
+                    MS.wait msem
+                    return (ht, i, msem)
                 Left _ -> do
                     putMVar lock i
                     throw XCqlPackException
@@ -405,13 +405,13 @@ execQuery ps req = do
         Just resp'' -> do
             (XCqlResponse h x) <- takeMVar resp''
             TSH.delete hx ind
-            --MS.signal ms
+            MS.signal ms
             return $ Q.unpack noCompression h x
         Nothing -> do
             throw XCqlEmptyHashtableException
 
 readResponse :: XCQLConnection -> IO ()
-readResponse (XCQLConnection ht lock sock) =
+readResponse (XCQLConnection ht lock sock msem) =
     forever $ do
         b <- LB.recv sock 9
         h' <- return $ header Q.V3 b
