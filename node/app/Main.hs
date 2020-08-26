@@ -204,11 +204,11 @@ makeCqlPool nodeConf = do
             connHandshake s startCql
             t <- TSH.new 1
             l <- newMVar (1 :: Int16)
-            m <- MS.new $ maxStreamsXCql nodeConf
-            let xcqlc = XCQLConnection t l s m
+            --m <- MS.new $ maxStreamsXCql nodeConf
+            let xcqlc = XCQLConnection t l s --m
             a <- A.async (readResponse xcqlc)
             return (xcqlc, a)
-        killResource (XCQLConnection t l s m, a) = do
+        killResource (XCQLConnection t l s , a) = do
             Network.Socket.close s
             A.uninterruptibleCancel a
     connPool <- createPool createResource killResource (stripesXCql nodeConf) (5 * 60) (maxConnectionsXCql nodeConf)
@@ -428,5 +428,6 @@ relaunch =
 
 main :: IO ()
 main = do
-    let pid = "/tmp/nexa.pid.0"
-    runDetached (Just pid) (ToFile "nexa.log") relaunch
+    initNexa
+    --let pid = "/tmp/nexa.pid.0"
+    --runDetached (Just pid) (ToFile "nexa.log") relaunch

@@ -6,13 +6,12 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE AllowAmbiguousTypes #-}
 
 module Network.Xoken.Node.P2P.Common where
 
 import Control.Concurrent.Async (mapConcurrently)
 import Control.Concurrent.Async.Lifted as LA (async, wait)
-import Control.Concurrent.MSem as MS
+--import Control.Concurrent.MSem as MS
 import Control.Concurrent.MVar
 import Control.Concurrent.STM.TVar
 import Control.Exception
@@ -382,36 +381,37 @@ write ps req = do
 
 execQuery :: (Tuple a, Tuple b) => XCqlClientState -> Request k a b -> IO (Either String (Response k a b))
 execQuery ps req = do
-    withResource ps $ \(xcs@(XCQLConnection ht lock sock msem), _)
-        -- getstreamid
-     -> do
-        MS.wait msem
-        a <- takeMVar lock
-        let i =
-                if a == maxBound
-                    then 1
-                    else (a + 1)
-            sid = mkStreamId i
-        case (Q.pack Q.V3 noCompression False sid req) of
-            Right reqp -> do
-                mv <- newEmptyMVar
-                TSH.insert ht i mv
-                (LB.sendAll sock reqp) `catch` (\(e :: IOException) -> putStrLn ("caught sendQueryReq: " ++ show e))
-                putMVar lock i
-                resp' <- TSH.lookup ht i -- logic issue
-                case resp' of
-                    Just resp'' -> do
-                        (XCqlResponse h x) <- takeMVar resp''
-                        TSH.delete ht i
-                        return $ Q.unpack noCompression h x
-                    Nothing -> do
-                        throw XCqlEmptyHashtableException
-            Left _ -> do
-                putMVar lock i
-                throw XCqlPackException
+    (hx, ind) <-
+        withResource ps $ \(xcs@(XCQLConnection ht lock sock), _) -> do
+            a <- takeMVar lock
+            let i =
+                    if a == maxBound
+                        then 1
+                        else (a + 1)
+                sid = mkStreamId i
+            case (Q.pack Q.V3 noCompression False sid req) of
+                Right reqp -> do
+                    mv <- newEmptyMVar
+                    TSH.insert ht i mv
+                    (LB.sendAll sock reqp) `catch` (\(e :: IOException) -> putStrLn ("caught sendQueryReq: " ++ show e))
+                    putMVar lock i
+                    --MS.wait msem
+                    return (ht, i)
+                Left _ -> do
+                    putMVar lock i
+                    throw XCqlPackException
+    resp' <- TSH.lookup hx ind
+    case resp' of
+        Just resp'' -> do
+            (XCqlResponse h x) <- takeMVar resp''
+            TSH.delete hx ind
+            --MS.signal ms
+            return $ Q.unpack noCompression h x
+        Nothing -> do
+            throw XCqlEmptyHashtableException
 
 readResponse :: XCQLConnection -> IO ()
-readResponse (XCQLConnection ht lock sock msem) =
+readResponse (XCQLConnection ht lock sock) =
     forever $ do
         b <- LB.recv sock 9
         h' <- return $ header Q.V3 b
@@ -419,14 +419,12 @@ readResponse (XCQLConnection ht lock sock msem) =
         case h' of
             Left s -> do
                 print $ "[Error] Query: header error: " ++ s
-                MS.signal msem
                 Network.Socket.close sock
                 --throw KeyValPoolException
             Right h -> do
                 case headerType h of
                     RqHeader -> do
                         print "[Error] Query: RqHeader"
-                        MS.signal msem
                         Network.Socket.close sock
                         --throw KeyValPoolException
                     RsHeader -> do
@@ -440,7 +438,6 @@ readResponse (XCQLConnection ht lock sock msem) =
                                 TSH.insert ht sid mv
                             Nothing -> do
                                 return ()
-                        MS.signal msem
 
 connHandshake :: (Tuple a, Tuple b) => Socket -> Request k a b -> IO (Response k a b)
 connHandshake sock req = do
