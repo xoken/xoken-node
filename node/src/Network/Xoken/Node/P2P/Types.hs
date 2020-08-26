@@ -4,6 +4,8 @@
 
 module Network.Xoken.Node.P2P.Types where
 
+import Control.Concurrent (ThreadId)
+import Control.Concurrent.Async (Async)
 import Control.Concurrent.MSem as MS
 import Control.Concurrent.MSemN as MSN
 import Control.Concurrent.MVar
@@ -21,11 +23,13 @@ import Data.Pool
 import Data.Time.Clock
 import Data.Word
 import Database.Bolt as BT
+import qualified Database.XCQL.Protocol as Q
 import Network.Socket hiding (send)
 import Network.Xoken.Block
 import Network.Xoken.Constants
 import Network.Xoken.Crypto.Hash
 import Network.Xoken.Network
+import qualified Network.Xoken.Node.Data.ThreadSafeHashTable as TSH
 import Network.Xoken.Transaction
 import System.Random
 import Text.Read
@@ -39,12 +43,26 @@ type Host = String
 -- | Type alias for a port number.
 type Port = Int
 
-type CqlConnection = Pool Socket
+data XCqlResponse =
+    XCqlResponse
+        { xheader :: !Q.Header
+        , xpayload :: !LB.ByteString
+        }
+
+data XCQLConnection =
+    XCQLConnection
+        { xCqlHashTable :: !(TSH.TSHashTable Int16 (MVar XCqlResponse))
+        , xCqlWriteLock :: !(MVar Int16)
+        , xCqlSocket :: !Socket
+        , xCqlMSem :: !(MSem Int16)
+        }
+
+type XCqlClientState = Pool (XCQLConnection, Async ())
 
 data DatabaseHandles =
     DatabaseHandles
         { graphDB :: !ServerState
-        , connection :: !(CqlConnection)
+        , xCqlClientState :: !(XCqlClientState)
         }
 
 -- | Data structure representing an bitcoin peer.

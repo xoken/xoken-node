@@ -16,6 +16,7 @@ import Data.ByteString.Char8 as C
 import Data.Maybe
 import Data.Text as T
 import qualified Data.Text.Encoding as E
+import Data.Int
 import Data.Word
 import Data.Yaml
 import GHC.Generics
@@ -54,6 +55,9 @@ data NodeConfig =
         , blockProcessingTimeout :: Int
         , recentTxReceiveTimeout :: Int
         , getDataResponseTimeout :: Int
+        , maxStreamsXCql :: Int16
+        , stripesXCql :: Int
+        , maxConnectionsXCql :: Int
         }
     deriving (Show, Generic)
 

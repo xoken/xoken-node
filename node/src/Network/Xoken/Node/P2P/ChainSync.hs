@@ -78,7 +78,7 @@ produceGetHeadersMessage = do
     LA.race (liftIO $ threadDelay (15 * 1000000)) (liftIO $ takeMVar (bestBlockUpdated bp2pEnv))
     dbe <- getDB
     let net = bitcoinNetwork $ nodeConfig bp2pEnv
-        conn = connection dbe
+        conn = xCqlClientState dbe
     bl <- getBlockLocator conn net
     let gh =
             GetHeaders
@@ -150,7 +150,7 @@ validateChainedBlockHeaders hdrs = do
         pairs = zip xs (drop 1 xs)
     L.foldl' (\ac x -> ac && (headerHash $ fst (fst x)) == (prevBlock $ fst (snd x))) True pairs
 
-markBestBlock :: (HasLogger m, MonadIO m) => Text -> Int32 -> CqlConnection -> m ()
+markBestBlock :: (HasLogger m, MonadIO m) => Text -> Int32 -> XCqlClientState -> m ()
 markBestBlock hash height conn = do
     lg <- getLogger
     let q :: Q.QueryString Q.W (Text, (Maybe Bool, Int32, Maybe Int64, Text)) ()
@@ -164,7 +164,7 @@ markBestBlock hash height conn = do
             err lg $ LG.msg ("Error: Marking [Best] blockhash failed: " ++ show e)
             throw KeyValueDBInsertException
 
-getBlockLocator :: (HasLogger m, MonadIO m) => CqlConnection -> Network -> m ([BlockHash])
+getBlockLocator :: (HasLogger m, MonadIO m) => XCqlClientState -> Network -> m ([BlockHash])
 getBlockLocator conn net = do
     lg <- getLogger
     (hash, ht) <- fetchBestBlock conn net
@@ -179,7 +179,7 @@ getBlockLocator conn net = do
             debug lg $ LG.msg $ "Best-block from DB: " ++ (show $ last op)
             return $ reverse $ catMaybes $ map (hexToBlockHash . snd) op
 
-fetchBestBlock :: (HasLogger m, MonadIO m) => CqlConnection -> Network -> m ((BlockHash, Int32))
+fetchBestBlock :: (HasLogger m, MonadIO m) => XCqlClientState -> Network -> m ((BlockHash, Int32))
 fetchBestBlock conn net = do
     lg <- getLogger
     let qstr :: Q.QueryString Q.R (Identity Text) (Identity (Maybe Bool, Maybe Int32, Maybe Int64, Maybe T.Text))
@@ -220,7 +220,7 @@ processHeaders hdrs = do
         True -> do
             let net = bitcoinNetwork $ nodeConfig bp2pEnv
                 genesisHash = blockHashToHex $ headerHash $ getGenesisHeader net
-                conn = connection dbe'
+                conn = xCqlClientState dbe'
                 headPrevHash = (blockHashToHex $ prevBlock $ fst $ head $ headersList hdrs)
                 hdrHash y = headerHash $ fst y
                 validate m = validateWithCheckPoint net (fromIntegral m) (hdrHash <$> (headersList hdrs))
@@ -335,7 +335,7 @@ processHeaders hdrs = do
             err lg $ LG.msg $ val "Error: BlocksNotChainedException"
             throw BlocksNotChainedException
 
-fetchMatchBlockOffset :: (HasLogger m, MonadIO m) => CqlConnection -> Network -> Text -> m (Maybe (Text, Int32))
+fetchMatchBlockOffset :: (HasLogger m, MonadIO m) => XCqlClientState -> Network -> Text -> m (Maybe (Text, Int32))
 fetchMatchBlockOffset conn net hashes = do
     lg <- getLogger
     let qstr :: Q.QueryString Q.R (Identity Text) (Int32, Text)
@@ -348,7 +348,7 @@ fetchMatchBlockOffset conn net hashes = do
             let (maxHt, bhash) = iop !! 0
             return $ Just (bhash, maxHt)
 
-updateChainWork :: (HasLogger m, MonadIO m) => [(Int32, BlockHeaderCount)] -> CqlConnection -> m ()
+updateChainWork :: (HasLogger m, MonadIO m) => [(Int32, BlockHeaderCount)] -> XCqlClientState -> m ()
 updateChainWork indexed conn = do
     lg <- getLogger
     if L.length indexed == 0

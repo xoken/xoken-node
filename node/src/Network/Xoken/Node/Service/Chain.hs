@@ -102,8 +102,8 @@ xGetChainInfo :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m (Maybe Cha
 xGetChainInfo = do
     dbe <- getDB
     lg <- getLogger
-    let conn = connection $ dbe
-    let conn' = connection $ dbe
+    let conn = xCqlClientState $ dbe
+    let conn = xCqlClientState dbe
         str = "SELECT key,value from xoken.misc_store"
         qstr = str :: Q.QueryString Q.R () (DT.Text, (Maybe Bool, Int32, Maybe Int64, DT.Text))
         p = getSimpleQueryParam ()
@@ -117,7 +117,7 @@ xGetChainInfo = do
                     let (_, blocks, _, bestSyncedHash) = snd . head $ (L.filter (\x -> fst x == "best-synced") iop)
                         (_, headers, _, bestBlockHash) = snd . head $ (L.filter (\x -> fst x == "best_chain_tip") iop)
                         (_, lagHeight, _, chainwork) = snd . head $ (L.filter (\x -> fst x == "chain-work") iop)
-                    lagCW <- calculateChainWork [(lagHeight + 1) .. (headers)] conn'
+                    lagCW <- calculateChainWork [(lagHeight + 1) .. (headers)] conn
                     return $
                         Just $
                         ChainInfo
@@ -135,7 +135,7 @@ xGetChainHeaders :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Int32 -> 
 xGetChainHeaders sblk pgsize = do
     dbe <- getDB
     lg <- getLogger
-    let conn = connection (dbe)
+    let conn = xCqlClientState dbe
         str = "SELECT block_hash,block_height,tx_count,block_header from xoken.blocks_by_height where block_height in ?"
         qstr = str :: Q.QueryString Q.R (Identity [Int32]) (DT.Text, Int32, Maybe Int32, DT.Text)
         p = getSimpleQueryParam $ Identity (L.take pgsize [sblk ..])

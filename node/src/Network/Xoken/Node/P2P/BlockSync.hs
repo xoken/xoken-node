@@ -221,7 +221,7 @@ runPeerSync =
                         (connPeers)
             else liftIO $ threadDelay (60 * 1000000)
 
-markBestSyncedBlock :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BlockHash -> Int32 -> CqlConnection -> m ()
+markBestSyncedBlock :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BlockHash -> Int32 -> XCqlClientState -> m ()
 markBestSyncedBlock hash height conn = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
@@ -237,7 +237,7 @@ markBestSyncedBlock hash height conn = do
             err lg $ LG.msg ("Error: Marking [Best-Synced] blockhash failed: " ++ show e)
             throw KeyValueDBInsertException
 
-checkBlocksFullySynced :: (HasLogger m, MonadIO m) => CqlConnection -> m Bool
+checkBlocksFullySynced :: (HasLogger m, MonadIO m) => XCqlClientState -> m Bool
 checkBlocksFullySynced conn = do
     lg <- getLogger
     let qstr :: Q.QueryString Q.R (Text, Text) (Identity (Maybe Bool, Int32, Maybe Int64, Text))
@@ -288,7 +288,7 @@ runBlockCacheQueue =
         trace lg $ LG.msg $ val "runBlockCacheQueue loop..."
         let nc = nodeConfig bp2pEnv
             net = bitcoinNetwork $ nc
-            conn = connection dbe
+            conn = xCqlClientState dbe
         allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
         let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
         syt' <- liftIO $ TSH.toList (blockSyncStatusMap bp2pEnv)
@@ -469,7 +469,7 @@ sortPeers peers = do
     return $ snd $ unzip $ L.sortBy (\(a, _) (b, _) -> compare b a) (zip ts peers)
 
 fetchBestSyncedBlock ::
-       (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => CqlConnection -> Network -> m ((BlockHash, Int32))
+       (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => XCqlClientState -> Network -> m ((BlockHash, Int32))
 fetchBestSyncedBlock conn net = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
@@ -500,7 +500,7 @@ fetchBestSyncedBlock conn net = do
                         Nothing -> throw InvalidMetaDataException
 
 commitScriptHashOutputs ::
-       (HasLogger m, MonadIO m) => CqlConnection -> Text -> (Text, Int32) -> (Text, Int32, Int32) -> m ()
+       (HasLogger m, MonadIO m) => XCqlClientState -> Text -> (Text, Int32) -> (Text, Int32, Int32) -> m ()
 commitScriptHashOutputs conn sh output blockInfo = do
     lg <- getLogger
     let blkHeight = fromIntegral $ snd3 blockInfo
@@ -516,7 +516,7 @@ commitScriptHashOutputs conn sh output blockInfo = do
             err lg $ LG.msg $ "Error: INSERTing into 'script_hash_outputs': " ++ show e
             throw KeyValueDBInsertException
 
-commitScriptHashUnspentOutputs :: (HasLogger m, MonadIO m) => CqlConnection -> Text -> (Text, Int32) -> m ()
+commitScriptHashUnspentOutputs :: (HasLogger m, MonadIO m) => XCqlClientState -> Text -> (Text, Int32) -> m ()
 commitScriptHashUnspentOutputs conn sh output = do
     lg <- getLogger
     let qstr :: Q.QueryString Q.W (Text, (Text, Int32)) ()
@@ -529,7 +529,7 @@ commitScriptHashUnspentOutputs conn sh output = do
             err lg $ LG.msg $ "Error: INSERTing into 'script_hash_unspent_outputs': " ++ show e
             throw KeyValueDBInsertException
 
-deleteScriptHashUnspentOutputs :: (HasLogger m, MonadIO m) => CqlConnection -> Text -> (Text, Int32) -> m ()
+deleteScriptHashUnspentOutputs :: (HasLogger m, MonadIO m) => XCqlClientState -> Text -> (Text, Int32) -> m ()
 deleteScriptHashUnspentOutputs conn sh output = do
     lg <- getLogger
     let qstr :: Q.QueryString Q.W (Text, (Text, Int32)) ()
@@ -545,7 +545,7 @@ deleteScriptHashUnspentOutputs conn sh output = do
 
 insertTxIdOutputs ::
        (HasLogger m, MonadIO m)
-    => CqlConnection
+    => XCqlClientState
     -> (Text, Int32)
     -> Text
     -> Text
@@ -585,7 +585,7 @@ commitTxPage ::
 commitTxPage txhash bhash page = do
     dbe' <- getDB
     lg <- getLogger
-    let conn = connection $ dbe'
+    let conn = xCqlClientState $ dbe'
         txids = txHashToHex <$> txhash
         qstr :: Q.QueryString Q.W (Text, Int32, [Text]) ()
         qstr = "insert INTO xoken.blockhash_txids (block_hash, page_number, txids) values (?, ?, ?)"
@@ -604,7 +604,7 @@ processConfTransaction tx bhash blkht txind = do
     lg <- getLogger
     let !txhs = txHash tx
     let net = bitcoinNetwork $ nodeConfig bp2pEnv
-        conn = connection dbe'
+        conn = xCqlClientState dbe'
     debug lg $ LG.msg $ "processing Tx " ++ show (txhs)
     let !inAddrs = zip (txIn tx) [0 :: Int32 ..]
     let !outAddrs =
@@ -731,7 +731,7 @@ processConfTransaction tx bhash blkht txind = do
                  (concurrently_
                       (concurrently_
                            (commitScriptHashOutputs
-                                conn -- connection
+                                conn -- 
                                 sh -- scriptHash
                                 output
                                 bi)
@@ -804,7 +804,7 @@ processConfTransaction tx bhash blkht txind = do
     debug lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": end of processing signaled " ++ show bhash
 
 getSatsValueFromOutpoint ::
-       CqlConnection
+       XCqlClientState
     -> TSH.TSHashTable TxHash EV.Event
     -> Logger
     -> Network
@@ -855,7 +855,7 @@ getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait = do
             throw e
 
 getScriptHashFromOutpoint ::
-       CqlConnection -> TSH.TSHashTable TxHash EV.Event -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Text)
+       XCqlClientState -> TSH.TSHashTable TxHash EV.Event -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Text)
 getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs = do
     let str = "SELECT tx_serialized from xoken.transactions where tx_id = ?"
         qstr = str :: Q.QueryString Q.R (Identity Text) (Identity Blob)
