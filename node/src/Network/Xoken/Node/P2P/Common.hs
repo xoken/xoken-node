@@ -387,7 +387,6 @@ execQuery ps req = do
             sid = mkStreamId i
         case (Q.pack Q.V3 noCompression False sid req) of
             Right reqp -> do
-                print $ "sendQueryReq sid: " ++ show i
                 mv <- newEmptyMVar
                 TSH.insert ht i mv
                 (LB.sendAll sock reqp) `catch` (\(e :: IOException) -> putStrLn ("caught sendQueryReq: " ++ show e))
@@ -395,10 +394,8 @@ execQuery ps req = do
                 resp' <- TSH.lookup ht i -- logic issue
                 case resp' of
                     Just resp'' -> do
-                        print $ "AAA write' 1"
                         (XCqlResponse h x) <- takeMVar resp''
                         TSH.delete ht i
-                        print $ "AAA write' 2"
                         return $ Q.unpack noCompression h x
                     Nothing -> do
                         print $ "[Error] Query: Nothing in hashtable"
@@ -418,7 +415,6 @@ readResponse (XCQLConnection ht lock sock msem) =
             Left s -> do
                 print $ "[Error] Query: header error: " ++ s
                 MS.signal msem
-                print "readResponse error parsing header. closing socket."
                 Network.Socket.close sock
                 --throw KeyValPoolException
             Right h -> do
@@ -426,24 +422,18 @@ readResponse (XCQLConnection ht lock sock msem) =
                     RqHeader -> do
                         print "[Error] Query: RqHeader"
                         MS.signal msem
-                        print "readResponse error request header. closing socket."
                         Network.Socket.close sock
                         --throw KeyValPoolException
                     RsHeader -> do
                         let len = lengthRepr (bodyLength h)
                             sid = fromIntegral $ fromStreamId $ streamId h
-                        print $ "readResponse sid: " ++ show sid
                         x <- LB.recv sock (fromIntegral len)
-                        print $ "readResponse " ++ show x
                         mmv <- TSH.lookup ht sid
                         case mmv of
                             Just mv -> do
-                                print "readResponse before putMvar"
                                 putMVar mv (XCqlResponse h x)
-                                print "readResponse after putMvar"
                                 TSH.insert ht sid mv
                             Nothing -> do
-                                print "readResponse Nothing"
                                 return ()
                         MS.signal msem
 
