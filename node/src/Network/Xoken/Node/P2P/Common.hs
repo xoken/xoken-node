@@ -123,10 +123,23 @@ data AriviServiceException
     = KeyValueDBLookupException
     | GraphDBLookupException
     | InvalidOutputAddressException
-    | KeyValPoolException
     deriving (Show)
 
 instance Exception AriviServiceException
+
+data XCqlException
+    = XCqlPackException
+    | XCqlUnpackException
+    | XCqlInvalidRowsResultException
+    | XCqlInvalidVoidResultException
+    | XCqlQueryErrorException
+    | XCqlNotReadyException
+    | XCqlHeaderException
+    | XCqlInvalidHeaderException
+    | XCqlEmptyHashtableException
+    deriving (Show)
+
+instance Exception XCqlException
 
 --
 --
@@ -344,34 +357,28 @@ query ps req = do
     res <- execQuery ps req
     case res of
         Left e -> do
-            print $ "[Error] Query: unpack " ++ show e
-            throw KeyValPoolException
+            throw XCqlUnpackException
         Right (RsError _ _ e) -> do
-            print $ "[Error] Query: RsError: " ++ show e
-            throw KeyValPoolException
+            throw XCqlQueryErrorException
         Right response ->
             case response of
                 (Q.RsResult _ _ (Q.RowsResult _ r)) -> return r
                 response -> do
-                    print $ "[Error] Query: Not a RowsResult!!"
-                    throw KeyValPoolException
+                    throw XCqlInvalidRowsResultException
 
 write :: (Tuple a, Tuple b) => XCqlClientState -> Request k a b -> IO ()
 write ps req = do
     res <- execQuery ps req
     case res of
         Left e -> do
-            print $ "[Error] Query: unpack " ++ show e
-            throw KeyValPoolException
+            throw XCqlUnpackException
         Right (RsError _ _ e) -> do
-            print $ "[Error] Query: RsError: " ++ show e
-            throw KeyValPoolException
+            throw XCqlQueryErrorException
         Right response ->
             case response of
                 (Q.RsResult _ _ (Q.VoidResult)) -> return ()
                 response -> do
-                    print $ "[Error] Query: Not a VoidResult!!"
-                    throw KeyValPoolException
+                    throw XCqlInvalidVoidResultException
 
 execQuery :: (Tuple a, Tuple b) => XCqlClientState -> Request k a b -> IO (Either String (Response k a b))
 execQuery ps req = do
@@ -398,12 +405,10 @@ execQuery ps req = do
                         TSH.delete ht i
                         return $ Q.unpack noCompression h x
                     Nothing -> do
-                        print $ "[Error] Query: Nothing in hashtable"
-                        throw KeyValPoolException
+                        throw XCqlEmptyHashtableException
             Left _ -> do
-                print "[Error] Query: pack"
                 putMVar lock i
-                throw KeyValPoolException
+                throw XCqlPackException
 
 readResponse :: XCQLConnection -> IO ()
 readResponse (XCQLConnection ht lock sock msem) =
@@ -447,25 +452,19 @@ connHandshake sock req = do
             h' <- return $ header Q.V3 b
             case h' of
                 Left s -> do
-                    print $ "[Error] Query: header error: " ++ s
-                    throw KeyValPoolException
+                    throw XCqlHeaderException
                 Right h -> do
                     case headerType h of
                         RqHeader -> do
-                            print "[Error] Query: RqHeader"
-                            throw KeyValPoolException
+                            throw XCqlInvalidHeaderException
                         RsHeader -> do
                             case Q.unpack noCompression h "" of
                                 Right r@(RsReady _ _ Ready) -> return r
                                 Left e -> do
-                                    print "[Error] Query: unpack"
-                                    throw KeyValPoolException
+                                    throw XCqlUnpackException
                                 Right (RsError _ _ e) -> do
-                                    print $ "[Error] Query: RsError: " ++ show e
-                                    throw KeyValPoolException
+                                    throw XCqlQueryErrorException
                                 Right _ -> do
-                                    print $ "[Error] Query: Response is not ready"
-                                    throw KeyValPoolException
+                                    throw XCqlNotReadyException
         Left _ -> do
-            print "[Error] Query: pack"
-            throw KeyValPoolException
+            throw XCqlPackException
