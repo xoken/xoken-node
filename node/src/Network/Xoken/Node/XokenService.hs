@@ -470,7 +470,7 @@ goGetResource msg net roles sessKey pretty = do
                     case opsE of
                         Right ops -> return $ RPCResponse 200 pretty $ Right $ Just $ RespPartiallySignedAllegoryTx ops
                         Left (e :: SomeException) -> do
-                            liftIO $ print e
+                            debug lg $ LG.msg $ "allegory error PS_ALLEGORY_TX: " ++ show e
                             return $ RPCResponse 400 pretty $ Left $ RPCError INTERNAL_ERROR Nothing
                 _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
         "OUTPOINT->SPEND_STATUS" -> do

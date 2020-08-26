@@ -297,7 +297,7 @@ pushHash (stateMap, res) nhash left right ht ind final =
                 else throw MerkleTreeInvalidException -- Fatal error, can only happen in case of invalid leaf nodes
         Nothing ->
             if ht == ind
-                then (updateState, (insertSpecial (Just nhash) left right True res))
+                then (stateMap, (insertSpecial (Just nhash) left right True res))
                 else if final
                          then pushHash
                                   (updateState, (insertSpecial (Just nhash) left right True res))
@@ -439,11 +439,11 @@ merkleTreeBuilder tque blockHash treeHt = do
     lg <- getLogger
     dbe <- getDB
     continue <- liftIO $ newIORef True
-    txPage <- liftIO $ atomically $ newTBQueue 100
-    txPageNum <- liftIO $ atomically $ newTVar 1
-    tv <- liftIO $ atomically $ newTVar (M.empty, [])
+    txPage <- liftIO $ newIORef []
+    txPageNum <- liftIO $ newIORef 1
+    tv <- liftIO $ newIORef (M.empty, [])
     whileM_ (liftIO $ readIORef continue) $ do
-        hcstate <- liftIO $ readTVarIO tv
+        hcstate <- liftIO $ readIORef tv
         ores <- LA.race (liftIO $ threadDelay (1000000 * 60)) (liftIO $ atomically $ readTQueue tque)
         case ores of
             Left ()
@@ -453,23 +453,22 @@ merkleTreeBuilder tque blockHash treeHt = do
                 liftIO $ writeIORef continue False
                 liftIO $ MS.signal (maxTMTBuilderThreadLock p2pEnv)
             Right (txh, isLast) -> do
-                pgc <- liftIO $ atomically $ lengthTBQueue txPage
-                if (fromIntegral pgc) == 100
+                pg <- liftIO $ readIORef txPage
+                if (fromIntegral $ L.length pg) == 100
                     then do
-                        txHashes <- liftIO $ atomically $ flushTBQueue txPage
-                        pgn <- liftIO $ atomically $ readTVar txPageNum
-                        LA.async $ commitTxPage txHashes blockHash pgn
-                        liftIO $ atomically $ writeTVar txPageNum (pgn + 1)
-                        liftIO $ atomically $ writeTBQueue txPage txh
+                        pgn <- liftIO $ readIORef txPageNum
+                        LA.async $ commitTxPage pg blockHash pgn
+                        liftIO $ writeIORef txPage [txh]
+                        liftIO $ writeIORef txPageNum (pgn + 1)
                     else do
-                        liftIO $ atomically $ writeTBQueue txPage txh
+                        liftIO $ modifyIORef' txPage (\x -> x ++ [txh])
                 res <-
                     LE.try $
                     liftIO $
                     EX.retry 3 $ updateMerkleSubTrees dbe hcstate (getTxHash txh) Nothing Nothing treeHt 0 isLast
                 case res of
                     Right (hcs) -> do
-                        liftIO $ atomically $ writeTVar tv hcs
+                        liftIO $ writeIORef tv hcs
                     Left MerkleSubTreeAlreadyExistsException
                         -- second attempt, after deleting stale TMT nodes
                      -> do
@@ -489,7 +488,7 @@ merkleTreeBuilder tque blockHash treeHt = do
                                 -- do NOT delete queue here, merely end this thread
                                 throw e
                             Right (hcs) -> do
-                                liftIO $ atomically $ writeTVar tv hcs
+                                liftIO $ writeIORef tv hcs
                     Left ee -> do
                         err lg $
                             LG.msg
@@ -500,12 +499,12 @@ merkleTreeBuilder tque blockHash treeHt = do
                         -- do NOT delete queue here, merely end this thread
                         throw ee
                 when isLast $ do
-                    txHashes <- liftIO $ atomically $ flushTBQueue txPage
-                    if L.null txHashes
+                    pg <- liftIO $ readIORef txPage
+                    if L.null pg
                         then return ()
                         else do
-                            pgn <- liftIO $ atomically $ readTVar txPageNum
-                            LA.async $ commitTxPage txHashes blockHash pgn
+                            pgn <- liftIO $ readIORef txPageNum
+                            LA.async $ commitTxPage pg blockHash pgn
                             return ()
                     liftIO $ writeIORef continue False
                     liftIO $ TSH.delete (merkleQueueMap p2pEnv) blockHash
@@ -872,8 +871,6 @@ processTxStream (tx, binfo, txIndex) = do
     res <- LE.try $ processConfTransaction (tx) bhash (fromIntegral bheight) txIndex
     case res of
         Right () -> return ()
-        Left BlockHashNotFoundException -> return ()
-        Left EmptyHeadersMessageException -> return ()
         Left TxIDNotFoundException -> do
             throw TxIDNotFoundException
         Left KeyValueDBInsertException -> do
