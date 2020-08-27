@@ -13,6 +13,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE BangPatterns #-}
 
 import Arivi.Crypto.Utils.PublicKey.Signature as ACUPS
 import Arivi.Crypto.Utils.PublicKey.Utils
@@ -198,22 +199,14 @@ makeCqlPool nodeConf = do
         startCql :: Q.Request k () ()
         startCql = Q.RqStartup $ Q.Startup Q.Cqlv300 (Q.algorithm Q.noCompression) --(Q.CqlVersion "3.4.4") Q.None
     (addr:_) <- getAddrInfo (Just hints) (Just "127.0.0.1") (Just "9042")
-    let createResource = do
-            s <- socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)
-            Network.Socket.connect s (addrAddress addr)
-            connHandshake s startCql
-            t <- TSH.new 1
-            l <- newIORef (1 :: Int16)
-            m <- MS.new $ maxStreamsXCql nodeConf
-            let xcqlc = XCQLConnection t l s m
-            a <- A.async (readResponse xcqlc)
-            return (xcqlc, a)
-        killResource (XCQLConnection t l s m, a) = do
-            Network.Socket.close s
-            A.uninterruptibleCancel a
-    connPool <-
-        createPool createResource killResource (stripesXCql nodeConf) (5 * 60 * 10000) (maxConnectionsXCql nodeConf)
-    return connPool
+    s <- socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)
+    Network.Socket.connect s (addrAddress addr)
+    connHandshake s startCql
+    t <- TSH.new 1
+    l <- newMVar (1 :: Int16)
+    let xcqlc = XCQLConnection t l s
+    a <- A.async (readResponse xcqlc)
+    return (xcqlc, a)
 
 runThreads ::
        Config.Config
@@ -259,7 +252,6 @@ runThreads config nodeConf bp2p conn lg certPaths = do
                                             _ <- LA.wait z
                                             return ())
     liftIO $ destroyAllResources $ pool gdbState
-    liftIO $ destroyAllResources $ conn
     liftIO $ putStrLn $ "node recovering from fatal DB connection failure!"
     return ()
 
@@ -402,7 +394,7 @@ initNexa = do
     unless b defaultConfig
     cnf <- Config.readConfig "arivi-config.yaml"
     nodeCnf <- NC.readConfig "node-config.yaml"
-    conn <- makeCqlPool nodeCnf
+    !conn <- makeCqlPool nodeCnf
     defaultAdminUser conn
     bp2p <- defBitcoinP2P nodeCnf
     let certFP = tlsCertificatePath nodeCnf

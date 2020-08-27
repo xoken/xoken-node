@@ -52,12 +52,11 @@ data XCqlResponse =
 data XCQLConnection =
     XCQLConnection
         { xCqlHashTable :: !(TSH.TSHashTable Int16 (MVar XCqlResponse))
-        , xCqlWriteLock :: !(IORef Int16)
+        , xCqlWriteLock :: !(MVar Int16)
         , xCqlSocket :: !Socket
-        , xCqlMSem :: !(MSem Int16)
         }
 
-type XCqlClientState = Pool (XCQLConnection, Async ())
+type XCqlClientState = (XCQLConnection, Async ())
 
 data DatabaseHandles =
     DatabaseHandles
