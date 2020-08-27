@@ -6,7 +6,6 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE AllowAmbiguousTypes #-}
 
 module Network.Xoken.Node.P2P.Common where
 
