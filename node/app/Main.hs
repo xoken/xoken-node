@@ -143,24 +143,6 @@ instance HasAllegoryEnv AppM where
 instance HasLogger AppM where
     getLogger = asks (loggerEnv . xokenNodeEnv)
 
--- instance HasNetworkEnv AppM where
---     getEnv = asks (ariviNetworkEnv . nodeEndpointEnv . p2pEnv)
--- instance HasSecretKey AppM
--- instance HasKbucket AppM where
---     getKb = asks (kbucket . kademliaEnv . p2pEnv)
--- instance HasStatsdClient AppM where
---     getStatsdClient = asks (statsdClient . p2pEnv)
--- instance HasNodeEndpoint AppM where
---     getEndpointEnv = asks (nodeEndpointEnv . p2pEnv)
---     getNetworkConfig = asks (PE._networkConfig . nodeEndpointEnv . p2pEnv)
---     getHandlers = asks (handlers . nodeEndpointEnv . p2pEnv)
---     getNodeIdPeerMapTVarP2PEnv = asks (tvarNodeIdPeerMap . nodeEndpointEnv . p2pEnv)
--- instance HasPRT AppM where
---     getPeerReputationHistoryTableTVar = asks (tvPeerReputationHashTable . prtEnv . p2pEnv)
---     getServicesReputationHashMapTVar = asks (tvServicesReputationHashMap . prtEnv . p2pEnv)
---     getP2PReputationHashMapTVar = asks (tvP2PReputationHashMap . prtEnv . p2pEnv)
---     getReputedVsOtherTVar = asks (tvReputedVsOther . prtEnv . p2pEnv)
---     getKClosestVsRandomTVar = asks (tvKClosestVsRandom . prtEnv . p2pEnv)
 runAppM :: ServiceEnv -> AppM a -> IO a
 runAppM env (AppM app) = runReaderT app env
 
@@ -193,36 +175,32 @@ makeGraphDBResPool uname pwd = do
     putStrLn $ "Connected to Neo4j database, version " ++ show (a !! 0)
     return gdbState
 
-makeCqlPool :: NC.NodeConfig -> IO (XCqlClientState)
-makeCqlPool nodeConf = do
+initXCql :: NC.NodeConfig -> IO (XCqlClientState)
+initXCql nodeConf = do
     let hints = defaultHints {addrFlags = [AI_NUMERICHOST, AI_NUMERICSERV], addrSocketType = Stream}
         startCql :: Q.Request k () ()
         startCql = Q.RqStartup $ Q.Startup Q.Cqlv300 (Q.algorithm Q.noCompression) --(Q.CqlVersion "3.4.4") Q.None
-    (addr:_) <- getAddrInfo (Just hints) (Just "127.0.0.1") (Just "9042")
-    s <- socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)
-    Network.Socket.connect s (addrAddress addr)
-    connHandshake s startCql
-    t <- TSH.new 1
-    l <- newMVar (1 :: Int16)
-    let xcqlc = XCQLConnection t l s
-    a <- A.async (readResponse xcqlc)
-    return (xcqlc, a)
+    mapM
+        (\cn -> do
+             (addr:_) <- getAddrInfo (Just hints) (Just "127.0.0.1") (Just "9042")
+             s <- socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)
+             Network.Socket.connect s (addrAddress addr)
+             connHandshake s startCql
+             t <- TSH.new 1
+             l <- newMVar (1 :: Int16)
+             sk <- newIORef $ Just s
+             let xcqlc = XCQLConnection t l sk
+             A.async (readResponse xcqlc)
+             return xcqlc)
+        [1 .. (maxConnectionsXCql nodeConf)]
 
-runThreads ::
-       Config.Config
-    -> NC.NodeConfig
-    -> BitcoinP2P
-    -> XCqlClientState
-    -> LG.Logger
-    -- -> (P2PEnv AppM ServiceResource ServiceTopic RPCMessage PubNotifyMessage)
-    -> [FilePath]
-    -> IO ()
+runThreads :: Config.Config -> NC.NodeConfig -> BitcoinP2P -> XCqlClientState -> LG.Logger -> [FilePath] -> IO ()
 runThreads config nodeConf bp2p conn lg certPaths = do
     gdbState <- makeGraphDBResPool (neo4jUsername nodeConf) (neo4jPassword nodeConf)
     let dbh = DatabaseHandles gdbState conn
     let allegoryEnv = AllegoryEnv $ allegoryVendorSecretKey nodeConf
     let xknEnv = XokenNodeEnv bp2p dbh lg allegoryEnv
-    let serviceEnv = ServiceEnv xknEnv -- p2pEnv
+    let serviceEnv = ServiceEnv xknEnv
     epHandler <- newTLSEndpointServiceHandler
     -- start TLS endpoint
     async $ startTLSEndpoint epHandler (endPointTLSListenIP nodeConf) (endPointTLSListenPort nodeConf) certPaths
@@ -236,10 +214,8 @@ runThreads config nodeConf bp2p conn lg certPaths = do
     async $ Snap.serveSnaplet snapConfig (appInit xknEnv)
     withResource (pool $ graphDB dbh) (`BT.run` initAllegoryRoot genesisTx)
     -- run main workers
-    -- runFileLoggingT (toS $ Config.logFile config) $
     runAppM
         serviceEnv
-            -- initP2P config
         (do bp2pEnv <- getBitcoinP2P
             withAsync runEpochSwitcher $ \_ -> do
                 withAsync setupSeedPeerConnection $ \_ -> do
@@ -313,9 +289,7 @@ runWatchDog = do
                         liftIO $ writeIORef continue False
 
 runNode :: Config.Config -> NC.NodeConfig -> XCqlClientState -> BitcoinP2P -> [FilePath] -> IO ()
-runNode config nodeConf conn bp2p certPaths
-    -- p2pEnv <- mkP2PEnv config globalHandlerRpc globalHandlerPubSub [AriviService] []
- = do
+runNode config nodeConf conn bp2p certPaths = do
     lg <-
         LG.new
             (LG.setOutput
@@ -394,7 +368,7 @@ initNexa = do
     unless b defaultConfig
     cnf <- Config.readConfig "arivi-config.yaml"
     nodeCnf <- NC.readConfig "node-config.yaml"
-    !conn <- makeCqlPool nodeCnf
+    !conn <- initXCql nodeCnf
     defaultAdminUser conn
     bp2p <- defBitcoinP2P nodeCnf
     let certFP = tlsCertificatePath nodeCnf
@@ -420,6 +394,5 @@ relaunch =
 
 main :: IO ()
 main = do
-    initNexa
-    -- let pid = "/tmp/nexa.pid.0"
-    -- runDetached (Just pid) (ToFile "nexa.log") relaunch
+    let pid = "/tmp/nexa.pid.0"
+    runDetached (Just pid) (ToFile "nexa.log") relaunch

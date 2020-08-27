@@ -381,7 +381,16 @@ write ps req = do
                     throw XCqlInvalidVoidResultException
 
 execQuery :: (Tuple a, Tuple b) => XCqlClientState -> Request k a b -> IO (Either String (Response k a b))
-execQuery ((XCQLConnection ht lock sock), _) req = do
+execQuery xcs req = do
+    vcs <-
+        mapM
+            (\(XCQLConnection hx lx sx) -> do
+                 ct <- readIORef sx
+                 case ct of
+                     Just x -> return $ Just (hx, lx, x)
+                     Nothing -> return Nothing)
+            xcs
+    let (ht, lock, sock) = head $ catMaybes vcs
     a <- takeMVar lock
     mv <- newEmptyMVar
     let i =
@@ -403,22 +412,24 @@ execQuery ((XCQLConnection ht lock sock), _) req = do
     return $ Q.unpack noCompression h x
 
 readResponse :: XCQLConnection -> IO ()
-readResponse (XCQLConnection ht lock sock) =
+readResponse (XCQLConnection ht lock sk) =
     forever $ do
+        skref <- readIORef sk
+        let sock = fromJust skref
         b <- LB.recv sock 9
         h' <- return $ header Q.V3 b
         -- print $ "readResponse " ++ show b
         case h' of
             Left s -> do
                 print $ "[Error] Query: header error: " ++ s
-                Network.Socket.close sock
-                --throw KeyValPoolException
+                writeIORef sk Nothing
+                throw XCqlHeaderException
             Right h -> do
                 case headerType h of
                     RqHeader -> do
                         print "[Error] Query: RqHeader"
-                        Network.Socket.close sock
-                        --throw KeyValPoolException
+                        writeIORef sk Nothing
+                        throw XCqlHeaderException
                     RsHeader -> do
                         let len = lengthRepr (bodyLength h)
                             sid = fromIntegral $ fromStreamId $ streamId h
