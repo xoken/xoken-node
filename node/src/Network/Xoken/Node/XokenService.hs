@@ -21,7 +21,6 @@ import Arivi.P2P.PubSub.Types
 import Arivi.P2P.RPC.Env
 import Arivi.P2P.RPC.Fetch
 import Arivi.P2P.Types hiding (msgType)
-import Codec.Compression.GZip as GZ
 import Codec.Serialise
 import Conduit hiding (runResourceT)
 import Control.Applicative

@@ -18,7 +18,7 @@ endPointHTTPSListenPort: 9091
 
 maxBitcoinPeerCount: 10
 
-unresponsivePeerConnTimeoutSecs: 180
+unresponsivePeerConnTimeoutSecs: 600
 
 acivatePeerDiscovery: True
 
@@ -46,18 +46,18 @@ allegoryTxFeeSatsProducerAction: 400
 
 allegoryTxFeeSatsOwnerAction: 200
 
-txOutputValuesCacheKeyBits: 20
+txOutputValuesCacheKeyBits: 16
 
 unconfirmedTxCacheKeyBits: 16
 
-getDataResponseTimeout: 5
+getDataResponseTimeout: 30
 
-recentTxReceiveTimeout: 10
+recentTxReceiveTimeout: 60
 
-blockProcessingTimeout: 60
+blockProcessingTimeout: 120
 
-maxStreamsXCql: 32
+maxStreamsXCql: 500
 
 stripesXCql: 1
 
-maxConnectionsXCql: 16
+maxConnectionsXCql: 4
