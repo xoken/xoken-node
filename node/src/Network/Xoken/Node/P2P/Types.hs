@@ -52,7 +52,7 @@ data XCqlResponse =
 data XCQLConnection =
     XCQLConnection
         { xCqlHashTable :: !(TSH.TSHashTable Int16 (MVar XCqlResponse))
-        , xCqlWriteLock :: !(MVar Int16)
+        , xCqlWriteLock :: !(IORef Int16)
         , xCqlSocket :: !Socket
         , xCqlMSem :: !(MSem Int16)
         }

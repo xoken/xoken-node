@@ -203,7 +203,7 @@ makeCqlPool nodeConf = do
             Network.Socket.connect s (addrAddress addr)
             connHandshake s startCql
             t <- TSH.new 1
-            l <- newMVar (1 :: Int16)
+            l <- newIORef (1 :: Int16)
             m <- MS.new $ maxStreamsXCql nodeConf
             let xcqlc = XCQLConnection t l s m
             a <- A.async (readResponse xcqlc)
@@ -211,7 +211,8 @@ makeCqlPool nodeConf = do
         killResource (XCQLConnection t l s m, a) = do
             Network.Socket.close s
             A.uninterruptibleCancel a
-    connPool <- createPool createResource killResource (stripesXCql nodeConf) (5 * 60) (maxConnectionsXCql nodeConf)
+    connPool <-
+        createPool createResource killResource (stripesXCql nodeConf) (5 * 60 * 10000) (maxConnectionsXCql nodeConf)
     return connPool
 
 runThreads ::
@@ -243,7 +244,6 @@ runThreads config nodeConf bp2p conn lg certPaths = do
     withResource (pool $ graphDB dbh) (`BT.run` initAllegoryRoot genesisTx)
     -- run main workers
     -- runFileLoggingT (toS $ Config.logFile config) $
-
     runAppM
         serviceEnv
             -- initP2P config
@@ -428,5 +428,6 @@ relaunch =
 
 main :: IO ()
 main = do
-    let pid = "/tmp/nexa.pid.0"
-    runDetached (Just pid) (ToFile "nexa.log") relaunch
+    initNexa
+    -- let pid = "/tmp/nexa.pid.0"
+    -- runDetached (Just pid) (ToFile "nexa.log") relaunch

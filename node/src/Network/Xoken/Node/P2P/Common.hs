@@ -34,6 +34,7 @@ import qualified Data.ByteString.Lazy.Char8 as LC
 import Data.ByteString.Short as BSS
 import Data.Function ((&))
 import Data.Functor.Identity
+import Data.IORef
 import Data.Int
 import qualified Data.List as L
 import qualified Data.Map.Strict as M
@@ -382,33 +383,39 @@ write ps req = do
 
 execQuery :: (Tuple a, Tuple b) => XCqlClientState -> Request k a b -> IO (Either String (Response k a b))
 execQuery ps req = do
-    withResource ps $ \(xcs@(XCQLConnection ht lock sock msem), _)
-        -- getstreamid
-     -> do
-        MS.wait msem
-        a <- takeMVar lock
-        let i =
-                if a == maxBound
-                    then 1
-                    else (a + 1)
-            sid = mkStreamId i
-        case (Q.pack Q.V3 noCompression False sid req) of
-            Right reqp -> do
-                mv <- newEmptyMVar
-                TSH.insert ht i mv
-                (LB.sendAll sock reqp) `catch` (\(e :: IOException) -> putStrLn ("caught sendQueryReq: " ++ show e))
-                putMVar lock i
-                resp' <- TSH.lookup ht i -- logic issue
-                case resp' of
-                    Just resp'' -> do
-                        (XCqlResponse h x) <- takeMVar resp''
-                        TSH.delete ht i
-                        return $ Q.unpack noCompression h x
-                    Nothing -> do
-                        throw XCqlEmptyHashtableException
-            Left _ -> do
-                putMVar lock i
-                throw XCqlPackException
+    (hx, ind, ms) <-
+        withResource
+            ps
+            (\(xcs@(XCQLConnection ht lock sock msem), _) -> do
+                 a <- readIORef lock
+                 let i =
+                         if a == maxBound
+                             then 1
+                             else (a + 1)
+                     sid = mkStreamId i
+                 case (Q.pack Q.V3 noCompression False sid req) of
+                     Right reqp -> do
+                         mv <- newEmptyMVar
+                         TSH.insert ht i mv
+                         (LB.sendAll sock reqp) `catch`
+                             (\(e :: IOException) -> putStrLn ("caught sendQueryReq: " ++ show e))
+                         writeIORef lock i
+                    -- MS.wait msem
+                         return (ht, i, msem)
+                     Left _ -> do
+                         writeIORef lock i
+                         print "XCqlPackException"
+                         throw XCqlPackException)
+    resp' <- TSH.lookup hx ind
+    case resp' of
+        Just resp'' -> do
+            (XCqlResponse h x) <- takeMVar resp''
+            TSH.delete hx ind
+            -- MS.signal ms
+            return $ Q.unpack noCompression h x
+        Nothing -> do
+            print "XCqlEmptyHashtableException"
+            throw XCqlEmptyHashtableException
 
 readResponse :: XCQLConnection -> IO ()
 readResponse (XCQLConnection ht lock sock msem) =
@@ -419,14 +426,14 @@ readResponse (XCQLConnection ht lock sock msem) =
         case h' of
             Left s -> do
                 print $ "[Error] Query: header error: " ++ s
-                MS.signal msem
+                -- MS.signal msem
                 Network.Socket.close sock
                 --throw KeyValPoolException
             Right h -> do
                 case headerType h of
                     RqHeader -> do
                         print "[Error] Query: RqHeader"
-                        MS.signal msem
+                        -- MS.signal msem
                         Network.Socket.close sock
                         --throw KeyValPoolException
                     RsHeader -> do
@@ -437,10 +444,10 @@ readResponse (XCQLConnection ht lock sock msem) =
                         case mmv of
                             Just mv -> do
                                 putMVar mv (XCqlResponse h x)
-                                TSH.insert ht sid mv
+                                -- TSH.insert ht sid mv
                             Nothing -> do
                                 return ()
-                        MS.signal msem
+                        -- MS.signal msem
 
 connHandshake :: (Tuple a, Tuple b) => Socket -> Request k a b -> IO (Response k a b)
 connHandshake sock req = do
