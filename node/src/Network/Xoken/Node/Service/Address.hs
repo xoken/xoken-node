@@ -102,7 +102,7 @@ getTxOutputsData :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => (DT.Text,
 getTxOutputsData (txid, index) = do
     dbe <- getDB
     lg <- getLogger
-    let conn = connection (dbe)
+    let conn = xCqlClientState dbe
         toStr = "SELECT block_info,is_recv,other,value,address FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
         toQStr =
             toStr :: Q.QueryString Q.R (DT.Text, Int32) ( (DT.Text, Int32, Int32)
@@ -140,7 +140,7 @@ xGetOutputsAddress address pgSize mbNomTxInd = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    let conn = connection (dbe)
+    let conn = xCqlClientState dbe
         net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
         nominalTxIndex =
             case mbNomTxInd of
@@ -209,7 +209,7 @@ xGetUTXOsAddress address pgSize mbFromOutput = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    let conn = connection (dbe)
+    let conn = xCqlClientState dbe
         net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
         sh = convertToScriptHash net address
         fromOutput =
@@ -277,7 +277,7 @@ xGetOutputsScriptHash ::
 xGetOutputsScriptHash scriptHash pgSize mbNomTxInd = do
     dbe <- getDB
     lg <- getLogger
-    let conn = connection (dbe)
+    let conn = xCqlClientState dbe
         nominalTxIndex =
             case mbNomTxInd of
                 (Just n) -> n
@@ -322,7 +322,7 @@ xGetUTXOsScriptHash ::
 xGetUTXOsScriptHash scriptHash pgSize mbFromOutput = do
     dbe <- getDB
     lg <- getLogger
-    let conn = connection (dbe)
+    let conn = xCqlClientState dbe
         fromOutput =
             case mbFromOutput of
                 (Just n) -> n

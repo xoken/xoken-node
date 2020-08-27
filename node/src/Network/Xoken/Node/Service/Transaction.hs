@@ -103,7 +103,7 @@ xGetTxHash hash = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    let conn = connection (dbe)
+    let conn = xCqlClientState dbe
         net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
         str = "SELECT tx_id, block_info, tx_serialized, inputs, fees from xoken.transactions where tx_id = ?"
         qstr =
@@ -149,7 +149,7 @@ xGetTxHashes hashes = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    let conn = connection (dbe)
+    let conn = xCqlClientState dbe
         net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
         str = "SELECT tx_id, block_info, tx_serialized, inputs, fees from xoken.transactions where tx_id in ?"
         qstr =
@@ -198,7 +198,7 @@ getTxOutputsFromTxId :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => DT.Te
 getTxOutputsFromTxId txid = do
     dbe <- getDB
     lg <- getLogger
-    let conn = connection (dbe)
+    let conn = xCqlClientState dbe
         toStr = "SELECT output_index,block_info,is_recv,other,value,address FROM xoken.txid_outputs WHERE txid=?"
         toQStr =
             toStr :: Q.QueryString Q.R (Identity DT.Text) ( Int32
@@ -240,7 +240,7 @@ xGetTxIDsByBlockHash :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Strin
 xGetTxIDsByBlockHash hash pgSize pgNum = do
     dbe <- getDB
     lg <- getLogger
-    let conn = connection $ dbe
+    let conn = xCqlClientState $ dbe
         txsToSkip = pgSize * (pgNum - 1)
         firstPage = (+ 1) $ fromIntegral $ floor $ (fromIntegral txsToSkip) / 100
         lastPage = (+ 1) $ fromIntegral $ floor $ (fromIntegral $ txsToSkip + pgSize) / 100
@@ -259,7 +259,7 @@ xGetTxIDsByBlockHash hash pgSize pgNum = do
 xGetTxOutputSpendStatus :: (HasXokenNodeEnv env m, MonadIO m) => String -> Int32 -> m (Maybe TxOutputSpendStatus)
 xGetTxOutputSpendStatus txId outputIndex = do
     dbe <- getDB
-    let conn = connection (dbe)
+    let conn = xCqlClientState dbe
         str = "SELECT is_recv, block_info, other FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
         qstr =
             str :: Q.QueryString Q.R (DT.Text, Int32) ( Bool
@@ -301,7 +301,7 @@ xRelayTx rawTx = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    let conn = connection (dbe)
+    let conn = xCqlClientState dbe
         bheight = 100000
         bhash = hexToBlockHash "0000000000000000000000000000000000000000000000000000000000000000"
     debug lg $ LG.msg $ "relayTx bhash " ++ show bhash 

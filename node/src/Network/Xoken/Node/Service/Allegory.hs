@@ -269,7 +269,7 @@ xGetPartiallySignedAllegoryTx payips (nameArr, isProducer) owner change = do
     bp2pEnv <- getBitcoinP2P
     lg <- getLogger
     alg <- getAllegory
-    let conn = connection (dbe)
+    let conn = xCqlClientState dbe
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
      -- check if name (of given type) exists
     let name = DT.pack $ L.map (\x -> chr x) (nameArr)
@@ -298,38 +298,38 @@ xGetPartiallySignedAllegoryTx payips (nameArr, isProducer) owner change = do
                         debug lg $ LG.msg $ val "allegory case index of : Nothing"
                         throw KeyValueDBLookupException
     inputHash <-
-        liftIO $
-        traverse
-            (\(w, _) -> do
-                 let op = OutPoint (fromString $ opTxHash w) (fromIntegral $ opIndex w)
-                 sh <- getScriptHashFromOutpoint conn (txSynchronizer bp2pEnv) lg net op 0
-                 return $ (w, ) <$> sh)
-            payips
+         liftIO $
+         traverse
+             (\(w, _) -> do
+                  let op = OutPoint (fromString $ opTxHash w) (fromIntegral $ opIndex w)
+                  sh <- getScriptHashFromOutpoint conn (txSynchronizer bp2pEnv) lg net op 0
+                  return $ (w, ) <$> sh)
+             payips
     let totalEffectiveInputSats = sum $ snd $ unzip payips
     let ins =
-            L.map
-                (\(x, s) ->
-                     TxIn (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x)) (fromJust $ decodeHex s) 0)
-                ([nameip] ++ (catMaybes inputHash))
+             L.map
+                 (\(x, s) ->
+                      TxIn (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x)) (fromJust $ decodeHex s) 0)
+                 ([nameip] ++ (catMaybes inputHash))
     sigInputs <-
-        mapM
-            (\(x, s) -> do
-                 case (decodeOutputBS ((fst . B16.decode) (E.encodeUtf8 s))) of
-                     Left e -> do
-                         liftIO $
-                             print
-                                 ("error (allegory) unable to decode scriptOutput! | " ++
-                                  show name ++ " " ++ show (x, s) ++ " | " ++ show ((fst . B16.decode) (E.encodeUtf8 s)))
-                         throw KeyValueDBLookupException
-                     Right scr -> do
-                         return $
-                             SigInput
-                                 scr
-                                 (fromIntegral $ anutxos)
-                                 (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x))
-                                 (setForkIdFlag sigHashAll)
-                                 Nothing)
-            [nameip]
+         mapM
+             (\(x, s) -> do
+                  case (decodeOutputBS ((fst . B16.decode) (E.encodeUtf8 s))) of
+                      Left e -> do
+                          liftIO $
+                              print
+                                  ("error (allegory) unable to decode scriptOutput! | " ++
+                                   show name ++ " " ++ show (x, s) ++ " | " ++ show ((fst . B16.decode) (E.encodeUtf8 s)))
+                          throw KeyValueDBLookupException
+                      Right scr -> do
+                          return $
+                              SigInput
+                                  scr
+                                  (fromIntegral $ anutxos)
+                                  (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x))
+                                  (setForkIdFlag sigHashAll)
+                                  Nothing)
+             [nameip]
      --
     let outs =
             if existed
@@ -444,7 +444,7 @@ getInputsForUnconfirmedTx op = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    let conn = connection (dbe)
+    let conn = xCqlClientState dbe
         (txid, index) = (opTxHash op, opIndex op)
         str = "SELECT other FROM xoken.ep_txid_outputs WHERE epoch IN (True,False)"
         qstr = str :: Q.QueryString Q.R () (Identity ((DT.Text, Int32), Int32, (DT.Text, Int64)))

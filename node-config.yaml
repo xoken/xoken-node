@@ -55,3 +55,9 @@ getDataResponseTimeout: 5
 recentTxReceiveTimeout: 10
 
 blockProcessingTimeout: 60
+
+maxStreamsXCql: 32
+
+stripesXCql: 1
+
+maxConnectionsXCql: 16

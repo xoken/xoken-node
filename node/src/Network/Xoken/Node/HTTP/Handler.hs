@@ -73,7 +73,7 @@ addUser :: RPCReqParams' -> Handler App App ()
 addUser AddUser {..} = do
     dbe <- getDB
     pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
-    let conn = connection dbe
+    let conn = xCqlClientState dbe
     resp <-
         LE.try $
         return $
@@ -622,7 +622,7 @@ testAuthHeader :: XokenNodeEnv -> Maybe B.ByteString -> Maybe DT.Text -> IO Bool
 testAuthHeader _ Nothing _ = pure False
 testAuthHeader env (Just sessionKey) role = do
     let dbe = dbHandles env
-        conn = connection (dbe)
+        conn = xCqlClientState (dbe)
         lg = loggerEnv env
         bp2pEnv = bitcoinP2PEnv env
         sKey = DT.pack $ S.unpack sessionKey

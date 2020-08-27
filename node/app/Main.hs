@@ -12,6 +12,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE BlockArguments #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 import Arivi.Crypto.Utils.PublicKey.Signature as ACUPS
 import Arivi.Crypto.Utils.PublicKey.Utils
@@ -28,6 +29,7 @@ import Arivi.P2P.ServiceRegistry
 import Control.Arrow
 import Control.Concurrent (threadDelay)
 import Control.Concurrent
+import qualified Control.Concurrent.Async as A (async, uninterruptibleCancel)
 import Control.Concurrent.Async.Lifted as LA (async, race, wait, withAsync)
 import Control.Concurrent.Event as EV
 import Control.Concurrent.MSem as MS
@@ -190,27 +192,33 @@ makeGraphDBResPool uname pwd = do
     putStrLn $ "Connected to Neo4j database, version " ++ show (a !! 0)
     return gdbState
 
-makeCqlPool :: IO (CqlConnection)
-makeCqlPool = do
+makeCqlPool :: NC.NodeConfig -> IO (XCqlClientState)
+makeCqlPool nodeConf = do
     let hints = defaultHints {addrFlags = [AI_NUMERICHOST, AI_NUMERICSERV], addrSocketType = Stream}
         startCql :: Q.Request k () ()
         startCql = Q.RqStartup $ Q.Startup Q.Cqlv300 (Q.algorithm Q.noCompression) --(Q.CqlVersion "3.4.4") Q.None
     (addr:_) <- getAddrInfo (Just hints) (Just "127.0.0.1") (Just "9042")
-    connPool <-
-        createPool
-            (socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr) >>= \s ->
-                 Network.Socket.connect s (addrAddress addr) >> connHandshake s startCql >> return s)
-            (Network.Socket.close)
-            1
-            (1800000000000)
-            200
+    let createResource = do
+            s <- socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)
+            Network.Socket.connect s (addrAddress addr)
+            connHandshake s startCql
+            t <- TSH.new 1
+            l <- newMVar (1 :: Int16)
+            m <- MS.new $ maxStreamsXCql nodeConf
+            let xcqlc = XCQLConnection t l s m
+            a <- A.async (readResponse xcqlc)
+            return (xcqlc, a)
+        killResource (XCQLConnection t l s m, a) = do
+            Network.Socket.close s
+            A.uninterruptibleCancel a
+    connPool <- createPool createResource killResource (stripesXCql nodeConf) (5 * 60) (maxConnectionsXCql nodeConf)
     return connPool
 
 runThreads ::
        Config.Config
     -> NC.NodeConfig
     -> BitcoinP2P
-    -> CqlConnection
+    -> XCqlClientState
     -> LG.Logger
     -- -> (P2PEnv AppM ServiceResource ServiceTopic RPCMessage PubNotifyMessage)
     -> [FilePath]
@@ -235,9 +243,10 @@ runThreads config nodeConf bp2p conn lg certPaths = do
     withResource (pool $ graphDB dbh) (`BT.run` initAllegoryRoot genesisTx)
     -- run main workers
     -- runFileLoggingT (toS $ Config.logFile config) $
+
     runAppM
         serviceEnv
-                -- initP2P config
+            -- initP2P config
         (do bp2pEnv <- getBitcoinP2P
             withAsync runEpochSwitcher $ \_ -> do
                 withAsync setupSeedPeerConnection $ \_ -> do
@@ -258,7 +267,7 @@ runSyncStatusChecker :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
 runSyncStatusChecker = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    conn <- connection <$> getDB
+    conn <- xCqlClientState <$> getDB
     -- wait 300 seconds before first check
     liftIO $ threadDelay (300 * 1000000)
     forever $ do
@@ -279,7 +288,7 @@ runWatchDog = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    let conn = connection (dbe)
+    let conn = xCqlClientState (dbe)
     LG.debug lg $ LG.msg $ LG.val "Starting watchdog"
     continue <- liftIO $ newIORef True
     whileM_ (liftIO $ readIORef continue) $ do
@@ -311,7 +320,7 @@ runWatchDog = do
                         LG.err lg $ LG.msg $ LG.val "Error: insert timed-out, watchdog raise alert "
                         liftIO $ writeIORef continue False
 
-runNode :: Config.Config -> NC.NodeConfig -> CqlConnection -> BitcoinP2P -> [FilePath] -> IO ()
+runNode :: Config.Config -> NC.NodeConfig -> XCqlClientState -> BitcoinP2P -> [FilePath] -> IO ()
 runNode config nodeConf conn bp2p certPaths
     -- p2pEnv <- mkP2PEnv config globalHandlerRpc globalHandlerPubSub [AriviService] []
  = do
@@ -338,7 +347,7 @@ defNetwork = bsvTest
 netNames :: String
 netNames = intercalate "|" (Data.List.map getNetworkName allNets)
 
-defaultAdminUser :: CqlConnection -> IO ()
+defaultAdminUser :: XCqlClientState -> IO ()
 defaultAdminUser conn = do
     let qstr =
             " SELECT password from xoken.user_permission where username = 'admin' " :: Q.QueryString Q.R () (Identity T.Text)
@@ -389,12 +398,12 @@ defBitcoinP2P nodeCnf = do
 initNexa :: IO ()
 initNexa = do
     putStrLn $ "Starting Xoken Nexa"
-    conn <- makeCqlPool
-    defaultAdminUser conn
     b <- doesFileExist "arivi-config.yaml"
     unless b defaultConfig
     cnf <- Config.readConfig "arivi-config.yaml"
     nodeCnf <- NC.readConfig "node-config.yaml"
+    conn <- makeCqlPool nodeCnf
+    defaultAdminUser conn
     bp2p <- defBitcoinP2P nodeCnf
     let certFP = tlsCertificatePath nodeCnf
         keyFP = tlsKeyfilePath nodeCnf
