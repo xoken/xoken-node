@@ -305,9 +305,15 @@ xRelayTx rawTx = do
         bheight = 100000
         bhash = hexToBlockHash "0000000000000000000000000000000000000000000000000000000000000000"
     debug lg $ LG.msg $ "relayTx bhash " ++ show bhash 
+    -- !!
+    liftIO $ print $ "xRelayTx: called with Tx: " <> show rawTx
+    -- !!
     -- broadcast Tx
     case runGetState (getConfirmedTx) (rawTx) 0 of
         Left e -> do
+            -- !!
+            liftIO $ print $ "xRelayTx: eror decoding raw Tx: " <> show e 
+            -- !!
             err lg $ LG.msg $ "error decoding rawTx :" ++ show e
             throw ConfirmedTxParseException
         Right res -> do
