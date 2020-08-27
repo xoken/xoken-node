@@ -461,6 +461,7 @@ goGetResource msg net roles sessKey pretty = do
             case methodParams $ rqParams msg of
                 Just (RelayTx tx) -> do
                     debug lg $ LG.msg $ "[relayflow] goGetResource: calling xRelayTx with arguments rawTx=" <> show tx
+                    liftIO $ print $ "[relayflow] goGetResource: calling xRelayTx with arguments rawTx=" <> show tx
                     ops <- xRelayTx tx
                     return $ RPCResponse 200 pretty $ Right $ Just $ RespRelayTx ops
                 _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing

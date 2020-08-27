@@ -306,15 +306,19 @@ xRelayTx rawTx = do
         bhash = hexToBlockHash "0000000000000000000000000000000000000000000000000000000000000000"
     debug lg $ LG.msg $ "relayTx bhash " ++ show bhash 
     debug lg $ LG.msg $ "[relayflow] xRelayTx: called with arguments rawTx=" <> show rawTx
+    liftIO $ print $ "[relayflow] xRelayTx: called with arguments rawTx=" <> show rawTx
     debug lg $ LG.msg $ "[relayflow] xRelayTx: calling getConfirmedTx with arguments tx=" <> show rawTx
+    liftIO $ print $ "[relayflow] xRelayTx: calling getConfirmedTx with arguments tx=" <> show rawTx
     -- broadcast Tx
     case runGetState (getConfirmedTx) (rawTx) 0 of
         Left e -> do
             debug lg $ LG.msg $ "[relayflow] xRelayTx: getConfirmedTx returned: Left " <> show e
+            liftIO $ print $ "[relayflow] xRelayTx: getConfirmedTx returned: Left " <> show e
             err lg $ LG.msg $ "error decoding rawTx :" ++ show e
             throw ConfirmedTxParseException
         Right res -> do
             debug lg $ LG.msg $ "[relayflow] xRelayTx: getConfirmedTx returned: Right " <> show res
+            liftIO $ print $ "[relayflow] xRelayTx: getConfirmedTx returned: Right " <> show res
             debug lg $ LG.msg $ val $ "broadcasting tx"
             case fst res of
                 Just tx -> do
