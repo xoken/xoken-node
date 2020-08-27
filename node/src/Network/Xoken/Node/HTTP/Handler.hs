@@ -479,19 +479,14 @@ getOutpointsByName = do
 
 relayTx :: RPCReqParams' -> Handler App App ()
 relayTx RelayTx {..} = do
-    liftIO $ print $ "relayTx: function was called by HTTP handler!"
     pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
-    liftIO $ print $ "relayTx: calling xRelayTx with parameters tx=" <> show rTx
     res <- LE.try $ xRelayTx rTx
-    liftIO $ print $ "relayTx: xRelayTx returned: " <> show res
     case res of
         Left (e :: SomeException) -> do
-            liftIO $ print $ "relayTx: encountered exception: " <> show e
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
         Right ops -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespRelayTx ops
-
-getRelayTx _ = throwBadRequest
+relayTx _ = throwBadRequest
 
 getPartiallySignedAllegoryTx :: RPCReqParams' -> Handler App App ()
 getPartiallySignedAllegoryTx GetPartiallySignedAllegoryTx {..} = do
