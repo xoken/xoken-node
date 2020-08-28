@@ -457,6 +457,20 @@ getInputsForUnconfirmedTx op = do
         Right others -> do
             return $ (\(Identity ((txid, index), _, _)) -> OutPoint' (DT.unpack txid) index) <$> others
 
+getUnconfirmedInputs :: (HasXokenNodeEnv env m, MonadIO m) => String -> m [OutPoint']
+getUnconfirmedInputs addr = do
+    dbe <- getDB
+    lg <- getLogger
+    bp2pEnv <- getBitcoinP2P
+    let conn = xCqlClientState dbe
+        net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
+        sh = convertToScriptHash net addr
+        str = "SELECT output FROM xoken.ep_script_hash_outputs WHERE script_hash=?"
+        qstr = str :: Q.QueryString Q.R (Identity DT.Text) (Identity (DT.Text, Int32))
+        par = getSimpleQueryParam (Identity (maybe "" DT.pack sh))
+    res <- liftIO $ query conn (Q.RqQuery $ Q.Query qstr par)
+    return []
+
 getFundingUtxos :: (HasXokenNodeEnv env m, MonadIO m) => String -> m [AddressOutputs]
 getFundingUtxos addr = do
     lg <- getLogger
