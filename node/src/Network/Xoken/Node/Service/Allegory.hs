@@ -465,7 +465,7 @@ getUnconfirmedOutputsForAddress addr = do
     let conn = xCqlClientState dbe
         net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
         sh = convertToScriptHash net addr
-        str = "SELECT output FROM xoken.ep_script_hash_outputs WHERE script_hash=?"
+        str = "SELECT output FROM xoken.ep_script_hash_outputs WHERE epoch IN (True,False) AND script_hash=?"
         qstr = str :: Q.QueryString Q.R (Identity DT.Text) (Identity (DT.Text, Int32))
         par = getSimpleQueryParam (Identity (maybe "" DT.pack sh))
     res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
