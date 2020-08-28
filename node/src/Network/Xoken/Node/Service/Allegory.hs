@@ -445,9 +445,9 @@ getInputsForUnconfirmedTx op = do
     bp2pEnv <- getBitcoinP2P
     let conn = xCqlClientState dbe
         (txid, index) = (opTxHash op, opIndex op)
-        str = "SELECT other FROM xoken.ep_txid_outputs WHERE epoch IN (True,False)"
-        qstr = str :: Q.QueryString Q.R () (Identity ((DT.Text, Int32), Int32, (DT.Text, Int64)))
-        par = getSimpleQueryParam ()
+        str = "SELECT other FROM xoken.ep_txid_outputs WHERE epoch IN (True,False) AND txid=? AND output_index=?"
+        qstr = str :: Q.QueryString Q.R (DT.Text, Int32) (Identity ((DT.Text, Int32), Int32, (DT.Text, Int64)))
+        par = getSimpleQueryParam (DT.pack $ opTxHash op, opIndex op)
     res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
     case res of
         Left (e :: SomeException) -> do
@@ -457,8 +457,8 @@ getInputsForUnconfirmedTx op = do
         Right others -> do
             return $ (\(Identity ((txid, index), _, _)) -> OutPoint' (DT.unpack txid) index) <$> others
 
-getUnconfirmedInputs :: (HasXokenNodeEnv env m, MonadIO m) => String -> m [OutPoint']
-getUnconfirmedInputs addr = do
+getUnconfirmedOutputsForAddress :: (HasXokenNodeEnv env m, MonadIO m) => String -> m [OutPoint']
+getUnconfirmedOutputsForAddress addr = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
@@ -468,8 +468,13 @@ getUnconfirmedInputs addr = do
         str = "SELECT output FROM xoken.ep_script_hash_outputs WHERE script_hash=?"
         qstr = str :: Q.QueryString Q.R (Identity DT.Text) (Identity (DT.Text, Int32))
         par = getSimpleQueryParam (Identity (maybe "" DT.pack sh))
-    res <- liftIO $ query conn (Q.RqQuery $ Q.Query qstr par)
-    return []
+    res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
+    case res of
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: getUnconfirmedOutputsForAddress: " <> show e
+            throw KeyValueDBLookupException
+        Right res -> do
+            return $ (\(Identity op) -> OutPoint' (DT.unpack $ fst op) (snd op)) <$> res
 
 getFundingUtxos :: (HasXokenNodeEnv env m, MonadIO m) => String -> m [AddressOutputs]
 getFundingUtxos addr = do
@@ -485,7 +490,8 @@ getFundingUtxos addr = do
         LG.msg $
         "[FundingUtxos] getFundingUtxos: calling getInputsForUnconfirmedTx with arguments [input]=" <>
         (show $ aoOutput <$> utxos)
-    possiblySpentInputs <- liftM concat $ sequence $ getInputsForUnconfirmedTx <$> aoOutput <$> utxos
+    unconfOutputs <- getUnconfirmedOutputsForAddress addr
+    possiblySpentInputs <- liftM concat $ sequence $ getInputsForUnconfirmedTx <$> unconfOutputs
     liftIO $
         debug lg $
         LG.msg $ "[FundingUtxos] getFundingUtxos: getInputsForUnconfirmedTx returned: " <> show possiblySpentInputs
