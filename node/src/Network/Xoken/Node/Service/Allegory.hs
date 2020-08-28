@@ -474,7 +474,7 @@ getUnconfirmedOutputsForAddress addr = do
             err lg $ LG.msg $ "Error: getUnconfirmedOutputsForAddress: " <> show e
             throw KeyValueDBLookupException
         Right res -> do
-            return $ (\(Identity op) -> OutPoint' (DT.unpack $ fst op) (snd op)) <$> res
+            return $ nub $ (\(Identity op) -> OutPoint' (DT.unpack $ fst op) (snd op)) <$> res
 
 getFundingUtxos :: (HasXokenNodeEnv env m, MonadIO m) => String -> m [AddressOutputs]
 getFundingUtxos addr = do
