@@ -2,6 +2,15 @@
 Xoken Nexa Node
 ===============
 
+v1.1.1     2020-08-27
+
+- Xcql Cassandra driver custom performance upgrades
+- XCql full multiplexing support for requests/responses
+- P2P streaming blocks, ingest batched transactions in chunks
+- Improvements to concurrent syncing
+- General bug fixes and code cleanup 
+
+
 v1.1.0     2020-07-17
 
 - HTTPS endpoint & REST API added, supports convenient JSON responses.
@@ -48,9 +57,7 @@ v1.0.0-beta     2020-05-26
 - Bugfix to address stalled syncing on resource constrained hardware.
 - General bug fixes and code cleanup.
 
+
 v1.0.0-alpha    2020-02-05
 
 - First version, released on an unsuspecting world.
-
-
-
