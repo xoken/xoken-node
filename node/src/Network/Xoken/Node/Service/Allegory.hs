@@ -197,7 +197,8 @@ createCommitImplictTx nameArr = do
                 ([nameip])
     liftIO $
         debug lg $
-        LG.msg $ "[FundingUtxos] createCommitImplicitTx: calling getFundingUtxos with arguments: address=" <> show addr'
+        LG.msg $
+        "[01 FundingUtxos] createCommitImplicitTx: calling getFundingUtxos with arguments: address=" <> show addr'
     utxos <- getFundingUtxos addr'
     liftIO $ debug lg $ LG.msg $ "[FundingUtxos] createCommitImplicitTx: getFundingUtxos returned: " <> show utxos
     let (ins, fval) =
@@ -455,6 +456,7 @@ getInputsForUnconfirmedTx op = do
             err lg $ LG.msg $ "Error: getInputsForUnconfirmedTx: " ++ show e
             throw KeyValueDBLookupException
         Right others -> do
+            debug lg $ LG.msg $ "[07 FundingUtxos] getInputsForUnconfirmedTx: got results from query: " <> show others
             return $ (\(Identity ((txid, index), _, _)) -> OutPoint' (DT.unpack txid) index) <$> others
 
 getUnconfirmedOutputsForAddress :: (HasXokenNodeEnv env m, MonadIO m) => String -> m [OutPoint']
@@ -476,7 +478,7 @@ getUnconfirmedOutputsForAddress addr = do
         Right res -> do
             liftIO $
                 debug lg $
-                LG.msg $ "[FundingUtxos] getUnconfirmedOutputsForAddress: got results from query: " <> show res
+                LG.msg $ "[05 FundingUtxos] getUnconfirmedOutputsForAddress: got results from query: " <> show res
             return $ nub $ (\(Identity op) -> OutPoint' (DT.unpack $ fst op) (snd op)) <$> res
 
 getFundingUtxos :: (HasXokenNodeEnv env m, MonadIO m) => String -> m [AddressOutputs]
@@ -484,19 +486,29 @@ getFundingUtxos addr = do
     lg <- getLogger
     liftIO $
         debug lg $
-        LG.msg $ "[FundingUtxos] getFundingUtxos: calling xGetUTXOsAddress with arguments: address=" <> show addr
+        LG.msg $ "[02 FundingUtxos] getFundingUtxos: calling xGetUTXOsAddress with arguments: address=" <> show addr
     res <- xGetUTXOsAddress addr (Just 200) Nothing
     let utxos = (\(ResultWithCursor ao _) -> ao) <$> res
-    liftIO $ debug lg $ LG.msg $ "[FundingUtxos] getFundingUtxos: xGetUTXOsAddress returned: " <> show utxos
+    liftIO $
+        debug lg $
+        LG.msg $ "[03 FundingUtxos] getFundingUtxos: xGetUTXOsAddress returned (count): " <> (show $ length utxos)
     liftIO $
         debug lg $
         LG.msg $
-        "[FundingUtxos] getFundingUtxos: calling getUnconfirmedOutputsForAddress with arguments [address]=" <>
+        "[04 FundingUtxos] getFundingUtxos: calling getUnconfirmedOutputsForAddress with arguments [address]=" <>
         (show addr)
     unconfOutputs <- getUnconfirmedOutputsForAddress addr
-    liftIO $ debug lg $ LG.msg $ "[FundingUtxos] getFundingUtxos: got unconfirmed outputs: " <> show unconfOutputs
+    liftIO $ debug lg $ LG.msg $ "[06 FundingUtxos] getFundingUtxos: got unconfirmed outputs: " <> show unconfOutputs
     possiblySpentInputs <- liftM concat $ sequence $ getInputsForUnconfirmedTx <$> unconfOutputs
     liftIO $
         debug lg $
-        LG.msg $ "[FundingUtxos] getFundingUtxos: getInputsForUnconfirmedTx returned: " <> show possiblySpentInputs
-    return $ L.filter (\utxo -> (aoOutput utxo `L.elem` possiblySpentInputs)) utxos
+        LG.msg $ "[08 FundingUtxos] getFundingUtxos: getInputsForUnconfirmedTx returned: " <> show possiblySpentInputs
+    let fundingUtxos = L.filter (\utxo -> (aoOutput utxo `L.elem` possiblySpentInputs)) (nub utxos)
+    liftIO $
+        debug lg $
+        LG.msg $
+        "[09 FundingUtxos] getFundingUtxos: all utxos for address: " ++
+        (show $ length $ nub utxos) ++
+        ", out of which possibly spent outputs: " ++
+        (show $ length possiblySpentInputs) ++ ", length of filtered list: " ++ (show $ length fundingUtxos)
+    return fundingUtxos
