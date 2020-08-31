@@ -200,7 +200,7 @@ createCommitImplictTx nameArr = do
         LG.msg $
         "[01 FundingUtxos] createCommitImplicitTx: calling getFundingUtxos with arguments: address=" <> show addr'
     utxos <- getFundingUtxos addr'
-    liftIO $ debug lg $ LG.msg $ "[FundingUtxos] createCommitImplicitTx: getFundingUtxos returned: " <> show utxos
+    liftIO $ debug lg $ LG.msg $ "[10 FundingUtxos] createCommitImplicitTx: getFundingUtxos returned: " <> show utxos
     let (ins, fval) =
             case L.filter (\y -> aoValue y >= 100000) utxos of
                 [] -> (ins', 0)
@@ -503,7 +503,7 @@ getFundingUtxos addr = do
     liftIO $
         debug lg $
         LG.msg $ "[08 FundingUtxos] getFundingUtxos: getInputsForUnconfirmedTx returned: " <> show possiblySpentInputs
-    let fundingUtxos = L.filter (\utxo -> (aoOutput utxo `L.elem` possiblySpentInputs)) (nub utxos)
+    let fundingUtxos = L.filter (\utxo -> (aoOutput utxo `L.notElem` possiblySpentInputs)) (nub utxos)
     liftIO $
         debug lg $
         LG.msg $
