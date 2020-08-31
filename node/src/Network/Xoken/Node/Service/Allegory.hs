@@ -297,38 +297,38 @@ xGetPartiallySignedAllegoryTx payips (nameArr, isProducer) owner change = do
                         debug lg $ LG.msg $ val "allegory case index of : Nothing"
                         throw KeyValueDBLookupException
     inputHash <-
-         liftIO $
-         traverse
-             (\(w, _) -> do
-                  let op = OutPoint (fromString $ opTxHash w) (fromIntegral $ opIndex w)
-                  sh <- getScriptHashFromOutpoint conn (txSynchronizer bp2pEnv) lg net op 0
-                  return $ (w, ) <$> sh)
-             payips
+        liftIO $
+        traverse
+            (\(w, _) -> do
+                 let op = OutPoint (fromString $ opTxHash w) (fromIntegral $ opIndex w)
+                 sh <- getScriptHashFromOutpoint conn (txSynchronizer bp2pEnv) lg net op 0
+                 return $ (w, ) <$> sh)
+            payips
     let totalEffectiveInputSats = sum $ snd $ unzip payips
     let ins =
-             L.map
-                 (\(x, s) ->
-                      TxIn (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x)) (fromJust $ decodeHex s) 0)
-                 ([nameip] ++ (catMaybes inputHash))
+            L.map
+                (\(x, s) ->
+                     TxIn (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x)) (fromJust $ decodeHex s) 0)
+                ([nameip] ++ (catMaybes inputHash))
     sigInputs <-
-         mapM
-             (\(x, s) -> do
-                  case (decodeOutputBS ((fst . B16.decode) (E.encodeUtf8 s))) of
-                      Left e -> do
-                          liftIO $
-                              print
-                                  ("error (allegory) unable to decode scriptOutput! | " ++
-                                   show name ++ " " ++ show (x, s) ++ " | " ++ show ((fst . B16.decode) (E.encodeUtf8 s)))
-                          throw KeyValueDBLookupException
-                      Right scr -> do
-                          return $
-                              SigInput
-                                  scr
-                                  (fromIntegral $ anutxos)
-                                  (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x))
-                                  (setForkIdFlag sigHashAll)
-                                  Nothing)
-             [nameip]
+        mapM
+            (\(x, s) -> do
+                 case (decodeOutputBS ((fst . B16.decode) (E.encodeUtf8 s))) of
+                     Left e -> do
+                         liftIO $
+                             print
+                                 ("error (allegory) unable to decode scriptOutput! | " ++
+                                  show name ++ " " ++ show (x, s) ++ " | " ++ show ((fst . B16.decode) (E.encodeUtf8 s)))
+                         throw KeyValueDBLookupException
+                     Right scr -> do
+                         return $
+                             SigInput
+                                 scr
+                                 (fromIntegral $ anutxos)
+                                 (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x))
+                                 (setForkIdFlag sigHashAll)
+                                 Nothing)
+            [nameip]
      --
     let outs =
             if existed
@@ -474,6 +474,9 @@ getUnconfirmedOutputsForAddress addr = do
             err lg $ LG.msg $ "Error: getUnconfirmedOutputsForAddress: " <> show e
             throw KeyValueDBLookupException
         Right res -> do
+            liftIO $
+                debug lg $
+                LG.msg $ "[FundingUtxos] getUnconfirmedOutputsForAddress: got results from query: " <> show res
             return $ nub $ (\(Identity op) -> OutPoint' (DT.unpack $ fst op) (snd op)) <$> res
 
 getFundingUtxos :: (HasXokenNodeEnv env m, MonadIO m) => String -> m [AddressOutputs]
@@ -488,9 +491,10 @@ getFundingUtxos addr = do
     liftIO $
         debug lg $
         LG.msg $
-        "[FundingUtxos] getFundingUtxos: calling getInputsForUnconfirmedTx with arguments [input]=" <>
-        (show $ aoOutput <$> utxos)
+        "[FundingUtxos] getFundingUtxos: calling getUnconfirmedOutputsForAddress with arguments [address]=" <>
+        (show addr)
     unconfOutputs <- getUnconfirmedOutputsForAddress addr
+    liftIO $ debug lg $ LG.msg $ "[FundingUtxos] getFundingUtxos: got unconfirmed outputs: " <> show unconfOutputs
     possiblySpentInputs <- liftM concat $ sequence $ getInputsForUnconfirmedTx <$> unconfOutputs
     liftIO $
         debug lg $
