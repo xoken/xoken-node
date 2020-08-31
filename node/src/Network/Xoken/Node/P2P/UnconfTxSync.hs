@@ -323,7 +323,7 @@ processUnconfTransaction tx = do
                                              net
                                              (prevOutput b)
                                              250
-                                             (100 * (txProcInputDependenciesWait $ nodeConfig bp2pEnv))
+                                             (1000 * (txProcInputDependenciesWait $ nodeConfig bp2pEnv))
                                      return valFromDB
                          Nothing -> do
                              valFromDB <-
