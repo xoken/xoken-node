@@ -160,7 +160,7 @@ setupSeedPeerConnection =
                                                       msg ("Seed peer blacklisted, ignoring.. " ++ show (addrAddress y))
                                               else do
                                                   rl <- liftIO $ newMVar True
-                                                  wl <- liftIO $ newMVar True
+                                                  wl <- liftIO $ newMVar ()
                                                   ss <- liftIO $ newTVarIO Nothing
                                                   imc <- liftIO $ newTVarIO 0
                                                   rc <- liftIO $ newTVarIO Nothing
@@ -235,7 +235,7 @@ setupPeerConnection saddr = do
                              case res of
                                  Right (sock) -> do
                                      rl <- liftIO $ newMVar True
-                                     wl <- liftIO $ newMVar True
+                                     wl <- liftIO $ newMVar ()
                                      ss <- liftIO $ newTVarIO Nothing
                                      imc <- liftIO $ newTVarIO 0
                                      rc <- liftIO $ newTVarIO Nothing
@@ -695,7 +695,7 @@ doVersionHandshake net sock sa = do
         rmt = NetworkAddress 0 sa
         ver = buildVersion net nonce bb ad rmt now
         em = runPut . putMessage net $ (MVersion ver)
-    mv <- liftIO $ (newMVar True)
+    mv <- liftIO $ (newMVar ())
     liftIO $ sendEncMessage mv sock (BSL.fromStrict em)
     (hs1, _) <- readNextMessage net sock Nothing
     case hs1 of

@@ -168,11 +168,8 @@ msgOrder m1 m2 = do
         then LT
         else GT
 
-sendEncMessage :: MVar Bool -> Socket -> BSL.ByteString -> IO ()
-sendEncMessage writeLock sock msg = do
-    a <- takeMVar writeLock
-    (LB.sendAll sock msg) `catch` (\(e :: IOException) -> putStrLn ("caught: " ++ show e))
-    putMVar writeLock a
+sendEncMessage :: MVar () -> Socket -> BSL.ByteString -> IO ()
+sendEncMessage writeLock sock msg = withMVar writeLock (\x -> (LB.sendAll sock msg))
 
 -- | Computes the height of a Merkle tree.
 computeTreeHeight ::
@@ -391,20 +388,20 @@ execQuery xcs req = do
                      Nothing -> return Nothing)
             xcs
     let (ht, lock, sock) = head $ catMaybes vcs
-    a <- takeMVar lock
     mv <- newEmptyMVar
-    let i =
-            if a == maxBound
-                then 1
-                else (a + 1)
-        sid = mkStreamId i
+    i <-
+        modifyMVar
+            lock
+            (\a -> do
+                 if a == maxBound
+                     then return (1, 1)
+                     else return (a + 1, a + 1))
+    let sid = mkStreamId i
     case (Q.pack Q.V3 noCompression False sid req) of
         Right reqp -> do
             TSH.insert ht i mv
-            putMVar lock i
-            (LB.sendAll sock reqp) `catch` (\(e :: IOException) -> putStrLn ("caught sendQueryReq: " ++ show e))
+            withMVar lock (\_ -> LB.sendAll sock reqp)
         Left _ -> do
-            putMVar lock i
             print "XCqlPackException"
             throw XCqlPackException
     (XCqlResponse h x) <- takeMVar mv

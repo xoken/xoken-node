@@ -69,7 +69,7 @@ data BitcoinPeer =
     BitcoinPeer
         { bpAddress :: !SockAddr --  network address
         , bpSocket :: !(Maybe Socket) --  live stream socket
-        , bpWriteMsgLock :: !(MVar Bool) --  write message lock
+        , bpWriteMsgLock :: !(MVar ()) --  write message lock
         , bpConnected :: !Bool --  peer is connected and ready
         , bpVersion :: !(Maybe Version) -- protocol version
         , bpNonce :: !Word64 -- random nonce sent during handshake
