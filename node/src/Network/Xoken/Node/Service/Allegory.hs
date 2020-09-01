@@ -489,7 +489,7 @@ getFundingUtxos addr = do
     liftIO $
         debug lg $
         LG.msg $ "[02 FundingUtxos] getFundingUtxos: calling xGetUTXOsAddress with arguments: address=" <> show addr
-    res <- xGetUTXOsAddress addr (Just 50) Nothing
+    res <- xGetUTXOsAddress addr (Just 200) Nothing
     let utxos = (\(ResultWithCursor ao _) -> ao) <$> res
     liftIO $ debug lg $ LG.msg $ "[-- Filtering --] getFundingUtxos: ALL: " <> show utxos
     liftIO $
@@ -503,17 +503,17 @@ getFundingUtxos addr = do
     unconfOutputs <- getUnconfirmedOutputsForAddress addr
     liftIO $ debug lg $ LG.msg $ "[06 FundingUtxos] getFundingUtxos: got unconfirmed outputs: " <> show unconfOutputs
     possiblySpentInputs <- liftM concat $ sequence $ getInputsForUnconfirmedTx <$> unconfOutputs
-    liftIO $ debug lg $ LG.msg $ "[-- Filtering --] getFundingUtxos: PSX: " <> show possiblySpentInputs
     liftIO $
         debug lg $
         LG.msg $ "[08 FundingUtxos] getFundingUtxos: getInputsForUnconfirmedTx returned: " <> show possiblySpentInputs
     let fundingUtxos = L.filter (\utxo -> (aoOutput utxo `L.notElem` possiblySpentInputs)) (nub utxos)
-    liftIO $ debug lg $ LG.msg $ "[-- Filtering --] getFundingUtxos: FIN: " <> show fundingUtxos
     liftIO $
         debug lg $
         LG.msg $
-        "[09 FundingUtxos] getFundingUtxos: ALL UTXOS for address: " ++
-        (show $ nub utxos) ++
-        ", out of which POSSIBLY SPENT UTXOS: " ++
-        (show possiblySpentInputs) ++ ", FILTERED LIST: " ++ (show $ fundingUtxos)
+        "[09 FundingUtxos] getFundingUtxos: ALL OUTPUTS for address " ++
+        show addr ++
+        ": " ++
+        (show $ length $ nub utxos) ++
+        ", out of which POSSIBLY SPENT OUTPUTS: " ++
+        (show $ length possiblySpentInputs) ++ ", size of FILTERED LIST: " ++ (show $ length fundingUtxos)
     return fundingUtxos
