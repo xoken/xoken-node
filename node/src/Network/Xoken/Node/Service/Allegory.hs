@@ -489,8 +489,9 @@ getFundingUtxos addr = do
     liftIO $
         debug lg $
         LG.msg $ "[02 FundingUtxos] getFundingUtxos: calling xGetUTXOsAddress with arguments: address=" <> show addr
-    res <- xGetUTXOsAddress addr (Just 200) Nothing
+    res <- xGetUTXOsAddress addr (Just 50) Nothing
     let utxos = (\(ResultWithCursor ao _) -> ao) <$> res
+    liftIO $ debug lg $ LG.msg $ "[-- Filtering --] getFundingUtxos: ALL: " <> show utxos
     liftIO $
         debug lg $
         LG.msg $ "[03 FundingUtxos] getFundingUtxos: xGetUTXOsAddress returned (count): " <> (show $ length utxos)
@@ -502,10 +503,12 @@ getFundingUtxos addr = do
     unconfOutputs <- getUnconfirmedOutputsForAddress addr
     liftIO $ debug lg $ LG.msg $ "[06 FundingUtxos] getFundingUtxos: got unconfirmed outputs: " <> show unconfOutputs
     possiblySpentInputs <- liftM concat $ sequence $ getInputsForUnconfirmedTx <$> unconfOutputs
+    liftIO $ debug lg $ LG.msg $ "[-- Filtering --] getFundingUtxos: PSX: " <> show possiblySpentInputs
     liftIO $
         debug lg $
         LG.msg $ "[08 FundingUtxos] getFundingUtxos: getInputsForUnconfirmedTx returned: " <> show possiblySpentInputs
     let fundingUtxos = L.filter (\utxo -> (aoOutput utxo `L.notElem` possiblySpentInputs)) (nub utxos)
+    liftIO $ debug lg $ LG.msg $ "[-- Filtering --] getFundingUtxos: FIN: " <> show fundingUtxos
     liftIO $
         debug lg $
         LG.msg $
