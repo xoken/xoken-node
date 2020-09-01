@@ -452,16 +452,14 @@ getInputsForUnconfirmedTx op = do
         qstr = str :: Q.QueryString Q.R (DT.Text, Int32) (Identity (Set ((DT.Text, Int32), Int32, (DT.Text, Int64))))
         par = getSimpleQueryParam (DT.pack $ opTxHash op, opIndex op)
     res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
-    case res of
+    case (concat . ((runIdentity . (Q.fromSet <$>)) <$>)) <$> res of
         Left (e :: SomeException) -> do
             debug lg $ LG.msg $ "[FundingUtxos] getInputsForUnconfirmedTx: encountered error: " <> show e
             err lg $ LG.msg $ "Error: getInputsForUnconfirmedTx: " ++ show e
             throw KeyValueDBLookupException
         Right os -> do
             debug lg $ LG.msg $ "[07 FundingUtxos] getInputsForUnconfirmedTx: got results from query: " <> show os
-            let others = concat $ (\(Identity l) -> l) <$> ((Q.fromSet <$>) <$> os)
-            debug lg $ LG.msg $ "[07 FundingUtxos] getInputsForUnconfirmedTx: results (fromSet): " <> show others
-            return $ (\((txid, index), _, _) -> OutPoint' (DT.unpack txid) index) <$> others
+            return $ (\((txid, index), _, _) -> OutPoint' (DT.unpack txid) index) <$> os
 
 getUnconfirmedOutputsForAddress :: (HasXokenNodeEnv env m, MonadIO m) => String -> m [OutPoint']
 getUnconfirmedOutputsForAddress addr = do
@@ -511,8 +509,8 @@ getFundingUtxos addr = do
     liftIO $
         debug lg $
         LG.msg $
-        "[09 FundingUtxos] getFundingUtxos: all utxos for address: " ++
-        (show $ length $ nub utxos) ++
-        ", out of which possibly spent outputs: " ++
-        (show $ length possiblySpentInputs) ++ ", length of filtered list: " ++ (show $ length fundingUtxos)
+        "[09 FundingUtxos] getFundingUtxos: ALL UTXOS for address: " ++
+        (show $ nub utxos) ++
+        ", out of which POSSIBLY SPENT UTXOS: " ++
+        (show possiblySpentInputs) ++ ", FILTERED LIST: " ++ (show $ fundingUtxos)
     return fundingUtxos
