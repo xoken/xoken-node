@@ -200,7 +200,9 @@ createCommitImplictTx nameArr = do
         LG.msg $
         "[01 FundingUtxos] createCommitImplicitTx: calling getFundingUtxos with arguments: address=" <> show addr'
     utxos <- getFundingUtxos addr'
-    liftIO $ debug lg $ LG.msg $ "[10 FundingUtxos] createCommitImplicitTx: getFundingUtxos returned: " <> show utxos
+    liftIO $
+        debug lg $
+        LG.msg $ "[10 FundingUtxos] createCommitImplicitTx: getFundingUtxos returned (count): " <> (show $ length utxos)
     let (ins, fval) =
             case L.filter (\y -> aoValue y >= 100000) utxos of
                 [] -> (ins', 0)
@@ -447,7 +449,7 @@ getInputsForUnconfirmedTx op = do
     let conn = xCqlClientState dbe
         (txid, index) = (opTxHash op, opIndex op)
         str = "SELECT other FROM xoken.ep_txid_outputs WHERE epoch IN (True,False) AND txid=? AND output_index=?"
-        qstr = str :: Q.QueryString Q.R (DT.Text, Int32) (Identity ((DT.Text, Int32), Int32, (DT.Text, Int64)))
+        qstr = str :: Q.QueryString Q.R (DT.Text, Int32) (Identity (Set ((DT.Text, Int32), Int32, (DT.Text, Int64))))
         par = getSimpleQueryParam (DT.pack $ opTxHash op, opIndex op)
     res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
     case res of
@@ -455,9 +457,11 @@ getInputsForUnconfirmedTx op = do
             debug lg $ LG.msg $ "[FundingUtxos] getInputsForUnconfirmedTx: encountered error: " <> show e
             err lg $ LG.msg $ "Error: getInputsForUnconfirmedTx: " ++ show e
             throw KeyValueDBLookupException
-        Right others -> do
-            debug lg $ LG.msg $ "[07 FundingUtxos] getInputsForUnconfirmedTx: got results from query: " <> show others
-            return $ (\(Identity ((txid, index), _, _)) -> OutPoint' (DT.unpack txid) index) <$> others
+        Right os -> do
+            debug lg $ LG.msg $ "[07 FundingUtxos] getInputsForUnconfirmedTx: got results from query: " <> show os
+            let others = concat $ (\(Identity l) -> l) <$> ((Q.fromSet <$>) <$> os)
+            debug lg $ LG.msg $ "[07 FundingUtxos] getInputsForUnconfirmedTx: results (fromSet): " <> show others
+            return $ (\((txid, index), _, _) -> OutPoint' (DT.unpack txid) index) <$> others
 
 getUnconfirmedOutputsForAddress :: (HasXokenNodeEnv env m, MonadIO m) => String -> m [OutPoint']
 getUnconfirmedOutputsForAddress addr = do
