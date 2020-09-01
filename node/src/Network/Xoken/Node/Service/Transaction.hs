@@ -356,7 +356,6 @@ xRelayTx rawTx = do
                     let !connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
                     debug lg $ LG.msg $ val $ "transaction verified - broadcasting tx"
                     mapM_ (\(_, peer) -> do sendRequestMessages peer (MTx (fromJust $ fst res))) connPeers
-                    processConfTransaction tx (fromJust bhash) bheight 0
                     eres <- LE.try $ handleIfAllegoryTx tx True -- MUST be False
                     case eres of
                         Right (flg) -> return True
