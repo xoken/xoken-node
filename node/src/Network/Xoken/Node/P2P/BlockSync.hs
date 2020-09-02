@@ -311,8 +311,8 @@ runBlockCacheQueue =
                             throw e
                         Right (op) -> do
                             if L.length op == 0
+                                    --debug lg $ LG.msg $ val "Synced fully!"
                                 then do
-                                    debug lg $ LG.msg $ val "Synced fully!"
                                     return (Nothing)
                                 else if L.length op == (fromIntegral $ last cacheInd)
                                          then do
@@ -488,7 +488,7 @@ fetchBestSyncedBlock conn net = do
                     return ((headerHash $ getGenesisHeader net), 0)
                 else do
                     let record = runIdentity $ iop !! 0
-                    debug lg $ LG.msg $ "Best-synced-block from DB: " ++ (show record)
+                    --debug lg $ LG.msg $ "Best-synced-block from DB: " ++ (show record)
                     case getTextVal record of
                         Just tx -> do
                             case (hexToBlockHash $ tx) of

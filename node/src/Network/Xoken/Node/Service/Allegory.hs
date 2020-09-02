@@ -245,10 +245,12 @@ createCommitImplictTx nameArr = do
                   Nothing
             ]
     let psatx = Tx version ins outs locktime
-    debug lg $ LG.msg $ "allegory psatx before sign createCommitTx: " ++ show psatx
+    debug lg $ LG.msg $ "[11 FundingUtxos] createCommitImplicitTx: unsigned intermim transaction: " ++ show psatx
     case signTx net psatx sigInputs [allegorySecretKey alg, allegorySecretKey alg] of
         Right tx -> do
-            debug lg $ LG.msg $ "allegory psatx after sign createCommitTx: " ++ show tx
+            debug lg $ LG.msg $ "[12 FundingUtxos] createCommitImplicitTx: signed interim transaction: " ++ show tx
+            debug lg $
+                LG.msg $ "[13 FundingUtxos] createCommitImplicitTx: created transaction: " <> (show $ txHash psatx)
             processUnconfTransaction tx
             xRelayTx $ Data.Serialize.encode tx
             return ()
@@ -456,7 +458,9 @@ getInputsForUnconfirmedTx op = do
             err lg $ LG.msg $ "Error: getInputsForUnconfirmedTx: " <> show e
             throw KeyValueDBLookupException
         Right os -> do
-            debug lg $ LG.msg $ "[07 FundingUtxos] getInputsForUnconfirmedTx: got results from query (count): " <> (show $ length os)
+            debug lg $
+                LG.msg $
+                "[07 FundingUtxos] getInputsForUnconfirmedTx: got results from query (count): " <> (show $ length os)
             return $ (\((txid, index), _, _) -> OutPoint' (DT.unpack txid) index) <$> os
 
 getUnconfirmedOutputsForAddress :: (HasXokenNodeEnv env m, MonadIO m) => String -> m [OutPoint']
@@ -478,7 +482,9 @@ getUnconfirmedOutputsForAddress addr = do
         Right res -> do
             liftIO $
                 debug lg $
-                LG.msg $ "[05 FundingUtxos] getUnconfirmedOutputsForAddress: got results from query (count): " <> (show $ length res)
+                LG.msg $
+                "[05 FundingUtxos] getUnconfirmedOutputsForAddress: got results from query (count): " <>
+                (show $ length res)
             return $ nub $ (\(Identity op) -> OutPoint' (DT.unpack $ fst op) (snd op)) <$> res
 
 getFundingUtxos :: (HasXokenNodeEnv env m, MonadIO m) => String -> m [AddressOutputs]

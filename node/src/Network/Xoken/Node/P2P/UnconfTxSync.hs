@@ -418,7 +418,9 @@ processUnconfTransaction tx = do
     --
     vall <- liftIO $ TSH.lookup (txSynchronizer bp2pEnv) (txHash tx)
     case vall of
-        Just ev -> liftIO $ EV.signal $ ev
+        Just ev -> do
+            liftIO $ EV.signal $ ev
+            liftIO $ debug lg $ LG.msg $ "Finished processing unconfirmed transaction: " ++ (show $ txHash tx)
         Nothing -> return ()
 
 getSatsValueFromEpochOutpoint ::
