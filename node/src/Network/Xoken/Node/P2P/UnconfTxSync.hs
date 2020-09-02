@@ -477,11 +477,11 @@ sourceSatsValueFromOutpoint ::
     -> Int
     -> IO ((Text, Text, Int64))
 sourceSatsValueFromOutpoint conn epoch txSync lg net outPoint waitSecs maxWait = do
-    res <- liftIO $ try $ getSatsValueFromOutpoint conn txSync lg net outPoint waitSecs maxWait
+    res <- liftIO $ try $ getSatsValueFromEpochOutpoint conn epoch txSync lg net outPoint waitSecs
     case res of
         Right val -> return val
         Left TxIDNotFoundException -> do
-            getSatsValueFromEpochOutpoint conn epoch txSync lg net outPoint waitSecs
+            getSatsValueFromOutpoint conn txSync lg net outPoint waitSecs maxWait
 
 convertToScriptHash :: Network -> String -> Maybe String
 convertToScriptHash net s = do
