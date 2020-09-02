@@ -440,7 +440,6 @@ xGetPartiallySignedAllegoryTx payips (nameArr, isProducer) owner change = do
     version = 1
     locktime = 0
 
---
 getInputsForUnconfirmedTx :: (HasXokenNodeEnv env m, MonadIO m) => OutPoint' -> m [OutPoint']
 getInputsForUnconfirmedTx op = do
     dbe <- getDB
@@ -454,11 +453,10 @@ getInputsForUnconfirmedTx op = do
     res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
     case (concat . ((runIdentity . (Q.fromSet <$>)) <$>)) <$> res of
         Left (e :: SomeException) -> do
-            debug lg $ LG.msg $ "[FundingUtxos] getInputsForUnconfirmedTx: encountered error: " <> show e
-            err lg $ LG.msg $ "Error: getInputsForUnconfirmedTx: " ++ show e
+            err lg $ LG.msg $ "Error: getInputsForUnconfirmedTx: " <> show e
             throw KeyValueDBLookupException
         Right os -> do
-            debug lg $ LG.msg $ "[07 FundingUtxos] getInputsForUnconfirmedTx: got results from query: " <> show os
+            debug lg $ LG.msg $ "[07 FundingUtxos] getInputsForUnconfirmedTx: got results from query (count): " <> (show $ length os)
             return $ (\((txid, index), _, _) -> OutPoint' (DT.unpack txid) index) <$> os
 
 getUnconfirmedOutputsForAddress :: (HasXokenNodeEnv env m, MonadIO m) => String -> m [OutPoint']
@@ -480,7 +478,7 @@ getUnconfirmedOutputsForAddress addr = do
         Right res -> do
             liftIO $
                 debug lg $
-                LG.msg $ "[05 FundingUtxos] getUnconfirmedOutputsForAddress: got results from query: " <> show res
+                LG.msg $ "[05 FundingUtxos] getUnconfirmedOutputsForAddress: got results from query (count): " <> (show $ length res)
             return $ nub $ (\(Identity op) -> OutPoint' (DT.unpack $ fst op) (snd op)) <$> res
 
 getFundingUtxos :: (HasXokenNodeEnv env m, MonadIO m) => String -> m [AddressOutputs]
@@ -491,7 +489,6 @@ getFundingUtxos addr = do
         LG.msg $ "[02 FundingUtxos] getFundingUtxos: calling xGetUTXOsAddress with arguments: address=" <> show addr
     res <- xGetUTXOsAddress addr (Just 200) Nothing
     let utxos = (\(ResultWithCursor ao _) -> ao) <$> res
-    liftIO $ debug lg $ LG.msg $ "[-- Filtering --] getFundingUtxos: ALL: " <> show utxos
     liftIO $
         debug lg $
         LG.msg $ "[03 FundingUtxos] getFundingUtxos: xGetUTXOsAddress returned (count): " <> (show $ length utxos)
