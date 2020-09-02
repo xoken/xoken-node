@@ -15,7 +15,7 @@ module Network.Xoken.Node.P2P.UnconfTxSync
     ) where
 
 import Control.Concurrent (threadDelay)
-import Control.Concurrent.Async (mapConcurrently, race_)
+import Control.Concurrent.Async (mapConcurrently, race, race_)
 import Control.Concurrent.Async.Lifted (concurrently_)
 import Control.Concurrent.Async.Lifted as LA (async)
 import Control.Concurrent.Event as EV
@@ -55,6 +55,7 @@ import Data.Time.Clock.POSIX
 import Data.Time.LocalTime
 import Data.Word
 import Database.XCQL.Protocol as Q
+import qualified GHC.Base as GB (id)
 import qualified Network.Socket as NS
 import qualified Network.Socket.ByteString as SB (recv)
 import qualified Network.Socket.ByteString.Lazy as LB (recv, sendAll)
@@ -479,11 +480,11 @@ sourceSatsValueFromOutpoint ::
     -> Int
     -> IO ((Text, Text, Int64))
 sourceSatsValueFromOutpoint conn epoch txSync lg net outPoint waitSecs maxWait = do
-    res <- liftIO $ try $ getSatsValueFromEpochOutpoint conn epoch txSync lg net outPoint waitSecs
-    case res of
-        Right val -> return val
-        Left TxIDNotFoundException -> do
-            getSatsValueFromOutpoint conn txSync lg net outPoint waitSecs maxWait
+    res' <-
+        race
+            (liftIO $ getSatsValueFromOutpoint conn txSync lg net outPoint waitSecs maxWait)
+            (liftIO $ getSatsValueFromEpochOutpoint conn epoch txSync lg net outPoint waitSecs)
+    return $ either (GB.id) (GB.id) res'
 
 convertToScriptHash :: Network -> String -> Maybe String
 convertToScriptHash net s = do

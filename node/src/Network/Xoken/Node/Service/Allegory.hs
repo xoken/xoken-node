@@ -249,8 +249,7 @@ createCommitImplictTx nameArr = do
     case signTx net psatx sigInputs [allegorySecretKey alg, allegorySecretKey alg] of
         Right tx -> do
             debug lg $ LG.msg $ "[12 FundingUtxos] createCommitImplicitTx: signed interim transaction: " ++ show tx
-            debug lg $
-                LG.msg $ "[13 FundingUtxos] createCommitImplicitTx: created transaction: " <> (show $ txHash psatx)
+            debug lg $ LG.msg $ "[13 FundingUtxos] createCommitImplicitTx: created transaction: " <> (show $ txHash tx)
             processUnconfTransaction tx
             xRelayTx $ Data.Serialize.encode tx
             return ()
