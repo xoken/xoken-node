@@ -262,8 +262,8 @@ checkBlocksFullySynced conn = do
             err lg $ LG.msg $ "checkBlocksFullySynced: error while querying DB: " ++ show e
             return False
 
-getBatchSize :: Int32 -> Int32 -> [Int32]
-getBatchSize peerCount n
+getBatchSizeMainnet :: Int32 -> Int32 -> [Int32]
+getBatchSizeMainnet peerCount n
     | n < 200000 =
         if peerCount > 8
             then [1 .. 8]
@@ -277,6 +277,16 @@ getBatchSize peerCount n
             then [1 .. 2]
             else [1]
     | otherwise = [1]
+
+getBatchSizeTestnet :: Int32 -> Int32 -> [Int32]
+getBatchSizeTestnet peerCount n
+    | peerCount > 8 = [1 .. 8]
+    | otherwise = [1 .. peerCount]
+
+getBatchSize :: Network -> Int32 -> Int32 -> [Int32]
+getBatchSize net peerCount n
+    | (getNetworkName net == "bsvtest") = getBatchSizeTestnet peerCount n
+    | otherwise = getBatchSizeMainnet peerCount n
 
 runBlockCacheQueue :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
 runBlockCacheQueue =
@@ -299,7 +309,7 @@ runBlockCacheQueue =
             if sysz == 0
                 then do
                     (hash, ht) <- fetchBestSyncedBlock conn net
-                    let cacheInd = getBatchSize (fromIntegral $ L.length connPeers) ht
+                    let cacheInd = getBatchSize net (fromIntegral $ L.length connPeers) ht
                     let !bks = map (\x -> ht + x) cacheInd
                     let qstr :: Q.QueryString Q.R (Identity [Int32]) ((Int32, T.Text))
                         qstr = "SELECT block_height, block_hash from xoken.blocks_by_height where block_height in ?"
