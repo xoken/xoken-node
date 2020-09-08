@@ -184,7 +184,7 @@ createCommitImplictTx nameArr = do
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
     (nameip, existed) <- getOrMakeProducer (init nameArr)
     let anutxos = NC.allegoryNameUtxoSatoshis $ nodeConfig $ bp2pEnv
-    let prAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
+    let prAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey False $ allegorySecretKey alg
     let prScript = addressToScriptBS prAddr
     let addr' =
             case addrToString net prAddr of
@@ -193,25 +193,20 @@ createCommitImplictTx nameArr = do
     let ins' =
             L.map
                 (\(x, s) ->
-                     TxIn (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x)) (fromJust $ decodeHex s) 0)
+                     TxIn
+                         (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x))
+                         (fromJust $ decodeHex s)
+                         0xFFFFFFFF)
                 ([nameip])
-    liftIO $
-        debug lg $
-        LG.msg $
-        "[01 FundingUtxos] createCommitImplicitTx: calling getFundingUtxos with arguments: address=" <> show addr'
     utxos <- getFundingUtxos addr'
-    liftIO $
-        debug lg $
-        LG.msg $ "[10 FundingUtxos] createCommitImplicitTx: getFundingUtxos returned (count): " <> (show $ length utxos)
     let (ins, fval) =
-            case L.filter (\y -> aoValue y >= 100000) utxos of
+            case L.filter (\y -> aoValue y >= 2000000) utxos of
                 [] -> (ins', 0)
                 (x:xs) ->
                     let op = aoOutput x
-                     in ( ins' ++ [TxIn (OutPoint (fromString $ opTxHash op) (fromIntegral $ opIndex op)) prScript 0]
+                     in ( ins' ++
+                          [TxIn (OutPoint (fromString $ opTxHash op) (fromIntegral $ opIndex op)) prScript 0xFFFFFFFF]
                         , aoValue x)
-    liftIO $ debug lg $ LG.msg $ "allegory TxIn ins: " <> show ins
-    liftIO $ debug lg $ LG.msg $ "allegory TxIn fval: " <> show fval
         -- construct OP_RETURN
     let al =
             Allegory
@@ -229,7 +224,6 @@ createCommitImplictTx nameArr = do
     let opRetScript = frameOpReturn $ C.toStrict $ serialise al
         -- derive producer's Address
     let !outs = [TxOut 0 opRetScript] ++ L.map (\_ -> TxOut (fromIntegral anutxos) prScript) [1, 2, 3]
-    debug lg $ LG.msg $ "allegory tx createCommitTx: " ++ show outs
     let !sigInputs =
             [ SigInput
                   (addressToOutput prAddr)
@@ -245,11 +239,8 @@ createCommitImplictTx nameArr = do
                   Nothing
             ]
     let psatx = Tx version ins outs locktime
-    debug lg $ LG.msg $ "[11 FundingUtxos] createCommitImplicitTx: unsigned intermim transaction: " ++ show psatx
     case signTx net psatx sigInputs [allegorySecretKey alg, allegorySecretKey alg] of
         Right tx -> do
-            debug lg $ LG.msg $ "[12 FundingUtxos] createCommitImplicitTx: signed interim transaction: " ++ show tx
-            debug lg $ LG.msg $ "[13 FundingUtxos] createCommitImplicitTx: created transaction: " <> (show $ txHash tx)
             processUnconfTransaction tx
             xRelayTx $ Data.Serialize.encode tx
             return ()
@@ -312,7 +303,10 @@ xGetPartiallySignedAllegoryTx payips (nameArr, isProducer) owner change = do
     let ins =
             L.map
                 (\(x, s) ->
-                     TxIn (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x)) (fromJust $ decodeHex s) 0)
+                     TxIn
+                         (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x))
+                         (fromJust $ decodeHex s)
+                         0xFFFFFFFF)
                 ([nameip] ++ (catMaybes inputHash))
     sigInputs <-
         mapM
@@ -349,9 +343,9 @@ xGetPartiallySignedAllegoryTx payips (nameArr, isProducer) owner change = do
                                               [])
                              let opRetScript = frameOpReturn $ C.toStrict $ serialise al
                              -- derive producer's Address
-                             let prAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
+                             let prAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey False $ allegorySecretKey alg
                              let prScript = addressToScriptBS prAddr
-                             let payAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
+                             let payAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey False $ allegorySecretKey alg
                              let payScript = addressToScriptBS payAddr
                              let paySats = 1000000
                              let changeSats = totalEffectiveInputSats - (paySats + feeSatsCreate)
@@ -381,7 +375,7 @@ xGetPartiallySignedAllegoryTx payips (nameArr, isProducer) owner change = do
                                                     (Registration "addrCommit" "utxoCommit" "signature" 876543)
                                               ])
                              let opRetScript = frameOpReturn $ C.toStrict $ serialise al
-                             let payAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
+                             let payAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey False $ allegorySecretKey alg
                              let payScript = addressToScriptBS payAddr
                              let paySats = 1000000
                              let changeSats = totalEffectiveInputSats - (paySats + feeSatsTransfer)
@@ -411,9 +405,9 @@ xGetPartiallySignedAllegoryTx payips (nameArr, isProducer) owner change = do
                                      ])
                     let opRetScript = frameOpReturn $ C.toStrict $ serialise al
                      -- derive producer's Address
-                    let prAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
+                    let prAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey False $ allegorySecretKey alg
                     let prScript = addressToScriptBS prAddr
-                    let payAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey True $ allegorySecretKey alg
+                    let payAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey False $ allegorySecretKey alg
                     let payScript = addressToScriptBS payAddr
                     let paySats = 1000000
                     let changeSats = totalEffectiveInputSats - ((fromIntegral $ anutxos) + paySats + feeSatsCreate)
@@ -431,7 +425,7 @@ xGetPartiallySignedAllegoryTx payips (nameArr, isProducer) owner change = do
                         [TxOut ((fromIntegral paySats) :: Word64) payScript] -- the charge for the name transfer
      --
     let psatx = Tx version ins outs locktime
-    case signTx net psatx sigInputs [allegorySecretKey alg, allegorySecretKey alg] of
+    case signTx net psatx sigInputs [allegorySecretKey alg] of
         Right tx -> do
             return $ BSL.toStrict $ A.encode $ tx
         Left err -> do
@@ -457,9 +451,6 @@ getInputsForUnconfirmedTx op = do
             err lg $ LG.msg $ "Error: getInputsForUnconfirmedTx: " <> show e
             throw KeyValueDBLookupException
         Right os -> do
-            debug lg $
-                LG.msg $
-                "[07 FundingUtxos] getInputsForUnconfirmedTx: got results from query (count): " <> (show $ length os)
             return $ (\((txid, index), _, _) -> OutPoint' (DT.unpack txid) index) <$> os
 
 getUnconfirmedOutputsForAddress :: (HasXokenNodeEnv env m, MonadIO m) => String -> m [OutPoint']
@@ -479,43 +470,14 @@ getUnconfirmedOutputsForAddress addr = do
             err lg $ LG.msg $ "Error: getUnconfirmedOutputsForAddress: " <> show e
             throw KeyValueDBLookupException
         Right res -> do
-            liftIO $
-                debug lg $
-                LG.msg $
-                "[05 FundingUtxos] getUnconfirmedOutputsForAddress: got results from query (count): " <>
-                (show $ length res)
             return $ nub $ (\(Identity op) -> OutPoint' (DT.unpack $ fst op) (snd op)) <$> res
 
 getFundingUtxos :: (HasXokenNodeEnv env m, MonadIO m) => String -> m [AddressOutputs]
 getFundingUtxos addr = do
     lg <- getLogger
-    liftIO $
-        debug lg $
-        LG.msg $ "[02 FundingUtxos] getFundingUtxos: calling xGetUTXOsAddress with arguments: address=" <> show addr
-    res <- xGetUTXOsAddress addr (Just 200) Nothing
+    res <- xGetUTXOsAddress addr (Just 2000) Nothing
     let utxos = (\(ResultWithCursor ao _) -> ao) <$> res
-    liftIO $
-        debug lg $
-        LG.msg $ "[03 FundingUtxos] getFundingUtxos: xGetUTXOsAddress returned (count): " <> (show $ length utxos)
-    liftIO $
-        debug lg $
-        LG.msg $
-        "[04 FundingUtxos] getFundingUtxos: calling getUnconfirmedOutputsForAddress with arguments [address]=" <>
-        (show addr)
     unconfOutputs <- getUnconfirmedOutputsForAddress addr
-    liftIO $ debug lg $ LG.msg $ "[06 FundingUtxos] getFundingUtxos: got unconfirmed outputs: " <> show unconfOutputs
     possiblySpentInputs <- liftM concat $ sequence $ getInputsForUnconfirmedTx <$> unconfOutputs
-    liftIO $
-        debug lg $
-        LG.msg $ "[08 FundingUtxos] getFundingUtxos: getInputsForUnconfirmedTx returned: " <> show possiblySpentInputs
-    let fundingUtxos = L.filter (\utxo -> (aoOutput utxo `L.notElem` possiblySpentInputs)) (nub utxos)
-    liftIO $
-        debug lg $
-        LG.msg $
-        "[09 FundingUtxos] getFundingUtxos: ALL OUTPUTS for address " ++
-        show addr ++
-        ": " ++
-        (show $ length $ nub utxos) ++
-        ", out of which POSSIBLY SPENT OUTPUTS: " ++
-        (show $ length possiblySpentInputs) ++ ", size of FILTERED LIST: " ++ (show $ length fundingUtxos)
+    let fundingUtxos = L.filter (\utxo -> (aoOutput utxo `L.notElem` possiblySpentInputs)) utxos
     return fundingUtxos
