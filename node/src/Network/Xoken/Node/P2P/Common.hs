@@ -128,13 +128,13 @@ data AriviServiceException
 instance Exception AriviServiceException
 
 data XCqlException
-    = XCqlPackException
-    | XCqlUnpackException
-    | XCqlInvalidRowsResultException
-    | XCqlInvalidVoidResultException
-    | XCqlQueryErrorException
+    = XCqlPackException String
+    | XCqlUnpackException String
+    | XCqlInvalidRowsResultException String
+    | XCqlInvalidVoidResultException String
+    | XCqlQueryErrorException String
     | XCqlNotReadyException
-    | XCqlHeaderException
+    | XCqlHeaderException String
     | XCqlInvalidHeaderException
     | XCqlEmptyHashtableException
     deriving (Show)
@@ -370,28 +370,44 @@ query ps req = do
     res <- execQuery ps req
     case res of
         Left e -> do
-            throw XCqlUnpackException
-        Right (RsError _ _ e) -> do
-            throw XCqlQueryErrorException
-        Right response ->
-            case response of
-                (Q.RsResult _ _ (Q.RowsResult _ r)) -> return r
-                response -> do
-                    throw XCqlInvalidRowsResultException
+            throw $ XCqlUnpackException $ show e
+        Right (Q.RsError _ _ e) -> do
+            throw $ XCqlQueryErrorException $ show e
+        Right (Q.RsReady _ _ _) -> throw $ XCqlInvalidRowsResultException "Got RsReady"
+        Right (Q.RsAuthenticate _ _ _) -> throw $ XCqlInvalidRowsResultException "Got RsAuthenticate"
+        Right (Q.RsAuthChallenge _ _ _) -> throw $ XCqlInvalidRowsResultException "Got RsAuthChallenge"
+        Right (Q.RsAuthSuccess _ _ _) -> throw $ XCqlInvalidRowsResultException "Got RsAuthSuccess"
+        Right (Q.RsSupported _ _ _) -> throw $ XCqlInvalidRowsResultException "Got RsSupported"
+        Right (Q.RsEvent _ _ _) -> throw $ XCqlInvalidRowsResultException "Got RsEvent"
+        Right (Q.RsResult _ _ result) ->
+            case result of
+                (Q.RowsResult _ r) -> return r
+                Q.VoidResult -> throw $ XCqlInvalidRowsResultException "Got VoidResult"
+                (Q.SetKeyspaceResult k) -> throw $ XCqlInvalidRowsResultException "Got SetKeySpaceResult"
+                (Q.PreparedResult _ _ _) -> throw $ XCqlInvalidRowsResultException "Got PreparedResult"
+                (Q.SchemaChangeResult _) -> throw $ XCqlInvalidRowsResultException "Got SchemaChangeResult"
 
 write :: (Tuple a, Tuple b) => XCqlClientState -> Request k a b -> IO ()
 write ps req = do
     res <- execQuery ps req
     case res of
         Left e -> do
-            throw XCqlUnpackException
-        Right (RsError _ _ e) -> do
-            throw XCqlQueryErrorException
-        Right response ->
-            case response of
-                (Q.RsResult _ _ (Q.VoidResult)) -> return ()
-                response -> do
-                    throw XCqlInvalidVoidResultException
+            throw $ XCqlUnpackException $ show e
+        Right (Q.RsError _ _ e) -> do
+            throw $ XCqlQueryErrorException $ show e
+        Right (Q.RsReady _ _ _) -> throw $ XCqlInvalidVoidResultException "Got RsReady"
+        Right (Q.RsAuthenticate _ _ _) -> throw $ XCqlInvalidVoidResultException "Got RsAuthenticate"
+        Right (Q.RsAuthChallenge _ _ _) -> throw $ XCqlInvalidVoidResultException "Got RsAuthChallenge"
+        Right (Q.RsAuthSuccess _ _ _) -> throw $ XCqlInvalidVoidResultException "Got RsAuthSuccess"
+        Right (Q.RsSupported _ _ _) -> throw $ XCqlInvalidVoidResultException "Got RsSupported"
+        Right (Q.RsEvent _ _ _) -> throw $ XCqlInvalidVoidResultException "Got RsEvent"
+        Right (Q.RsResult _ _ result) ->
+            case result of
+                Q.VoidResult -> return ()
+                (Q.RowsResult _ r) -> throw $ XCqlInvalidVoidResultException "Got RowsResult"
+                (Q.SetKeyspaceResult k) -> throw $ XCqlInvalidVoidResultException "Got SetKeySpaceResult"
+                (Q.PreparedResult _ _ _) -> throw $ XCqlInvalidVoidResultException "Got PreparedResult"
+                (Q.SchemaChangeResult _) -> throw $ XCqlInvalidVoidResultException "Got SchemaChangeResult"
 
 execQuery :: (Tuple a, Tuple b) => XCqlClientState -> Request k a b -> IO (Either String (Response k a b))
 execQuery xcs req = do
@@ -417,9 +433,8 @@ execQuery xcs req = do
         Right reqp -> do
             TSH.insert ht i mv
             withMVar lock (\_ -> LB.sendAll sock reqp)
-        Left _ -> do
-            print "XCqlPackException"
-            throw XCqlPackException
+        Left e -> do
+            throw $ XCqlPackException $ show e
     (XCqlResponse h x) <- takeMVar mv
     TSH.delete ht i
     return $ Q.unpack noCompression h x
@@ -434,15 +449,13 @@ readResponse (XCQLConnection ht lock sk) =
         -- print $ "readResponse " ++ show b
         case h' of
             Left s -> do
-                print $ "[Error] Query: header error: " ++ s
                 writeIORef sk Nothing
-                throw XCqlHeaderException
+                throw $ XCqlHeaderException (show s)
             Right h -> do
                 case headerType h of
                     RqHeader -> do
-                        print "[Error] Query: RqHeader"
                         writeIORef sk Nothing
-                        throw XCqlHeaderException
+                        throw XCqlInvalidHeaderException
                     RsHeader -> do
                         let len = lengthRepr (bodyLength h)
                             sid = fromIntegral $ fromStreamId $ streamId h
@@ -467,7 +480,7 @@ connHandshake sock req = do
             h' <- return $ header Q.V3 b
             case h' of
                 Left s -> do
-                    throw XCqlHeaderException
+                    throw $ XCqlHeaderException (show s)
                 Right h -> do
                     case headerType h of
                         RqHeader -> do
@@ -476,10 +489,10 @@ connHandshake sock req = do
                             case Q.unpack noCompression h "" of
                                 Right r@(RsReady _ _ Ready) -> return r
                                 Left e -> do
-                                    throw XCqlUnpackException
+                                    throw $ XCqlUnpackException (show e)
                                 Right (RsError _ _ e) -> do
-                                    throw XCqlQueryErrorException
+                                    throw $ XCqlQueryErrorException (show e)
                                 Right _ -> do
                                     throw XCqlNotReadyException
-        Left _ -> do
-            throw XCqlPackException
+        Left e -> do
+            throw $ XCqlPackException (show e)
