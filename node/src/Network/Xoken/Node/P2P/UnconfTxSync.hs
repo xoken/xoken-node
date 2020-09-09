@@ -421,7 +421,6 @@ processUnconfTransaction tx = do
     case vall of
         Just ev -> do
             liftIO $ EV.signal $ ev
-            liftIO $ debug lg $ LG.msg $ "Finished processing unconfirmed transaction: " ++ (show $ txHash tx)
         Nothing -> return ()
 
 getSatsValueFromEpochOutpoint ::

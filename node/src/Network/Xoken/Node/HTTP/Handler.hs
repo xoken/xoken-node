@@ -99,7 +99,6 @@ addUser _ = throwBadRequest
 
 getChainInfo :: Handler App App ()
 getChainInfo = do
-    liftIO $ print $ "getChainInfo: function was called by HTTP handler!"
     lg <- getLogger
     pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     res <- LE.try $ xGetChainInfo
