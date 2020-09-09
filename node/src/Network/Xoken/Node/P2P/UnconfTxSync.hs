@@ -480,11 +480,11 @@ sourceSatsValueFromOutpoint ::
     -> Int
     -> IO ((Text, Text, Int64))
 sourceSatsValueFromOutpoint conn epoch txSync lg net outPoint waitSecs maxWait = do
-    res' <-
+    res <-
         race
             (liftIO $ getSatsValueFromOutpoint conn txSync lg net outPoint waitSecs maxWait)
             (liftIO $ getSatsValueFromEpochOutpoint conn epoch txSync lg net outPoint waitSecs)
-    return $ either (GB.id) (GB.id) res'
+    return $ either (GB.id) (GB.id) res
 
 convertToScriptHash :: Network -> String -> Maybe String
 convertToScriptHash net s = do
