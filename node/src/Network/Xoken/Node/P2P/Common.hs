@@ -201,6 +201,22 @@ divide x y = (a / b)
 toInt :: Float -> Int
 toInt x = round x
 
+-- Helper Functions
+recvAll :: (MonadIO m) => Socket -> Int64 -> m BSL.ByteString
+recvAll sock len = do
+    if len > 0
+        then do
+            res <- liftIO $ try $ LB.recv sock len
+            case res of
+                Left (e :: IOException) -> throw SocketReadException
+                Right mesg ->
+                    if BSL.length mesg == len
+                        then return mesg
+                        else if BSL.length mesg == 0
+                                 then throw ZeroLengthSocketReadException
+                                 else BSL.append mesg <$> recvAll sock (len - BSL.length mesg)
+        else return (BSL.empty)
+
 -- OP_RETURN Allegory/AllPay
 frameOpReturn :: C.ByteString -> C.ByteString
 frameOpReturn opReturn = do
@@ -413,7 +429,7 @@ readResponse (XCQLConnection ht lock sk) =
     forever $ do
         skref <- readIORef sk
         let sock = fromJust skref
-        b <- LB.recv sock 9
+        b <- recvAll sock 9
         h' <- return $ header Q.V3 b
         -- print $ "readResponse " ++ show b
         case h' of
@@ -430,7 +446,7 @@ readResponse (XCQLConnection ht lock sk) =
                     RsHeader -> do
                         let len = lengthRepr (bodyLength h)
                             sid = fromIntegral $ fromStreamId $ streamId h
-                        x <- LB.recv sock (fromIntegral len)
+                        x <- recvAll sock (fromIntegral len)
                         mmv <- TSH.lookup ht sid
                         case mmv of
                             Just mv -> do
@@ -447,7 +463,7 @@ connHandshake sock req = do
     case (Q.pack Q.V3 noCompression False i req) of
         Right qp -> do
             LB.sendAll sock qp
-            b <- LB.recv sock 9
+            b <- recvAll sock 9
             h' <- return $ header Q.V3 b
             case h' of
                 Left s -> do

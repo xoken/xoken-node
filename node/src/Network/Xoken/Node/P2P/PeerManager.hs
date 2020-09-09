@@ -256,22 +256,6 @@ setupPeerConnection saddr = do
                                      warn lg $ msg ("SocketConnectException: " ++ show addr)
                                      return Nothing
 
--- Helper Functions
-recvAll :: (MonadIO m) => Socket -> Int64 -> m BSL.ByteString
-recvAll sock len = do
-    if len > 0
-        then do
-            res <- liftIO $ try $ LB.recv sock len
-            case res of
-                Left (e :: IOException) -> throw SocketReadException
-                Right mesg ->
-                    if BSL.length mesg == len
-                        then return mesg
-                        else if BSL.length mesg == 0
-                                 then throw ZeroLengthSocketReadException
-                                 else BSL.append mesg <$> recvAll sock (len - BSL.length mesg)
-        else return (BSL.empty)
-
 hashPair :: Hash256 -> Hash256 -> Hash256
 hashPair a b = doubleSHA256 $ encode a `B.append` encode b
 
