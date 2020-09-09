@@ -160,7 +160,7 @@ setupSeedPeerConnection =
                                                       msg ("Seed peer blacklisted, ignoring.. " ++ show (addrAddress y))
                                               else do
                                                   rl <- liftIO $ newMVar True
-                                                  wl <- liftIO $ newMVar True
+                                                  wl <- liftIO $ newMVar ()
                                                   ss <- liftIO $ newTVarIO Nothing
                                                   imc <- liftIO $ newTVarIO 0
                                                   rc <- liftIO $ newTVarIO Nothing
@@ -235,7 +235,7 @@ setupPeerConnection saddr = do
                              case res of
                                  Right (sock) -> do
                                      rl <- liftIO $ newMVar True
-                                     wl <- liftIO $ newMVar True
+                                     wl <- liftIO $ newMVar ()
                                      ss <- liftIO $ newTVarIO Nothing
                                      imc <- liftIO $ newTVarIO 0
                                      rc <- liftIO $ newTVarIO Nothing
@@ -255,22 +255,6 @@ setupPeerConnection saddr = do
                                  Left (SocketConnectException addr) -> do
                                      warn lg $ msg ("SocketConnectException: " ++ show addr)
                                      return Nothing
-
--- Helper Functions
-recvAll :: (MonadIO m) => Socket -> Int64 -> m BSL.ByteString
-recvAll sock len = do
-    if len > 0
-        then do
-            res <- liftIO $ try $ LB.recv sock len
-            case res of
-                Left (e :: IOException) -> throw SocketReadException
-                Right mesg ->
-                    if BSL.length mesg == len
-                        then return mesg
-                        else if BSL.length mesg == 0
-                                 then throw ZeroLengthSocketReadException
-                                 else BSL.append mesg <$> recvAll sock (len - BSL.length mesg)
-        else return (BSL.empty)
 
 hashPair :: Hash256 -> Hash256 -> Hash256
 hashPair a b = doubleSHA256 $ encode a `B.append` encode b
@@ -695,7 +679,7 @@ doVersionHandshake net sock sa = do
         rmt = NetworkAddress 0 sa
         ver = buildVersion net nonce bb ad rmt now
         em = runPut . putMessage net $ (MVersion ver)
-    mv <- liftIO $ (newMVar True)
+    mv <- liftIO $ (newMVar ())
     liftIO $ sendEncMessage mv sock (BSL.fromStrict em)
     (hs1, _) <- readNextMessage net sock Nothing
     case hs1 of
