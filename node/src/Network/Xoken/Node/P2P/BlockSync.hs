@@ -266,13 +266,9 @@ getBatchSizeMainnet :: Int32 -> Int32 -> [Int32]
 getBatchSizeMainnet peerCount n
     | n < 200000 =
         if peerCount > 8
-            then [1 .. 8]
-            else [1 .. peerCount]
-    | n >= 200000 && n < 500000 =
-        if peerCount > 4
-            then [1 .. 2]
-            else [1]
-    | n >= 500000 && n < 640000 =
+            then [1 .. 4]
+            else [1 .. 2]
+    | n >= 200000 && n < 640000 =
         if peerCount > 4
             then [1 .. 2]
             else [1]
@@ -280,8 +276,9 @@ getBatchSizeMainnet peerCount n
 
 getBatchSizeTestnet :: Int32 -> Int32 -> [Int32]
 getBatchSizeTestnet peerCount n
-    | peerCount > 8 = [1 .. 8]
-    | otherwise = [1 .. peerCount]
+    | peerCount > 8 = [1 .. 4]
+    | peerCount > 4 = [1 .. 2]
+    | otherwise = [1]
 
 getBatchSize :: Network -> Int32 -> Int32 -> [Int32]
 getBatchSize net peerCount n
