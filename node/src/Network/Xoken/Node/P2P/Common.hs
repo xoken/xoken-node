@@ -434,7 +434,10 @@ readResponse (XCQLConnection ht lock sk) =
                         mmv <- TSH.lookup ht sid
                         case mmv of
                             Just mv -> do
-                                putMVar mv (XCqlResponse h x)
+                                res <- tryPutMVar mv (XCqlResponse h x)
+                                case res of
+                                    True -> return ()
+                                    False -> print "[Error] tryPutMVar False"
                             Nothing -> do
                                 return ()
 

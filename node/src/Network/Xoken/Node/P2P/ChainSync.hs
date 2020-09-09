@@ -137,13 +137,12 @@ msgOrder m1 m2 = do
         else GT
 
 runEgressChainSync :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
-runEgressChainSync =
-    forever $ do
-        lg <- getLogger
-        res1 <- LE.try $ forever $ do produceGetHeadersMessage >>= sendRequestMessages
-        case res1 of
-            Right () -> return ()
-            Left (e :: SomeException) -> err lg $ LG.msg $ "[ERROR] runEgressChainSync " ++ show e
+runEgressChainSync = do
+    lg <- getLogger
+    res1 <- LE.try $ forever $ do produceGetHeadersMessage >>= sendRequestMessages
+    case res1 of
+        Right () -> return ()
+        Left (e :: SomeException) -> err lg $ LG.msg $ "[ERROR] runEgressChainSync " ++ show e
 
 validateChainedBlockHeaders :: Headers -> Bool
 validateChainedBlockHeaders hdrs = do
