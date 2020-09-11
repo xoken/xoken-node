@@ -9,6 +9,7 @@
 
 module Network.Xoken.Node.P2P.Common where
 
+import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (mapConcurrently)
 import Control.Concurrent.Async.Lifted as LA (async, wait)
 import Control.Concurrent.MSem as MS
@@ -409,25 +410,35 @@ write ps req = do
                 (Q.PreparedResult _ _ _) -> throw $ XCqlInvalidVoidResultException "Got PreparedResult"
                 (Q.SchemaChangeResult _) -> throw $ XCqlInvalidVoidResultException "Got SchemaChangeResult"
 
+getConnectionStreamID :: XCqlClientState -> IO (XCQLConnection, Int16)
+getConnectionStreamID xcs = do
+    rnd <- randomIO
+    let vcs = xcs !! (rnd `mod` (L.length xcs - 1))
+    let lock = xCqlWriteLock vcs
+    sockm <- readIORef $ xCqlSocket vcs
+    case sockm of
+        Just s -> do
+            i <-
+                modifyMVar
+                    lock
+                    (\a -> do
+                         if a == maxBound
+                             then return (1, 1)
+                             else return (a + 1, a + 1))
+            return $ (vcs, i)
+        Nothing -> do
+            print "Hit a dud XCQL connection!"
+            liftIO $ threadDelay (100000) -- 100ms sleep
+            getConnectionStreamID xcs -- hopefully we find another good one
+
 execQuery :: (Tuple a, Tuple b) => XCqlClientState -> Request k a b -> IO (Either String (Response k a b))
 execQuery xcs req = do
-    vcs <-
-        mapM
-            (\(XCQLConnection hx lx sx) -> do
-                 ct <- readIORef sx
-                 case ct of
-                     Just x -> return $ Just (hx, lx, x)
-                     Nothing -> return Nothing)
-            xcs
-    let (ht, lock, sock) = head $ catMaybes vcs
     mv <- newEmptyMVar
-    i <-
-        modifyMVar
-            lock
-            (\a -> do
-                 if a == maxBound
-                     then return (1, 1)
-                     else return (a + 1, a + 1))
+    (conn, i) <- getConnectionStreamID xcs
+    let ht = xCqlHashTable conn
+    let lock = xCqlWriteLock conn
+    sockm <- readIORef $ xCqlSocket conn
+    let sock = fromJust sockm
     let sid = mkStreamId i
     case (Q.pack Q.V3 noCompression False sid req) of
         Right reqp -> do
