@@ -837,7 +837,9 @@ processTxBatch txns iss = do
                                      then debug lg $ LG.msg $ (" (error) Tx__index: " ++ show idx ++ show bf)
                                      else debug lg $ LG.msg $ ("Tx__index: " ++ show idx)
                                  return ((txns !! idx), bf, cidx)) &
-                        S.mapM (processTxStream)
+                        S.mapM (processTxStream) &
+                        S.maxBuffer (maxTxProcessingBuffer $ nodeConfig bp2pEnv) &
+                        S.maxThreads (maxTxProcessingThreads $ nodeConfig bp2pEnv)
                     valy <- liftIO $ TSH.lookup (blockTxProcessingLeftMap bp2pEnv) (biBlockHash bf)
                     case valy of
                         Just lefta -> liftIO $ TSH.insert (fst lefta) (txHash $ head txns) (L.length txns)

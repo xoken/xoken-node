@@ -13,10 +13,10 @@ import Crypto.Secp256k1
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as B16
 import Data.ByteString.Char8 as C
+import Data.Int
 import Data.Maybe
 import Data.Text as T
 import qualified Data.Text.Encoding as E
-import Data.Int
 import Data.Word
 import Data.Yaml
 import GHC.Generics
@@ -58,6 +58,8 @@ data NodeConfig =
         , maxStreamsXCql :: Int16
         , stripesXCql :: Int
         , maxConnectionsXCql :: Int
+        , maxTxProcessingThreads :: Int
+        , maxTxProcessingBuffer :: Int
         }
     deriving (Show, Generic)
 
