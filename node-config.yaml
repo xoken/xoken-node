@@ -62,6 +62,6 @@ stripesXCql: 1
 
 maxConnectionsXCql: 4
 
-maxTxProcessingThreads: 1500
+maxTxProcessingThreads: 100
 
-maxTxProcessingBuffer: 1500
+maxTxProcessingBuffer: 100
