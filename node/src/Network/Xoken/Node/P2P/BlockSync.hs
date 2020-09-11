@@ -733,25 +733,21 @@ processConfTransaction tx bhash blkht txind = do
              let sh = txHashToHex $ TxHash $ sha256 (scriptOutput o)
              let bi = (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
              let output = (txHashToHex txhs, i)
-             concurrently_
-                 (insertTxIdOutputs conn output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o))
-                 (concurrently_
-                      (concurrently_
-                           (commitScriptHashOutputs
-                                conn -- 
-                                sh -- scriptHash
-                                output
-                                bi)
-                           (commitScriptHashUnspentOutputs conn sh output))
-                      (case decodeOutputBS $ scriptOutput o of
-                           (Right so) ->
-                               if isPayPK so
-                                   then do
-                                       concurrently_
-                                           (commitScriptHashOutputs conn a output bi)
-                                           (commitScriptHashUnspentOutputs conn a output)
-                                   else return ()
-                           (Left e) -> return ())))
+             insertTxIdOutputs conn output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o)
+             commitScriptHashOutputs
+                 conn -- 
+                 sh -- scriptHash
+                 output
+                 bi
+             commitScriptHashUnspentOutputs conn sh output
+             case decodeOutputBS $ scriptOutput o of
+                 (Right so) ->
+                     if isPayPK so
+                         then do
+                             commitScriptHashOutputs conn a output bi
+                             commitScriptHashUnspentOutputs conn a output
+                         else return ()
+                 (Left e) -> return ())
         outAddrs
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": committed scripthash,txid_outputs tables"
     mapM_
@@ -763,11 +759,9 @@ processConfTransaction tx bhash blkht txind = do
              if a == "" || sh == "" -- likely coinbase txns
                  then return ()
                  else do
-                     concurrently_
-                         (insertTxIdOutputs conn prevOutpoint a sh False bi (stripScriptHash <$> spendInfo) 0)
-                         (concurrently_
-                              (deleteScriptHashUnspentOutputs conn sh prevOutpoint)
-                              (deleteScriptHashUnspentOutputs conn a prevOutpoint)))
+                     insertTxIdOutputs conn prevOutpoint a sh False bi (stripScriptHash <$> spendInfo) 0
+                     deleteScriptHashUnspentOutputs conn sh prevOutpoint
+                     deleteScriptHashUnspentOutputs conn a prevOutpoint)
         (zip (inAddrs) (map (\x -> (fst3 $ thd3 x, snd3 $ thd3 $ x)) inputs))
     --
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": updated spend info for inputs"
