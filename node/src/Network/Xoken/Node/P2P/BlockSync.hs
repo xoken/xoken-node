@@ -774,11 +774,16 @@ processConfTransaction tx bhash blkht txind = do
     -- persist tx
     let qstr :: Q.QueryString Q.W (Text, (Text, Int32, Int32), Blob, [((Text, Int32), Int32, (Text, Int64))], Int64) ()
         qstr = "insert INTO xoken.transactions (tx_id, block_info, tx_serialized , inputs, fees) values (?, ?, ?, ?, ?)"
-        par =
+        serbs = runPutLazy $ putLazyByteString $ S.encodeLazy tx
+        fst =
+            if BSL.length serbs >= (16 * 1000 * 1000) -- TODO: fragment and store to circumvent Cassandra's 16MB segment_size limit.
+                then BSL.empty
+                else serbs
+    let par =
             getSimpleQueryParam
                 ( txHashToHex txhs
                 , (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
-                , Blob $ runPutLazy $ putLazyByteString $ S.encodeLazy tx
+                , Blob fst
                 , (stripScriptHash <$> inputs)
                 , fees)
     res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr par)
