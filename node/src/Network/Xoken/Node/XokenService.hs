@@ -467,7 +467,9 @@ goGetResource msg net roles sessKey pretty = do
                 Just (GetPartiallySignedAllegoryTx payips (name, isProducer) owner change) -> do
                     opsE <- LE.try $ xGetPartiallySignedAllegoryTx payips (name, isProducer) owner change
                     case opsE of
-                        Right ops -> return $ RPCResponse 200 pretty $ Right $ Just $ RespPartiallySignedAllegoryTx ops
+                        Right ops ->
+                            return $
+                            RPCResponse 200 pretty $ Right $ Just $ RespPartiallySignedAllegoryTx (fst ops) (snd ops)
                         Left (e :: SomeException) -> do
                             debug lg $ LG.msg $ "allegory error PS_ALLEGORY_TX: " ++ show e
                             return $ RPCResponse 400 pretty $ Left $ RPCError INTERNAL_ERROR Nothing

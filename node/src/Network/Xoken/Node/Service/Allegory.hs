@@ -40,7 +40,9 @@ import Control.Monad.IO.Class
 import Control.Monad.Logger
 import Control.Monad.Loops
 import Control.Monad.Reader
+import Control.Monad.Trans.Class
 import Control.Monad.Trans.Control
+import Control.Monad.Writer.Lazy
 import Data.Aeson as A
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Base16 as B16 (decode, encode)
@@ -175,7 +177,7 @@ getOrMakeProducer nameArr = do
                 Just i -> return $ ((OutPoint' txid (fromIntegral i), (snd $ head nb)), True)
                 Nothing -> throw KeyValueDBLookupException
 
-createCommitImplictTx :: (HasXokenNodeEnv env m, MonadIO m) => [Int] -> m ()
+createCommitImplictTx :: (HasXokenNodeEnv env m, MonadIO m) => [Int] -> m BC.ByteString
 createCommitImplictTx nameArr = do
     dbe <- getDB
     lg <- getLogger
@@ -224,32 +226,102 @@ createCommitImplictTx nameArr = do
     let opRetScript = frameOpReturn $ C.toStrict $ serialise al
         -- derive producer's Address
     let !outs = [TxOut 0 opRetScript] ++ L.map (\_ -> TxOut (fromIntegral anutxos) prScript) [1, 2, 3]
-    let !sigInputs =
-            [ SigInput
-                  (addressToOutput prAddr)
-                  (fromIntegral anutxos)
-                  (prevOutput $ head ins)
-                  (setForkIdFlag sigHashAll)
-                  Nothing
-            , SigInput
-                  (addressToOutput prAddr)
-                  (fromIntegral fval)
-                  (prevOutput $ ins !! 1)
-                  (setForkIdFlag sigHashAll)
-                  Nothing
-            ]
-    let psatx = Tx version ins outs locktime
-    case signTx net psatx sigInputs [allegorySecretKey alg, allegorySecretKey alg] of
-        Right tx -> do
-            processUnconfTransaction tx
-            xRelayTx $ Data.Serialize.encode tx
-            return ()
-        Left err -> do
-            liftIO $ print $ "error occurred while signing the Tx: " <> show err
-            throw KeyValueDBLookupException
+    let unsignedTx = Tx version ins outs locktime
+    processUnconfTransaction unsignedTx
+    handleIfAllegoryTx unsignedTx True
+    return $ B16.encode $ S.encode unsignedTx
   where
     version = 1
     locktime = 0
+
+getOrMakeProducer' :: (HasXokenNodeEnv env m, MonadIO m) => [Int] -> m ((OutPoint', DT.Text), Bool, [BC.ByteString])
+getOrMakeProducer' nameArr = do
+    dbe <- getDB
+    lg <- getLogger
+    bp2pEnv <- getBitcoinP2P
+    alg <- getAllegory
+    let name = DT.pack $ L.map (\x -> chr x) (nameArr)
+    let anutxos = NC.allegoryNameUtxoSatoshis $ nodeConfig $ bp2pEnv
+    res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameScriptOp (name) True)
+    case res of
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "error fetching allegory name input :" ++ show e
+            throw e
+        Right [] -> do
+            debug lg $ LG.msg $ "allegory name not found, create recursively (1): " <> name
+            (nameip, existed, interimTxns) <- getOrMakeProducer' (init nameArr)
+            let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
+                prAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey False $ allegorySecretKey alg
+                prScript = addressToScriptBS prAddr
+                addr' =
+                    case addrToString net prAddr of
+                        Nothing -> ""
+                        Just t -> DT.unpack t
+                ins' =
+                    L.map
+                        (\(x, s) ->
+                             TxIn
+                                 (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x))
+                                 (fromJust $ decodeHex s)
+                                 0xFFFFFFFF)
+                        [nameip]
+            utxos <- getFundingUtxos addr'
+            let (ins, fval) =
+                    case L.filter (\y -> aoValue y >= 2000000) utxos of
+                        [] -> (ins', 0)
+                        (x:xs) ->
+                            let op = aoOutput x
+                             in ( ins' ++
+                                  [ TxIn
+                                        (OutPoint (fromString $ opTxHash op) (fromIntegral $ opIndex op))
+                                        prScript
+                                        0xFFFFFFFF
+                                  ]
+                                , aoValue x)
+                al =
+                    Allegory
+                        1
+                        (init nameArr)
+                        (ProducerAction
+                             (Index 0)
+                             (ProducerOutput (Index 1) (Just $ Endpoint "XokenP2P" "someuri-1"))
+                             Nothing
+                             [ (ProducerExtension
+                                    (ProducerOutput (Index 2) (Just $ Endpoint "XokenP2P" "someuri-2"))
+                                    (last nameArr))
+                             , (OwnerExtension
+                                    (OwnerOutput (Index 3) (Just $ Endpoint "XokenP2P" "someuri-3"))
+                                    (last nameArr))
+                             ])
+                opRetScript = frameOpReturn $ C.toStrict $ serialise al
+                !outs = [TxOut 0 opRetScript] ++ L.map (\_ -> TxOut (fromIntegral anutxos) prScript) [1, 2, 3]
+                unsignedTx = B16.encode $ S.encode $ Tx 1 ins outs 0
+            inres <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameScriptOp (name) True)
+            case inres of
+                Left (e :: SomeException) -> do
+                    err lg $ LG.msg $ "error fetching allegory name input :" ++ show e
+                    throw e
+                Right [] -> do
+                    err lg $ LG.msg $ "allegory name still not found, recursive create must've failed (1): " <> name
+                    throw KeyValueDBLookupException
+                Right nb -> do
+                    liftIO $ print $ "nb2~" <> show nb
+                    let sp = DT.split (== ':') $ fst (head nb)
+                    let txid = DT.unpack $ sp !! 0
+                    let index = readMaybe (DT.unpack $ sp !! 1) :: Maybe Int
+                    case index of
+                        Just i ->
+                            return $
+                            ((OutPoint' txid (fromIntegral i), (snd $ head nb)), False, unsignedTx : interimTxns)
+                        Nothing -> throw KeyValueDBLookupException
+        Right nb -> do
+            debug lg $ LG.msg $ "allegory name found! (1): " <> name
+            let sp = DT.split (== ':') $ fst (head nb)
+            let txid = DT.unpack $ sp !! 0
+            let index = readMaybe (DT.unpack $ sp !! 1) :: Maybe Int
+            case index of
+                Just i -> return $ ((OutPoint' txid (fromIntegral i), (snd $ head nb)), True, [])
+                Nothing -> throw KeyValueDBLookupException
 
 xGetPartiallySignedAllegoryTx ::
        (HasXokenNodeEnv env m, MonadIO m)
@@ -257,7 +329,7 @@ xGetPartiallySignedAllegoryTx ::
     -> ([Int], Bool)
     -> (String)
     -> (String)
-    -> m (BC.ByteString)
+    -> m ([BC.ByteString], BC.ByteString)
 xGetPartiallySignedAllegoryTx payips (nameArr, isProducer) owner change = do
     dbe <- getDB
     bp2pEnv <- getBitcoinP2P
@@ -272,14 +344,14 @@ xGetPartiallySignedAllegoryTx payips (nameArr, isProducer) owner change = do
     let feeSatsCreate = NC.allegoryTxFeeSatsProducerAction $ nodeConfig $ bp2pEnv
     let feeSatsTransfer = NC.allegoryTxFeeSatsOwnerAction $ nodeConfig $ bp2pEnv
     res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameScriptOp (name) isProducer)
-    (nameip, existed) <-
+    (nameip, existed, interimTxns) <-
         case res of
             Left (e :: SomeException) -> do
                 err lg $ LG.msg $ "error fetching allegory name input :" ++ show e
                 throw e
             Right [] -> do
                 debug lg $ LG.msg $ "allegory name not found, get or make interim producers recursively : " <> name
-                getOrMakeProducer (init nameArr)
+                getOrMakeProducer' (init nameArr)
             Right nb -> do
                 debug lg $ LG.msg $ "allegory name found! : " <> name
                 let sp = DT.split (== ':') $ fst (head nb)
@@ -287,7 +359,7 @@ xGetPartiallySignedAllegoryTx payips (nameArr, isProducer) owner change = do
                 let index = readMaybe (DT.unpack $ sp !! 1) :: Maybe Int32
                 case index of
                     Just i -> do
-                        return $ ((OutPoint' txid i, (snd $ head nb)), True)
+                        return $ ((OutPoint' txid i, (snd $ head nb)), True, [])
                     Nothing -> do
                         debug lg $ LG.msg $ val "allegory case index of : Nothing"
                         throw KeyValueDBLookupException
@@ -427,10 +499,10 @@ xGetPartiallySignedAllegoryTx payips (nameArr, isProducer) owner change = do
     let psatx = Tx version ins outs locktime
     case signTx net psatx sigInputs [allegorySecretKey alg] of
         Right tx -> do
-            return $ BSL.toStrict $ A.encode $ tx
+            return $ (interimTxns, BSL.toStrict $ A.encode $ tx)
         Left err -> do
             liftIO $ print $ "error occurred while signing the Tx: " <> show err
-            return $ BC.empty
+            return $ (interimTxns, BC.empty)
   where
     version = 1
     locktime = 0

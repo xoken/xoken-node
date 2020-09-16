@@ -496,7 +496,7 @@ getPartiallySignedAllegoryTx GetPartiallySignedAllegoryTx {..} = do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
         Right ops -> do
-            writeBS $ BSL.toStrict $ encodeResp pretty $ RespPartiallySignedAllegoryTx ops
+            writeBS $ BSL.toStrict $ encodeResp pretty $ RespPartiallySignedAllegoryTx (fst ops) (snd ops)
 getPartiallySignedAllegoryTx _ = throwBadRequest
 
 getCurrentUser :: Handler App App ()
