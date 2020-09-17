@@ -33,6 +33,7 @@ import Data.Time.Calendar
 import Data.Time.Clock
 import Data.Time.Clock.POSIX
 import Database.XCQL.Protocol as Q
+import Network.Xoken.Address
 import Network.Xoken.Crypto.Hash
 import Network.Xoken.Node.Data
     ( AddUserResp(..)
@@ -489,14 +490,26 @@ relayTx _ = throwBadRequest
 
 getPartiallySignedAllegoryTx :: RPCReqParams' -> Handler App App ()
 getPartiallySignedAllegoryTx GetPartiallySignedAllegoryTx {..} = do
+    net <- (NC.bitcoinNetwork . nodeConfig) <$> getBitcoinP2P
     pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
-    res <- LE.try $ xGetPartiallySignedAllegoryTx gpsaPaymentInputs gpsaName gpsaOutputOwner gpsaOutputChange
-    case res of
-        Left (e :: SomeException) -> do
-            modifyResponse $ setResponseStatus 500 "Internal Server Error"
-            writeBS "INTERNAL_SERVER_ERROR"
-        Right ops -> do
-            writeBS $ BSL.toStrict $ encodeResp pretty $ RespPartiallySignedAllegoryTx (fst ops) (snd ops)
+    case stringToAddr net (DT.pack gpsaResellerAddress) of
+        Nothing -> throwBadRequest
+        Just addr -> do
+            res <-
+                LE.try $
+                xGetPartiallySignedAllegoryTx
+                    gpsaPaymentInputs
+                    gpsaName
+                    gpsaOutputOwner
+                    gpsaOutputChange
+                    addr
+                    gpsaPaySats
+            case res of
+                Left (e :: SomeException) -> do
+                    modifyResponse $ setResponseStatus 500 "Internal Server Error"
+                    writeBS "INTERNAL_SERVER_ERROR"
+                Right ops -> do
+                    writeBS $ BSL.toStrict $ encodeResp pretty $ RespPartiallySignedAllegoryTx (fst ops) (snd ops)
 getPartiallySignedAllegoryTx _ = throwBadRequest
 
 getCurrentUser :: Handler App App ()

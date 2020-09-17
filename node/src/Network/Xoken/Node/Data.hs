@@ -249,6 +249,8 @@ data RPCReqParams'
           , gpsaName :: ([Int], Bool) -- name & isProducer
           , gpsaOutputOwner :: String
           , gpsaOutputChange :: String
+          , gpsaResellerAddress :: String
+          , gpsaPaySats :: Int
           }
     | GetTxOutputSpendStatus
           { gtssHash :: String
@@ -285,7 +287,9 @@ instance FromJSON RPCReqParams' where
         (GetAllegoryNameBranch <$> o .: "name" <*> o .: "isProducer") <|>
         (RelayTx . B64.decodeLenient . T.encodeUtf8 <$> o .: "rawTx") <|>
         (GetPartiallySignedAllegoryTx <$> o .: "paymentInputs" <*> o .: "name" <*> o .: "outputOwner" <*>
-         o .: "outputChange") <|>
+         o .: "outputChange" <*>
+         o .: "resellerAddress" <*>
+         o .: "namePriceSats") <|>
         (AddUser <$> o .: "username" <*> o .:? "apiExpiryTime" <*> o .:? "apiQuota" <*> o .: "firstName" <*>
          o .: "lastName" <*>
          o .: "email" <*>

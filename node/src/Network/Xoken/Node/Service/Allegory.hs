@@ -234,12 +234,12 @@ createCommitImplictTx nameArr = do
     version = 1
     locktime = 0
 
-getOrMakeProducer' :: (HasXokenNodeEnv env m, MonadIO m) => [Int] -> m ((OutPoint', DT.Text), Bool, [BC.ByteString])
-getOrMakeProducer' nameArr = do
+getOrMakeProducer' ::
+       (HasXokenNodeEnv env m, MonadIO m) => Address -> [Int] -> m ((OutPoint', DT.Text), Bool, [BC.ByteString])
+getOrMakeProducer' resellerAddress nameArr = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    alg <- getAllegory
     let name = DT.pack $ L.map (\x -> chr x) (nameArr)
     let anutxos = NC.allegoryNameUtxoSatoshis $ nodeConfig $ bp2pEnv
     res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameScriptOp (name) True)
@@ -249,12 +249,11 @@ getOrMakeProducer' nameArr = do
             throw e
         Right [] -> do
             debug lg $ LG.msg $ "allegory name not found, create recursively (1): " <> name
-            (nameip, existed, interimTxns) <- getOrMakeProducer' (init nameArr)
+            (nameip, existed, interimTxns) <- getOrMakeProducer' resellerAddress (init nameArr)
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
-                prAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey False $ allegorySecretKey alg
-                prScript = addressToScriptBS prAddr
+                prScript = addressToScriptBS resellerAddress
                 addr' =
-                    case addrToString net prAddr of
+                    case addrToString net resellerAddress of
                         Nothing -> ""
                         Just t -> DT.unpack t
                 ins' =
@@ -311,7 +310,7 @@ getOrMakeProducer' nameArr = do
                     case index of
                         Just i ->
                             return $
-                            ((OutPoint' txid (fromIntegral i), (snd $ head nb)), False, unsignedTx:interimTxns)
+                            ((OutPoint' txid (fromIntegral i), (snd $ head nb)), False, unsignedTx : interimTxns)
                         Nothing -> throw KeyValueDBLookupException
         Right nb -> do
             debug lg $ LG.msg $ "allegory name found! (1): " <> name
@@ -328,12 +327,13 @@ xGetPartiallySignedAllegoryTx ::
     -> ([Int], Bool)
     -> (String)
     -> (String)
+    -> Address
+    -> Int
     -> m ([BC.ByteString], BC.ByteString)
-xGetPartiallySignedAllegoryTx payips (nameArr, isProducer) owner change = do
+xGetPartiallySignedAllegoryTx payips (nameArr, isProducer) owner change resellerAddress paySats = do
     dbe <- getDB
     bp2pEnv <- getBitcoinP2P
     lg <- getLogger
-    alg <- getAllegory
     let conn = xCqlClientState dbe
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
      -- check if name (of given type) exists
@@ -350,7 +350,7 @@ xGetPartiallySignedAllegoryTx payips (nameArr, isProducer) owner change = do
                 throw e
             Right [] -> do
                 debug lg $ LG.msg $ "allegory name not found, get or make interim producers recursively : " <> name
-                getOrMakeProducer' (init nameArr)
+                getOrMakeProducer' resellerAddress (init nameArr)
             Right nb -> do
                 debug lg $ LG.msg $ "allegory name found! : " <> name
                 let sp = DT.split (== ':') $ fst (head nb)
@@ -394,11 +394,8 @@ xGetPartiallySignedAllegoryTx payips (nameArr, isProducer) owner change = do
                                               [])
                              let opRetScript = frameOpReturn $ C.toStrict $ serialise al
                              -- derive producer's Address
-                             let prAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey False $ allegorySecretKey alg
-                             let prScript = addressToScriptBS prAddr
-                             let payAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey False $ allegorySecretKey alg
-                             let payScript = addressToScriptBS payAddr
-                             let paySats = 1000000
+                             let prScript = addressToScriptBS resellerAddress
+                             let payScript = addressToScriptBS resellerAddress
                              let changeSats = totalEffectiveInputSats - (paySats + feeSatsCreate)
                              [TxOut 0 opRetScript] ++
                                  (L.map
@@ -426,9 +423,7 @@ xGetPartiallySignedAllegoryTx payips (nameArr, isProducer) owner change = do
                                                     (Registration "addrCommit" "utxoCommit" "signature" 876543)
                                               ])
                              let opRetScript = frameOpReturn $ C.toStrict $ serialise al
-                             let payAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey False $ allegorySecretKey alg
-                             let payScript = addressToScriptBS payAddr
-                             let paySats = 1000000
+                             let payScript = addressToScriptBS resellerAddress
                              let changeSats = totalEffectiveInputSats - (paySats + feeSatsTransfer)
                              [TxOut 0 opRetScript] ++
                                  (L.map
@@ -456,11 +451,8 @@ xGetPartiallySignedAllegoryTx payips (nameArr, isProducer) owner change = do
                                      ])
                     let opRetScript = frameOpReturn $ C.toStrict $ serialise al
                      -- derive producer's Address
-                    let prAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey False $ allegorySecretKey alg
-                    let prScript = addressToScriptBS prAddr
-                    let payAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey False $ allegorySecretKey alg
-                    let payScript = addressToScriptBS payAddr
-                    let paySats = 1000000
+                    let prScript = addressToScriptBS resellerAddress
+                    let payScript = addressToScriptBS resellerAddress
                     let changeSats = totalEffectiveInputSats - ((fromIntegral $ anutxos) + paySats + feeSatsCreate)
                     [TxOut 0 opRetScript] ++
                         [TxOut (fromIntegral anutxos) prScript] ++
