@@ -472,7 +472,7 @@ xGetPartiallySignedAllegoryTx payips (nameArr, isProducer) owner change reseller
                         [TxOut ((fromIntegral paySats) :: Word64) payScript] -- the charge for the name transfer
      --
     let psatx = Tx version ins outs locktime
-    return $ (interimTxns, BSL.toStrict $ A.encode $ psatx)
+    return $ (L.reverse interimTxns, BSL.toStrict $ A.encode $ psatx)
   where
     version = 1
     locktime = 0
