@@ -244,6 +244,9 @@ data RPCReqParams'
     | RelayTx
           { rTx :: ByteString
           }
+    | RelayMultipleTx
+          { rTxns :: [ByteString]
+          }
     | GetPartiallySignedAllegoryTx
           { gpsaPaymentInputs :: [(OutPoint', Int)]
           , gpsaName :: ([Int], Bool) -- name & isProducer
@@ -286,6 +289,7 @@ instance FromJSON RPCReqParams' where
         (GetMerkleBranchByTxID <$> o .: "txid") <|>
         (GetAllegoryNameBranch <$> o .: "name" <*> o .: "isProducer") <|>
         (RelayTx . B64.decodeLenient . T.encodeUtf8 <$> o .: "rawTx") <|>
+        (RelayMultipleTx . (B64.decodeLenient . T.encodeUtf8 <$>) <$> o .: "rawTransactions") <|>
         (GetPartiallySignedAllegoryTx <$> o .: "paymentInputs" <*> o .: "name" <*> o .: "outputOwner" <*>
          o .: "outputChange" <*>
          o .: "resellerAddress" <*>
@@ -380,6 +384,9 @@ data RPCResponseBody
     | RespRelayTx
           { rrTx :: Bool
           }
+    | RespRelayMultipleTx
+          { rrMultipleTx :: [Bool]
+          }
     | RespPartiallySignedAllegoryTx
           { interimTxns :: [ByteString]
           , purchaseTxn :: ByteString
@@ -417,6 +424,7 @@ instance ToJSON RPCResponseBody where
     toJSON (RespMerkleBranchByTxID mb) = object ["merkleBranch" .= mb]
     toJSON (RespAllegoryNameBranch nb) = object ["nameBranch" .= nb]
     toJSON (RespRelayTx rrTx) = object ["txBroadcast" .= rrTx]
+    toJSON (RespRelayMultipleTx rrMultipleTx) = object ["txnsBroadcast" .= rrMultipleTx]
     toJSON (RespPartiallySignedAllegoryTx itxns ptxn) =
         object
             [ "interimTxns" .= (T.decodeUtf8 . B64.encode <$> itxns)

@@ -462,6 +462,12 @@ goGetResource msg net roles sessKey pretty = do
                     ops <- xRelayTx tx
                     return $ RPCResponse 200 pretty $ Right $ Just $ RespRelayTx ops
                 _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
+        "RELAY_MULTIPLE_TX" -> do
+            case methodParams $ rqParams msg of
+                Just (RelayMultipleTx txns) -> do
+                    ops <- xRelayMultipleTx txns
+                    return $ RPCResponse 200 pretty $ Right $ Just $ RespRelayMultipleTx ops
+                _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
         "PS_ALLEGORY_TX" -> do
             case methodParams $ rqParams msg of
                 Just (GetPartiallySignedAllegoryTx payips (name, isProducer) owner change resellerAddress paySats) -> do

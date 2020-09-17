@@ -488,6 +488,17 @@ relayTx RelayTx {..} = do
         Right ops -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespRelayTx ops
 relayTx _ = throwBadRequest
 
+relayMultipleTx :: RPCReqParams' -> Handler App App ()
+relayMultipleTx RelayMultipleTx {..} = do
+    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    res <- LE.try $ xRelayMultipleTx rTxns
+    case res of
+        Left (e :: SomeException) -> do
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+        Right ops -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespRelayMultipleTx ops
+relayMultipleTx _ = throwBadRequest
+
 getPartiallySignedAllegoryTx :: RPCReqParams' -> Handler App App ()
 getPartiallySignedAllegoryTx GetPartiallySignedAllegoryTx {..} = do
     net <- (NC.bitcoinNetwork . nodeConfig) <$> getBitcoinP2P

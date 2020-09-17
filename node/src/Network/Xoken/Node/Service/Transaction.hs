@@ -295,6 +295,12 @@ xGetMerkleBranch txid = do
             err lg $ LG.msg $ "Error: xGetMerkleBranch: " ++ show e
             throw KeyValueDBLookupException
 
+xRelayMultipleTx :: (HasXokenNodeEnv env m, MonadIO m) => [BC.ByteString] -> m [Bool]
+xRelayMultipleTx = f []
+  where
+    f r [] = return r
+    f r (t:ts) = xRelayTx t >>= \r' -> f (r' : r) ts
+
 xRelayTx :: (HasXokenNodeEnv env m, MonadIO m) => BC.ByteString -> m (Bool)
 xRelayTx rawTx = do
     dbe <- getDB
@@ -303,7 +309,7 @@ xRelayTx rawTx = do
     let conn = xCqlClientState dbe
         bheight = 100000
         bhash = hexToBlockHash "0000000000000000000000000000000000000000000000000000000000000000"
-    debug lg $ LG.msg $ "relayTx bhash " ++ show bhash 
+    debug lg $ LG.msg $ "relayTx bhash " ++ show bhash
     -- broadcast Tx
     case runGetState (getConfirmedTx) (rawTx) 0 of
         Left e -> do
