@@ -380,26 +380,6 @@ xGetPartiallySignedAllegoryTx payips (nameArr, isProducer) owner change = do
                          (fromJust $ decodeHex s)
                          0xFFFFFFFF)
                 ([nameip] ++ (catMaybes inputHash))
-    sigInputs <-
-        mapM
-            (\(x, s) -> do
-                 case (decodeOutputBS ((fst . B16.decode) (E.encodeUtf8 s))) of
-                     Left e -> do
-                         liftIO $
-                             print
-                                 ("error (allegory) unable to decode scriptOutput! | " ++
-                                  show name ++ " " ++ show (x, s) ++ " | " ++ show ((fst . B16.decode) (E.encodeUtf8 s)))
-                         throw KeyValueDBLookupException
-                     Right scr -> do
-                         return $
-                             SigInput
-                                 scr
-                                 (fromIntegral $ anutxos)
-                                 (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x))
-                                 (setForkIdFlag sigHashAll)
-                                 Nothing)
-            [nameip]
-     --
     let outs =
             if existed
                 then if isProducer
@@ -497,12 +477,7 @@ xGetPartiallySignedAllegoryTx payips (nameArr, isProducer) owner change = do
                         [TxOut ((fromIntegral paySats) :: Word64) payScript] -- the charge for the name transfer
      --
     let psatx = Tx version ins outs locktime
-    case signTx net psatx sigInputs [allegorySecretKey alg] of
-        Right tx -> do
-            return $ (interimTxns, BSL.toStrict $ A.encode $ tx)
-        Left err -> do
-            liftIO $ print $ "error occurred while signing the Tx: " <> show err
-            return $ (interimTxns, BC.empty)
+    return $ (interimTxns, BSL.toStrict $ A.encode $ psatx)
   where
     version = 1
     locktime = 0
