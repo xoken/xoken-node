@@ -295,6 +295,7 @@ getOrMakeProducer' resellerAddress nameArr = do
                 opRetScript = frameOpReturn $ C.toStrict $ serialise al
                 !outs = [TxOut 0 opRetScript] ++ L.map (\_ -> TxOut (fromIntegral anutxos) prScript) [1, 2, 3]
                 unsignedTx = Tx 1 ins outs 0
+            processUnconfTransaction unsignedTx
             handleIfAllegoryTx unsignedTx True
             inres <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameScriptOp (name) True)
             case inres of
