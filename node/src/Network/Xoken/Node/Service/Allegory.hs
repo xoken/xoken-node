@@ -295,7 +295,7 @@ getOrMakeProducer' nameArr = do
                              ])
                 opRetScript = frameOpReturn $ C.toStrict $ serialise al
                 !outs = [TxOut 0 opRetScript] ++ L.map (\_ -> TxOut (fromIntegral anutxos) prScript) [1, 2, 3]
-                unsignedTx = B16.encode $ S.encode $ Tx 1 ins outs 0
+                unsignedTx = BSL.toStrict $ A.encode $ Tx 1 ins outs 0
             inres <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameScriptOp (name) True)
             case inres of
                 Left (e :: SomeException) -> do
@@ -305,14 +305,13 @@ getOrMakeProducer' nameArr = do
                     err lg $ LG.msg $ "allegory name still not found, recursive create must've failed (1): " <> name
                     throw KeyValueDBLookupException
                 Right nb -> do
-                    liftIO $ print $ "nb2~" <> show nb
                     let sp = DT.split (== ':') $ fst (head nb)
                     let txid = DT.unpack $ sp !! 0
                     let index = readMaybe (DT.unpack $ sp !! 1) :: Maybe Int
                     case index of
                         Just i ->
                             return $
-                            ((OutPoint' txid (fromIntegral i), (snd $ head nb)), False, unsignedTx : interimTxns)
+                            ((OutPoint' txid (fromIntegral i), (snd $ head nb)), False, unsignedTx:interimTxns)
                         Nothing -> throw KeyValueDBLookupException
         Right nb -> do
             debug lg $ LG.msg $ "allegory name found! (1): " <> name
