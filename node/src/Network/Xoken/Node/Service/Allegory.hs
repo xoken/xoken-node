@@ -294,7 +294,8 @@ getOrMakeProducer' resellerAddress nameArr = do
                              ])
                 opRetScript = frameOpReturn $ C.toStrict $ serialise al
                 !outs = [TxOut 0 opRetScript] ++ L.map (\_ -> TxOut (fromIntegral anutxos) prScript) [1, 2, 3]
-                unsignedTx = BSL.toStrict $ A.encode $ Tx 1 ins outs 0
+                unsignedTx = Tx 1 ins outs 0
+            handleIfAllegoryTx unsignedTx True
             inres <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameScriptOp (name) True)
             case inres of
                 Left (e :: SomeException) -> do
@@ -310,7 +311,9 @@ getOrMakeProducer' resellerAddress nameArr = do
                     case index of
                         Just i ->
                             return $
-                            ((OutPoint' txid (fromIntegral i), (snd $ head nb)), False, unsignedTx : interimTxns)
+                            ( (OutPoint' txid (fromIntegral i), (snd $ head nb))
+                            , False
+                            , (BSL.toStrict $ A.encode $ unsignedTx) : interimTxns)
                         Nothing -> throw KeyValueDBLookupException
         Right nb -> do
             debug lg $ LG.msg $ "allegory name found! (1): " <> name
