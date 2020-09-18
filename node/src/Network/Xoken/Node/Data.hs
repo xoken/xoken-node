@@ -255,6 +255,9 @@ data RPCReqParams'
           , gpsaResellerAddress :: String
           , gpsaPaySats :: Int
           }
+    | GetProducer
+          { gpName :: [Int]
+          }
     | GetTxOutputSpendStatus
           { gtssHash :: String
           , gtssIndex :: Int32
@@ -294,6 +297,7 @@ instance FromJSON RPCReqParams' where
          o .: "outputChange" <*>
          o .: "resellerAddress" <*>
          o .: "namePriceSats") <|>
+        (GetProducer <$> o .: "name") <|>
         (AddUser <$> o .: "username" <*> o .:? "apiExpiryTime" <*> o .:? "apiQuota" <*> o .: "firstName" <*>
          o .: "lastName" <*>
          o .: "email" <*>
@@ -391,6 +395,10 @@ data RPCResponseBody
           { interimTxns :: [ByteString]
           , purchaseTxn :: ByteString
           }
+    | RespGetProducer
+          { producerOutpoint :: OutPoint'
+          , producerScript :: String
+          }
     | RespTxOutputSpendStatus
           { spendStatus :: Maybe TxOutputSpendStatus
           }
@@ -430,6 +438,7 @@ instance ToJSON RPCResponseBody where
             [ "interimTxns" .= (T.decodeUtf8 . B64.encode <$> itxns)
             , "purchaseTxn" .= (T.decodeUtf8 . B64.encode $ ptxn)
             ]
+    toJSON (RespGetProducer op scr) = object ["outpoint" .= op, "script" .= scr]
     toJSON (RespTxOutputSpendStatus ss) = object ["spendStatus" .= ss]
     toJSON (RespUser u) = object ["user" .= u]
 

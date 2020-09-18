@@ -137,102 +137,31 @@ xGetAllegoryNameBranch name isProducer = do
             err lg $ LG.msg $ "Error: xGetAllegoryNameBranch: " ++ show e
             throw KeyValueDBLookupException
 
-getOrMakeProducer :: (HasXokenNodeEnv env m, MonadIO m) => [Int] -> m (((OutPoint', DT.Text), Bool))
-getOrMakeProducer nameArr = do
+xGetProducer :: (HasXokenNodeEnv env m, MonadIO m) => [Int] -> m (OutPoint', DT.Text)
+xGetProducer nameArr = do
     dbe <- getDB
     lg <- getLogger
-    bp2pEnv <- getBitcoinP2P
     let name = DT.pack $ L.map (\x -> chr x) (nameArr)
-    let anutxos = NC.allegoryNameUtxoSatoshis $ nodeConfig $ bp2pEnv
     res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameScriptOp (name) True)
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "error fetching allegory name input :" ++ show e
             throw e
         Right [] -> do
-            debug lg $ LG.msg $ "allegory name not found, create recursively (1): " <> name
-            createCommitImplictTx (nameArr)
-            inres <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameScriptOp (name) True)
-            case inres of
-                Left (e :: SomeException) -> do
-                    err lg $ LG.msg $ "error fetching allegory name input :" ++ show e
-                    throw e
-                Right [] -> do
-                    err lg $ LG.msg $ "allegory name still not found, recursive create must've failed (1): " <> name
+            debug lg $ LG.msg $ "[getProducer] Allegory name '" <> name <> "' not found, going one level above"
+            if nameArr == []
+                then do
+                    err lg $ LG.msg $ show "[getProducer] Couldn't find Allegory root!"
                     throw KeyValueDBLookupException
-                Right nb -> do
-                    liftIO $ print $ "nb2~" <> show nb
-                    let sp = DT.split (== ':') $ fst (head nb)
-                    let txid = DT.unpack $ sp !! 0
-                    let index = readMaybe (DT.unpack $ sp !! 1) :: Maybe Int
-                    case index of
-                        Just i -> return $ ((OutPoint' txid (fromIntegral i), (snd $ head nb)), False)
-                        Nothing -> throw KeyValueDBLookupException
+                else xGetProducer $ init nameArr
         Right nb -> do
-            debug lg $ LG.msg $ "allegory name found! (1): " <> name
+            debug lg $ LG.msg $ "[getProducer] Allegory producer '" <> name <> "' found"
             let sp = DT.split (== ':') $ fst (head nb)
             let txid = DT.unpack $ sp !! 0
             let index = readMaybe (DT.unpack $ sp !! 1) :: Maybe Int
             case index of
-                Just i -> return $ ((OutPoint' txid (fromIntegral i), (snd $ head nb)), True)
+                Just i -> return $ (OutPoint' txid (fromIntegral i), (snd $ head nb))
                 Nothing -> throw KeyValueDBLookupException
-
-createCommitImplictTx :: (HasXokenNodeEnv env m, MonadIO m) => [Int] -> m BC.ByteString
-createCommitImplictTx nameArr = do
-    dbe <- getDB
-    lg <- getLogger
-    bp2pEnv <- getBitcoinP2P
-    alg <- getAllegory
-    let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
-    (nameip, existed) <- getOrMakeProducer (init nameArr)
-    let anutxos = NC.allegoryNameUtxoSatoshis $ nodeConfig $ bp2pEnv
-    let prAddr = pubKeyAddr $ derivePubKeyI $ wrapSecKey False $ allegorySecretKey alg
-    let prScript = addressToScriptBS prAddr
-    let addr' =
-            case addrToString net prAddr of
-                Nothing -> ""
-                Just t -> DT.unpack t
-    let ins' =
-            L.map
-                (\(x, s) ->
-                     TxIn
-                         (OutPoint (fromString $ opTxHash x) (fromIntegral $ opIndex x))
-                         (fromJust $ decodeHex s)
-                         0xFFFFFFFF)
-                ([nameip])
-    utxos <- getFundingUtxos addr'
-    let (ins, fval) =
-            case L.filter (\y -> aoValue y >= 2000000) utxos of
-                [] -> (ins', 0)
-                (x:xs) ->
-                    let op = aoOutput x
-                     in ( ins' ++
-                          [TxIn (OutPoint (fromString $ opTxHash op) (fromIntegral $ opIndex op)) prScript 0xFFFFFFFF]
-                        , aoValue x)
-        -- construct OP_RETURN
-    let al =
-            Allegory
-                1
-                (init nameArr)
-                (ProducerAction
-                     (Index 0)
-                     (ProducerOutput (Index 1) (Just $ Endpoint "XokenP2P" "someuri-1"))
-                     Nothing
-                     [ (ProducerExtension
-                            (ProducerOutput (Index 2) (Just $ Endpoint "XokenP2P" "someuri-2"))
-                            (last nameArr))
-                     , (OwnerExtension (OwnerOutput (Index 3) (Just $ Endpoint "XokenP2P" "someuri-3")) (last nameArr))
-                     ])
-    let opRetScript = frameOpReturn $ C.toStrict $ serialise al
-        -- derive producer's Address
-    let !outs = [TxOut 0 opRetScript] ++ L.map (\_ -> TxOut (fromIntegral anutxos) prScript) [1, 2, 3]
-    let unsignedTx = Tx version ins outs locktime
-    processUnconfTransaction unsignedTx
-    handleIfAllegoryTx unsignedTx True
-    return $ B16.encode $ S.encode unsignedTx
-  where
-    version = 1
-    locktime = 0
 
 getOrMakeProducer' ::
        (HasXokenNodeEnv env m, MonadIO m) => Address -> [Int] -> m ((OutPoint', DT.Text), Bool, [BC.ByteString])

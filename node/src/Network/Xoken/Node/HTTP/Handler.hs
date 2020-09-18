@@ -499,29 +499,16 @@ relayMultipleTx RelayMultipleTx {..} = do
         Right ops -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespRelayMultipleTx ops
 relayMultipleTx _ = throwBadRequest
 
-getPartiallySignedAllegoryTx :: RPCReqParams' -> Handler App App ()
-getPartiallySignedAllegoryTx GetPartiallySignedAllegoryTx {..} = do
-    net <- (NC.bitcoinNetwork . nodeConfig) <$> getBitcoinP2P
+getProducer :: RPCReqParams' -> Handler App App ()
+getProducer (GetProducer nameArray) = do
     pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
-    case stringToAddr net (DT.pack gpsaResellerAddress) of
-        Nothing -> throwBadRequest
-        Just addr -> do
-            res <-
-                LE.try $
-                xGetPartiallySignedAllegoryTx
-                    gpsaPaymentInputs
-                    gpsaName
-                    gpsaOutputOwner
-                    gpsaOutputChange
-                    addr
-                    gpsaPaySats
-            case res of
-                Left (e :: SomeException) -> do
-                    modifyResponse $ setResponseStatus 500 "Internal Server Error"
-                    writeBS "INTERNAL_SERVER_ERROR"
-                Right ops -> do
-                    writeBS $ BSL.toStrict $ encodeResp pretty $ RespPartiallySignedAllegoryTx (fst ops) (snd ops)
-getPartiallySignedAllegoryTx _ = throwBadRequest
+    res <- LE.try $ xGetProducer nameArray
+    case res of
+        Left (e :: SomeException) -> do
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+        Right (op, scr) -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespGetProducer op (DT.unpack scr)
+getProducer _ = throwBadRequest
 
 getCurrentUser :: Handler App App ()
 getCurrentUser = do

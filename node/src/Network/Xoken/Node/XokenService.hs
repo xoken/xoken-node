@@ -468,23 +468,16 @@ goGetResource msg net roles sessKey pretty = do
                     ops <- xRelayMultipleTx txns
                     return $ RPCResponse 200 pretty $ Right $ Just $ RespRelayMultipleTx ops
                 _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
-        "PS_ALLEGORY_TX" -> do
+        "GET_PRODUCER" -> do
             case methodParams $ rqParams msg of
-                Just (GetPartiallySignedAllegoryTx payips (name, isProducer) owner change resellerAddress paySats) -> do
-                    case stringToAddr net (DT.pack resellerAddress) of
-                        Nothing -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
-                        Just addr -> do
-                            opsE <-
-                                LE.try $
-                                xGetPartiallySignedAllegoryTx payips (name, isProducer) owner change addr paySats
-                            case opsE of
-                                Right ops ->
-                                    return $
-                                    RPCResponse 200 pretty $
-                                    Right $ Just $ RespPartiallySignedAllegoryTx (fst ops) (snd ops)
-                                Left (e :: SomeException) -> do
-                                    debug lg $ LG.msg $ "allegory error PS_ALLEGORY_TX: " ++ show e
-                                    return $ RPCResponse 400 pretty $ Left $ RPCError INTERNAL_ERROR Nothing
+                Just (GetProducer name) -> do
+                    res <- LE.try $ xGetProducer name
+                    case res of
+                        Left (e :: SomeException) -> do
+                            debug lg $ LG.msg $ "Allegory error: xGetProducer: " ++ show e
+                            return $ RPCResponse 400 pretty $ Left $ RPCError INTERNAL_ERROR Nothing
+                        Right (op, scr) ->
+                            return $ RPCResponse 200 pretty $ Right $ Just $ RespGetProducer op (DT.unpack scr)
                 _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
         "OUTPOINT->SPEND_STATUS" -> do
             case methodParams $ rqParams msg of
