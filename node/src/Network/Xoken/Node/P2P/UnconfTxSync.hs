@@ -419,8 +419,7 @@ processUnconfTransaction tx = do
     --
     vall <- liftIO $ TSH.lookup (txSynchronizer bp2pEnv) (txHash tx)
     case vall of
-        Just ev -> do
-            liftIO $ EV.signal $ ev
+        Just ev -> liftIO $ EV.signal $ ev
         Nothing -> return ()
 
 getSatsValueFromEpochOutpoint ::

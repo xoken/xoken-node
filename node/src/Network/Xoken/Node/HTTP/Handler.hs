@@ -33,7 +33,6 @@ import Data.Time.Calendar
 import Data.Time.Clock
 import Data.Time.Clock.POSIX
 import Database.XCQL.Protocol as Q
-import Network.Xoken.Address
 import Network.Xoken.Crypto.Hash
 import Network.Xoken.Node.Data
     ( AddUserResp(..)

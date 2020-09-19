@@ -247,14 +247,6 @@ data RPCReqParams'
     | RelayMultipleTx
           { rTxns :: [ByteString]
           }
-    | GetPartiallySignedAllegoryTx
-          { gpsaPaymentInputs :: [(OutPoint', Int)]
-          , gpsaName :: ([Int], Bool) -- name & isProducer
-          , gpsaOutputOwner :: String
-          , gpsaOutputChange :: String
-          , gpsaResellerAddress :: String
-          , gpsaPaySats :: Int
-          }
     | GetProducer
           { gpName :: [Int]
           }
@@ -293,10 +285,6 @@ instance FromJSON RPCReqParams' where
         (GetAllegoryNameBranch <$> o .: "name" <*> o .: "isProducer") <|>
         (RelayTx . B64.decodeLenient . T.encodeUtf8 <$> o .: "rawTx") <|>
         (RelayMultipleTx . (B64.decodeLenient . T.encodeUtf8 <$>) <$> o .: "rawTransactions") <|>
-        (GetPartiallySignedAllegoryTx <$> o .: "paymentInputs" <*> o .: "name" <*> o .: "outputOwner" <*>
-         o .: "outputChange" <*>
-         o .: "resellerAddress" <*>
-         o .: "namePriceSats") <|>
         (GetProducer <$> o .: "name") <|>
         (AddUser <$> o .: "username" <*> o .:? "apiExpiryTime" <*> o .:? "apiQuota" <*> o .: "firstName" <*>
          o .: "lastName" <*>
@@ -391,10 +379,6 @@ data RPCResponseBody
     | RespRelayMultipleTx
           { rrMultipleTx :: [Bool]
           }
-    | RespPartiallySignedAllegoryTx
-          { interimTxns :: [ByteString]
-          , purchaseTxn :: ByteString
-          }
     | RespGetProducer
           { producerOutpoint :: OutPoint'
           , producerScript :: String
@@ -433,11 +417,6 @@ instance ToJSON RPCResponseBody where
     toJSON (RespAllegoryNameBranch nb) = object ["nameBranch" .= nb]
     toJSON (RespRelayTx rrTx) = object ["txBroadcast" .= rrTx]
     toJSON (RespRelayMultipleTx rrMultipleTx) = object ["txnsBroadcast" .= rrMultipleTx]
-    toJSON (RespPartiallySignedAllegoryTx itxns ptxn) =
-        object
-            [ "interimTxns" .= (T.decodeUtf8 . B64.encode <$> itxns)
-            , "purchaseTxn" .= (T.decodeUtf8 . B64.encode $ ptxn)
-            ]
     toJSON (RespGetProducer op scr) = object ["outpoint" .= op, "script" .= scr]
     toJSON (RespTxOutputSpendStatus ss) = object ["spendStatus" .= ss]
     toJSON (RespUser u) = object ["user" .= u]

@@ -40,9 +40,7 @@ import Control.Monad.IO.Class
 import Control.Monad.Logger
 import Control.Monad.Loops
 import Control.Monad.Reader
-import Control.Monad.Trans.Class
 import Control.Monad.Trans.Control
-import Control.Monad.Writer.Lazy
 import Data.Aeson as A
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Base16 as B16 (decode, encode)
@@ -90,7 +88,6 @@ import Network.Xoken.Node.GraphDB
 import Network.Xoken.Node.P2P.BlockSync
 import Network.Xoken.Node.P2P.Common
 import Network.Xoken.Node.P2P.Types
-import Network.Xoken.Node.P2P.UnconfTxSync
 import Network.Xoken.Node.Service.Address
 import Network.Xoken.Node.Service.Transaction
 import Network.Xoken.Util (bsToInteger, integerToBS)
@@ -160,4 +157,3 @@ xGetProducer nameArr = do
             case index of
                 Just i -> return $ (OutPoint' txid (fromIntegral i), (snd $ head nb))
                 Nothing -> throw KeyValueDBLookupException
-
