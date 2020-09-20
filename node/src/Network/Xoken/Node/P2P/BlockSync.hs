@@ -516,7 +516,8 @@ commitScriptHashOutputs conn sh output blockInfo = do
         qstrAddrOuts :: Q.QueryString Q.W (Text, Int64, (Text, Int32)) ()
         qstrAddrOuts = "INSERT INTO xoken.script_hash_outputs (script_hash, nominal_tx_index, output) VALUES (?,?,?)"
         parAddrOuts = getSimpleQueryParam (sh, nominalTxIndex, output)
-    resAddrOuts <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstrAddrOuts parAddrOuts)
+    queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstrAddrOuts))
+    resAddrOuts <- liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryId parAddrOuts))
     case resAddrOuts of
         Right _ -> return ()
         Left (e :: SomeException) -> do
@@ -529,7 +530,8 @@ commitScriptHashUnspentOutputs conn sh output = do
     let qstr :: Q.QueryString Q.W (Text, (Text, Int32)) ()
         qstr = "INSERT INTO xoken.script_hash_unspent_outputs (script_hash, output) VALUES (?,?)"
         par = getSimpleQueryParam (sh, output)
-    res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr par)
+    queryI <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstr))
+    res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryI par)
     case res of
         Right _ -> return ()
         Left (e :: SomeException) -> do
@@ -542,8 +544,8 @@ deleteScriptHashUnspentOutputs conn sh output = do
     let qstr :: Q.QueryString Q.W (Text, (Text, Int32)) ()
         qstr = "DELETE FROM xoken.script_hash_unspent_outputs WHERE script_hash=? AND output=?"
         par = getSimpleQueryParam (sh, output)
-    return ()
-    res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr par)
+    queryI <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstr))
+    res <- liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryI par))
     case res of
         Right _ -> return ()
         Left (e :: SomeException) -> do
@@ -575,7 +577,8 @@ insertTxIdOutputs conn (txid, outputIndex) address scriptHash isRecv blockInfo o
         qstr =
             "INSERT INTO xoken.txid_outputs (txid,output_index,address,script_hash,is_recv,block_info,other,value) VALUES (?,?,?,?,?,?,?,?)"
         par = getSimpleQueryParam (txid, outputIndex, address, scriptHash, isRecv, blockInfo, other, value)
-    res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr par)
+    queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstr))
+    res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryId par)
     case res of
         Right _ -> return ()
         Left (e :: SomeException) -> do
@@ -711,7 +714,7 @@ processConfTransaction tx bhash blkht txind = do
             inAddrs
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": fetched input(s): " ++ show inputs
     --
-    -- cache compile output values 
+    -- cache compile output values
     -- imp: order is (address, scriptHash, value)
     let ovs =
             map
@@ -735,7 +738,7 @@ processConfTransaction tx bhash blkht txind = do
              let output = (txHashToHex txhs, i)
              insertTxIdOutputs conn output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o)
              commitScriptHashOutputs
-                 conn -- 
+                 conn --
                  sh -- scriptHash
                  output
                  bi
@@ -786,7 +789,8 @@ processConfTransaction tx bhash blkht txind = do
                 , Blob fst
                 , (stripScriptHash <$> inputs)
                 , fees)
-    res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr par)
+    queryI <- liftIO $ queryPrepared conn (Q.RqPrepare $ Q.Prepare qstr)
+    res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryI par)
     case res of
         Right _ -> return ()
         Left (e :: SomeException) -> do
@@ -801,7 +805,7 @@ processConfTransaction tx bhash blkht txind = do
         Left (e :: SomeException) -> err lg $ LG.msg ("Error: " ++ show e)
     --
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": handled Allegory Tx"
-    -- signal 'done' event for tx's that were processed out of sequence 
+    -- signal 'done' event for tx's that were processed out of sequence
     --
     vall <- liftIO $ TSH.lookup (txSynchronizer bp2pEnv) txhs
     case vall of
@@ -822,7 +826,8 @@ getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait = do
     let qstr :: Q.QueryString Q.R (Text, Int32) (Text, Text, Int64)
         qstr = "SELECT address, script_hash, value FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
         par = getSimpleQueryParam (txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint)
-    res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
+    queryI <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstr))
+    res <- liftIO $ try $ query conn (Q.RqExecute (Q.Execute queryI par))
     case res of
         Right results -> do
             if L.length results == 0

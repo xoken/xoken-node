@@ -388,6 +388,28 @@ query ps req = do
                 (Q.PreparedResult _ _ _) -> throw $ XCqlInvalidRowsResultException "Got PreparedResult"
                 (Q.SchemaChangeResult _) -> throw $ XCqlInvalidRowsResultException "Got SchemaChangeResult"
 
+queryPrepared :: (Tuple a, Tuple b) => XCqlClientState -> Request k a b -> IO (QueryId k a b)
+queryPrepared ps req = do
+    res <- execQuery ps req
+    case res of
+        Left e -> do
+            throw $ XCqlUnpackException $ show e
+        Right (Q.RsError _ _ e) -> do
+            throw $ XCqlQueryErrorException $ show e
+        Right (Q.RsReady _ _ _) -> throw $ XCqlInvalidRowsResultException "Got RsReady" -- TODO change the exception
+        Right (Q.RsAuthenticate _ _ _) -> throw $ XCqlInvalidRowsResultException "Got RsAuthenticate"
+        Right (Q.RsAuthChallenge _ _ _) -> throw $ XCqlInvalidRowsResultException "Got RsAuthChallenge"
+        Right (Q.RsAuthSuccess _ _ _) -> throw $ XCqlInvalidRowsResultException "Got RsAuthSuccess"
+        Right (Q.RsSupported _ _ _) -> throw $ XCqlInvalidRowsResultException "Got RsSupported"
+        Right (Q.RsEvent _ _ _) -> throw $ XCqlInvalidRowsResultException "Got RsEvent"
+        Right (Q.RsResult _ _ result) ->
+            case result of
+                (Q.RowsResult _ r) -> throw $ XCqlInvalidRowsResultException "Got Rows Result"
+                Q.VoidResult -> throw $ XCqlInvalidRowsResultException "Got VoidResult"
+                (Q.SetKeyspaceResult k) -> throw $ XCqlInvalidRowsResultException "Got SetKeySpaceResult"
+                (Q.PreparedResult q _ _) -> return q
+                (Q.SchemaChangeResult _) -> throw $ XCqlInvalidRowsResultException "Got SchemaChangeResult"
+
 write :: (Tuple a, Tuple b) => XCqlClientState -> Request k a b -> IO ()
 write ps req = do
     res <- execQuery ps req
