@@ -384,7 +384,7 @@ resilientRead ::
        (HasLogger m, MonadBaseControl IO m, MonadIO m) => Socket -> BlockIngestState -> m (([Tx], LC.ByteString), Int64)
 resilientRead sock !blin = do
     lg <- getLogger
-    let chunkSize = 100 * 1000 -- 100 KB
+    let chunkSize = 200 * 1000 -- 200 KB
         !delta =
             if binTxPayloadLeft blin > chunkSize
                 then chunkSize - ((LC.length $ binUnspentBytes blin))
@@ -397,7 +397,7 @@ resilientRead sock !blin = do
     case runGetLazyState (getConfirmedTxBatch) txbyt of
         Left e -> do
             trace lg $ msg $ "1st attempt|" ++ show e
-            let chunkSizeFB = 10 * 1000 * 1000 -- 10 MB
+            let chunkSizeFB = 200 * 1000 * 1000 -- 200 MB
                 !deltaNew =
                     if binTxPayloadLeft blin > chunkSizeFB
                         then chunkSizeFB - ((LC.length $ binUnspentBytes blin) + delta)
@@ -837,7 +837,9 @@ processTxBatch txns iss = do
                                      then debug lg $ LG.msg $ (" (error) Tx__index: " ++ show idx ++ show bf)
                                      else debug lg $ LG.msg $ ("Tx__index: " ++ show idx)
                                  return ((txns !! idx), bf, cidx)) &
-                        S.mapM (processTxStream)
+                        S.mapM (processTxStream) &
+                        S.maxBuffer (maxTxProcessingBuffer $ nodeConfig bp2pEnv) &
+                        S.maxThreads (maxTxProcessingThreads $ nodeConfig bp2pEnv)
                     valy <- liftIO $ TSH.lookup (blockTxProcessingLeftMap bp2pEnv) (biBlockHash bf)
                     case valy of
                         Just lefta -> liftIO $ TSH.insert (fst lefta) (txHash $ head txns) (L.length txns)
