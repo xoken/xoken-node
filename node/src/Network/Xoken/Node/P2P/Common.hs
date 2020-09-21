@@ -529,3 +529,35 @@ connHandshake sock req = do
                                     throw XCqlNotReadyException
         Left e -> do
             throw $ XCqlPackException (show e)
+
+chunksOf :: Int -> BSL.ByteString -> [BSL.ByteString]
+chunksOf k = go
+  where
+    go t =
+        case LC.splitAt (toEnum k) t of
+            (a, b)
+                | BSL.null a -> []
+                | otherwise -> a : go b
+
+isSegmented :: BSL.ByteString -> Bool
+isSegmented bs = (BSL.take 32 bs) == (LC.replicate 32 'f')
+
+getSegmentCount :: BSL.ByteString -> Int
+getSegmentCount = read . T.unpack . DTE.decodeUtf8 . BSL.toStrict . BSL.drop 32
+
+getCompleteTx :: XCqlClientState -> T.Text -> Int -> IO (BSL.ByteString)
+getCompleteTx conn hash segments = do
+    let str = "SELECT tx_serialized from xoken.transactions where tx_id = ?"
+        qstr = str :: Q.QueryString Q.R (Identity Text) (Identity Blob)
+    queryI <- queryPrepared conn (Q.RqPrepare $ Q.Prepare qstr)
+    foldM
+        (\acc s -> do
+             let p = getSimpleQueryParam $ Identity $ hash <> (T.pack $ show s)
+             resp <- query conn (Q.RqExecute $ Q.Execute queryI p)
+             return $
+                 if L.length resp == 0 -- TODO: this shouldn't be occurring
+                     then acc
+                     else let sz = runIdentity $ resp !! 0
+                           in acc <> fromBlob sz)
+        BSL.empty
+        [1 .. segments]
