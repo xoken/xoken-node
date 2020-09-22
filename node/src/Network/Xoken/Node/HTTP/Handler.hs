@@ -485,20 +485,29 @@ relayTx RelayTx {..} = do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
         Right ops -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespRelayTx ops
+relayTx _ = throwBadRequest
 
-getRelayTx _ = throwBadRequest
-
-getPartiallySignedAllegoryTx :: RPCReqParams' -> Handler App App ()
-getPartiallySignedAllegoryTx GetPartiallySignedAllegoryTx {..} = do
+relayMultipleTx :: RPCReqParams' -> Handler App App ()
+relayMultipleTx RelayMultipleTx {..} = do
     pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
-    res <- LE.try $ xGetPartiallySignedAllegoryTx gpsaPaymentInputs gpsaName gpsaOutputOwner gpsaOutputChange
+    res <- LE.try $ xRelayMultipleTx rTxns
     case res of
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
-        Right ops -> do
-            writeBS $ BSL.toStrict $ encodeResp pretty $ RespPartiallySignedAllegoryTx ops
-getPartiallySignedAllegoryTx _ = throwBadRequest
+        Right ops -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespRelayMultipleTx ops
+relayMultipleTx _ = throwBadRequest
+
+getProducer :: RPCReqParams' -> Handler App App ()
+getProducer (GetProducer nameArray) = do
+    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    res <- LE.try $ xGetProducer nameArray
+    case res of
+        Left (e :: SomeException) -> do
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+        Right (op, scr) -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespGetProducer op (DT.unpack scr)
+getProducer _ = throwBadRequest
 
 getCurrentUser :: Handler App App ()
 getCurrentUser = do

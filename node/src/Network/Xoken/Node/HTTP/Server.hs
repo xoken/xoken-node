@@ -44,6 +44,7 @@ apiRoutes =
     , ("/v1/scripthashes/utxos", method GET (withAuth getUTXOsByScriptHashes))
     , ("/v1/merklebranch/:txid", method GET (withAuth getMNodesByTxID))
     , ("/v1/allegory/:name", method GET (withAuth getOutpointsByName))
+    , ("/v1/producer", method POST (withAuth $ withReq getProducer))
     , ("/v1/relaytx", method POST (withAuth $ withReq relayTx))
-    , ("/v1/partialsign", method POST (withAuth $ withReq getPartiallySignedAllegoryTx))
+    , ("/v1/relaymultipletx", method POST (withAuth $ withReq relayMultipleTx))
     ]
