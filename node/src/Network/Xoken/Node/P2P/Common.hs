@@ -9,6 +9,7 @@
 
 module Network.Xoken.Node.P2P.Common where
 
+import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (mapConcurrently)
 import Control.Concurrent.Async.Lifted as LA (async, wait)
 import Control.Concurrent.MSem as MS
@@ -128,13 +129,13 @@ data AriviServiceException
 instance Exception AriviServiceException
 
 data XCqlException
-    = XCqlPackException
-    | XCqlUnpackException
-    | XCqlInvalidRowsResultException
-    | XCqlInvalidVoidResultException
-    | XCqlQueryErrorException
+    = XCqlPackException String
+    | XCqlUnpackException String
+    | XCqlInvalidRowsResultException String
+    | XCqlInvalidVoidResultException String
+    | XCqlQueryErrorException String
     | XCqlNotReadyException
-    | XCqlHeaderException
+    | XCqlHeaderException String
     | XCqlInvalidHeaderException
     | XCqlEmptyHashtableException
     deriving (Show)
@@ -168,11 +169,8 @@ msgOrder m1 m2 = do
         then LT
         else GT
 
-sendEncMessage :: MVar Bool -> Socket -> BSL.ByteString -> IO ()
-sendEncMessage writeLock sock msg = do
-    a <- takeMVar writeLock
-    (LB.sendAll sock msg) `catch` (\(e :: IOException) -> putStrLn ("caught: " ++ show e))
-    putMVar writeLock a
+sendEncMessage :: MVar () -> Socket -> BSL.ByteString -> IO ()
+sendEncMessage writeLock sock msg = withMVar writeLock (\x -> (LB.sendAll sock msg))
 
 -- | Computes the height of a Merkle tree.
 computeTreeHeight ::
@@ -203,6 +201,22 @@ divide x y = (a / b)
 
 toInt :: Float -> Int
 toInt x = round x
+
+-- Helper Functions
+recvAll :: (MonadIO m) => Socket -> Int64 -> m BSL.ByteString
+recvAll sock len = do
+    if len > 0
+        then do
+            res <- liftIO $ try $ LB.recv sock len
+            case res of
+                Left (e :: IOException) -> throw SocketReadException
+                Right mesg ->
+                    if BSL.length mesg == len
+                        then return mesg
+                        else if BSL.length mesg == 0
+                                 then throw ZeroLengthSocketReadException
+                                 else BSL.append mesg <$> recvAll sock (len - BSL.length mesg)
+        else return (BSL.empty)
 
 -- OP_RETURN Allegory/AllPay
 frameOpReturn :: C.ByteString -> C.ByteString
@@ -357,56 +371,81 @@ query ps req = do
     res <- execQuery ps req
     case res of
         Left e -> do
-            throw XCqlUnpackException
-        Right (RsError _ _ e) -> do
-            throw XCqlQueryErrorException
-        Right response ->
-            case response of
-                (Q.RsResult _ _ (Q.RowsResult _ r)) -> return r
-                response -> do
-                    throw XCqlInvalidRowsResultException
+            throw $ XCqlUnpackException $ show e
+        Right (Q.RsError _ _ e) -> do
+            throw $ XCqlQueryErrorException $ show e
+        Right (Q.RsReady _ _ _) -> throw $ XCqlInvalidRowsResultException "Got RsReady"
+        Right (Q.RsAuthenticate _ _ _) -> throw $ XCqlInvalidRowsResultException "Got RsAuthenticate"
+        Right (Q.RsAuthChallenge _ _ _) -> throw $ XCqlInvalidRowsResultException "Got RsAuthChallenge"
+        Right (Q.RsAuthSuccess _ _ _) -> throw $ XCqlInvalidRowsResultException "Got RsAuthSuccess"
+        Right (Q.RsSupported _ _ _) -> throw $ XCqlInvalidRowsResultException "Got RsSupported"
+        Right (Q.RsEvent _ _ _) -> throw $ XCqlInvalidRowsResultException "Got RsEvent"
+        Right (Q.RsResult _ _ result) ->
+            case result of
+                (Q.RowsResult _ r) -> return r
+                Q.VoidResult -> throw $ XCqlInvalidRowsResultException "Got VoidResult"
+                (Q.SetKeyspaceResult k) -> throw $ XCqlInvalidRowsResultException "Got SetKeySpaceResult"
+                (Q.PreparedResult _ _ _) -> throw $ XCqlInvalidRowsResultException "Got PreparedResult"
+                (Q.SchemaChangeResult _) -> throw $ XCqlInvalidRowsResultException "Got SchemaChangeResult"
 
 write :: (Tuple a, Tuple b) => XCqlClientState -> Request k a b -> IO ()
 write ps req = do
     res <- execQuery ps req
     case res of
         Left e -> do
-            throw XCqlUnpackException
-        Right (RsError _ _ e) -> do
-            throw XCqlQueryErrorException
-        Right response ->
-            case response of
-                (Q.RsResult _ _ (Q.VoidResult)) -> return ()
-                response -> do
-                    throw XCqlInvalidVoidResultException
+            throw $ XCqlUnpackException $ show e
+        Right (Q.RsError _ _ e) -> do
+            throw $ XCqlQueryErrorException $ show e
+        Right (Q.RsReady _ _ _) -> throw $ XCqlInvalidVoidResultException "Got RsReady"
+        Right (Q.RsAuthenticate _ _ _) -> throw $ XCqlInvalidVoidResultException "Got RsAuthenticate"
+        Right (Q.RsAuthChallenge _ _ _) -> throw $ XCqlInvalidVoidResultException "Got RsAuthChallenge"
+        Right (Q.RsAuthSuccess _ _ _) -> throw $ XCqlInvalidVoidResultException "Got RsAuthSuccess"
+        Right (Q.RsSupported _ _ _) -> throw $ XCqlInvalidVoidResultException "Got RsSupported"
+        Right (Q.RsEvent _ _ _) -> throw $ XCqlInvalidVoidResultException "Got RsEvent"
+        Right (Q.RsResult _ _ result) ->
+            case result of
+                Q.VoidResult -> return ()
+                (Q.RowsResult _ r) -> throw $ XCqlInvalidVoidResultException "Got RowsResult"
+                (Q.SetKeyspaceResult k) -> throw $ XCqlInvalidVoidResultException "Got SetKeySpaceResult"
+                (Q.PreparedResult _ _ _) -> throw $ XCqlInvalidVoidResultException "Got PreparedResult"
+                (Q.SchemaChangeResult _) -> throw $ XCqlInvalidVoidResultException "Got SchemaChangeResult"
+
+getConnectionStreamID :: XCqlClientState -> IO (XCQLConnection, Int16)
+getConnectionStreamID xcs = do
+    rnd <- randomIO
+    let vcs = xcs !! (rnd `mod` (L.length xcs - 1))
+    let lock = xCqlWriteLock vcs
+    sockm <- readIORef $ xCqlSocket vcs
+    case sockm of
+        Just s -> do
+            i <-
+                modifyMVar
+                    lock
+                    (\a -> do
+                         if a == maxBound
+                             then return (1, 1)
+                             else return (a + 1, a + 1))
+            return $ (vcs, i)
+        Nothing -> do
+            print "Hit a dud XCQL connection!"
+            liftIO $ threadDelay (100000) -- 100ms sleep
+            getConnectionStreamID xcs -- hopefully we find another good one
 
 execQuery :: (Tuple a, Tuple b) => XCqlClientState -> Request k a b -> IO (Either String (Response k a b))
 execQuery xcs req = do
-    vcs <-
-        mapM
-            (\(XCQLConnection hx lx sx) -> do
-                 ct <- readIORef sx
-                 case ct of
-                     Just x -> return $ Just (hx, lx, x)
-                     Nothing -> return Nothing)
-            xcs
-    let (ht, lock, sock) = head $ catMaybes vcs
-    a <- takeMVar lock
     mv <- newEmptyMVar
-    let i =
-            if a == maxBound
-                then 1
-                else (a + 1)
-        sid = mkStreamId i
+    (conn, i) <- getConnectionStreamID xcs
+    let ht = xCqlHashTable conn
+    let lock = xCqlWriteLock conn
+    sockm <- readIORef $ xCqlSocket conn
+    let sock = fromJust sockm
+    let sid = mkStreamId i
     case (Q.pack Q.V3 noCompression False sid req) of
         Right reqp -> do
             TSH.insert ht i mv
-            putMVar lock i
-            (LB.sendAll sock reqp) `catch` (\(e :: IOException) -> putStrLn ("caught sendQueryReq: " ++ show e))
-        Left _ -> do
-            putMVar lock i
-            print "XCqlPackException"
-            throw XCqlPackException
+            withMVar lock (\_ -> LB.sendAll sock reqp)
+        Left e -> do
+            throw $ XCqlPackException $ show e
     (XCqlResponse h x) <- takeMVar mv
     TSH.delete ht i
     return $ Q.unpack noCompression h x
@@ -416,28 +455,29 @@ readResponse (XCQLConnection ht lock sk) =
     forever $ do
         skref <- readIORef sk
         let sock = fromJust skref
-        b <- LB.recv sock 9
+        b <- recvAll sock 9
         h' <- return $ header Q.V3 b
         -- print $ "readResponse " ++ show b
         case h' of
             Left s -> do
-                print $ "[Error] Query: header error: " ++ s
                 writeIORef sk Nothing
-                throw XCqlHeaderException
+                throw $ XCqlHeaderException (show s)
             Right h -> do
                 case headerType h of
                     RqHeader -> do
-                        print "[Error] Query: RqHeader"
                         writeIORef sk Nothing
-                        throw XCqlHeaderException
+                        throw XCqlInvalidHeaderException
                     RsHeader -> do
                         let len = lengthRepr (bodyLength h)
                             sid = fromIntegral $ fromStreamId $ streamId h
-                        x <- LB.recv sock (fromIntegral len)
+                        x <- recvAll sock (fromIntegral len)
                         mmv <- TSH.lookup ht sid
                         case mmv of
                             Just mv -> do
-                                putMVar mv (XCqlResponse h x)
+                                res <- tryPutMVar mv (XCqlResponse h x)
+                                case res of
+                                    True -> return ()
+                                    False -> print "[Error] tryPutMVar False"
                             Nothing -> do
                                 return ()
 
@@ -447,11 +487,11 @@ connHandshake sock req = do
     case (Q.pack Q.V3 noCompression False i req) of
         Right qp -> do
             LB.sendAll sock qp
-            b <- LB.recv sock 9
+            b <- recvAll sock 9
             h' <- return $ header Q.V3 b
             case h' of
                 Left s -> do
-                    throw XCqlHeaderException
+                    throw $ XCqlHeaderException (show s)
                 Right h -> do
                     case headerType h of
                         RqHeader -> do
@@ -460,10 +500,10 @@ connHandshake sock req = do
                             case Q.unpack noCompression h "" of
                                 Right r@(RsReady _ _ Ready) -> return r
                                 Left e -> do
-                                    throw XCqlUnpackException
+                                    throw $ XCqlUnpackException (show e)
                                 Right (RsError _ _ e) -> do
-                                    throw XCqlQueryErrorException
+                                    throw $ XCqlQueryErrorException (show e)
                                 Right _ -> do
                                     throw XCqlNotReadyException
-        Left _ -> do
-            throw XCqlPackException
+        Left e -> do
+            throw $ XCqlPackException (show e)

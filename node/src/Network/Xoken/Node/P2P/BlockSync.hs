@@ -262,21 +262,28 @@ checkBlocksFullySynced conn = do
             err lg $ LG.msg $ "checkBlocksFullySynced: error while querying DB: " ++ show e
             return False
 
-getBatchSize :: Int32 -> Int32 -> [Int32]
-getBatchSize peerCount n
+getBatchSizeMainnet :: Int32 -> Int32 -> [Int32]
+getBatchSizeMainnet peerCount n
     | n < 200000 =
         if peerCount > 8
-            then [1 .. 8]
-            else [1 .. peerCount]
-    | n >= 200000 && n < 500000 =
-        if peerCount > 4
-            then [1 .. 2]
-            else [1]
-    | n >= 500000 && n < 640000 =
+            then [1 .. 4]
+            else [1 .. 2]
+    | n >= 200000 && n < 640000 =
         if peerCount > 4
             then [1 .. 2]
             else [1]
     | otherwise = [1]
+
+getBatchSizeTestnet :: Int32 -> Int32 -> [Int32]
+getBatchSizeTestnet peerCount n
+    | peerCount > 8 = [1 .. 4]
+    | peerCount > 4 = [1 .. 2]
+    | otherwise = [1]
+
+getBatchSize :: Network -> Int32 -> Int32 -> [Int32]
+getBatchSize net peerCount n
+    | (getNetworkName net == "bsvtest") = getBatchSizeTestnet peerCount n
+    | otherwise = getBatchSizeMainnet peerCount n
 
 runBlockCacheQueue :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
 runBlockCacheQueue =
@@ -299,7 +306,7 @@ runBlockCacheQueue =
             if sysz == 0
                 then do
                     (hash, ht) <- fetchBestSyncedBlock conn net
-                    let cacheInd = getBatchSize (fromIntegral $ L.length connPeers) ht
+                    let cacheInd = getBatchSize net (fromIntegral $ L.length connPeers) ht
                     let !bks = map (\x -> ht + x) cacheInd
                     let qstr :: Q.QueryString Q.R (Identity [Int32]) ((Int32, T.Text))
                         qstr = "SELECT block_height, block_hash from xoken.blocks_by_height where block_height in ?"
@@ -726,25 +733,21 @@ processConfTransaction tx bhash blkht txind = do
              let sh = txHashToHex $ TxHash $ sha256 (scriptOutput o)
              let bi = (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
              let output = (txHashToHex txhs, i)
-             concurrently_
-                 (insertTxIdOutputs conn output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o))
-                 (concurrently_
-                      (concurrently_
-                           (commitScriptHashOutputs
-                                conn -- 
-                                sh -- scriptHash
-                                output
-                                bi)
-                           (commitScriptHashUnspentOutputs conn sh output))
-                      (case decodeOutputBS $ scriptOutput o of
-                           (Right so) ->
-                               if isPayPK so
-                                   then do
-                                       concurrently_
-                                           (commitScriptHashOutputs conn a output bi)
-                                           (commitScriptHashUnspentOutputs conn a output)
-                                   else return ()
-                           (Left e) -> return ())))
+             insertTxIdOutputs conn output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o)
+             commitScriptHashOutputs
+                 conn -- 
+                 sh -- scriptHash
+                 output
+                 bi
+             commitScriptHashUnspentOutputs conn sh output
+             case decodeOutputBS $ scriptOutput o of
+                 (Right so) ->
+                     if isPayPK so
+                         then do
+                             commitScriptHashOutputs conn a output bi
+                             commitScriptHashUnspentOutputs conn a output
+                         else return ()
+                 (Left e) -> return ())
         outAddrs
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": committed scripthash,txid_outputs tables"
     mapM_
@@ -756,11 +759,9 @@ processConfTransaction tx bhash blkht txind = do
              if a == "" || sh == "" -- likely coinbase txns
                  then return ()
                  else do
-                     concurrently_
-                         (insertTxIdOutputs conn prevOutpoint a sh False bi (stripScriptHash <$> spendInfo) 0)
-                         (concurrently_
-                              (deleteScriptHashUnspentOutputs conn sh prevOutpoint)
-                              (deleteScriptHashUnspentOutputs conn a prevOutpoint)))
+                     insertTxIdOutputs conn prevOutpoint a sh False bi (stripScriptHash <$> spendInfo) 0
+                     deleteScriptHashUnspentOutputs conn sh prevOutpoint
+                     deleteScriptHashUnspentOutputs conn a prevOutpoint)
         (zip (inAddrs) (map (\x -> (fst3 $ thd3 x, snd3 $ thd3 $ x)) inputs))
     --
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": updated spend info for inputs"
@@ -773,11 +774,16 @@ processConfTransaction tx bhash blkht txind = do
     -- persist tx
     let qstr :: Q.QueryString Q.W (Text, (Text, Int32, Int32), Blob, [((Text, Int32), Int32, (Text, Int64))], Int64) ()
         qstr = "insert INTO xoken.transactions (tx_id, block_info, tx_serialized , inputs, fees) values (?, ?, ?, ?, ?)"
-        par =
+        serbs = runPutLazy $ putLazyByteString $ S.encodeLazy tx
+        fst =
+            if BSL.length serbs >= (16 * 1000 * 1000) -- TODO: fragment and store to circumvent Cassandra's 16MB segment_size limit.
+                then BSL.empty
+                else serbs
+    let par =
             getSimpleQueryParam
                 ( txHashToHex txhs
                 , (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
-                , Blob $ runPutLazy $ putLazyByteString $ S.encodeLazy tx
+                , Blob fst
                 , (stripScriptHash <$> inputs)
                 , fees)
     res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr par)

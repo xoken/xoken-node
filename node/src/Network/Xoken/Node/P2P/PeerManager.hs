@@ -160,7 +160,7 @@ setupSeedPeerConnection =
                                                       msg ("Seed peer blacklisted, ignoring.. " ++ show (addrAddress y))
                                               else do
                                                   rl <- liftIO $ newMVar True
-                                                  wl <- liftIO $ newMVar True
+                                                  wl <- liftIO $ newMVar ()
                                                   ss <- liftIO $ newTVarIO Nothing
                                                   imc <- liftIO $ newTVarIO 0
                                                   rc <- liftIO $ newTVarIO Nothing
@@ -235,7 +235,7 @@ setupPeerConnection saddr = do
                              case res of
                                  Right (sock) -> do
                                      rl <- liftIO $ newMVar True
-                                     wl <- liftIO $ newMVar True
+                                     wl <- liftIO $ newMVar ()
                                      ss <- liftIO $ newTVarIO Nothing
                                      imc <- liftIO $ newTVarIO 0
                                      rc <- liftIO $ newTVarIO Nothing
@@ -255,22 +255,6 @@ setupPeerConnection saddr = do
                                  Left (SocketConnectException addr) -> do
                                      warn lg $ msg ("SocketConnectException: " ++ show addr)
                                      return Nothing
-
--- Helper Functions
-recvAll :: (MonadIO m) => Socket -> Int64 -> m BSL.ByteString
-recvAll sock len = do
-    if len > 0
-        then do
-            res <- liftIO $ try $ LB.recv sock len
-            case res of
-                Left (e :: IOException) -> throw SocketReadException
-                Right mesg ->
-                    if BSL.length mesg == len
-                        then return mesg
-                        else if BSL.length mesg == 0
-                                 then throw ZeroLengthSocketReadException
-                                 else BSL.append mesg <$> recvAll sock (len - BSL.length mesg)
-        else return (BSL.empty)
 
 hashPair :: Hash256 -> Hash256 -> Hash256
 hashPair a b = doubleSHA256 $ encode a `B.append` encode b
@@ -400,7 +384,7 @@ resilientRead ::
        (HasLogger m, MonadBaseControl IO m, MonadIO m) => Socket -> BlockIngestState -> m (([Tx], LC.ByteString), Int64)
 resilientRead sock !blin = do
     lg <- getLogger
-    let chunkSize = 100 * 1000 -- 100 KB
+    let chunkSize = 200 * 1000 -- 200 KB
         !delta =
             if binTxPayloadLeft blin > chunkSize
                 then chunkSize - ((LC.length $ binUnspentBytes blin))
@@ -413,7 +397,7 @@ resilientRead sock !blin = do
     case runGetLazyState (getConfirmedTxBatch) txbyt of
         Left e -> do
             trace lg $ msg $ "1st attempt|" ++ show e
-            let chunkSizeFB = 10 * 1000 * 1000 -- 10 MB
+            let chunkSizeFB = 200 * 1000 * 1000 -- 200 MB
                 !deltaNew =
                     if binTxPayloadLeft blin > chunkSizeFB
                         then chunkSizeFB - ((LC.length $ binUnspentBytes blin) + delta)
@@ -695,7 +679,7 @@ doVersionHandshake net sock sa = do
         rmt = NetworkAddress 0 sa
         ver = buildVersion net nonce bb ad rmt now
         em = runPut . putMessage net $ (MVersion ver)
-    mv <- liftIO $ (newMVar True)
+    mv <- liftIO $ (newMVar ())
     liftIO $ sendEncMessage mv sock (BSL.fromStrict em)
     (hs1, _) <- readNextMessage net sock Nothing
     case hs1 of
@@ -853,7 +837,9 @@ processTxBatch txns iss = do
                                      then debug lg $ LG.msg $ (" (error) Tx__index: " ++ show idx ++ show bf)
                                      else debug lg $ LG.msg $ ("Tx__index: " ++ show idx)
                                  return ((txns !! idx), bf, cidx)) &
-                        S.mapM (processTxStream)
+                        S.mapM (processTxStream) &
+                        S.maxBuffer (maxTxProcessingBuffer $ nodeConfig bp2pEnv) &
+                        S.maxThreads (maxTxProcessingThreads $ nodeConfig bp2pEnv)
                     valy <- liftIO $ TSH.lookup (blockTxProcessingLeftMap bp2pEnv) (biBlockHash bf)
                     case valy of
                         Just lefta -> liftIO $ TSH.insert (fst lefta) (txHash $ head txns) (L.length txns)
