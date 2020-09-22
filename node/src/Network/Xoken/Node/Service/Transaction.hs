@@ -122,16 +122,20 @@ xGetTxHash hash = do
             if length iop == 0
                 then return Nothing
                 else do
-                    let (txid, (bhash, blkht, txind), sz, sinps, fees) = iop !! 0
+                    let (txid, (bhash, blkht, txind), psz, sinps, fees) = iop !! 0
                         inps = L.sortBy (\(_, x, _) (_, y, _) -> compare x y) $ Q.fromSet sinps
-                        tx = fromJust $ Extra.hush $ S.decodeLazy $ fromBlob sz
+                    sz <-
+                        if isSegmented $ fromBlob psz
+                            then liftIO $ getCompleteTx conn hash (getSegmentCount (fromBlob psz))
+                            else pure $ fromBlob psz
+                    let tx = fromJust $ Extra.hush $ S.decodeLazy sz
                     return $
                         Just $
                         RawTxRecord
                             (DT.unpack txid)
-                            (fromIntegral $ C.length $ fromBlob sz)
+                            (fromIntegral $ C.length sz)
                             (BlockInfo' (DT.unpack bhash) (fromIntegral blkht) (fromIntegral txind))
-                            (fromBlob sz)
+                            (sz)
                             (zipWith mergeTxOutTxOutput (txOut tx) outs)
                             (zipWith mergeTxInTxInput (txIn tx) $
                              (\((outTxId, outTxIndex), inpTxIndex, (addr, value)) ->
@@ -163,9 +167,13 @@ xGetTxHashes hashes = do
         Right iop -> do
             txRecs <-
                 traverse
-                    (\(txid, (bhash, blkht, txind), sz, sinps, fees) -> do
+                    (\(txid, (bhash, blkht, txind), psz, sinps, fees) -> do
                          let inps = L.sortBy (\(_, x, _) (_, y, _) -> compare x y) $ Q.fromSet sinps
-                             tx = fromJust $ Extra.hush $ S.decodeLazy $ fromBlob sz
+                         sz <-
+                             if isSegmented (fromBlob psz)
+                                 then liftIO $ getCompleteTx conn txid (getSegmentCount (fromBlob psz))
+                                 else pure $ fromBlob psz
+                         let tx = fromJust $ Extra.hush $ S.decodeLazy sz
                          res' <-
                              LE.try $ LA.concurrently (getTxOutputsFromTxId txid) (xGetMerkleBranch $ DT.unpack txid)
                          case res' of
@@ -174,9 +182,9 @@ xGetTxHashes hashes = do
                                  Just $
                                  RawTxRecord
                                      (DT.unpack txid)
-                                     (fromIntegral $ C.length $ fromBlob sz)
+                                     (fromIntegral $ C.length sz)
                                      (BlockInfo' (DT.unpack bhash) (fromIntegral blkht) (fromIntegral txind))
-                                     (fromBlob sz)
+                                     (sz)
                                      (zipWith mergeTxOutTxOutput (txOut tx) outs)
                                      (zipWith mergeTxInTxInput (txIn tx) $
                                       (\((outTxId, outTxIndex), inpTxIndex, (addr, value)) ->
@@ -337,10 +345,14 @@ xRelayTx rawTx = do
                                          debug lg $ LG.msg $ "not found" ++ show txid
                                          return Nothing
                                      else do
-                                         let (txid, _, sz) = iop !! 0
-                                         case runGetLazy (getConfirmedTx) (fromBlob sz) of
+                                         let (txid, _, psz) = iop !! 0
+                                         sz <-
+                                             if isSegmented (fromBlob psz)
+                                                 then liftIO $ getCompleteTx conn txid (getSegmentCount (fromBlob psz))
+                                                 else pure $ fromBlob psz
+                                         case runGetLazy (getConfirmedTx) sz of
                                              Left e -> do
-                                                 debug lg $ LG.msg (encodeHex $ BSL.toStrict $ fromBlob sz)
+                                                 debug lg $ LG.msg (encodeHex $ BSL.toStrict sz)
                                                  return Nothing
                                              Right (txd) -> do
                                                  case txd of

@@ -63,6 +63,7 @@ import Data.Serialize as S
 import Data.String.Conversions
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as DTE
 import Data.Time.Calendar
 import Data.Time.Clock
 import Data.Time.Clock
@@ -516,7 +517,8 @@ commitScriptHashOutputs conn sh output blockInfo = do
         qstrAddrOuts :: Q.QueryString Q.W (Text, Int64, (Text, Int32)) ()
         qstrAddrOuts = "INSERT INTO xoken.script_hash_outputs (script_hash, nominal_tx_index, output) VALUES (?,?,?)"
         parAddrOuts = getSimpleQueryParam (sh, nominalTxIndex, output)
-    resAddrOuts <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstrAddrOuts parAddrOuts)
+    queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstrAddrOuts))
+    resAddrOuts <- liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryId parAddrOuts))
     case resAddrOuts of
         Right _ -> return ()
         Left (e :: SomeException) -> do
@@ -529,7 +531,8 @@ commitScriptHashUnspentOutputs conn sh output = do
     let qstr :: Q.QueryString Q.W (Text, (Text, Int32)) ()
         qstr = "INSERT INTO xoken.script_hash_unspent_outputs (script_hash, output) VALUES (?,?)"
         par = getSimpleQueryParam (sh, output)
-    res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr par)
+    queryI <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstr))
+    res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryI par)
     case res of
         Right _ -> return ()
         Left (e :: SomeException) -> do
@@ -542,8 +545,8 @@ deleteScriptHashUnspentOutputs conn sh output = do
     let qstr :: Q.QueryString Q.W (Text, (Text, Int32)) ()
         qstr = "DELETE FROM xoken.script_hash_unspent_outputs WHERE script_hash=? AND output=?"
         par = getSimpleQueryParam (sh, output)
-    return ()
-    res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr par)
+    queryI <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstr))
+    res <- liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryI par))
     case res of
         Right _ -> return ()
         Left (e :: SomeException) -> do
@@ -575,7 +578,8 @@ insertTxIdOutputs conn (txid, outputIndex) address scriptHash isRecv blockInfo o
         qstr =
             "INSERT INTO xoken.txid_outputs (txid,output_index,address,script_hash,is_recv,block_info,other,value) VALUES (?,?,?,?,?,?,?,?)"
         par = getSimpleQueryParam (txid, outputIndex, address, scriptHash, isRecv, blockInfo, other, value)
-    res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr par)
+    queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstr))
+    res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryId par)
     case res of
         Right _ -> return ()
         Left (e :: SomeException) -> do
@@ -711,7 +715,7 @@ processConfTransaction tx bhash blkht txind = do
             inAddrs
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": fetched input(s): " ++ show inputs
     --
-    -- cache compile output values 
+    -- cache compile output values
     -- imp: order is (address, scriptHash, value)
     let ovs =
             map
@@ -735,7 +739,7 @@ processConfTransaction tx bhash blkht txind = do
              let output = (txHashToHex txhs, i)
              insertTxIdOutputs conn output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o)
              commitScriptHashOutputs
-                 conn -- 
+                 conn --
                  sh -- scriptHash
                  output
                  bi
@@ -775,9 +779,17 @@ processConfTransaction tx bhash blkht txind = do
     let qstr :: Q.QueryString Q.W (Text, (Text, Int32, Int32), Blob, [((Text, Int32), Int32, (Text, Int64))], Int64) ()
         qstr = "insert INTO xoken.transactions (tx_id, block_info, tx_serialized , inputs, fees) values (?, ?, ?, ?, ?)"
         serbs = runPutLazy $ putLazyByteString $ S.encodeLazy tx
+        count = BSL.length serbs
+        smb a = a * 16 * 1000 * 1000
+        segments =
+            let (d, m) = divMod count (smb 1)
+             in d +
+                (if m == 0
+                     then 0
+                     else 1)
         fst =
-            if BSL.length serbs >= (16 * 1000 * 1000) -- TODO: fragment and store to circumvent Cassandra's 16MB segment_size limit.
-                then BSL.empty
+            if segments > 1
+                then (LC.replicate 32 'f') <> (BSL.fromStrict $ DTE.encodeUtf8 $ T.pack $ show $ segments)
                 else serbs
     let par =
             getSimpleQueryParam
@@ -786,12 +798,32 @@ processConfTransaction tx bhash blkht txind = do
                 , Blob fst
                 , (stripScriptHash <$> inputs)
                 , fees)
-    res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr par)
+    queryI <- liftIO $ queryPrepared conn (Q.RqPrepare $ Q.Prepare qstr)
+    res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryI par)
     case res of
         Right _ -> return ()
         Left (e :: SomeException) -> do
             liftIO $ err lg $ LG.msg ("Error: INSERTing into 'xoken.transactions': " ++ show e)
             throw KeyValueDBInsertException
+    when (segments > 1) $ do
+        let segmentsData = chunksOf (smb 1) serbs
+        mapM_
+            (\(seg, i) -> do
+                 let par =
+                         getSimpleQueryParam
+                             ( (txHashToHex txhs) <> (T.pack $ show i)
+                             , (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
+                             , Blob seg
+                             , []
+                             , fees)
+                 queryI <- liftIO $ queryPrepared conn (Q.RqPrepare $ Q.Prepare qstr)
+                 res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryI par)
+                 case res of
+                     Right _ -> return ()
+                     Left (e :: SomeException) -> do
+                         liftIO $ err lg $ LG.msg ("Error: INSERTing into 'xoken.transactions': " ++ show e)
+                         throw KeyValueDBInsertException)
+            (zip segmentsData [1 ..])
     --
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": persisted in DB"
     -- handle allegory
@@ -801,7 +833,7 @@ processConfTransaction tx bhash blkht txind = do
         Left (e :: SomeException) -> err lg $ LG.msg ("Error: " ++ show e)
     --
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": handled Allegory Tx"
-    -- signal 'done' event for tx's that were processed out of sequence 
+    -- signal 'done' event for tx's that were processed out of sequence
     --
     vall <- liftIO $ TSH.lookup (txSynchronizer bp2pEnv) txhs
     case vall of
@@ -822,7 +854,8 @@ getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait = do
     let qstr :: Q.QueryString Q.R (Text, Int32) (Text, Text, Int64)
         qstr = "SELECT address, script_hash, value FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
         par = getSimpleQueryParam (txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint)
-    res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
+    queryI <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstr))
+    res <- liftIO $ try $ query conn (Q.RqExecute (Q.Execute queryI par))
     case res of
         Right results -> do
             if L.length results == 0
@@ -898,9 +931,17 @@ getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs = do
                     return Nothing
                 else do
                     let txbyt = runIdentity $ iop !! 0
-                    case runGetLazy (getConfirmedTx) (fromBlob txbyt) of
+                    ctxbyt <-
+                        if isSegmented (fromBlob txbyt)
+                            then liftIO $
+                                 getCompleteTx
+                                     conn
+                                     (txHashToHex $ outPointHash outPoint)
+                                     (getSegmentCount (fromBlob txbyt))
+                            else pure $ fromBlob txbyt
+                    case runGetLazy (getConfirmedTx) ctxbyt of
                         Left e -> do
-                            debug lg $ LG.msg (encodeHex $ BSL.toStrict $ fromBlob txbyt)
+                            debug lg $ LG.msg (encodeHex $ BSL.toStrict ctxbyt)
                             throw DBTxParseException
                         Right (txd) -> do
                             case txd of
