@@ -380,7 +380,8 @@ data RPCResponseBody
           { rrMultipleTx :: [Bool]
           }
     | RespGetProducer
-          { producerOutpoint :: OutPoint'
+          { producerName :: [Int]
+          , producerOutpoint :: OutPoint'
           , producerScript :: String
           }
     | RespTxOutputSpendStatus
@@ -417,7 +418,7 @@ instance ToJSON RPCResponseBody where
     toJSON (RespAllegoryNameBranch nb) = object ["nameBranch" .= nb]
     toJSON (RespRelayTx rrTx) = object ["txBroadcast" .= rrTx]
     toJSON (RespRelayMultipleTx rrMultipleTx) = object ["txnsBroadcast" .= rrMultipleTx]
-    toJSON (RespGetProducer op scr) = object ["outpoint" .= op, "script" .= scr]
+    toJSON (RespGetProducer name op scr) = object ["name" .= name, "outpoint" .= op, "script" .= scr]
     toJSON (RespTxOutputSpendStatus ss) = object ["spendStatus" .= ss]
     toJSON (RespUser u) = object ["user" .= u]
 
