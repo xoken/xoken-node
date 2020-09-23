@@ -561,7 +561,7 @@ readNextMessage net sock ingss = do
                                     case vala of
                                         Just v -> return ()
                                         Nothing -> do
-                                            ar <- TSH.new 1
+                                            ar <- TSH.new 4
                                             TSH.insert
                                                 (blockTxProcessingLeftMap p2pEnv)
                                                 (biBlockHash $ bf)
@@ -827,7 +827,7 @@ processTxBatch txns iss = do
                          (show $ biBlockHash bf) ++ ", tx-index: " ++ show (binTxIngested bi))
                 else do
                     S.drain $
-                        asyncly $
+                        aheadly $
                         (do let start = (binTxIngested bi) - (L.length txns)
                                 end = (binTxIngested bi) - 1
                             S.fromList $ zip [start .. end] [0 ..]) &

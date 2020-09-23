@@ -269,7 +269,7 @@ getBatchSizeMainnet peerCount n
         if peerCount > 8
             then [1 .. 4]
             else [1 .. 2]
-    | n >= 200000 && n < 640000 =
+    | n >= 200000 && n < 540000 =
         if peerCount > 4
             then [1 .. 2]
             else [1]
@@ -635,11 +635,11 @@ processConfTransaction tx bhash blkht txind = do
     inputs <-
         mapM
             (\(b, j) -> do
-                 tuple <- return Nothing
-                    --  liftIO $
-                    --  TSH.lookup
-                    --      (txOutputValuesCache bp2pEnv)
-                    --      (getTxShortHash (outPointHash $ prevOutput b) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
+                 tuple <-
+                     liftIO $
+                     TSH.lookup
+                         (txOutputValuesCache bp2pEnv)
+                         (getTxShortHash (outPointHash $ prevOutput b) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
                  val <-
                      case tuple of
                          Just (ftxh, indexvals) ->
@@ -669,8 +669,8 @@ processConfTransaction tx bhash blkht txind = do
                                                      lg
                                                      net
                                                      (prevOutput b)
-                                                     (250)
-                                                     (1000 * (txProcInputDependenciesWait $ nodeConfig bp2pEnv))
+                                                     (2 * 1000 * 1000) -- 2 secs
+                                                     ((txProcInputDependenciesWait $ nodeConfig bp2pEnv) * 1000 * 1000)
                                              case dbRes of
                                                  Right v -> return $ v
                                                  Left (e :: SomeException) -> do
@@ -697,8 +697,8 @@ processConfTransaction tx bhash blkht txind = do
                                              lg
                                              net
                                              (prevOutput b)
-                                             (250)
-                                             (1000 * (txProcInputDependenciesWait $ nodeConfig bp2pEnv))
+                                             (2 * 1000 * 1000) -- 2 secs
+                                             ((txProcInputDependenciesWait $ nodeConfig bp2pEnv) * 1000 * 1000)
                                      case dbRes of
                                          Right v -> return $ v
                                          Left (e :: SomeException) -> do
@@ -724,12 +724,11 @@ processConfTransaction tx bhash blkht txind = do
                      , (a, (txHashToHex $ TxHash $ sha256 (scriptOutput o)), fromIntegral $ outValue o)))
                 outAddrs
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": compiled output value(s): " ++ (show ovs)
-    -- liftIO $
-    --     TSH.insert
-    --         (txOutputValuesCache bp2pEnv)
-    --         (getTxShortHash (txHash tx) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
-    --         (txHash tx, ovs)
-    --
+    liftIO $
+        TSH.insert
+            (txOutputValuesCache bp2pEnv)
+            (getTxShortHash (txHash tx) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
+            (txHash tx, ovs)
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": added outputvals to cache"
     -- update outputs and scripthash tables
     mapM_
@@ -869,11 +868,11 @@ getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait = do
                             Just evt -> return evt
                             Nothing -> EV.new
                     liftIO $ TSH.insert txSync (outPointHash outPoint) event
-                    tofl <- waitTimeout event (1000 * (fromIntegral wait))
+                    tofl <- waitTimeout event (fromIntegral wait)
                     if tofl == False
-                        then if (wait < 66000)
+                        then if (wait < maxWait)
                                  then do
-                                     getSatsValueFromOutpoint conn txSync lg net outPoint (2 * wait) maxWait
+                                     getSatsValueFromOutpoint conn txSync lg net outPoint (4 * wait) maxWait
                                  else do
                                      liftIO $ TSH.delete txSync (outPointHash outPoint)
                                      debug lg $
