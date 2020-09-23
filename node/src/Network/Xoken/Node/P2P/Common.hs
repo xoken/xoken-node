@@ -546,9 +546,15 @@ getSegmentCount :: BSL.ByteString -> Int
 getSegmentCount = read . T.unpack . DTE.decodeUtf8 . BSL.toStrict . BSL.drop 32
 
 getCompleteTx :: XCqlClientState -> T.Text -> Int -> IO (BSL.ByteString)
-getCompleteTx conn hash segments = do
-    let str = "SELECT tx_serialized from xoken.transactions where tx_id = ?"
-        qstr = str :: Q.QueryString Q.R (Identity Text) (Identity Blob)
+getCompleteTx conn hash segments =
+    getTx conn ("SELECT tx_serialized from xoken.transactions where tx_id = ?") hash segments
+
+getCompleteUnConfTx :: XCqlClientState -> T.Text -> Int -> IO (BSL.ByteString)
+getCompleteUnConfTx conn hash segments =
+    getTx conn ("SELECT tx_serialized from xoken.ep_transactions where tx_id = ?") hash segments
+
+getTx :: XCqlClientState -> Q.QueryString Q.R (Identity Text) (Identity Blob) -> T.Text -> Int -> IO (BSL.ByteString)
+getTx conn qstr hash segments = do
     queryI <- queryPrepared conn (Q.RqPrepare $ Q.Prepare qstr)
     foldM
         (\acc s -> do

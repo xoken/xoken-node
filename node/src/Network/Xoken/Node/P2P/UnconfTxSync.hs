@@ -49,6 +49,7 @@ import Data.Serialize as S
 import Data.String.Conversions
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as DTE
 import Data.Time.Clock
 import Data.Time.Clock
 import Data.Time.Clock.POSIX
@@ -403,19 +404,41 @@ processUnconfTransaction tx = do
     --
     let str = "INSERT INTO xoken.ep_transactions (epoch, tx_id, tx_serialized, inputs, fees) values (?, ?, ?, ?, ?)"
         qstr = str :: Q.QueryString Q.W (Bool, Text, Blob, [((Text, Int32), Int32, (Text, Int64))], Int64) ()
-        par =
-            getSimpleQueryParam
-                ( epoch
-                , txHashToHex $ txHash tx
-                , Blob $ runPutLazy $ putLazyByteString $ S.encodeLazy tx
-                , (stripScriptHash <$> inputs)
-                , fees)
-    res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr par)
+        serbs = runPutLazy $ putLazyByteString $ S.encodeLazy tx
+        count = BSL.length serbs
+        smb a = a * 16 * 1000 * 1000
+        segments =
+            let (d, m) = divMod count (smb 1)
+             in d +
+                (if m == 0
+                     then 0
+                     else 1)
+        fst =
+            if segments > 1
+                then (LC.replicate 32 'f') <> (BSL.fromStrict $ DTE.encodeUtf8 $ T.pack $ show $ segments)
+                else serbs
+    let par = getSimpleQueryParam (epoch, txHashToHex $ txHash tx, Blob fst, (stripScriptHash <$> inputs), fees)
+    queryI <- liftIO $ queryPrepared conn (Q.RqPrepare $ Q.Prepare qstr)
+    res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryI par)
     case res of
         Right _ -> return ()
         Left (e :: SomeException) -> do
-            liftIO $ err lg $ LG.msg $ "Error: INSERTing into 'xoken.ep_transactions':" ++ show e
+            liftIO $ err lg $ LG.msg ("Error: INSERTing into 'xoken.ep_transactions': " ++ show e)
             throw KeyValueDBInsertException
+    when (segments > 1) $ do
+        let segmentsData = chunksOf (smb 1) serbs
+        mapM_
+            (\(seg, i) -> do
+                 let par =
+                         getSimpleQueryParam (epoch, (txHashToHex $ txHash tx) <> (T.pack $ show i), Blob seg, [], fees)
+                 queryI <- liftIO $ queryPrepared conn (Q.RqPrepare $ Q.Prepare qstr)
+                 res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryI par)
+                 case res of
+                     Right _ -> return ()
+                     Left (e :: SomeException) -> do
+                         liftIO $ err lg $ LG.msg ("Error: INSERTing into 'xoken.ep_transactions': " ++ show e)
+                         throw KeyValueDBInsertException)
+            (zip segmentsData [1 ..])
     --
     vall <- liftIO $ TSH.lookup (txSynchronizer bp2pEnv) (txHash tx)
     case vall of

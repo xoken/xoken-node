@@ -604,7 +604,7 @@ data RawTxRecord =
     RawTxRecord
         { txId :: String
         , size :: Int32
-        , txBlockInfo :: BlockInfo'
+        , txBlockInfo :: Maybe BlockInfo'
         , txSerialized :: C.ByteString
         , txOutputs :: [TxOutput]
         , txInputs :: [TxInput]
@@ -618,9 +618,9 @@ instance ToJSON RawTxRecord where
         object
             [ "txId" .= tId
             , "size" .= sz
-            , "txIndex" .= (binfTxIndex tBI)
-            , "blockHash" .= (binfBlockHash tBI)
-            , "blockHeight" .= (binfBlockHeight tBI)
+            , "txIndex" .= (binfTxIndex <$> tBI)
+            , "blockHash" .= (binfBlockHash <$> tBI)
+            , "blockHeight" .= (binfBlockHeight <$> tBI)
             , "txSerialized" .= (T.decodeUtf8 . BL.toStrict . B64L.encode $ tS)
             , "txOutputs" .= txo
             , "txInputs" .= txi
@@ -632,7 +632,7 @@ data TxRecord =
     TxRecord
         { txId :: String
         , size :: Int32
-        , txBlockInfo :: BlockInfo'
+        , txBlockInfo :: Maybe BlockInfo'
         , tx :: Tx'
         , fees :: Int64
         , txMerkleBranch :: [MerkleBranchNode']
@@ -644,9 +644,9 @@ instance ToJSON TxRecord where
         object
             [ "txId" .= tId
             , "size" .= sz
-            , "txIndex" .= (binfTxIndex tBI)
-            , "blockHash" .= (binfBlockHash tBI)
-            , "blockHeight" .= (binfBlockHeight tBI)
+            , "txIndex" .= (binfTxIndex <$> tBI)
+            , "blockHash" .= (binfBlockHash <$> tBI)
+            , "blockHeight" .= (binfBlockHeight <$> tBI)
             , "tx" .= tx'
             , "fees" .= fee
             , "merkleBranch" .= mrkl
@@ -666,7 +666,7 @@ data TxInput =
         { outpointTxID :: String
         , outpointIndex :: Int32
         , txInputIndex :: Int32
-        , address :: String -- decode will succeed for P2PKH txn 
+        , address :: String -- decode will succeed for P2PKH txn
         , value :: Int64
         , unlockingScript :: ByteString -- scriptSig
         }
@@ -675,7 +675,7 @@ data TxInput =
 data TxOutput =
     TxOutput
         { outputIndex :: Int32
-        , address :: String -- decode will succeed for P2PKH txn 
+        , address :: String -- decode will succeed for P2PKH txn
         , txSpendInfo :: Maybe SpendInfo
         , value :: Int64
         , lockingScript :: ByteString -- Script Pub Key

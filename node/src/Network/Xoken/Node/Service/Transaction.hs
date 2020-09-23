@@ -111,6 +111,13 @@ xGetTxHash hash = do
                                                         , Blob
                                                         , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
                                                         , Int64)
+        ustr = "SELECT epoch, tx_id, tx_serialized, inputs, fees from xoken.ep_transactions where tx_id = ?"
+        uqstr =
+            ustr :: Q.QueryString Q.R (Identity DT.Text) ( Bool
+                                                         , DT.Text
+                                                         , Blob
+                                                         , [((DT.Text, Int32), Int32, (DT.Text, Int64))]
+                                                         , Int64)
         p = getSimpleQueryParam $ Identity $ hash
     res <-
         LE.try $
@@ -120,7 +127,43 @@ xGetTxHash hash = do
     case res of
         Right ((iop, outs), mrkl) ->
             if length iop == 0
-                then return Nothing
+                then do
+                    ures <- LE.try $ liftIO $ query conn (Q.RqQuery $ Q.Query uqstr p)
+                    case ures of
+                        Right uiop ->
+                            if length uiop == 0
+                                then return Nothing
+                                else do
+                                    let (epoch, txid, psz, sinps, fees) = uiop !! 0
+                                        inps = L.sortBy (\(_, x, _) (_, y, _) -> compare x y) sinps
+                                    sz <-
+                                        if isSegmented $ fromBlob psz
+                                            then liftIO $ getCompleteUnConfTx conn hash (getSegmentCount (fromBlob psz))
+                                            else pure $ fromBlob psz
+                                    let tx = fromJust $ Extra.hush $ S.decodeLazy sz
+                                    return $
+                                        Just $
+                                        RawTxRecord
+                                            (DT.unpack txid)
+                                            (fromIntegral $ C.length sz)
+                                            Nothing
+                                            (sz)
+                                            (zipWith mergeTxOutTxOutput (txOut tx) outs)
+                                            (zipWith mergeTxInTxInput (txIn tx) $
+                                             (\((outTxId, outTxIndex), inpTxIndex, (addr, value)) ->
+                                                  TxInput
+                                                      (DT.unpack outTxId)
+                                                      outTxIndex
+                                                      inpTxIndex
+                                                      (DT.unpack addr)
+                                                      value
+                                                      "") <$>
+                                             inps)
+                                            fees
+                                            mrkl
+                        Left (e :: SomeException) -> do
+                            err lg $ LG.msg $ "Error: xGetTxHash: " ++ show e
+                            throw KeyValueDBLookupException
                 else do
                     let (txid, (bhash, blkht, txind), psz, sinps, fees) = iop !! 0
                         inps = L.sortBy (\(_, x, _) (_, y, _) -> compare x y) $ Q.fromSet sinps
@@ -134,7 +177,7 @@ xGetTxHash hash = do
                         RawTxRecord
                             (DT.unpack txid)
                             (fromIntegral $ C.length sz)
-                            (BlockInfo' (DT.unpack bhash) (fromIntegral blkht) (fromIntegral txind))
+                            (Just $ BlockInfo' (DT.unpack bhash) (fromIntegral blkht) (fromIntegral txind))
                             (sz)
                             (zipWith mergeTxOutTxOutput (txOut tx) outs)
                             (zipWith mergeTxInTxInput (txIn tx) $
@@ -155,51 +198,74 @@ xGetTxHashes hashes = do
     let conn = xCqlClientState dbe
         net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
         str = "SELECT tx_id, block_info, tx_serialized, inputs, fees from xoken.transactions where tx_id in ?"
+        ustr = "SELECT epoch, tx_id, tx_serialized, inputs, fees from xoken.ep_transactions where tx_id in ?"
         qstr =
             str :: Q.QueryString Q.R (Identity [DT.Text]) ( DT.Text
                                                           , (DT.Text, Int32, Int32)
                                                           , Blob
                                                           , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
                                                           , Int64)
+        uqstr =
+            ustr :: Q.QueryString Q.R (Identity [DT.Text]) ( Bool
+                                                           , DT.Text
+                                                           , Blob
+                                                           , [((DT.Text, Int32), Int32, (DT.Text, Int64))]
+                                                           , Int64)
         p = getSimpleQueryParam $ Identity $ hashes
     res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr p)
-    case res of
-        Right iop -> do
-            txRecs <-
-                traverse
-                    (\(txid, (bhash, blkht, txind), psz, sinps, fees) -> do
-                         let inps = L.sortBy (\(_, x, _) (_, y, _) -> compare x y) $ Q.fromSet sinps
-                         sz <-
-                             if isSegmented (fromBlob psz)
-                                 then liftIO $ getCompleteTx conn txid (getSegmentCount (fromBlob psz))
-                                 else pure $ fromBlob psz
-                         let tx = fromJust $ Extra.hush $ S.decodeLazy sz
-                         res' <-
-                             LE.try $ LA.concurrently (getTxOutputsFromTxId txid) (xGetMerkleBranch $ DT.unpack txid)
-                         case res' of
-                             Right (outs, mrkl) ->
-                                 return $
-                                 Just $
-                                 RawTxRecord
-                                     (DT.unpack txid)
-                                     (fromIntegral $ C.length sz)
-                                     (BlockInfo' (DT.unpack bhash) (fromIntegral blkht) (fromIntegral txind))
-                                     (sz)
-                                     (zipWith mergeTxOutTxOutput (txOut tx) outs)
-                                     (zipWith mergeTxInTxInput (txIn tx) $
-                                      (\((outTxId, outTxIndex), inpTxIndex, (addr, value)) ->
-                                           TxInput (DT.unpack outTxId) outTxIndex inpTxIndex (DT.unpack addr) value "") <$>
-                                      inps)
-                                     fees
-                                     mrkl
-                             Left (e :: SomeException) -> do
-                                 err lg $ LG.msg $ "Error: xGetTxHashes: " ++ show e
-                                 return Nothing)
+    ures <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query uqstr p)
+    cres <-
+        case res of
+            Right iop ->
+                pure $
+                L.map
+                    (\(txid, (bhash, blkht, txind), psz, sinps, fees) ->
+                         (txid, Just (bhash, blkht, txind), psz, Q.fromSet sinps, fees))
                     iop
-            return $ fromMaybe [] (sequence txRecs)
-        Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: xGetTxHashes: " ++ show e
-            throw KeyValueDBLookupException
+            Left (e :: SomeException) -> do
+                err lg $ LG.msg $ "Error: xGetTxHashes: " ++ show e
+                throw KeyValueDBLookupException
+    cures <-
+        case ures of
+            Right iop -> pure $ L.map (\(epoch, txid, psz, sinps, fees) -> (txid, Nothing, psz, sinps, fees)) iop
+            Left (e :: SomeException) -> do
+                err lg $ LG.msg $ "Error: xGetTxHashes: " ++ show e
+                throw KeyValueDBLookupException
+    let iop = nubBy (\(txid, _, _, _, _) (txid2, _, _, _, _) -> txid == txid2) (cres ++ cures)
+    txRecs <-
+        traverse
+            (\(txid, bi, psz, sinps, fees) -> do
+                 let inps = L.sortBy (\(_, x, _) (_, y, _) -> compare x y) sinps
+                 sz <-
+                     if isSegmented (fromBlob psz)
+                         then liftIO $ getCompleteTx conn txid (getSegmentCount (fromBlob psz))
+                         else pure $ fromBlob psz
+                 let tx = fromJust $ Extra.hush $ S.decodeLazy sz
+                 -- TODO when blockInfo is null, merkle branch has to be computed for confirmed parent
+                 res' <- LE.try $ LA.concurrently (getTxOutputsFromTxId txid) (xGetMerkleBranch $ DT.unpack txid)
+                 case res' of
+                     Right (outs, mrkl) ->
+                         return $
+                         Just $
+                         RawTxRecord
+                             (DT.unpack txid)
+                             (fromIntegral $ C.length sz)
+                             ((\(bhash, blkht, txind) ->
+                                   BlockInfo' (DT.unpack bhash) (fromIntegral blkht) (fromIntegral txind)) <$>
+                              bi)
+                             (sz)
+                             (zipWith mergeTxOutTxOutput (txOut tx) outs)
+                             (zipWith mergeTxInTxInput (txIn tx) $
+                              (\((outTxId, outTxIndex), inpTxIndex, (addr, value)) ->
+                                   TxInput (DT.unpack outTxId) outTxIndex inpTxIndex (DT.unpack addr) value "") <$>
+                              inps)
+                             fees
+                             mrkl
+                     Left (e :: SomeException) -> do
+                         err lg $ LG.msg $ "Error: xGetTxHashes: " ++ show e
+                         return Nothing)
+            iop
+    return $ fromMaybe [] (sequence txRecs)
 
 getTxOutputsFromTxId :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => DT.Text -> m [TxOutput]
 getTxOutputsFromTxId txid = do
