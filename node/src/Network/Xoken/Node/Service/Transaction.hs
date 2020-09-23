@@ -141,6 +141,7 @@ xGetTxHash hash = do
                                             then liftIO $ getCompleteUnConfTx conn hash (getSegmentCount (fromBlob psz))
                                             else pure $ fromBlob psz
                                     let tx = fromJust $ Extra.hush $ S.decodeLazy sz
+                                    let mrkl = [MerkleBranchNode' "" False]
                                     return $
                                         Just $
                                         RawTxRecord
@@ -241,8 +242,11 @@ xGetTxHashes hashes = do
                          then liftIO $ getCompleteTx conn txid (getSegmentCount (fromBlob psz))
                          else pure $ fromBlob psz
                  let tx = fromJust $ Extra.hush $ S.decodeLazy sz
-                 -- TODO when blockInfo is null, merkle branch has to be computed for confirmed parent
-                 res' <- LE.try $ LA.concurrently (getTxOutputsFromTxId txid) (xGetMerkleBranch $ DT.unpack txid)
+                 let mrklF =
+                         case bi of
+                             Just b -> xGetMerkleBranch $ DT.unpack txid
+                             Nothing -> pure [(MerkleBranchNode' "" False)] -- TODO: compute it
+                 res' <- LE.try $ LA.concurrently (getTxOutputsFromTxId txid) mrklF
                  case res' of
                      Right (outs, mrkl) ->
                          return $
