@@ -561,7 +561,7 @@ readNextMessage net sock ingss = do
                                     case vala of
                                         Just v -> return ()
                                         Nothing -> do
-                                            ar <- TSH.new 1
+                                            ar <- TSH.new 4
                                             TSH.insert
                                                 (blockTxProcessingLeftMap p2pEnv)
                                                 (biBlockHash $ bf)
