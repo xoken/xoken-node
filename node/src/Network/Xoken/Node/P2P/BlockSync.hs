@@ -879,8 +879,7 @@ getSatsValueFromOutpoint conn txSync lg net outPoint maxWait = do
                             liftIO $ TSH.delete txSync (outPointHash outPoint, outPointIndex outPoint)
                             return res
                 else do
-                    let (addr, scriptHash, val) = head $ results
-                    return $ (addr, scriptHash, val)
+                    return $ head results
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: getSatsValueFromOutpoint: " ++ show e
             throw e
