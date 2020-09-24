@@ -26,7 +26,7 @@ module Network.Xoken.Node.P2P.BlockSync
 import Codec.Serialise
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (AsyncCancelled, mapConcurrently, mapConcurrently_, race_)
-import Control.Concurrent.Async.Lifted as LA (async, concurrently_)
+import Control.Concurrent.Async.Lifted as LA (async, concurrently_, race)
 import Control.Concurrent.Event as EV
 import Control.Concurrent.MVar
 import Control.Concurrent.QSem
@@ -669,8 +669,7 @@ processConfTransaction tx bhash blkht txind = do
                                                      lg
                                                      net
                                                      (prevOutput b)
-                                                     (2 * 1000 * 1000) -- 2 secs
-                                                     ((txProcInputDependenciesWait $ nodeConfig bp2pEnv) * 1000 * 1000)
+                                                     (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
                                              case dbRes of
                                                  Right v -> return $ v
                                                  Left (e :: SomeException) -> do
@@ -697,8 +696,7 @@ processConfTransaction tx bhash blkht txind = do
                                              lg
                                              net
                                              (prevOutput b)
-                                             (2 * 1000 * 1000) -- 2 secs
-                                             ((txProcInputDependenciesWait $ nodeConfig bp2pEnv) * 1000 * 1000)
+                                             (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
                                      case dbRes of
                                          Right v -> return $ v
                                          Left (e :: SomeException) -> do
@@ -834,22 +832,24 @@ processConfTransaction tx bhash blkht txind = do
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": handled Allegory Tx"
     -- signal 'done' event for tx's that were processed out of sequence
     --
-    vall <- liftIO $ TSH.lookup (txSynchronizer bp2pEnv) txhs
-    case vall of
-        Just ev -> liftIO $ EV.signal $ ev
-        Nothing -> return ()
+    mapM_
+        (\(indx, body) -> do
+             vall <- liftIO $ TSH.lookup (txSynchronizer bp2pEnv) (txhs, indx)
+             case vall of
+                 Just ev -> liftIO $ putMVar ev body
+                 Nothing -> return ())
+        ovs
     debug lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": end of processing signaled " ++ show bhash
 
 getSatsValueFromOutpoint ::
        XCqlClientState
-    -> TSH.TSHashTable TxHash EV.Event
+    -> TSH.TSHashTable (TxHash, Word32) (MVar (Text, Text, Int64))
     -> Logger
     -> Network
     -> OutPoint
     -> Int
-    -> Int
     -> IO ((Text, Text, Int64))
-getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait = do
+getSatsValueFromOutpoint conn txSync lg net outPoint maxWait = do
     let qstr :: Q.QueryString Q.R (Text, Int32) (Text, Text, Int64)
         qstr = "SELECT address, script_hash, value FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
         par = getSimpleQueryParam (txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint)
@@ -862,29 +862,22 @@ getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait = do
                     debug lg $
                         LG.msg $
                         "Tx not found: " ++ (show $ txHashToHex $ outPointHash outPoint) ++ " _waiting_ for event"
-                    valx <- liftIO $ TSH.lookup txSync (outPointHash outPoint)
+                    valx <- liftIO $ TSH.lookup txSync (outPointHash outPoint, outPointIndex outPoint)
                     event <-
                         case valx of
                             Just evt -> return evt
-                            Nothing -> EV.new
-                    liftIO $ TSH.insert txSync (outPointHash outPoint) event
-                    tofl <- waitTimeout event (fromIntegral wait)
-                    if tofl == False
-                        then if (wait < maxWait)
-                                 then do
-                                     getSatsValueFromOutpoint conn txSync lg net outPoint (4 * wait) maxWait
-                                 else do
-                                     liftIO $ TSH.delete txSync (outPointHash outPoint)
-                                     debug lg $
-                                         LG.msg $
-                                         "TxIDNotFoundException: While querying txid_outputs for (TxID, Index): " ++
-                                         (show $ txHashToHex $ outPointHash outPoint) ++
-                                         ", " ++ show (outPointIndex outPoint) ++ ")"
-                                     throw TxIDNotFoundException
-                        else do
+                            Nothing -> newEmptyMVar
+                    liftIO $ TSH.insert txSync (outPointHash outPoint, outPointIndex outPoint) event
+                    ores <- LA.race (liftIO $ readMVar event) (liftIO $ threadDelay (maxWait * 1000000))
+                    case ores of
+                        Right () -> do
+                            liftIO $ TSH.delete txSync (outPointHash outPoint, outPointIndex outPoint)
+                            throw TxIDNotFoundException
+                        Left res -> do
                             debug lg $
                                 LG.msg $ "event received _available_: " ++ (show $ txHashToHex $ outPointHash outPoint)
-                            getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait
+                            liftIO $ TSH.delete txSync (outPointHash outPoint, outPointIndex outPoint)
+                            return res
                 else do
                     let (addr, scriptHash, val) = head $ results
                     return $ (addr, scriptHash, val)
