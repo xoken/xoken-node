@@ -346,14 +346,14 @@ defBitcoinP2P nodeCnf = do
     mv <- newMVar True
     hl <- newMVar True
     st <- TSH.new 1
-    tl <- TSH.new 1
+    tl <- TSH.new 4
     ep <- newTVarIO False
-    tc <- TSH.new 1
-    vc <- TSH.new 1
+    tc <- TSH.new 16
+    vc <- TSH.new 16
     rpf <- newEmptyMVar
     rpc <- newTVarIO 0
-    mq <- TSH.new 1
-    ts <- TSH.new 1
+    mq <- TSH.new 4
+    ts <- TSH.new 4
     tbt <- MS.new $ maxTMTBuilderThreads nodeCnf
     iut <- newTVarIO False
     udc <- H.new

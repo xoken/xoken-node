@@ -561,7 +561,7 @@ readNextMessage net sock ingss = do
                                     case vala of
                                         Just v -> return ()
                                         Nothing -> do
-                                            ar <- TSH.new 1
+                                            ar <- TSH.new 4
                                             TSH.insert
                                                 (blockTxProcessingLeftMap p2pEnv)
                                                 (biBlockHash $ bf)
@@ -827,7 +827,7 @@ processTxBatch txns iss = do
                          (show $ biBlockHash bf) ++ ", tx-index: " ++ show (binTxIngested bi))
                 else do
                     S.drain $
-                        asyncly $
+                        aheadly $
                         (do let start = (binTxIngested bi) - (L.length txns)
                                 end = (binTxIngested bi) - 1
                             S.fromList $ zip [start .. end] [0 ..]) &
@@ -949,8 +949,9 @@ handleIncomingMessages pr = do
              S.aheadly $
              S.repeatM (readNextMessage' pr rlk) & -- read next msgs
              S.mapM (messageHandler pr) & -- handle read msgs
-             S.mapM (logMessage pr) -- log msgs & collect stats
-             )
+             S.mapM (logMessage pr) & -- log msgs & collect stats
+             S.maxBuffer 2 &
+             S.maxThreads 2)
     case res of
         Right (a) -> return ()
         Left (e :: SomeException) -> do
