@@ -141,7 +141,6 @@ xGetTxHash hash = do
                                             then liftIO $ getCompleteUnConfTx conn hash (getSegmentCount (fromBlob psz))
                                             else pure $ fromBlob psz
                                     let tx = fromJust $ Extra.hush $ S.decodeLazy sz
-                                    let mrkl = [MerkleBranchNode' "" False]
                                     return $
                                         Just $
                                         RawTxRecord
@@ -149,7 +148,7 @@ xGetTxHash hash = do
                                             (fromIntegral $ C.length sz)
                                             Nothing
                                             (sz)
-                                            (zipWith mergeTxOutTxOutput (txOut tx) outs)
+                                            Nothing
                                             (zipWith mergeTxInTxInput (txIn tx) $
                                              (\((outTxId, outTxIndex), inpTxIndex, (addr, value)) ->
                                                   TxInput
@@ -161,7 +160,7 @@ xGetTxHash hash = do
                                                       "") <$>
                                              inps)
                                             fees
-                                            mrkl
+                                            Nothing
                         Left (e :: SomeException) -> do
                             err lg $ LG.msg $ "Error: xGetTxHash: " ++ show e
                             throw KeyValueDBLookupException
@@ -180,13 +179,13 @@ xGetTxHash hash = do
                             (fromIntegral $ C.length sz)
                             (Just $ BlockInfo' (DT.unpack bhash) (fromIntegral blkht) (fromIntegral txind))
                             (sz)
-                            (zipWith mergeTxOutTxOutput (txOut tx) outs)
+                            (Just $ zipWith mergeTxOutTxOutput (txOut tx) outs)
                             (zipWith mergeTxInTxInput (txIn tx) $
                              (\((outTxId, outTxIndex), inpTxIndex, (addr, value)) ->
                                   TxInput (DT.unpack outTxId) outTxIndex inpTxIndex (DT.unpack addr) value "") <$>
                              inps)
                             fees
-                            mrkl
+                            (Just mrkl)
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetTxHash: " ++ show e
             throw KeyValueDBLookupException
@@ -244,9 +243,13 @@ xGetTxHashes hashes = do
                  let tx = fromJust $ Extra.hush $ S.decodeLazy sz
                  let mrklF =
                          case bi of
-                             Just b -> xGetMerkleBranch $ DT.unpack txid
-                             Nothing -> pure [(MerkleBranchNode' "" False)] -- TODO: compute it
-                 res' <- LE.try $ LA.concurrently (getTxOutputsFromTxId txid) mrklF
+                             Just b -> Just <$> (xGetMerkleBranch $ DT.unpack txid)
+                             Nothing -> pure Nothing
+                 let oF =
+                         case bi of
+                             Just b -> Just <$> getTxOutputsFromTxId txid
+                             Nothing -> pure Nothing
+                 res' <- LE.try $ LA.concurrently oF mrklF
                  case res' of
                      Right (outs, mrkl) ->
                          return $
@@ -258,7 +261,7 @@ xGetTxHashes hashes = do
                                    BlockInfo' (DT.unpack bhash) (fromIntegral blkht) (fromIntegral txind)) <$>
                               bi)
                              (sz)
-                             (zipWith mergeTxOutTxOutput (txOut tx) outs)
+                             (zipWith mergeTxOutTxOutput (txOut tx) <$> outs)
                              (zipWith mergeTxInTxInput (txIn tx) $
                               (\((outTxId, outTxIndex), inpTxIndex, (addr, value)) ->
                                    TxInput (DT.unpack outTxId) outTxIndex inpTxIndex (DT.unpack addr) value "") <$>

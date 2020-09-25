@@ -606,10 +606,10 @@ data RawTxRecord =
         , size :: Int32
         , txBlockInfo :: Maybe BlockInfo'
         , txSerialized :: C.ByteString
-        , txOutputs :: [TxOutput]
+        , txOutputs :: Maybe [TxOutput]
         , txInputs :: [TxInput]
         , fees :: Int64
-        , txMerkleBranch :: [MerkleBranchNode']
+        , txMerkleBranch :: Maybe [MerkleBranchNode']
         }
     deriving (Show, Generic, Hashable, Eq, Serialise)
 
@@ -635,7 +635,7 @@ data TxRecord =
         , txBlockInfo :: Maybe BlockInfo'
         , tx :: Tx'
         , fees :: Int64
-        , txMerkleBranch :: [MerkleBranchNode']
+        , txMerkleBranch :: Maybe [MerkleBranchNode']
         }
     deriving (Show, Generic, Hashable, Eq, Serialise)
 

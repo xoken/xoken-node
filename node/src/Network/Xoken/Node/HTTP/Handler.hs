@@ -223,7 +223,13 @@ getTxById = do
                     BSL.toStrict $
                     encodeResp pretty $
                     RespTransactionByTxID
-                        (TxRecord txId size txBlockInfo (txToTx' rt txOutputs txInputs) fees txMerkleBranch)
+                        (TxRecord
+                             txId
+                             size
+                             txBlockInfo
+                             (txToTx' rt (fromMaybe [] txOutputs) txInputs)
+                             fees
+                             txMerkleBranch)
                 Left err -> do
                     modifyResponse $ setResponseStatus 400 "Bad Request"
                     writeBS "400 error"
@@ -244,7 +250,8 @@ getTxByIds = do
             let rawTxs =
                     (\RawTxRecord {..} ->
                          (TxRecord txId size txBlockInfo <$>
-                          (txToTx' <$> (Extra.hush $ S.decodeLazy txSerialized) <*> (pure txOutputs) <*> (pure txInputs)) <*>
+                          (txToTx' <$> (Extra.hush $ S.decodeLazy txSerialized) <*> (pure $ fromMaybe [] txOutputs) <*>
+                           (pure txInputs)) <*>
                           (pure fees) <*>
                           (pure txMerkleBranch))) <$>
                     txs
