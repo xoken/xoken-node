@@ -277,7 +277,6 @@ getBatchSizeMainnet peerCount n
 
 getBatchSizeTestnet :: Int32 -> Int32 -> [Int32]
 getBatchSizeTestnet peerCount n
-    | peerCount > 8 = [1 .. 4]
     | peerCount > 4 = [1 .. 2]
     | otherwise = [1]
 

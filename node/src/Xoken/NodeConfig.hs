@@ -50,8 +50,8 @@ data NodeConfig =
         , allegoryNameUtxoSatoshis :: Int
         , allegoryTxFeeSatsProducerAction :: Int
         , allegoryTxFeeSatsOwnerAction :: Int
-        , txOutputValuesCacheKeyBits :: Word8
-        , unconfirmedTxCacheKeyBits :: Word8
+        , txOutputValuesCacheKeyBits :: Int
+        , unconfirmedTxCacheKeyBits :: Int
         , blockProcessingTimeout :: Int
         , recentTxReceiveTimeout :: Int
         , getDataResponseTimeout :: Int
