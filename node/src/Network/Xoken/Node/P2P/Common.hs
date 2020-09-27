@@ -34,6 +34,7 @@ import qualified Data.ByteString.Lazy.Char8 as LC
 import Data.ByteString.Short as BSS
 import Data.Function ((&))
 import Data.Functor.Identity
+import qualified Data.HashTable as CHT
 import Data.IORef
 import Data.Int
 import qualified Data.List as L
@@ -464,12 +465,12 @@ execQuery xcs req = do
     let sid = mkStreamId i
     case (Q.pack Q.V3 noCompression False sid req) of
         Right reqp -> do
-            TSH.insert ht i mv
+            CHT.insert ht i mv
             withMVar lock (\_ -> LB.sendAll sock reqp)
         Left e -> do
             throw $ XCqlPackException $ show e
     (XCqlResponse h x) <- takeMVar mv
-    TSH.delete ht i
+    CHT.delete ht i
     return $ Q.unpack noCompression h x
 
 readResponse :: XCQLConnection -> IO ()
@@ -493,7 +494,7 @@ readResponse (XCQLConnection ht lock sk) =
                         let len = lengthRepr (bodyLength h)
                             sid = fromIntegral $ fromStreamId $ streamId h
                         x <- recvAll sock (fromIntegral len)
-                        mmv <- TSH.lookup ht sid
+                        mmv <- CHT.lookup ht sid
                         case mmv of
                             Just mv -> do
                                 res <- tryPutMVar mv (XCqlResponse h x)

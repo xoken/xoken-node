@@ -64,6 +64,7 @@ import Data.Default
 import Data.Default
 import Data.Function
 import Data.Functor.Identity
+import qualified Data.HashTable as CHT
 import qualified Data.HashTable.IO as H
 import Data.IORef
 import Data.Int
@@ -186,7 +187,7 @@ initXCql nodeConf = do
              s <- socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)
              Network.Socket.connect s (addrAddress addr)
              connHandshake s startCql
-             t <- TSH.new 1
+             t <- CHT.newWithDefaults 1
              l <- newMVar (1 :: Int16)
              sk <- newIORef $ Just s
              let xcqlc = XCQLConnection t l sk
@@ -345,21 +346,21 @@ defBitcoinP2P nodeCnf = do
     bp <- newTVarIO M.empty
     mv <- newMVar True
     hl <- newMVar True
-    st <- TSH.new 1
-    tl <- TSH.new 4
+    st <- CHT.newWithDefaults 1
+    tl <- CHT.newWithDefaults 4
     ep <- newTVarIO False
-    tc <- TSH.new 16
-    vc <- TSH.new 16
+    tc <- CHT.newWithDefaults 16
+    -- vc <- CHT.newWithDefaults 8 -- CHT.new 16
     rpf <- newEmptyMVar
     rpc <- newTVarIO 0
-    mq <- TSH.new 4
-    ts <- TSH.new 4
+    mq <- CHT.newWithDefaults 4
+    ts <- CHT.newWithDefaults 4
     tbt <- MS.new $ maxTMTBuilderThreads nodeCnf
     iut <- newTVarIO False
     udc <- H.new
     tpfa <- newTVarIO 0
     bsb <- newTVarIO Nothing
-    return $ BitcoinP2P nodeCnf g bp mv hl st tl ep tc vc (rpf, rpc) mq ts tbt iut udc tpfa bsb
+    return $ BitcoinP2P nodeCnf g bp mv hl st tl ep tc (rpf, rpc) mq ts tbt iut udc tpfa bsb
 
 initNexa :: IO ()
 initNexa = do

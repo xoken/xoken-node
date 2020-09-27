@@ -16,6 +16,7 @@ import Control.Monad.IO.Class
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as LB
 import Data.Functor.Identity
+import qualified Data.HashTable as CHT
 import Data.IORef
 import Data.Int
 import qualified Data.Map.Strict as M
@@ -51,7 +52,7 @@ data XCqlResponse =
 
 data XCQLConnection =
     XCQLConnection
-        { xCqlHashTable :: !(TSH.TSHashTable Int16 (MVar XCqlResponse))
+        { xCqlHashTable :: !(CHT.HashTable Int16 (MVar XCqlResponse))
         , xCqlWriteLock :: !(MVar Int16)
         , xCqlSocket :: !(IORef (Maybe Socket))
         }

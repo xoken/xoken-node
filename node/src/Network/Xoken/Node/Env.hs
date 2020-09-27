@@ -19,6 +19,7 @@ import Control.Monad.Reader
 import Control.Monad.Trans.Control
 import Crypto.Secp256k1
 import qualified Data.ByteString.Lazy.Char8 as C
+import qualified Data.HashTable as CHT
 import qualified Data.HashTable.IO as H
 import Data.Hashable
 import Data.Int
@@ -71,14 +72,14 @@ data BitcoinP2P =
         , blacklistedPeers :: !(TVar (M.Map SockAddr BitcoinPeer))
         , bestBlockUpdated :: !(MVar Bool)
         , headersWriteLock :: !(MVar Bool)
-        , blockSyncStatusMap :: !(TSH.TSHashTable BlockHash (BlockSyncStatus, BlockHeight))
-        , blockTxProcessingLeftMap :: !(TSH.TSHashTable BlockHash ((TSH.TSHashTable TxHash Int), Int))
+        , blockSyncStatusMap :: !(CHT.HashTable BlockHash (BlockSyncStatus, BlockHeight))
+        , blockTxProcessingLeftMap :: !(CHT.HashTable BlockHash ((CHT.HashTable TxHash Int), Int))
         , epochType :: !(TVar Bool)
-        , unconfirmedTxCache :: !(TSH.TSHashTable TxShortHash (Bool, TxHash))
-        , txOutputValuesCache :: !(TSH.TSHashTable TxShortHash (TxHash, [(Word32, (Text, Text, Int64))]))
+        , unconfirmedTxCache :: !(CHT.HashTable TxShortHash (Bool, TxHash))
+        -- , txOutputValuesCache :: !(CHT.HashTable TxShortHash (TxHash, [(Word32, (Text, Text, Int64))]))
         , peerReset :: !(MVar Bool, TVar Int)
-        , merkleQueueMap :: !(TSH.TSHashTable BlockHash (TQueue (TxHash, Bool)))
-        , txSynchronizer :: !(TSH.TSHashTable (TxHash, Word32) (MVar (Text, Text, Int64)))
+        , merkleQueueMap :: !(CHT.HashTable BlockHash (TQueue (TxHash, Bool)))
+        , txSynchronizer :: !(CHT.HashTable (TxHash, Word32) (MVar (Text, Text, Int64)))
         , maxTMTBuilderThreadLock :: !(MSem Int)
         , indexUnconfirmedTx :: !(TVar Bool)
         , userDataCache :: !(HashTable Text (Text, Int32, Int32, UTCTime, [Text])) -- (name, quota, used, expiry time, roles)

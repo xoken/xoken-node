@@ -38,6 +38,7 @@ import qualified Data.ByteString.Lazy.Char8 as LC
 import Data.ByteString.Short as BSS
 import Data.Function ((&))
 import Data.Functor.Identity
+import qualified Data.HashTable as CHT
 import qualified Data.HashTable.IO as H
 import Data.Int
 import qualified Data.IntMap as I
@@ -99,7 +100,7 @@ processTxGetData pr txHash = do
             bp2pEnv <- getBitcoinP2P
             tuple <-
                 liftIO $
-                TSH.lookup
+                CHT.lookup
                     (unconfirmedTxCache bp2pEnv)
                     (getTxShortHash (TxHash txHash) (unconfirmedTxCacheKeyBits $ nodeConfig bp2pEnv))
             case tuple of
@@ -109,7 +110,7 @@ processTxGetData pr txHash = do
                             liftIO $ threadDelay (1000000 * 30)
                             tuple2 <-
                                 liftIO $
-                                TSH.lookup
+                                CHT.lookup
                                     (unconfirmedTxCache bp2pEnv)
                                     (getTxShortHash (TxHash txHash) (unconfirmedTxCacheKeyBits $ nodeConfig bp2pEnv))
                             case tuple2 of
@@ -134,13 +135,16 @@ sendTxGetData pr txHash = do
             let em = runPut . putMessage net $ msg
             res <- liftIO $ try $ sendEncMessage (bpWriteMsgLock pr) s (BSL.fromStrict em)
             case res of
-                Right _ ->
+                Right _ -> do
                     liftIO $
-                    TSH.insert
-                        (unconfirmedTxCache bp2pEnv)
-                        (getTxShortHash (TxHash txHash) (unconfirmedTxCacheKeyBits $ nodeConfig bp2pEnv))
-                        (False, TxHash txHash)
-                Left (e :: SomeException) -> debug lg $ LG.msg $ "Error, sending out data: " ++ show e
+                        CHT.insert
+                            (unconfirmedTxCache bp2pEnv)
+                            (getTxShortHash (TxHash txHash) (unconfirmedTxCacheKeyBits $ nodeConfig bp2pEnv))
+                            (False, TxHash txHash)
+                    return ()
+                Left (e :: SomeException) -> do
+                    debug lg $ LG.msg $ "Error, sending out data: " ++ show e
+                    throw e
             debug lg $ LG.msg $ "sending out GetData: " ++ show (bpAddress pr)
         Nothing -> err lg $ LG.msg $ val "Error sending, no connections available"
 
@@ -297,11 +301,11 @@ processUnconfTransaction tx = do
     inputs <-
         mapM
             (\(b, j) -> do
-                 tuple <-
-                     liftIO $
-                     TSH.lookup
-                         (txOutputValuesCache bp2pEnv)
-                         (getTxShortHash (txHash tx) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
+                 tuple <- return Nothing
+                    --  liftIO $
+                    --  CHT.lookup
+                    --      (txOutputValuesCache bp2pEnv)
+                    --      (getTxShortHash (txHash tx) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
                  val <-
                      case tuple of
                          Just (ftxh, indexvals) ->
@@ -348,11 +352,11 @@ processUnconfTransaction tx = do
                      ( fromIntegral $ i
                      , (a, (txHashToHex $ TxHash $ sha256 (scriptOutput o)), fromIntegral $ outValue o)))
                 outAddrs
-    liftIO $
-        TSH.insert
-            (txOutputValuesCache bp2pEnv)
-            (getTxShortHash (txHash tx) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
-            (txHash tx, ovs)
+    -- liftIO $
+    --     CHT.insert
+    --         (txOutputValuesCache bp2pEnv)
+    --         (getTxShortHash (txHash tx) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
+    --         (txHash tx, ovs)
     --
     mapM_
         (\(a, o, i) -> do
@@ -419,7 +423,7 @@ processUnconfTransaction tx = do
     --
     mapM_
         (\(indx, body) -> do
-             vall <- liftIO $ TSH.lookup (txSynchronizer bp2pEnv) (txHash tx, indx)
+             vall <- liftIO $ CHT.lookup (txSynchronizer bp2pEnv) (txHash tx, indx)
              case vall of
                  Just ev -> liftIO $ putMVar ev body
                  Nothing -> return ())
@@ -429,7 +433,7 @@ processUnconfTransaction tx = do
 getSatsValueFromEpochOutpoint ::
        XCqlClientState
     -> Bool
-    -> (TSH.TSHashTable (TxHash, Word32) (MVar (Text, Text, Int64)))
+    -> (CHT.HashTable (TxHash, Word32) (MVar (Text, Text, Int64)))
     -> Logger
     -> Network
     -> OutPoint
@@ -449,21 +453,21 @@ getSatsValueFromEpochOutpoint conn epoch txSync lg net outPoint maxWait = do
                     debug lg $
                         LG.msg $
                         "Tx not found: " ++ (show $ txHashToHex $ outPointHash outPoint) ++ " _waiting_ for event"
-                    valx <- liftIO $ TSH.lookup txSync (outPointHash outPoint, outPointIndex outPoint)
+                    valx <- liftIO $ CHT.lookup txSync (outPointHash outPoint, outPointIndex outPoint)
                     event <-
                         case valx of
                             Just evt -> return evt
                             Nothing -> newEmptyMVar
-                    liftIO $ TSH.insert txSync (outPointHash outPoint, outPointIndex outPoint) event
+                    liftIO $ CHT.insert txSync (outPointHash outPoint, outPointIndex outPoint) event
                     ores <- LA.race (liftIO $ readMVar event) (liftIO $ threadDelay (maxWait * 1000000))
                     case ores of
                         Right () -> do
-                            liftIO $ TSH.delete txSync (outPointHash outPoint, outPointIndex outPoint)
+                            liftIO $ CHT.delete txSync (outPointHash outPoint, outPointIndex outPoint)
                             throw TxIDNotFoundException
                         Left res -> do
                             debug lg $
                                 LG.msg $ "event received _available_: " ++ (show $ txHashToHex $ outPointHash outPoint)
-                            liftIO $ TSH.delete txSync (outPointHash outPoint, outPointIndex outPoint)
+                            liftIO $ CHT.delete txSync (outPointHash outPoint, outPointIndex outPoint)
                             return res
                 else do
                     let (addr, scriptHash, val) = head $ results
@@ -475,7 +479,7 @@ getSatsValueFromEpochOutpoint conn epoch txSync lg net outPoint maxWait = do
 sourceSatsValueFromOutpoint ::
        XCqlClientState
     -> Bool
-    -> (TSH.TSHashTable (TxHash, Word32) (MVar (Text, Text, Int64)))
+    -> (CHT.HashTable (TxHash, Word32) (MVar (Text, Text, Int64)))
     -> Logger
     -> Network
     -> OutPoint
@@ -485,7 +489,7 @@ sourceSatsValueFromOutpoint ::
 sourceSatsValueFromOutpoint conn epoch txSync lg net outPoint waitSecs maxWait = do
     res <-
         LA.race
-            (liftIO $ getSatsValueFromOutpoint conn txSync lg net outPoint maxWait)
+            (liftIO $ getSatsValueFromOutpoint conn txSync lg net outPoint maxWait True)
             (liftIO $ getSatsValueFromEpochOutpoint conn epoch txSync lg net outPoint waitSecs)
     return $ either (GB.id) (GB.id) res
 
