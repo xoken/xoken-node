@@ -465,12 +465,12 @@ execQuery xcs req = do
     let sid = mkStreamId i
     case (Q.pack Q.V3 noCompression False sid req) of
         Right reqp -> do
-            CHT.insert ht i mv
+            TSH.insert ht i mv
             withMVar lock (\_ -> LB.sendAll sock reqp)
         Left e -> do
             throw $ XCqlPackException $ show e
     (XCqlResponse h x) <- takeMVar mv
-    CHT.delete ht i
+    TSH.delete ht i
     return $ Q.unpack noCompression h x
 
 readResponse :: XCQLConnection -> IO ()
@@ -494,7 +494,7 @@ readResponse (XCQLConnection ht lock sk) =
                         let len = lengthRepr (bodyLength h)
                             sid = fromIntegral $ fromStreamId $ streamId h
                         x <- recvAll sock (fromIntegral len)
-                        mmv <- CHT.lookup ht sid
+                        mmv <- TSH.lookup ht sid
                         case mmv of
                             Just mv -> do
                                 res <- tryPutMVar mv (XCqlResponse h x)

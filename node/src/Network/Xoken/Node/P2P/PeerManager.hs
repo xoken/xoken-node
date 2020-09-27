@@ -492,7 +492,7 @@ merkleTreeBuilder tque blockHash treeHt = do
                             LA.async $ commitTxPage pg blockHash pgn
                             return ()
                     liftIO $ writeIORef continue False
-                    liftIO $ CHT.delete (merkleQueueMap p2pEnv) blockHash
+                    liftIO $ TSH.delete (merkleQueueMap p2pEnv) blockHash
                     liftIO $ MS.signal (maxTMTBuilderThreadLock p2pEnv)
 
 updateBlocks :: (HasLogger m, HasDatabaseHandles m, MonadIO m) => BlockHash -> BlockHeight -> Int -> Int -> Tx -> m ()
@@ -558,12 +558,12 @@ readNextMessage net sock ingss = do
                         if (binTxIngested blin == 0) -- very first Tx
                             then do
                                 liftIO $ do
-                                    vala <- CHT.lookup (blockTxProcessingLeftMap p2pEnv) (biBlockHash $ bf)
+                                    vala <- TSH.lookup (blockTxProcessingLeftMap p2pEnv) (biBlockHash $ bf)
                                     case vala of
                                         Just v -> return ()
                                         Nothing -> do
-                                            ar <- CHT.newWithDefaults 4
-                                            CHT.insert
+                                            ar <- TSH.new 4
+                                            TSH.insert
                                                 (blockTxProcessingLeftMap p2pEnv)
                                                 (biBlockHash $ bf)
                                                 (ar, (binTxTotalCount blin))
@@ -571,7 +571,7 @@ readNextMessage net sock ingss = do
                                 qq <- liftIO $ atomically $ newTQueue
                                         -- wait for TMT threads alloc
                                 liftIO $ MS.wait (maxTMTBuilderThreadLock p2pEnv)
-                                liftIO $ CHT.insert (merkleQueueMap p2pEnv) (biBlockHash $ bf) qq
+                                liftIO $ TSH.insert (merkleQueueMap p2pEnv) (biBlockHash $ bf) qq
                                 LA.async $
                                     merkleTreeBuilder qq (biBlockHash $ bf) (computeTreeHeight $ binTxTotalCount blin)
                                 updateBlocks
@@ -582,7 +582,7 @@ readNextMessage net sock ingss = do
                                     (txns !! 0)
                                 return qq
                             else do
-                                valx <- liftIO $ CHT.lookup (merkleQueueMap p2pEnv) (biBlockHash $ bf)
+                                valx <- liftIO $ TSH.lookup (merkleQueueMap p2pEnv) (biBlockHash $ bf)
                                 case valx of
                                     Just q -> return q
                                     Nothing -> throw MerkleQueueNotFoundException
@@ -812,11 +812,11 @@ processTxBatch txns iss = do
     let binfo = issBlockInfo iss
     case binfo of
         Just bf -> do
-            valx <- liftIO $ CHT.lookup (blockTxProcessingLeftMap bp2pEnv) (biBlockHash bf)
+            valx <- liftIO $ TSH.lookup (blockTxProcessingLeftMap bp2pEnv) (biBlockHash bf)
             skip <-
                 case valx of
                     Just lfa -> do
-                        y <- liftIO $ CHT.lookup (fst lfa) (txHash $ head txns)
+                        y <- liftIO $ TSH.lookup (fst lfa) (txHash $ head txns)
                         case y of
                             Just c -> return True
                             Nothing -> return False
@@ -842,10 +842,10 @@ processTxBatch txns iss = do
                         S.mapM (processTxStream) &
                         S.maxBuffer (maxTxProcessingBuffer $ nodeConfig bp2pEnv) &
                         S.maxThreads (maxTxProcessingThreads $ nodeConfig bp2pEnv)
-                    valy <- liftIO $ CHT.lookup (blockTxProcessingLeftMap bp2pEnv) (biBlockHash bf)
+                    valy <- liftIO $ TSH.lookup (blockTxProcessingLeftMap bp2pEnv) (biBlockHash bf)
                     case valy of
                         Just lefta -> do
-                            liftIO $ CHT.insert (fst lefta) (txHash $ head txns) (L.length txns)
+                            liftIO $ TSH.insert (fst lefta) (txHash $ head txns) (L.length txns)
                             return ()
                         Nothing -> return ()
                     return ()
@@ -898,7 +898,7 @@ readNextMessage' peer readLock = do
                         Just (MBlock blk) -- setup state
                          -> do
                             let hh = headerHash $ defBlockHeader blk
-                            mht <- liftIO $ CHT.lookup (blockSyncStatusMap bp2pEnv) (hh)
+                            mht <- liftIO $ TSH.lookup (blockSyncStatusMap bp2pEnv) (hh)
                             case (mht) of
                                 Just x -> return ()
                                 Nothing -> do
@@ -915,7 +915,7 @@ readNextMessage' peer readLock = do
                                         then do
                                             liftIO $ modifyIORef' (ptBlockFetchWindow tracker) (\z -> z - 1)
                                             liftIO $
-                                                CHT.insert
+                                                TSH.insert
                                                     (blockSyncStatusMap bp2pEnv)
                                                     (biBlockHash bi)
                                                     (BlockReceiveComplete tm, biBlockHeight bi)
@@ -924,7 +924,7 @@ readNextMessage' peer readLock = do
                                             liftIO $ putMVar readLock Nothing
                                         else do
                                             liftIO $
-                                                CHT.insert
+                                                TSH.insert
                                                     (blockSyncStatusMap bp2pEnv)
                                                     (biBlockHash bi)
                                                     ( RecentTxReceiveTime (tm, binTxIngested ingst)
