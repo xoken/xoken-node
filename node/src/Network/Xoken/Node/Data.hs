@@ -714,7 +714,7 @@ data AddressOutputs =
     AddressOutputs
         { aoAddress :: String
         , aoOutput :: OutPoint'
-        , aoBlockInfo :: BlockInfo'
+        , aoBlockInfo :: Maybe BlockInfo'
         , aoSpendInfo :: Maybe SpendInfo
         , aoPrevOutpoint :: [(OutPoint', Int32, Int64)]
         , aoValue :: Int64
@@ -727,9 +727,9 @@ instance ToJSON AddressOutputs where
             [ "address" .= addr
             , "outputTxHash" .= (opTxHash out)
             , "outputIndex" .= (opIndex out)
-            , "txIndex" .= (binfTxIndex bi)
-            , "blockHash" .= (binfBlockHash bi)
-            , "blockHeight" .= (binfBlockHeight bi)
+            , "txIndex" .= (binfTxIndex <$> bi)
+            , "blockHash" .= (binfBlockHash <$> bi)
+            , "blockHeight" .= (binfBlockHeight <$> bi)
             , "spendInfo" .= ios
             , "prevOutpoint" .= po
             , "value" .= val
@@ -739,7 +739,7 @@ data ScriptOutputs =
     ScriptOutputs
         { scScriptHash :: String
         , scOutput :: OutPoint'
-        , scBlockInfo :: BlockInfo'
+        , scBlockInfo :: Maybe BlockInfo'
         , scSpendInfo :: Maybe SpendInfo
         , scPrevOutpoint :: [(OutPoint', Int32, Int64)]
         , scValue :: Int64
@@ -752,9 +752,9 @@ instance ToJSON ScriptOutputs where
             [ "scriptHash" .= dh
             , "outputTxHash" .= (opTxHash out)
             , "outputIndex" .= (opIndex out)
-            , "txIndex" .= (binfTxIndex bi)
-            , "blockHash" .= (binfBlockHash bi)
-            , "blockHeight" .= (binfBlockHeight bi)
+            , "txIndex" .= (binfTxIndex <$> bi)
+            , "blockHash" .= (binfBlockHash <$> bi)
+            , "blockHeight" .= (binfBlockHeight <$> bi)
             , "spendInfo" .= ios
             , "prevOutpoint" .= po
             , "value" .= val
@@ -821,7 +821,7 @@ data TxOutputData =
         , txind :: Int32
         , address :: T.Text
         , value :: Int64
-        , blockInfo :: BlockInfo'
+        , blockInfo :: Maybe BlockInfo'
         , inputs :: [((T.Text, Int32), Int32, (T.Text, Int64))]
         , spendInfo :: Maybe SpendInfo
         }
@@ -914,9 +914,20 @@ txToTx' (Tx {..}) txout txin = Tx' txVersion txout txin txLockTime
 
 type TxIdOutputs = ((T.Text, Int32, Int32), Bool, Set ((T.Text, Int32), Int32, (T.Text, Int64)), Int64, T.Text)
 
+type TxIdOutputs' = (Bool, Set ((T.Text, Int32), Int32, (T.Text, Int64)), Int64, T.Text)
+
+genUnConfTxOutputData :: (T.Text, Int32, TxIdOutputs', Maybe TxIdOutputs') -> TxOutputData
+genUnConfTxOutputData (txId, txIndex, (_, inps, val, addr), Nothing) =
+    TxOutputData txId txIndex addr val Nothing (Q.fromSet inps) Nothing
+genUnConfTxOutputData (txId, txIndex, (_, inps, val, addr), Just (_, oth, _, _)) =
+    let other = Q.fromSet oth
+        ((stid, _), stidx, _) = head $ other
+        si = (\((_, soi), _, (ad, vl)) -> SpendInfo' soi ad vl) <$> other
+     in TxOutputData txId txIndex addr val Nothing (Q.fromSet inps) Nothing
+
 genTxOutputData :: (T.Text, Int32, TxIdOutputs, Maybe TxIdOutputs) -> TxOutputData
 genTxOutputData (txId, txIndex, ((hs, ht, ind), _, inps, val, addr), Nothing) =
-    TxOutputData txId txIndex addr val (BlockInfo' (T.unpack hs) ht ind) (Q.fromSet inps) Nothing
+    TxOutputData txId txIndex addr val (Just $ BlockInfo' (T.unpack hs) ht ind) (Q.fromSet inps) Nothing
 genTxOutputData (txId, txIndex, ((hs, ht, ind), _, inps, val, addr), Just ((shs, sht, sind), _, oth, _, _)) =
     let other = Q.fromSet oth
         ((stid, _), stidx, _) = head $ other
@@ -926,7 +937,7 @@ genTxOutputData (txId, txIndex, ((hs, ht, ind), _, inps, val, addr), Just ((shs,
             txIndex
             addr
             val
-            (BlockInfo' (T.unpack hs) ht ind)
+            (Just $ BlockInfo' (T.unpack hs) ht ind)
             (Q.fromSet inps)
             (Just $ SpendInfo (T.unpack stid) stidx (BlockInfo' (T.unpack shs) sht sind) si)
 

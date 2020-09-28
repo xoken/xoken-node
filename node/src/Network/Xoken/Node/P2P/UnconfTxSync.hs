@@ -202,9 +202,13 @@ commitEpochScriptHashOutputs ::
     -> m ()
 commitEpochScriptHashOutputs conn epoch sh output = do
     lg <- getLogger
-    let strAddrOuts = "INSERT INTO xoken.ep_script_hash_outputs (epoch, script_hash, output) VALUES (?,?,?)"
-        qstrAddrOuts = strAddrOuts :: Q.QueryString Q.W (Bool, Text, (Text, Int32)) ()
-        parAddrOuts = getSimpleQueryParam (epoch, sh, output)
+    let blkHeight = fromIntegral 10000000
+        txIndex = fromIntegral $ snd output
+        nominalTxIndex = blkHeight * 1000000000 + txIndex
+    let strAddrOuts =
+            "INSERT INTO xoken.ep_script_hash_outputs (epoch, script_hash, nominal_tx_index, output) VALUES (?,?,?,?)"
+        qstrAddrOuts = strAddrOuts :: Q.QueryString Q.W (Bool, Text, Int64, (Text, Int32)) ()
+        parAddrOuts = getSimpleQueryParam (epoch, sh, nominalTxIndex, output)
     resAddrOuts <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query (qstrAddrOuts) parAddrOuts)
     case resAddrOuts of
         Right _ -> return ()
