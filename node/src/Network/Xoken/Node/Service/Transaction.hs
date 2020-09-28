@@ -102,6 +102,7 @@ xGetTxHash hash = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
+    ep <- liftIO $ readTVarIO (epochType bp2pEnv)
     let conn = xCqlClientState dbe
         net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
         str = "SELECT tx_id, block_info, tx_serialized, inputs, fees from xoken.transactions where tx_id = ?"
@@ -111,14 +112,16 @@ xGetTxHash hash = do
                                                         , Blob
                                                         , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
                                                         , Int64)
-        ustr = "SELECT epoch, tx_id, tx_serialized, inputs, fees from xoken.ep_transactions where tx_id = ?"
+        ustr =
+            "SELECT epoch, tx_id, tx_serialized, inputs, fees from xoken.ep_transactions where epoch = ? AND tx_id = ?"
         uqstr =
-            ustr :: Q.QueryString Q.R (Identity DT.Text) ( Bool
-                                                         , DT.Text
-                                                         , Blob
-                                                         , [((DT.Text, Int32), Int32, (DT.Text, Int64))]
-                                                         , Int64)
+            ustr :: Q.QueryString Q.R (Bool, DT.Text) ( Bool
+                                                      , DT.Text
+                                                      , Blob
+                                                      , [((DT.Text, Int32), Int32, (DT.Text, Int64))]
+                                                      , Int64)
         p = getSimpleQueryParam $ Identity $ hash
+        up = getSimpleQueryParam $ (ep, hash)
     res <-
         LE.try $
         LA.concurrently
@@ -128,7 +131,7 @@ xGetTxHash hash = do
         Right ((iop, outs), mrkl) ->
             if length iop == 0
                 then do
-                    ures <- LE.try $ liftIO $ query conn (Q.RqQuery $ Q.Query uqstr p)
+                    ures <- LE.try $ liftIO $ query conn (Q.RqQuery $ Q.Query uqstr up)
                     case ures of
                         Right uiop ->
                             if length uiop == 0
@@ -195,10 +198,11 @@ xGetTxHashes hashes = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
+    ep <- liftIO $ readTVarIO (epochType bp2pEnv)
     let conn = xCqlClientState dbe
         net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
         str = "SELECT tx_id, block_info, tx_serialized, inputs, fees from xoken.transactions where tx_id in ?"
-        ustr = "SELECT epoch, tx_id, tx_serialized, inputs, fees from xoken.ep_transactions where tx_id in ?"
+        ustr = "SELECT tx_id, tx_serialized, inputs, fees from xoken.ep_transactions where epoch = ? AND tx_id = ?"
         qstr =
             str :: Q.QueryString Q.R (Identity [DT.Text]) ( DT.Text
                                                           , (DT.Text, Int32, Int32)
@@ -206,14 +210,14 @@ xGetTxHashes hashes = do
                                                           , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
                                                           , Int64)
         uqstr =
-            ustr :: Q.QueryString Q.R (Identity [DT.Text]) ( Bool
-                                                           , DT.Text
-                                                           , Blob
-                                                           , [((DT.Text, Int32), Int32, (DT.Text, Int64))]
-                                                           , Int64)
+            ustr :: Q.QueryString Q.R (Bool, DT.Text) ( DT.Text
+                                                      , Blob
+                                                      , [((DT.Text, Int32), Int32, (DT.Text, Int64))]
+                                                      , Int64)
         p = getSimpleQueryParam $ Identity $ hashes
+        up a = getSimpleQueryParam $ (ep, a)
     res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr p)
-    ures <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query uqstr p)
+    ures <- liftIO $ LE.try $ mapConcurrently (\a -> query conn (Q.RqQuery $ Q.Query uqstr (up a))) hashes
     cres <-
         case res of
             Right iop ->
@@ -227,7 +231,7 @@ xGetTxHashes hashes = do
                 throw KeyValueDBLookupException
     cures <-
         case ures of
-            Right iop -> pure $ L.map (\(epoch, txid, psz, sinps, fees) -> (txid, Nothing, psz, sinps, fees)) iop
+            Right iop -> pure $ L.map (\(txid, psz, sinps, fees) -> (txid, Nothing, psz, sinps, fees)) (L.concat iop)
             Left (e :: SomeException) -> do
                 err lg $ LG.msg $ "Error: xGetTxHashes: " ++ show e
                 throw KeyValueDBLookupException
