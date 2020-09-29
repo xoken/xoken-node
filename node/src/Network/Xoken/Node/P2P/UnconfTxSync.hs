@@ -52,6 +52,7 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as DTE
 import Data.Time.Clock
 import Data.Time.Clock
+import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
 import Data.Time.Clock.POSIX
 import Data.Time.LocalTime
 import Data.Word
@@ -160,6 +161,8 @@ runEpochSwitcher =
                     0 -> True
                     1 -> False
         liftIO $ atomically $ writeTVar (epochType bp2pEnv) epoch
+        when (epoch && minute == 0) $ do
+            liftIO $ atomically $ writeTVar (epochTimestamp bp2pEnv) (floor $ utcTimeToPOSIXSeconds tm)
         if minute == 0
             then do
                 let str = "DELETE from xoken.ep_transactions where epoch = ?"
@@ -194,7 +197,7 @@ runEpochSwitcher =
         return ()
 
 commitEpochScriptHashOutputs ::
-       (HasLogger m, MonadIO m)
+       (HasLogger m, HasBitcoinP2P m, MonadIO m)
     => XCqlClientState
     -> Bool -- epoch
     -> Text -- scriptHash
@@ -202,8 +205,11 @@ commitEpochScriptHashOutputs ::
     -> m ()
 commitEpochScriptHashOutputs conn epoch sh output = do
     lg <- getLogger
+    bp2pEnv <- getBitcoinP2P
+    bt <- liftIO $ readTVarIO (epochTimestamp bp2pEnv)
+    tm <- liftIO getCurrentTime
     let blkHeight = fromIntegral 10000000
-        txIndex = fromIntegral $ snd output
+        txIndex = (floor $ utcTimeToPOSIXSeconds tm) - bt
         nominalTxIndex = blkHeight * 1000000000 + txIndex
     let strAddrOuts =
             "INSERT INTO xoken.ep_script_hash_outputs (epoch, script_hash, nominal_tx_index, output) VALUES (?,?,?,?)"

@@ -191,6 +191,17 @@ xGetOutputsAddress address pgSize mbNomTxInd = do
         shp = getSimpleQueryParam (maybe "" DT.pack sh, nominalTxIndex)
         uaop = getSimpleQueryParam (ep, DT.pack address, nominalTxIndex)
         ushp = getSimpleQueryParam (ep, maybe "" DT.pack sh, nominalTxIndex)
+    ures <-
+        if nominalTxIndex < 1000000000
+            then LE.try $
+                 LA.concurrently
+                     (case sh of
+                          Nothing -> return []
+                          Just s -> liftIO $ query conn (Q.RqQuery $ Q.Query uqstr (ushp {pageSize = pgSize})))
+                     (case address of
+                          ('3':_) -> return []
+                          _ -> liftIO $ query conn (Q.RqQuery $ Q.Query uqstr (uaop {pageSize = pgSize})))
+            else return $ Right mempty
     res <-
         LE.try $
         LA.concurrently
@@ -200,92 +211,61 @@ xGetOutputsAddress address pgSize mbNomTxInd = do
             (case address of
                  ('3':_) -> return []
                  _ -> liftIO $ query conn (Q.RqQuery $ Q.Query qstr (aop {pageSize = pgSize})))
-    case res of
-        Right (sr, ar) -> do
-            let iops =
-                    fmap head $
-                    L.groupBy (\(x, _) (y, _) -> x == y) $
-                    L.sortBy
-                        (\(x, _) (y, _) ->
-                             if x < y
-                                 then GT
-                                 else LT)
-                        (sr ++ ar)
-                iop =
-                    case pgSize of
-                        Nothing -> iops
-                        (Just pg) -> L.take (fromIntegral pg) iops
-            if L.null iop
-                then do
-                    ures <-
-                        LE.try $
-                        LA.concurrently
-                            (case sh of
-                                 Nothing -> return []
-                                 Just s -> liftIO $ query conn (Q.RqQuery $ Q.Query uqstr (ushp {pageSize = pgSize})))
-                            (case address of
-                                 ('3':_) -> return []
-                                 _ -> liftIO $ query conn (Q.RqQuery $ Q.Query uqstr (uaop {pageSize = pgSize})))
-                    case ures of
-                        Right (sr, ar) -> do
-                            let iops =
-                                    fmap head $
-                                    L.groupBy (\(x, _) (y, _) -> x == y) $
-                                    L.sortBy
-                                        (\(x, _) (y, _) ->
-                                             if x < y
-                                                 then GT
-                                                 else LT)
-                                        (sr ++ ar)
-                                iop =
-                                    case pgSize of
-                                        Nothing -> iops
-                                        (Just pg) -> L.take (fromIntegral pg) iops
-                            if L.null iop
-                                then return []
-                                else do
-                                    res' <-
-                                        sequence $ (\(_, (txid, index)) -> getUnConfTxOutputsData (txid, index)) <$> iop
-                                    return $
-                                        ((\((nti, (op_txid, op_txidx)), TxOutputData _ _ _ val bi ips si) ->
-                                              ResultWithCursor
-                                                  (AddressOutputs
-                                                       (address)
-                                                       (OutPoint' (DT.unpack op_txid) (fromIntegral op_txidx))
-                                                       bi
-                                                       si
-                                                       ((\((oph, opi), ii, (_, ov)) ->
-                                                             ( OutPoint' (DT.unpack oph) (fromIntegral opi)
-                                                             , fromIntegral ii
-                                                             , fromIntegral ov)) <$>
-                                                        ips)
-                                                       val)
-                                                  nti) <$>)
-                                            (zip iop res')
-                        Left (e :: SomeException) -> do
-                            err lg $ LG.msg $ "Error: xGetOutputsAddress':" ++ show e
-                            throw KeyValueDBLookupException
-                else do
-                    res' <- sequence $ (\(_, (txid, index)) -> getTxOutputsData (txid, index)) <$> iop
-                    return $
-                        ((\((nti, (op_txid, op_txidx)), TxOutputData _ _ _ val bi ips si) ->
-                              ResultWithCursor
-                                  (AddressOutputs
-                                       (address)
-                                       (OutPoint' (DT.unpack op_txid) (fromIntegral op_txidx))
-                                       bi
-                                       si
-                                       ((\((oph, opi), ii, (_, ov)) ->
-                                             ( OutPoint' (DT.unpack oph) (fromIntegral opi)
-                                             , fromIntegral ii
-                                             , fromIntegral ov)) <$>
-                                        ips)
-                                       val)
-                                  nti) <$>)
-                            (zip iop res')
-        Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: xGetOutputsAddress':" ++ show e
-            throw KeyValueDBLookupException
+    (ui, ur) <-
+        case ures of
+            Right (sr, ar) -> do
+                let iops =
+                        fmap head $
+                        L.groupBy (\(x, _) (y, _) -> x == y) $
+                        L.sortBy
+                            (\(x, _) (y, _) ->
+                                 if x < y
+                                     then GT
+                                     else LT)
+                            (sr ++ ar)
+                    iop =
+                        case pgSize of
+                            Nothing -> iops
+                            (Just pg) -> L.take (fromIntegral pg) iops
+                (iop, ) <$> (sequence $ (\(_, (txid, index)) -> getUnConfTxOutputsData (txid, index)) <$> iop)
+            Left (e :: SomeException) -> do
+                err lg $ LG.msg $ "Error: xGetOutputsAddress':" ++ show e
+                throw KeyValueDBLookupException
+    (i, r) <-
+        case res of
+            Right (sr, ar) -> do
+                let iops =
+                        fmap head $
+                        L.groupBy (\(x, _) (y, _) -> x == y) $
+                        L.sortBy
+                            (\(x, _) (y, _) ->
+                                 if x < y
+                                     then GT
+                                     else LT)
+                            (sr ++ ar)
+                    iop =
+                        case pgSize of
+                            Nothing -> iops
+                            (Just pg) -> L.take (fromIntegral pg) iops
+                (iop, ) <$> (sequence $ (\(_, (txid, index)) -> getTxOutputsData (txid, index)) <$> iop)
+            Left (e :: SomeException) -> do
+                err lg $ LG.msg $ "Error: xGetOutputsAddress':" ++ show e
+                throw KeyValueDBLookupException
+    let z = zip (ui ++ i) (ur ++ r)
+    return $
+        ((\((nti, (op_txid, op_txidx)), TxOutputData _ _ _ val bi ips si) ->
+              ResultWithCursor
+                  (AddressOutputs
+                       (address)
+                       (OutPoint' (DT.unpack op_txid) (fromIntegral op_txidx))
+                       bi
+                       si
+                       ((\((oph, opi), ii, (_, ov)) ->
+                             (OutPoint' (DT.unpack oph) (fromIntegral opi), fromIntegral ii, fromIntegral ov)) <$>
+                        ips)
+                       val)
+                  nti) <$>)
+            (maybe z (flip L.take z . fromIntegral) pgSize)
 
 xGetUTXOsAddress ::
        (HasXokenNodeEnv env m, MonadIO m)
@@ -434,57 +414,31 @@ xGetOutputsScriptHash scriptHash pgSize mbNomTxInd = do
             "SELECT script_hash,nominal_tx_index,output FROM xoken.ep_script_hash_outputs WHERE epoch = ? AND script_hash=? AND nominal_tx_index<?"
         uqstr = ustr :: Q.QueryString Q.R (Bool, DT.Text, Int64) (DT.Text, Int64, (DT.Text, Int32))
         upar = getSimpleQueryParam (ep, DT.pack scriptHash, nominalTxIndex)
-    res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr (par {pageSize = pgSize}))
-    case res of
-        Right iop -> do
-            if L.null iop
-                then do
-                    ures <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query uqstr (upar {pageSize = pgSize}))
-                    case ures of
-                        Right uiop -> do
-                            if L.null uiop
-                                then return []
-                                else do
-                                    res <-
-                                        sequence $
-                                        (\(_, _, (txid, index)) -> getUnConfTxOutputsData (txid, index)) <$> iop
-                                    return $
-                                        ((\((addr, nti, (op_txid, op_txidx)), TxOutputData _ _ _ val bi ips si) ->
-                                              ResultWithCursor
-                                                  (ScriptOutputs
-                                                       (DT.unpack addr)
-                                                       (OutPoint' (DT.unpack op_txid) (fromIntegral op_txidx))
-                                                       bi
-                                                       si
-                                                       ((\((oph, opi), ii, (_, ov)) ->
-                                                             ( OutPoint' (DT.unpack oph) (fromIntegral opi)
-                                                             , fromIntegral ii
-                                                             , fromIntegral ov)) <$>
-                                                        ips)
-                                                       val)
-                                                  nti) <$>)
-                                            (zip iop res)
-                        Left (e :: SomeException) -> do
-                            err lg $ LG.msg $ "Error: xGetOutputsScriptHash':" ++ show e
-                            throw KeyValueDBLookupException
-                else do
-                    res <- sequence $ (\(_, _, (txid, index)) -> getTxOutputsData (txid, index)) <$> iop
-                    return $
-                        ((\((addr, nti, (op_txid, op_txidx)), TxOutputData _ _ _ val bi ips si) ->
-                              ResultWithCursor
-                                  (ScriptOutputs
-                                       (DT.unpack addr)
-                                       (OutPoint' (DT.unpack op_txid) (fromIntegral op_txidx))
-                                       bi
-                                       si
-                                       ((\((oph, opi), ii, (_, ov)) ->
-                                             ( OutPoint' (DT.unpack oph) (fromIntegral opi)
-                                             , fromIntegral ii
-                                             , fromIntegral ov)) <$>
-                                        ips)
-                                       val)
-                                  nti) <$>)
-                            (zip iop res)
+    let uf =
+            if nominalTxIndex < 1000000000
+                then query conn (Q.RqQuery $ Q.Query uqstr (upar {pageSize = pgSize}))
+                else return []
+    fres <-
+        LE.try $ LA.concurrently (liftIO $ query conn (Q.RqQuery $ Q.Query qstr (par {pageSize = pgSize}))) (liftIO uf)
+    case fres of
+        Right (iop, uiop) -> do
+            ures <- sequence $ (\(_, _, (txid, index)) -> getUnConfTxOutputsData (txid, index)) <$> uiop
+            res <- sequence $ (\(_, _, (txid, index)) -> getTxOutputsData (txid, index)) <$> iop
+            let z = zip (uiop ++ iop) (ures ++ res)
+            return $
+                ((\((addr, nti, (op_txid, op_txidx)), TxOutputData _ _ _ val bi ips si) ->
+                      ResultWithCursor
+                          (ScriptOutputs
+                               (DT.unpack addr)
+                               (OutPoint' (DT.unpack op_txid) (fromIntegral op_txidx))
+                               bi
+                               si
+                               ((\((oph, opi), ii, (_, ov)) ->
+                                     (OutPoint' (DT.unpack oph) (fromIntegral opi), fromIntegral ii, fromIntegral ov)) <$>
+                                ips)
+                               val)
+                          nti) <$>)
+                    (maybe z (flip L.take z . fromIntegral) pgSize)
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetOutputsScriptHash':" ++ show e
             throw KeyValueDBLookupException
