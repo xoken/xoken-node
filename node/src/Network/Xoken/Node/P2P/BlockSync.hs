@@ -309,12 +309,16 @@ runBlockCacheQueue =
         syt' <- liftIO $ TSH.toList (blockSyncStatusMap bp2pEnv)
         let syt = L.sortBy (\(_, (_, h)) (_, (_, h')) -> compare h h') syt'
             sysz = fromIntegral $ L.length syt
+        fullySynced <- liftIO $ readTVarIO $ indexUnconfirmedTx bp2pEnv
         -- reload cache
         retn <-
             if sysz == 0
                 then do
                     (hash, ht) <- fetchBestSyncedBlock conn net
-                    let cacheInd = getBatchSize net (fromIntegral $ L.length connPeers) ht
+                    let cacheInd =
+                            if fullySynced
+                                then [1]
+                                else getBatchSize net (fromIntegral $ L.length connPeers) ht
                     let !bks = map (\x -> ht + x) cacheInd
                     let qstr :: Q.QueryString Q.R (Identity [Int32]) ((Int32, T.Text))
                         qstr = "SELECT block_height, block_hash from xoken.blocks_by_height where block_height in ?"

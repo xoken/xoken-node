@@ -237,20 +237,11 @@ runSyncStatusChecker = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
     conn <- xCqlClientState <$> getDB
-    -- wait 300 seconds before first check
     liftIO $ threadDelay (300 * 1000000)
     forever $ do
         isSynced <- checkBlocksFullySynced conn
-        LG.debug lg $
-            LG.msg $
-            LG.val $
-            C.pack $
-            "Sync Status Checker: All blocks synced? " ++
-            if isSynced
-                then "Yes"
-                else "No"
         liftIO $ CMS.atomically $ writeTVar (indexUnconfirmedTx bp2pEnv) isSynced
-        liftIO $ threadDelay (60 * 1000000)
+        liftIO $ threadDelay (10 * 1000000)
 
 runWatchDog :: (HasXokenNodeEnv env m, MonadIO m) => m ()
 runWatchDog = do
