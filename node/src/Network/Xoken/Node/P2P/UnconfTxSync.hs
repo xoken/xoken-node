@@ -212,9 +212,7 @@ commitEpochScriptHashOutputs conn epoch sh output = do
     bp2pEnv <- getBitcoinP2P
     bt <- liftIO $ readTVarIO (epochTimestamp bp2pEnv)
     tm <- liftIO getCurrentTime
-    let blkHeight = fromIntegral 10000000
-        txIndex = (floor $ utcTimeToPOSIXSeconds tm) - bt
-        nominalTxIndex = blkHeight * 1000000000 + txIndex
+    let nominalTxIndex = (floor $ utcTimeToPOSIXSeconds tm) - bt
     let strAddrOuts =
             "INSERT INTO xoken.ep_script_hash_outputs (epoch, script_hash, nominal_tx_index, output) VALUES (?,?,?,?)"
         qstrAddrOuts = strAddrOuts :: Q.QueryString Q.W (Bool, Text, Int64, (Text, Int32)) ()
