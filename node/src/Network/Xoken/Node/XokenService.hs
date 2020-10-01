@@ -476,8 +476,8 @@ goGetResource msg net roles sessKey pretty = do
                         Left (e :: SomeException) -> do
                             debug lg $ LG.msg $ "Allegory error: xGetProducer: " ++ show e
                             return $ RPCResponse 400 pretty $ Left $ RPCError INTERNAL_ERROR Nothing
-                        Right (op, scr) ->
-                            return $ RPCResponse 200 pretty $ Right $ Just $ RespGetProducer op (DT.unpack scr)
+                        Right (name, op, scr) ->
+                            return $ RPCResponse 200 pretty $ Right $ Just $ RespGetProducer name op (DT.unpack scr)
                 _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
         "OUTPOINT->SPEND_STATUS" -> do
             case methodParams $ rqParams msg of
