@@ -43,6 +43,7 @@ import Data.Char
 import Data.Default
 import Data.Function ((&))
 import Data.Functor.Identity
+import qualified Data.HashTable as CHT
 import Data.IORef
 import Data.Int
 import qualified Data.List as L
@@ -566,6 +567,7 @@ readNextMessage net sock ingss = do
                                                 (blockTxProcessingLeftMap p2pEnv)
                                                 (biBlockHash $ bf)
                                                 (ar, (binTxTotalCount blin))
+                                            return ()
                                 qq <- liftIO $ atomically $ newTQueue
                                         -- wait for TMT threads alloc
                                 liftIO $ MS.wait (maxTMTBuilderThreadLock p2pEnv)
@@ -842,7 +844,9 @@ processTxBatch txns iss = do
                         S.maxThreads (maxTxProcessingThreads $ nodeConfig bp2pEnv)
                     valy <- liftIO $ TSH.lookup (blockTxProcessingLeftMap bp2pEnv) (biBlockHash bf)
                     case valy of
-                        Just lefta -> liftIO $ TSH.insert (fst lefta) (txHash $ head txns) (L.length txns)
+                        Just lefta -> do
+                            liftIO $ TSH.insert (fst lefta) (txHash $ head txns) (L.length txns)
+                            return ()
                         Nothing -> return ()
                     return ()
         Nothing -> throw InvalidStreamStateException

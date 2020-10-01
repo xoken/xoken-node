@@ -64,6 +64,7 @@ import Data.Default
 import Data.Default
 import Data.Function
 import Data.Functor.Identity
+import qualified Data.HashTable as CHT
 import qualified Data.HashTable.IO as H
 import Data.IORef
 import Data.Int
@@ -236,20 +237,11 @@ runSyncStatusChecker = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
     conn <- xCqlClientState <$> getDB
-    -- wait 300 seconds before first check
     liftIO $ threadDelay (300 * 1000000)
     forever $ do
         isSynced <- checkBlocksFullySynced conn
-        LG.debug lg $
-            LG.msg $
-            LG.val $
-            C.pack $
-            "Sync Status Checker: All blocks synced? " ++
-            if isSynced
-                then "Yes"
-                else "No"
         liftIO $ CMS.atomically $ writeTVar (indexUnconfirmedTx bp2pEnv) isSynced
-        liftIO $ threadDelay (60 * 1000000)
+        liftIO $ threadDelay (10 * 1000000)
 
 runWatchDog :: (HasXokenNodeEnv env m, MonadIO m) => m ()
 runWatchDog = do
@@ -349,7 +341,7 @@ defBitcoinP2P nodeCnf = do
     tl <- TSH.new 4
     ep <- newTVarIO False
     tc <- TSH.new 16
-    vc <- TSH.new 16
+    -- vc <- TSH.new 8 -- TSH.new 16
     rpf <- newEmptyMVar
     rpc <- newTVarIO 0
     mq <- TSH.new 4
@@ -359,7 +351,7 @@ defBitcoinP2P nodeCnf = do
     udc <- H.new
     tpfa <- newTVarIO 0
     bsb <- newTVarIO Nothing
-    return $ BitcoinP2P nodeCnf g bp mv hl st tl ep tc vc (rpf, rpc) mq ts tbt iut udc tpfa bsb
+    return $ BitcoinP2P nodeCnf g bp mv hl st tl ep tc (rpf, rpc) mq ts tbt iut udc tpfa bsb
 
 initNexa :: IO ()
 initNexa = do

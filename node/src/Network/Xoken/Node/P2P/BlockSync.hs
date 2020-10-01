@@ -50,6 +50,7 @@ import qualified Data.ByteString.Lazy.Char8 as LC
 import Data.ByteString.Short as BSS
 import Data.Function ((&))
 import Data.Functor.Identity
+import Data.HashTable as CHT
 import qualified Data.HashTable.IO as H
 import Data.IORef
 import Data.Int
@@ -128,7 +129,9 @@ sendRequestMessages pr msg = do
                 Left (e :: SomeException) -> do
                     case fromException e of
                         Just (t :: AsyncCancelled) -> throw e
-                        otherwise -> debug lg $ LG.msg $ "Error, sending out data: " ++ show e
+                        otherwise -> do
+                            debug lg $ LG.msg $ "Error, sending out data: " ++ show e
+                            throw e
             debug lg $ LG.msg $ "sending out GetData: " ++ show (bpAddress pr)
         Nothing -> err lg $ LG.msg $ val "Error sending, no connections available"
 
@@ -157,6 +160,7 @@ peerBlockSync peer =
                                 liftIO $ modifyIORef' (ptBlockFetchWindow tracker) (\z -> z + 1)
                             Left (e :: SomeException) -> do
                                 err lg $ LG.msg ("[ERROR] peerBlockSync " ++ show e)
+                                ------------
                                 throw e
                     else if (diffUTCTime tm rt > staleTime)
                              then do
@@ -217,7 +221,11 @@ runPeerSync =
                                      res <- liftIO $ try $ sendEncMessage (bpWriteMsgLock pr) s (BSL.fromStrict em)
                                      case res of
                                          Right () -> liftIO $ threadDelay (60 * 1000000)
-                                         Left (e :: SomeException) -> err lg $ LG.msg ("[ERROR] runPeerSync " ++ show e)
+                                         Left (e :: SomeException) -> do
+                                             err lg $ LG.msg ("[ERROR] runPeerSync " ++ show e)
+                                             liftIO $
+                                                 atomically $
+                                                 modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
                                  Nothing -> err lg $ LG.msg $ val "Error sending, no connections available")
                         (connPeers)
             else liftIO $ threadDelay (60 * 1000000)
@@ -277,7 +285,6 @@ getBatchSizeMainnet peerCount n
 
 getBatchSizeTestnet :: Int32 -> Int32 -> [Int32]
 getBatchSizeTestnet peerCount n
-    | peerCount > 8 = [1 .. 4]
     | peerCount > 4 = [1 .. 2]
     | otherwise = [1]
 
@@ -302,12 +309,16 @@ runBlockCacheQueue =
         syt' <- liftIO $ TSH.toList (blockSyncStatusMap bp2pEnv)
         let syt = L.sortBy (\(_, (_, h)) (_, (_, h')) -> compare h h') syt'
             sysz = fromIntegral $ L.length syt
+        fullySynced <- liftIO $ readTVarIO $ indexUnconfirmedTx bp2pEnv
         -- reload cache
         retn <-
             if sysz == 0
                 then do
                     (hash, ht) <- fetchBestSyncedBlock conn net
-                    let cacheInd = getBatchSize net (fromIntegral $ L.length connPeers) ht
+                    let cacheInd =
+                            if fullySynced
+                                then [1]
+                                else getBatchSize net (fromIntegral $ L.length connPeers) ht
                     let !bks = map (\x -> ht + x) cacheInd
                     let qstr :: Q.QueryString Q.R (Identity [Int32]) ((Int32, T.Text))
                         qstr = "SELECT block_height, block_hash from xoken.blocks_by_height where block_height in ?"
@@ -341,17 +352,7 @@ runBlockCacheQueue =
                                              debug lg $ LG.msg $ val "Still loading block headers, try again!"
                                              return (Nothing)
                 else do
-                    mapM
-                        (\(bsh, (_, ht)) -> do
-                             q <- liftIO $ TSH.lookup (blockTxProcessingLeftMap bp2pEnv) (bsh)
-                             case q of
-                                 Nothing -> trace lg $ LG.msg $ ("bsh did-not-find : " ++ show bsh)
-                                 Just (vvv, www) -> do
-                                     eee <- liftIO $ TSH.toList vvv
-                                     trace lg $ LG.msg $ ("bsh: " ++ (show bsh) ++ " " ++ (show eee) ++ (show www)))
-                        syt
-                    --
-                    mapM
+                    mapM_
                         (\(bsh, (_, ht)) -> do
                              valx <- liftIO $ TSH.lookup (blockTxProcessingLeftMap bp2pEnv) (bsh)
                              case valx of
@@ -364,6 +365,7 @@ runBlockCacheQueue =
                                                      (blockSyncStatusMap bp2pEnv)
                                                      (bsh)
                                                      (BlockProcessingComplete, ht)
+                                             return ()
                                          else return ()
                                  Nothing -> return ())
                         (syt)
@@ -635,11 +637,11 @@ processConfTransaction tx bhash blkht txind = do
     inputs <-
         mapM
             (\(b, j) -> do
-                 tuple <-
-                     liftIO $
-                     TSH.lookup
-                         (txOutputValuesCache bp2pEnv)
-                         (getTxShortHash (outPointHash $ prevOutput b) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
+                 tuple <- return Nothing
+                    --  liftIO $
+                    --  TSH.lookup
+                    --      (txOutputValuesCache bp2pEnv)
+                    --      (getTxShortHash (outPointHash $ prevOutput b) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
                  val <-
                      case tuple of
                          Just (ftxh, indexvals) ->
@@ -669,6 +671,7 @@ processConfTransaction tx bhash blkht txind = do
                                                      lg
                                                      net
                                                      (prevOutput b)
+                                                     (5)
                                                      (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
                                              case dbRes of
                                                  Right v -> return $ v
@@ -696,6 +699,7 @@ processConfTransaction tx bhash blkht txind = do
                                              lg
                                              net
                                              (prevOutput b)
+                                             (5)
                                              (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
                                      case dbRes of
                                          Right v -> return $ v
@@ -722,11 +726,11 @@ processConfTransaction tx bhash blkht txind = do
                      , (a, (txHashToHex $ TxHash $ sha256 (scriptOutput o)), fromIntegral $ outValue o)))
                 outAddrs
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": compiled output value(s): " ++ (show ovs)
-    liftIO $
-        TSH.insert
-            (txOutputValuesCache bp2pEnv)
-            (getTxShortHash (txHash tx) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
-            (txHash tx, ovs)
+    -- liftIO $
+    --     TSH.insert
+    --         (txOutputValuesCache bp2pEnv)
+    --         (getTxShortHash (txHash tx) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
+    --         (txHash tx, ovs)
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": added outputvals to cache"
     -- update outputs and scripthash tables
     mapM_
@@ -832,24 +836,22 @@ processConfTransaction tx bhash blkht txind = do
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": handled Allegory Tx"
     -- signal 'done' event for tx's that were processed out of sequence
     --
-    mapM_
-        (\(indx, body) -> do
-             vall <- liftIO $ TSH.lookup (txSynchronizer bp2pEnv) (txhs, indx)
-             case vall of
-                 Just ev -> liftIO $ putMVar ev body
-                 Nothing -> return ())
-        ovs
+    vall <- liftIO $ TSH.lookup (txSynchronizer bp2pEnv) txhs
+    case vall of
+        Just ev -> liftIO $ EV.signal ev
+        Nothing -> return ()
     debug lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": end of processing signaled " ++ show bhash
 
 getSatsValueFromOutpoint ::
        XCqlClientState
-    -> TSH.TSHashTable (TxHash, Word32) (MVar (Text, Text, Int64))
+    -> TSH.TSHashTable TxHash EV.Event
     -> Logger
     -> Network
     -> OutPoint
     -> Int
+    -> Int
     -> IO ((Text, Text, Int64))
-getSatsValueFromOutpoint conn txSync lg net outPoint maxWait = do
+getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait = do
     let qstr :: Q.QueryString Q.R (Text, Int32) (Text, Text, Int64)
         qstr = "SELECT address, script_hash, value FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
         par = getSimpleQueryParam (txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint)
@@ -862,23 +864,28 @@ getSatsValueFromOutpoint conn txSync lg net outPoint maxWait = do
                     debug lg $
                         LG.msg $
                         "Tx not found: " ++ (show $ txHashToHex $ outPointHash outPoint) ++ " _waiting_ for event"
-                    valx <- liftIO $ TSH.lookup txSync (outPointHash outPoint, outPointIndex outPoint)
+                    valx <- liftIO $ TSH.lookup txSync (outPointHash outPoint)
                     event <-
                         case valx of
                             Just evt -> return evt
-                            Nothing -> newEmptyMVar
-                    liftIO $ TSH.insert txSync (outPointHash outPoint, outPointIndex outPoint) event
-                    ores <- LA.race (liftIO $ readMVar event) (liftIO $ threadDelay (maxWait * 1000000))
-                    case ores of
-                        Right () -> do
-                            liftIO $ TSH.delete txSync (outPointHash outPoint, outPointIndex outPoint)
-                            throw TxIDNotFoundException
-                        Left res -> do
+                            Nothing -> EV.new
+                    liftIO $ TSH.insert txSync (outPointHash outPoint) event
+                    tofl <- waitTimeout event $ fromIntegral (wait * 1000000)
+                    if tofl == False
+                        then if wait < maxWait
+                                 then do
+                                     getSatsValueFromOutpoint conn txSync lg net outPoint maxWait maxWait -- re-attempt
+                                 else do
+                                     liftIO $ TSH.delete txSync (outPointHash outPoint)
+                                     throw TxIDNotFoundException
+                        else do
                             debug lg $
                                 LG.msg $ "event received _available_: " ++ (show $ txHashToHex $ outPointHash outPoint)
-                            liftIO $ TSH.delete txSync (outPointHash outPoint, outPointIndex outPoint)
-                            return res
+                            getSatsValueFromOutpoint conn txSync lg net outPoint maxWait maxWait
                 else do
+                    if wait == maxWait
+                        then liftIO $ TSH.delete txSync (outPointHash outPoint)
+                        else return ()
                     return $ head results
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: getSatsValueFromOutpoint: " ++ show e
