@@ -50,8 +50,10 @@ import Data.Serialize as S
 import Data.String.Conversions
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as DTE
 import Data.Time.Clock
 import Data.Time.Clock
+import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
 import Data.Time.Clock.POSIX
 import Data.Time.LocalTime
 import Data.Word
@@ -163,6 +165,8 @@ runEpochSwitcher =
                     0 -> True
                     1 -> False
         liftIO $ atomically $ writeTVar (epochType bp2pEnv) epoch
+        when (epoch && minute == 0) $ do
+            liftIO $ atomically $ writeTVar (epochTimestamp bp2pEnv) (floor $ utcTimeToPOSIXSeconds tm)
         if minute == 0
             then do
                 let str = "DELETE from xoken.ep_transactions where epoch = ?"
@@ -197,7 +201,7 @@ runEpochSwitcher =
         return ()
 
 commitEpochScriptHashOutputs ::
-       (HasLogger m, MonadIO m)
+       (HasLogger m, HasBitcoinP2P m, MonadIO m)
     => XCqlClientState
     -> Bool -- epoch
     -> Text -- scriptHash
@@ -205,9 +209,16 @@ commitEpochScriptHashOutputs ::
     -> m ()
 commitEpochScriptHashOutputs conn epoch sh output = do
     lg <- getLogger
-    let strAddrOuts = "INSERT INTO xoken.ep_script_hash_outputs (epoch, script_hash, output) VALUES (?,?,?)"
-        qstrAddrOuts = strAddrOuts :: Q.QueryString Q.W (Bool, Text, (Text, Int32)) ()
-        parAddrOuts = getSimpleQueryParam (epoch, sh, output)
+    bp2pEnv <- getBitcoinP2P
+    bt <- liftIO $ readTVarIO (epochTimestamp bp2pEnv)
+    tm <- liftIO getCurrentTime
+    let blkHeight = fromIntegral 10000000
+        txIndex = (floor $ utcTimeToPOSIXSeconds tm) - bt
+        nominalTxIndex = blkHeight * 1000000000 + txIndex
+    let strAddrOuts =
+            "INSERT INTO xoken.ep_script_hash_outputs (epoch, script_hash, nominal_tx_index, output) VALUES (?,?,?,?)"
+        qstrAddrOuts = strAddrOuts :: Q.QueryString Q.W (Bool, Text, Int64, (Text, Int32)) ()
+        parAddrOuts = getSimpleQueryParam (epoch, sh, nominalTxIndex, output)
     resAddrOuts <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query (qstrAddrOuts) parAddrOuts)
     case resAddrOuts of
         Right _ -> return ()
@@ -407,19 +418,41 @@ processUnconfTransaction tx = do
     --
     let str = "INSERT INTO xoken.ep_transactions (epoch, tx_id, tx_serialized, inputs, fees) values (?, ?, ?, ?, ?)"
         qstr = str :: Q.QueryString Q.W (Bool, Text, Blob, [((Text, Int32), Int32, (Text, Int64))], Int64) ()
-        par =
-            getSimpleQueryParam
-                ( epoch
-                , txHashToHex $ txHash tx
-                , Blob $ runPutLazy $ putLazyByteString $ S.encodeLazy tx
-                , (stripScriptHash <$> inputs)
-                , fees)
-    res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr par)
+        serbs = runPutLazy $ putLazyByteString $ S.encodeLazy tx
+        count = BSL.length serbs
+        smb a = a * 16 * 1000 * 1000
+        segments =
+            let (d, m) = divMod count (smb 1)
+             in d +
+                (if m == 0
+                     then 0
+                     else 1)
+        fst =
+            if segments > 1
+                then (LC.replicate 32 'f') <> (BSL.fromStrict $ DTE.encodeUtf8 $ T.pack $ show $ segments)
+                else serbs
+    let par = getSimpleQueryParam (epoch, txHashToHex $ txHash tx, Blob fst, (stripScriptHash <$> inputs), fees)
+    queryI <- liftIO $ queryPrepared conn (Q.RqPrepare $ Q.Prepare qstr)
+    res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryI par)
     case res of
         Right _ -> return ()
         Left (e :: SomeException) -> do
-            liftIO $ err lg $ LG.msg $ "Error: INSERTing into 'xoken.ep_transactions':" ++ show e
+            liftIO $ err lg $ LG.msg ("Error: INSERTing into 'xoken.ep_transactions': " ++ show e)
             throw KeyValueDBInsertException
+    when (segments > 1) $ do
+        let segmentsData = chunksOf (smb 1) serbs
+        mapM_
+            (\(seg, i) -> do
+                 let par =
+                         getSimpleQueryParam (epoch, (txHashToHex $ txHash tx) <> (T.pack $ show i), Blob seg, [], fees)
+                 queryI <- liftIO $ queryPrepared conn (Q.RqPrepare $ Q.Prepare qstr)
+                 res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryI par)
+                 case res of
+                     Right _ -> return ()
+                     Left (e :: SomeException) -> do
+                         liftIO $ err lg $ LG.msg ("Error: INSERTing into 'xoken.ep_transactions': " ++ show e)
+                         throw KeyValueDBInsertException)
+            (zip segmentsData [1 ..])
     --
     vall <- liftIO $ TSH.lookup (txSynchronizer bp2pEnv) (txHash tx)
     case vall of

@@ -605,12 +605,12 @@ data RawTxRecord =
     RawTxRecord
         { txId :: String
         , size :: Int32
-        , txBlockInfo :: BlockInfo'
+        , txBlockInfo :: Maybe BlockInfo'
         , txSerialized :: C.ByteString
-        , txOutputs :: [TxOutput]
+        , txOutputs :: Maybe [TxOutput]
         , txInputs :: [TxInput]
         , fees :: Int64
-        , txMerkleBranch :: [MerkleBranchNode']
+        , txMerkleBranch :: Maybe [MerkleBranchNode']
         }
     deriving (Show, Generic, Hashable, Eq, Serialise)
 
@@ -619,9 +619,9 @@ instance ToJSON RawTxRecord where
         object
             [ "txId" .= tId
             , "size" .= sz
-            , "txIndex" .= (binfTxIndex tBI)
-            , "blockHash" .= (binfBlockHash tBI)
-            , "blockHeight" .= (binfBlockHeight tBI)
+            , "txIndex" .= (binfTxIndex <$> tBI)
+            , "blockHash" .= (binfBlockHash <$> tBI)
+            , "blockHeight" .= (binfBlockHeight <$> tBI)
             , "txSerialized" .= (T.decodeUtf8 . BL.toStrict . B64L.encode $ tS)
             , "txOutputs" .= txo
             , "txInputs" .= txi
@@ -633,10 +633,10 @@ data TxRecord =
     TxRecord
         { txId :: String
         , size :: Int32
-        , txBlockInfo :: BlockInfo'
+        , txBlockInfo :: Maybe BlockInfo'
         , tx :: Tx'
         , fees :: Int64
-        , txMerkleBranch :: [MerkleBranchNode']
+        , txMerkleBranch :: Maybe [MerkleBranchNode']
         }
     deriving (Show, Generic, Hashable, Eq, Serialise)
 
@@ -645,9 +645,9 @@ instance ToJSON TxRecord where
         object
             [ "txId" .= tId
             , "size" .= sz
-            , "txIndex" .= (binfTxIndex tBI)
-            , "blockHash" .= (binfBlockHash tBI)
-            , "blockHeight" .= (binfBlockHeight tBI)
+            , "txIndex" .= (binfTxIndex <$> tBI)
+            , "blockHash" .= (binfBlockHash <$> tBI)
+            , "blockHeight" .= (binfBlockHeight <$> tBI)
             , "tx" .= tx'
             , "fees" .= fee
             , "merkleBranch" .= mrkl
@@ -667,7 +667,7 @@ data TxInput =
         { outpointTxID :: String
         , outpointIndex :: Int32
         , txInputIndex :: Int32
-        , address :: String -- decode will succeed for P2PKH txn 
+        , address :: String -- decode will succeed for P2PKH txn
         , value :: Int64
         , unlockingScript :: ByteString -- scriptSig
         }
@@ -676,7 +676,7 @@ data TxInput =
 data TxOutput =
     TxOutput
         { outputIndex :: Int32
-        , address :: String -- decode will succeed for P2PKH txn 
+        , address :: String -- decode will succeed for P2PKH txn
         , txSpendInfo :: Maybe SpendInfo
         , value :: Int64
         , lockingScript :: ByteString -- Script Pub Key
@@ -715,7 +715,7 @@ data AddressOutputs =
     AddressOutputs
         { aoAddress :: String
         , aoOutput :: OutPoint'
-        , aoBlockInfo :: BlockInfo'
+        , aoBlockInfo :: Maybe BlockInfo'
         , aoSpendInfo :: Maybe SpendInfo
         , aoPrevOutpoint :: [(OutPoint', Int32, Int64)]
         , aoValue :: Int64
@@ -728,9 +728,9 @@ instance ToJSON AddressOutputs where
             [ "address" .= addr
             , "outputTxHash" .= (opTxHash out)
             , "outputIndex" .= (opIndex out)
-            , "txIndex" .= (binfTxIndex bi)
-            , "blockHash" .= (binfBlockHash bi)
-            , "blockHeight" .= (binfBlockHeight bi)
+            , "txIndex" .= (binfTxIndex <$> bi)
+            , "blockHash" .= (binfBlockHash <$> bi)
+            , "blockHeight" .= (binfBlockHeight <$> bi)
             , "spendInfo" .= ios
             , "prevOutpoint" .= po
             , "value" .= val
@@ -740,7 +740,7 @@ data ScriptOutputs =
     ScriptOutputs
         { scScriptHash :: String
         , scOutput :: OutPoint'
-        , scBlockInfo :: BlockInfo'
+        , scBlockInfo :: Maybe BlockInfo'
         , scSpendInfo :: Maybe SpendInfo
         , scPrevOutpoint :: [(OutPoint', Int32, Int64)]
         , scValue :: Int64
@@ -753,9 +753,9 @@ instance ToJSON ScriptOutputs where
             [ "scriptHash" .= dh
             , "outputTxHash" .= (opTxHash out)
             , "outputIndex" .= (opIndex out)
-            , "txIndex" .= (binfTxIndex bi)
-            , "blockHash" .= (binfBlockHash bi)
-            , "blockHeight" .= (binfBlockHeight bi)
+            , "txIndex" .= (binfTxIndex <$> bi)
+            , "blockHash" .= (binfBlockHash <$> bi)
+            , "blockHeight" .= (binfBlockHeight <$> bi)
             , "spendInfo" .= ios
             , "prevOutpoint" .= po
             , "value" .= val
@@ -822,7 +822,7 @@ data TxOutputData =
         , txind :: Int32
         , address :: T.Text
         , value :: Int64
-        , blockInfo :: BlockInfo'
+        , blockInfo :: Maybe BlockInfo'
         , inputs :: [((T.Text, Int32), Int32, (T.Text, Int64))]
         , spendInfo :: Maybe SpendInfo
         }
@@ -915,9 +915,20 @@ txToTx' (Tx {..}) txout txin = Tx' txVersion txout txin txLockTime
 
 type TxIdOutputs = ((T.Text, Int32, Int32), Bool, Set ((T.Text, Int32), Int32, (T.Text, Int64)), Int64, T.Text)
 
+type TxIdOutputs' = (Bool, Set ((T.Text, Int32), Int32, (T.Text, Int64)), Int64, T.Text)
+
+genUnConfTxOutputData :: (T.Text, Int32, TxIdOutputs', Maybe TxIdOutputs') -> TxOutputData
+genUnConfTxOutputData (txId, txIndex, (_, inps, val, addr), Nothing) =
+    TxOutputData txId txIndex addr val Nothing (Q.fromSet inps) Nothing
+genUnConfTxOutputData (txId, txIndex, (_, inps, val, addr), Just (_, oth, _, _)) =
+    let other = Q.fromSet oth
+        ((stid, _), stidx, _) = head $ other
+        si = (\((_, soi), _, (ad, vl)) -> SpendInfo' soi ad vl) <$> other
+     in TxOutputData txId txIndex addr val Nothing (Q.fromSet inps) Nothing
+
 genTxOutputData :: (T.Text, Int32, TxIdOutputs, Maybe TxIdOutputs) -> TxOutputData
 genTxOutputData (txId, txIndex, ((hs, ht, ind), _, inps, val, addr), Nothing) =
-    TxOutputData txId txIndex addr val (BlockInfo' (T.unpack hs) ht ind) (Q.fromSet inps) Nothing
+    TxOutputData txId txIndex addr val (Just $ BlockInfo' (T.unpack hs) ht ind) (Q.fromSet inps) Nothing
 genTxOutputData (txId, txIndex, ((hs, ht, ind), _, inps, val, addr), Just ((shs, sht, sind), _, oth, _, _)) =
     let other = Q.fromSet oth
         ((stid, _), stidx, _) = head $ other
@@ -927,7 +938,7 @@ genTxOutputData (txId, txIndex, ((hs, ht, ind), _, inps, val, addr), Just ((shs,
             txIndex
             addr
             val
-            (BlockInfo' (T.unpack hs) ht ind)
+            (Just $ BlockInfo' (T.unpack hs) ht ind)
             (Q.fromSet inps)
             (Just $ SpendInfo (T.unpack stid) stidx (BlockInfo' (T.unpack shs) sht sind) si)
 
