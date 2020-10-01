@@ -43,6 +43,7 @@ import Data.Char
 import Data.Default
 import Data.Function ((&))
 import Data.Functor.Identity
+import qualified Data.HashTable as CHT
 import Data.IORef
 import Data.Int
 import qualified Data.List as L
@@ -561,11 +562,12 @@ readNextMessage net sock ingss = do
                                     case vala of
                                         Just v -> return ()
                                         Nothing -> do
-                                            ar <- TSH.new 1
+                                            ar <- TSH.new 4
                                             TSH.insert
                                                 (blockTxProcessingLeftMap p2pEnv)
                                                 (biBlockHash $ bf)
                                                 (ar, (binTxTotalCount blin))
+                                            return ()
                                 qq <- liftIO $ atomically $ newTQueue
                                         -- wait for TMT threads alloc
                                 liftIO $ MS.wait (maxTMTBuilderThreadLock p2pEnv)
@@ -827,7 +829,7 @@ processTxBatch txns iss = do
                          (show $ biBlockHash bf) ++ ", tx-index: " ++ show (binTxIngested bi))
                 else do
                     S.drain $
-                        asyncly $
+                        aheadly $
                         (do let start = (binTxIngested bi) - (L.length txns)
                                 end = (binTxIngested bi) - 1
                             S.fromList $ zip [start .. end] [0 ..]) &
@@ -842,7 +844,9 @@ processTxBatch txns iss = do
                         S.maxThreads (maxTxProcessingThreads $ nodeConfig bp2pEnv)
                     valy <- liftIO $ TSH.lookup (blockTxProcessingLeftMap bp2pEnv) (biBlockHash bf)
                     case valy of
-                        Just lefta -> liftIO $ TSH.insert (fst lefta) (txHash $ head txns) (L.length txns)
+                        Just lefta -> do
+                            liftIO $ TSH.insert (fst lefta) (txHash $ head txns) (L.length txns)
+                            return ()
                         Nothing -> return ()
                     return ()
         Nothing -> throw InvalidStreamStateException
@@ -949,8 +953,9 @@ handleIncomingMessages pr = do
              S.aheadly $
              S.repeatM (readNextMessage' pr rlk) & -- read next msgs
              S.mapM (messageHandler pr) & -- handle read msgs
-             S.mapM (logMessage pr) -- log msgs & collect stats
-             )
+             S.mapM (logMessage pr) & -- log msgs & collect stats
+             S.maxBuffer 2 &
+             S.maxThreads 2)
     case res of
         Right (a) -> return ()
         Left (e :: SomeException) -> do

@@ -19,6 +19,7 @@ import Control.Monad.Reader
 import Control.Monad.Trans.Control
 import Crypto.Secp256k1
 import qualified Data.ByteString.Lazy.Char8 as C
+import qualified Data.HashTable as CHT
 import qualified Data.HashTable.IO as H
 import Data.Hashable
 import Data.Int
@@ -76,7 +77,7 @@ data BitcoinP2P =
         , epochType :: !(TVar Bool)
         , epochTimestamp :: !(TVar Int64)
         , unconfirmedTxCache :: !(TSH.TSHashTable TxShortHash (Bool, TxHash))
-        , txOutputValuesCache :: !(TSH.TSHashTable TxShortHash (TxHash, [(Int16, (Text, Text, Int64))]))
+        -- , txOutputValuesCache :: !(TSH.TSHashTable TxShortHash (TxHash, [(Word32, (Text, Text, Int64))]))
         , peerReset :: !(MVar Bool, TVar Int)
         , merkleQueueMap :: !(TSH.TSHashTable BlockHash (TQueue (TxHash, Bool)))
         , txSynchronizer :: !(TSH.TSHashTable TxHash Event)

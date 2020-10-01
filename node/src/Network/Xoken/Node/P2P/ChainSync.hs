@@ -128,6 +128,7 @@ sendRequestMessages msg = do
                 Right () -> return ()
                 Left (e :: SomeException) -> do
                     err lg $ LG.msg ("Error, sending out data: " ++ show e)
+                    throw e
         ___ -> undefined
 
 msgOrder :: Message -> Message -> Ordering

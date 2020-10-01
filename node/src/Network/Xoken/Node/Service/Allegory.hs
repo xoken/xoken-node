@@ -134,7 +134,7 @@ xGetAllegoryNameBranch name isProducer = do
             err lg $ LG.msg $ "Error: xGetAllegoryNameBranch: " ++ show e
             throw KeyValueDBLookupException
 
-xGetProducer :: (HasXokenNodeEnv env m, MonadIO m) => [Int] -> m (OutPoint', DT.Text)
+xGetProducer :: (HasXokenNodeEnv env m, MonadIO m) => [Int] -> m ([Int], OutPoint', DT.Text)
 xGetProducer nameArr = do
     dbe <- getDB
     lg <- getLogger
@@ -155,5 +155,5 @@ xGetProducer nameArr = do
             let txid = DT.unpack $ sp !! 0
             let index = readMaybe (DT.unpack $ sp !! 1) :: Maybe Int
             case index of
-                Just i -> return $ (OutPoint' txid (fromIntegral i), (snd $ head nb))
+                Just i -> return $ (nameArr, OutPoint' txid (fromIntegral i), (snd $ head nb))
                 Nothing -> throw KeyValueDBLookupException

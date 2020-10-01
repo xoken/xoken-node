@@ -513,7 +513,7 @@ getProducer (GetProducer nameArray) = do
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
-        Right (op, scr) -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespGetProducer op (DT.unpack scr)
+        Right (name, op, scr) -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespGetProducer name op (DT.unpack scr)
 getProducer _ = throwBadRequest
 
 getCurrentUser :: Handler App App ()
