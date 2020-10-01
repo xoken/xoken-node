@@ -133,6 +133,7 @@ executable xoken-nexa
     , lens
     , list-t
     , xcql
+    , concurrent-hashtable
   default-language: Haskell2010
 
 test-suite xoken-node-test

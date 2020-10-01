@@ -34,6 +34,7 @@ import qualified Data.ByteString.Lazy.Char8 as LC
 import Data.ByteString.Short as BSS
 import Data.Function ((&))
 import Data.Functor.Identity
+import qualified Data.HashTable as CHT
 import Data.IORef
 import Data.Int
 import qualified Data.List as L
