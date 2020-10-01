@@ -3,7 +3,7 @@ CREATE KEYSPACE xoken WITH replication = {'class': 'SimpleStrategy', 'replicatio
 CREATE TABLE xoken.misc_store (
     key text PRIMARY KEY,
     value frozen<tuple<boolean, int, bigint, text>>
-); 
+);
 
 CREATE TABLE xoken.transactions (
     tx_id text PRIMARY KEY,
@@ -21,7 +21,7 @@ CREATE TABLE xoken.blocks_by_hash (
     block_size int,
     tx_count int,
     coinbase_tx blob
-); 
+);
 
 CREATE TABLE xoken.ep_transactions (
     epoch boolean,
@@ -30,14 +30,15 @@ CREATE TABLE xoken.ep_transactions (
     inputs set  <frozen<tuple<frozen<tuple<text, int>>, int, frozen<tuple<text, bigint>>>>>,
     fees bigint,
     PRIMARY KEY (epoch, tx_id)
-); 
+);
 
 CREATE TABLE xoken.ep_script_hash_outputs (
     epoch boolean,
     script_hash text,
+    nominal_tx_index bigint,
     output frozen<tuple<text, int>>,
-    PRIMARY KEY (epoch, script_hash, output)
-); 
+    PRIMARY KEY (epoch, script_hash, nominal_tx_index, output)
+) WITH CLUSTERING ORDER BY (nominal_tx_index DESC);
 
 CREATE TABLE xoken.ep_script_hash_unspent_outputs (
     epoch boolean,
@@ -91,7 +92,7 @@ CREATE TABLE xoken.blocks_by_height (
     block_size int,
     tx_count int,
     coinbase_tx blob
-); 
+);
 
 CREATE TABLE xoken.user_permission (
     username text PRIMARY KEY,
@@ -106,7 +107,7 @@ CREATE TABLE xoken.user_permission (
     api_expiry_time timestamp,
     session_key text,
     session_key_expiry_time timestamp
-); 
+);
 
 CREATE TABLE xoken.blockhash_txids (
     block_hash text,

@@ -347,7 +347,7 @@ goGetResource msg net roles sessKey pretty = do
                                              txId
                                              size
                                              txBlockInfo
-                                             (txToTx' rt txOutputs txInputs)
+                                             (txToTx' rt (fromMaybe [] txOutputs) txInputs)
                                              fees
                                              txMerkleBranch)
                                 Left err -> return $ RPCResponse 400 pretty $ Left $ RPCError INTERNAL_ERROR Nothing
@@ -366,7 +366,8 @@ goGetResource msg net roles sessKey pretty = do
                     let rawTxs =
                             (\RawTxRecord {..} ->
                                  (TxRecord txId size txBlockInfo <$>
-                                  (txToTx' <$> (Extra.hush $ S.decodeLazy txSerialized) <*> (pure txOutputs) <*>
+                                  (txToTx' <$> (Extra.hush $ S.decodeLazy txSerialized) <*>
+                                   (pure $ fromMaybe [] txOutputs) <*>
                                    (pure txInputs)) <*>
                                   (pure fees) <*>
                                   (pure txMerkleBranch))) <$>

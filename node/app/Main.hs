@@ -331,8 +331,8 @@ defaultAdminUser conn = do
             putStrLn $ "  Password : " ++ (aurPassword $ fromJust usr)
             putStrLn $ "******************************************************************* "
 
-defBitcoinP2P :: NodeConfig -> IO (BitcoinP2P)
-defBitcoinP2P nodeCnf = do
+defBitcoinP2P :: NodeConfig -> Int64 -> IO (BitcoinP2P)
+defBitcoinP2P nodeCnf ept = do
     g <- newTVarIO M.empty
     bp <- newTVarIO M.empty
     mv <- newMVar True
@@ -340,6 +340,7 @@ defBitcoinP2P nodeCnf = do
     st <- TSH.new 1
     tl <- TSH.new 4
     ep <- newTVarIO False
+    epts <- newTVarIO ept
     tc <- TSH.new 16
     -- vc <- TSH.new 8 -- TSH.new 16
     rpf <- newEmptyMVar
@@ -351,7 +352,7 @@ defBitcoinP2P nodeCnf = do
     udc <- H.new
     tpfa <- newTVarIO 0
     bsb <- newTVarIO Nothing
-    return $ BitcoinP2P nodeCnf g bp mv hl st tl ep tc (rpf, rpc) mq ts tbt iut udc tpfa bsb
+    return $ BitcoinP2P nodeCnf g bp mv hl st tl ep epts tc (rpf, rpc) mq ts tbt iut udc tpfa bsb
 
 initNexa :: IO ()
 initNexa = do
@@ -362,7 +363,8 @@ initNexa = do
     nodeCnf <- NC.readConfig "node-config.yaml"
     !conn <- initXCql nodeCnf
     defaultAdminUser conn
-    bp2p <- defBitcoinP2P nodeCnf
+    tm <- getCurrentTime
+    bp2p <- defBitcoinP2P nodeCnf (floor $ utcTimeToPOSIXSeconds tm)
     let certFP = tlsCertificatePath nodeCnf
         keyFP = tlsKeyfilePath nodeCnf
         csrFP = tlsCertificateStorePath nodeCnf
