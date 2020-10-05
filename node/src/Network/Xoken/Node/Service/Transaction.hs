@@ -151,7 +151,7 @@ xGetTxHash hash = do
                                             (fromIntegral $ C.length sz)
                                             Nothing
                                             (sz)
-                                            Nothing
+                                            (Just $ zipWith mergeTxOutTxOutput (txOut tx) outs)
                                             (zipWith mergeTxInTxInput (txIn tx) $
                                              (\((outTxId, outTxIndex), inpTxIndex, (addr, value)) ->
                                                   TxInput
@@ -249,10 +249,7 @@ xGetTxHashes hashes = do
                          case bi of
                              Just b -> Just <$> (xGetMerkleBranch $ DT.unpack txid)
                              Nothing -> pure Nothing
-                 let oF =
-                         case bi of
-                             Just b -> Just <$> getTxOutputsFromTxId txid
-                             Nothing -> pure Nothing
+                 let oF = Just <$> getTxOutputsFromTxId txid
                  res' <- LE.try $ LA.concurrently oF mrklF
                  case res' of
                      Right (outs, mrkl) ->
@@ -282,6 +279,8 @@ getTxOutputsFromTxId :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => DT.Te
 getTxOutputsFromTxId txid = do
     dbe <- getDB
     lg <- getLogger
+    bp2pEnv <- getBitcoinP2P
+    ep <- liftIO $ readTVarIO (epochType bp2pEnv)
     let conn = xCqlClientState dbe
         toStr = "SELECT output_index,block_info,is_recv,other,value,address FROM xoken.txid_outputs WHERE txid=?"
         toQStr =
@@ -292,14 +291,15 @@ getTxOutputsFromTxId txid = do
                                                           , Int64
                                                           , DT.Text)
         par = getSimpleQueryParam (Identity txid)
-        utoStr = "SELECT output_index,is_recv,other,value,address FROM xoken.ep_txid_outputs WHERE txid=?"
+        utoStr = "SELECT output_index,is_recv,other,value,address FROM xoken.ep_txid_outputs WHERE epoch = ? AND txid=?"
         utoQStr =
-            utoStr :: Q.QueryString Q.R (Identity DT.Text) ( Int32
-                                                           , Bool
-                                                           , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
-                                                           , Int64
-                                                           , DT.Text)
-    ures <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query utoQStr par)
+            utoStr :: Q.QueryString Q.R ((Bool, DT.Text)) ( Int32
+                                                          , Bool
+                                                          , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
+                                                          , Int64
+                                                          , DT.Text)
+        upar = getSimpleQueryParam (ep, txid)
+    ures <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query utoQStr upar)
     res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query toQStr par)
     uout <-
         case ures of
@@ -307,7 +307,7 @@ getTxOutputsFromTxId txid = do
                 if L.null ut
                     then do
                         err lg $
-                            LG.msg $ "Error: getTxOutputsFromTxId: No entry in txid_outputs for txid: " ++ show txid
+                            LG.msg $ "Error: getTxOutputsFromTxId: No entry in ep_txid_outputs for txid: " ++ show txid
                         return []
                     else do
                         let txg =
