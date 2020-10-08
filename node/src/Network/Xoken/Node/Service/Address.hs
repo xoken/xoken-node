@@ -222,17 +222,17 @@ xGetOutputsAddress address pgSize mbNomTxInd = do
             Left (e :: SomeException) -> do
                 err lg $ LG.msg $ "Error: xGetOutputsAddress':" ++ show e
                 throw KeyValueDBLookupException
-    let pgSize = maybe Nothing (\p -> Just $ p - (fromIntegral $ length ui)) pgSize
+    let pgSize' = maybe Nothing (\p -> Just $ p - (fromIntegral $ length ui)) pgSize
     res <-
-        if isNothing pgSize || pgSize > Just 0
+        if isNothing pgSize' || pgSize' > Just 0
             then LE.try $
                  LA.concurrently
                      (case sh of
                           Nothing -> return []
-                          Just s -> liftIO $ query conn (Q.RqQuery $ Q.Query qstr (shp {pageSize = pgSize})))
+                          Just s -> liftIO $ query conn (Q.RqQuery $ Q.Query qstr (shp {pageSize = pgSize'})))
                      (case address of
                           ('3':_) -> return []
-                          _ -> liftIO $ query conn (Q.RqQuery $ Q.Query qstr (aop {pageSize = pgSize})))
+                          _ -> liftIO $ query conn (Q.RqQuery $ Q.Query qstr (aop {pageSize = pgSize'})))
             else return $ Right mempty
     (i, r) <-
         case res of
@@ -247,7 +247,7 @@ xGetOutputsAddress address pgSize mbNomTxInd = do
                                      else LT)
                             (sr ++ ar)
                     iop =
-                        case pgSize of
+                        case pgSize' of
                             Nothing -> iops
                             (Just pg) -> L.take (fromIntegral pg) iops
                 (iop, ) <$> (sequence $ (\(_, (txid, index)) -> getTxOutputsData (txid, index)) <$> iop)
@@ -268,7 +268,7 @@ xGetOutputsAddress address pgSize mbNomTxInd = do
                         ips)
                        val)
                   nti) <$>)
-            (maybe z (flip L.take z . fromIntegral) pgSize)
+            (maybe z (flip L.take z . fromIntegral) pgSize')
 
 xGetUTXOsAddress ::
        (HasXokenNodeEnv env m, MonadIO m)
@@ -325,17 +325,17 @@ xGetUTXOsAddress address pgSize mbFromOutput = do
             Left (e :: SomeException) -> do
                 err lg $ LG.msg $ "Error: xGetUTXOsAddress:" ++ show e
                 throw KeyValueDBLookupException
-    let pgSize = maybe Nothing (\p -> Just (p - (fromIntegral $ length uoi))) pgSize
+    let pgSize' = maybe Nothing (\p -> Just (p - (fromIntegral $ length uoi))) pgSize
     res <-
-        if isNothing pgSize || pgSize > Just 0
+        if isNothing pgSize' || pgSize' > Just 0
             then LE.try $
                  LA.concurrently
                      (case sh of
                           Nothing -> return []
-                          Just s -> liftIO $ query conn (Q.RqQuery $ Q.Query qstr (shp {pageSize = pgSize})))
+                          Just s -> liftIO $ query conn (Q.RqQuery $ Q.Query qstr (shp {pageSize = pgSize'})))
                      (case address of
                           ('3':_) -> return []
-                          _ -> liftIO $ query conn (Q.RqQuery $ Q.Query qstr (aop {pageSize = pgSize})))
+                          _ -> liftIO $ query conn (Q.RqQuery $ Q.Query qstr (aop {pageSize = pgSize'})))
             else return $ Right mempty
     (oi, op) <-
         case res of
@@ -350,7 +350,7 @@ xGetUTXOsAddress address pgSize mbFromOutput = do
                                      else LT)
                             (sr ++ ar)
                     iop =
-                        case pgSize of
+                        case pgSize' of
                             Nothing -> iops
                             (Just pg) -> L.take (fromIntegral pg) iops
                 (iop, ) <$> (sequence $ (\(Identity (txid, index)) -> getTxOutputsData (txid, index)) <$> iop)
@@ -403,11 +403,11 @@ xGetOutputsScriptHash scriptHash pgSize mbNomTxInd = do
     fres <- LE.try $ liftIO uf
     case fres of
         Right uiop -> do
-            let pgSize = maybe Nothing (\p -> Just $ p - (fromIntegral $ length uiop)) pgSize
+            let pgSize' = maybe Nothing (\p -> Just $ p - (fromIntegral $ length uiop)) pgSize
             iop <-
-                if isNothing pgSize || pgSize > Just 0
+                if isNothing pgSize' || pgSize' > Just 0
                     then do
-                        res <- LE.try $ liftIO $ query conn (Q.RqQuery $ Q.Query qstr (par {pageSize = pgSize}))
+                        res <- LE.try $ liftIO $ query conn (Q.RqQuery $ Q.Query qstr (par {pageSize = pgSize'}))
                         case res of
                             Right i -> return i
                             Left (e :: SomeException) -> do
@@ -466,10 +466,10 @@ xGetUTXOsScriptHash scriptHash pgSize mbFromOutput = do
             Left (e :: SomeException) -> do
                 err lg $ LG.msg $ "Error: xGetUTXOsScriptHash':" ++ show e
                 throw KeyValueDBLookupException
-    let pgSize = maybe Nothing (\p -> Just $ p - (fromIntegral $ length uio)) pgSize
+    let pgSize' = maybe Nothing (\p -> Just $ p - (fromIntegral $ length uio)) pgSize
     res <-
-        if isNothing pgSize || pgSize > Just 0
-            then liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr (par {pageSize = pgSize}))
+        if isNothing pgSize' || pgSize' > Just 0
+            then liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr (par {pageSize = pgSize'}))
             else return $ Right mempty
     (io, ou) <-
         case res of
