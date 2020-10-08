@@ -27,7 +27,7 @@ CREATE TABLE xoken.ep_transactions (
     epoch boolean,
     tx_id text,
     tx_serialized blob,
-    inputs list <frozen<tuple<frozen<tuple<text, int>>, int, frozen<tuple<text, bigint>>>>>,
+    inputs set <frozen<tuple<frozen<tuple<text, int>>, int, frozen<tuple<text, bigint>>>>>,
     fees bigint,
     PRIMARY KEY (epoch, tx_id)
 );
