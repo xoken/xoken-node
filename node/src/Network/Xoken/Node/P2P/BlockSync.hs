@@ -331,7 +331,7 @@ runBlockCacheQueue =
                         Right (op) -> do
                             if L.length op == 0
                                 then do
-                                    debug lg $ LG.msg $ val "Synced fully!"
+                                    --debug lg $ LG.msg $ val "Synced fully!"
                                     return (Nothing)
                                 else if L.length op == (fromIntegral $ last cacheInd)
                                          then do
@@ -498,7 +498,7 @@ fetchBestSyncedBlock conn net = do
                     return ((headerHash $ getGenesisHeader net), 0)
                 else do
                     let record = runIdentity $ iop !! 0
-                    debug lg $ LG.msg $ "Best-synced-block from DB: " ++ (show record)
+                    --debug lg $ LG.msg $ "Best-synced-block from DB: " ++ (show record)
                     case getTextVal record of
                         Just tx -> do
                             case (hexToBlockHash $ tx) of
@@ -715,7 +715,7 @@ processConfTransaction tx bhash blkht txind = do
                  return
                      ((txHashToHex $ outPointHash $ prevOutput b, fromIntegral $ outPointIndex $ prevOutput b), j, val))
             inAddrs
-    trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": fetched input(s): " ++ show inputs
+    debug lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": fetched input(s): " ++ show inputs
     --
     -- cache compile output values
     -- imp: order is (address, scriptHash, value)
@@ -754,7 +754,7 @@ processConfTransaction tx bhash blkht txind = do
                          else return ()
                  (Left e) -> return ())
         outAddrs
-    trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": committed scripthash,txid_outputs tables"
+    debug lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": committed scripthash,txid_outputs tables"
     mapM_
         (\((o, i), (a, sh)) -> do
              let bi = (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
@@ -769,7 +769,7 @@ processConfTransaction tx bhash blkht txind = do
                      deleteScriptHashUnspentOutputs conn a prevOutpoint)
         (zip (inAddrs) (map (\x -> (fst3 $ thd3 x, snd3 $ thd3 $ x)) inputs))
     --
-    trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": updated spend info for inputs"
+    debug lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": updated spend info for inputs"
     -- calculate Tx fees
     let ipSum = foldl (+) 0 $ (\(_, _, (_, _, val)) -> val) <$> inputs
         opSum = foldl (+) 0 $ (\(_, o, _) -> fromIntegral $ outValue o) <$> outAddrs
