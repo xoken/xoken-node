@@ -877,6 +877,7 @@ getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait = do
                                      getSatsValueFromOutpoint conn txSync lg net outPoint maxWait maxWait -- re-attempt
                                  else do
                                      liftIO $ TSH.delete txSync (outPointHash outPoint)
+                                     err lg $ LG.msg $ "[ERROR] TxID not found: " <> (show $ txHashToHex $ outPointHash outPoint)
                                      throw TxIDNotFoundException
                         else do
                             debug lg $
@@ -888,7 +889,7 @@ getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait = do
                         else return ()
                     return $ head results
         Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: getSatsValueFromOutpoint: " ++ show e
+            err lg $ LG.msg $ "Error: getSatsValueFromOutpoint (txid: " ++ (show $ txHashToHex $ outPointHash outPoint) ++ "): " ++ show e
             throw e
 
 getScriptHashFromOutpoint ::
