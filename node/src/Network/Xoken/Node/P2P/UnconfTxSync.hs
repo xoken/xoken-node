@@ -481,7 +481,7 @@ getSatsValueFromEpochOutpoint conn epoch txSync lg net outPoint wait maxWait = d
                 then do
                     debug lg $
                         LG.msg $
-                        "Tx not found: " ++ (show $ txHashToHex $ outPointHash outPoint) ++ " _waiting_ for event"
+                        "[Unconfirmed] Tx not found: " ++ (show $ txHashToHex $ outPointHash outPoint) ++ " _waiting_ for event"
                     valx <- liftIO $ TSH.lookup txSync (outPointHash outPoint)
                     event <-
                         case valx of
@@ -498,7 +498,7 @@ getSatsValueFromEpochOutpoint conn epoch txSync lg net outPoint wait maxWait = d
                                      throw TxIDNotFoundException
                         else do
                             debug lg $
-                                LG.msg $ "event received _available_: " ++ (show $ txHashToHex $ outPointHash outPoint)
+                                LG.msg $ "Event received _available_ [Unconfirmed] tx: " ++ (show $ txHashToHex $ outPointHash outPoint)
                             getSatsValueFromEpochOutpoint conn epoch txSync lg net outPoint maxWait maxWait
                 else do
                     return $ head results
@@ -519,8 +519,13 @@ sourceSatsValueFromOutpoint ::
 sourceSatsValueFromOutpoint conn epoch txSync lg net outPoint waitSecs maxWait = do
     res <-
         LA.race
-            (liftIO $ getSatsValueFromOutpoint conn txSync lg net outPoint 5 maxWait)
-            (liftIO $ getSatsValueFromEpochOutpoint conn epoch txSync lg net outPoint 5 waitSecs)
+            (liftIO $ do
+                debug lg $ LG.msg $ "race getSatsValueFromOutpoint <start>: " <> (show outPoint)
+                getSatsValueFromOutpoint conn txSync lg net outPoint 5 maxWait)
+            (liftIO $ do
+                debug lg $ LG.msg $ "race getSatsValueFromEpochOutpoint <start>: " <> (show outPoint)
+                getSatsValueFromEpochOutpoint conn epoch txSync lg net outPoint 5 waitSecs)
+    debug lg $ LG.msg $ "sourceSatsValueFromOutpoint race for " <> (show outPoint) <> " result: " <> (show res)
     return $ either (GB.id) (GB.id) res
 
 convertToScriptHash :: Network -> String -> Maybe String
