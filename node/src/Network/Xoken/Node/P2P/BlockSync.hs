@@ -330,8 +330,8 @@ runBlockCacheQueue =
                             throw e
                         Right (op) -> do
                             if L.length op == 0
-                                then do
                                     --debug lg $ LG.msg $ val "Synced fully!"
+                                then do
                                     return (Nothing)
                                 else if L.length op == (fromIntegral $ last cacheInd)
                                          then do
@@ -877,8 +877,14 @@ getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait = do
                                      getSatsValueFromOutpoint conn txSync lg net outPoint maxWait maxWait -- re-attempt
                                  else do
                                      liftIO $ TSH.delete txSync (outPointHash outPoint)
-                                     err lg $ LG.msg $ "[ERROR] TxID not found: " <> (show $ txHashToHex $ outPointHash outPoint)
-                                     throw TxIDNotFoundException
+                                     err lg $
+                                         LG.msg $
+                                         "[ERROR] TxID not found: " <> (show $ txHashToHex $ outPointHash outPoint)
+                                     throw $
+                                         TxIDNotFoundException
+                                             ( show $ txHashToHex $ outPointHash outPoint
+                                             , Just $ fromIntegral $ outPointIndex outPoint)
+                                             "getSatsValueFromOutpoint"
                         else do
                             debug lg $
                                 LG.msg $ "event received _available_: " ++ (show $ txHashToHex $ outPointHash outPoint)
@@ -889,7 +895,10 @@ getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait = do
                         else return ()
                     return $ head results
         Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: getSatsValueFromOutpoint (txid: " ++ (show $ txHashToHex $ outPointHash outPoint) ++ "): " ++ show e
+            err lg $
+                LG.msg $
+                "Error: getSatsValueFromOutpoint (txid: " ++
+                (show $ txHashToHex $ outPointHash outPoint) ++ "): " ++ show e
             throw e
 
 getScriptHashFromOutpoint ::
@@ -924,7 +933,11 @@ getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs = do
                         then do
                             liftIO $ TSH.delete txSync (outPointHash outPoint)
                             debug lg $ LG.msg ("TxIDNotFoundException" ++ (show $ txHashToHex $ outPointHash outPoint))
-                            throw TxIDNotFoundException
+                            throw $
+                                TxIDNotFoundException
+                                    ( show $ txHashToHex $ outPointHash outPoint
+                                    , Just $ fromIntegral $ outPointIndex outPoint)
+                                    "getScriptHashFromOutpoint"
                         else getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs -- if being signalled, try again to success
                     --
                     return Nothing

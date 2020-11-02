@@ -861,8 +861,8 @@ processTxStream (tx, binfo, txIndex) = do
     res <- LE.try $ processConfTransaction (tx) bhash (fromIntegral bheight) txIndex
     case res of
         Right () -> return ()
-        Left TxIDNotFoundException -> do
-            throw TxIDNotFoundException
+        Left (TxIDNotFoundException (txid, index) src) -> do
+            throw $ TxIDNotFoundException (txid, index) src
         Left KeyValueDBInsertException -> do
             err lg $ LG.msg $ val "[ERROR] KeyValueDBInsertException"
             throw KeyValueDBInsertException
