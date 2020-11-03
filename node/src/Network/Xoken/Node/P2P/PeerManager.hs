@@ -775,7 +775,11 @@ messageHandler peer (mm, ingss) = do
                             err lg $ LG.msg $ val ("[???] Unconfirmed Tx ")
                     return $ msgType msg
                 MTx tx -> do
-                    processUnconfTransaction tx
+                    res <- LE.try $ processUnconfTransaction tx
+                    case res of
+                        Right () -> return ()
+                        Left (TxIDNotFoundException _ _) -> return ()
+                        Left e -> throw e
                     return $ msgType msg
                 MBlock blk
                     -- debug lg $ LG.msg $ LG.val ("DEBUG receiving block ")
