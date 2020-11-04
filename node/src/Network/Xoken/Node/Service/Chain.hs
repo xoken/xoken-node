@@ -101,6 +101,7 @@ xGetChainInfo :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m (Maybe Cha
 xGetChainInfo = do
     dbe <- getDB
     lg <- getLogger
+    net <- (NC.bitcoinNetwork . nodeConfig) <$> getBitcoinP2P
     let conn = xCqlClientState $ dbe
     let conn = xCqlClientState dbe
         str = "SELECT key,value from xoken.misc_store"
@@ -120,7 +121,7 @@ xGetChainInfo = do
                     return $
                         Just $
                         ChainInfo
-                            "main"
+                            (getNetworkName net)
                             (showHex (lagCW + (read . DT.unpack $ chainwork)) "")
                             (headers)
                             (blocks)
