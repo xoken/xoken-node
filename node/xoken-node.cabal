@@ -72,6 +72,7 @@ executable xoken-nexa
     , hashable
     , hashable-time
     , http-types
+    , lens
     , monad-logger
     , mtl
     , network

@@ -35,6 +35,7 @@ import Control.Concurrent.STM.TVar
 import Control.Exception
 import qualified Control.Exception.Extra as EX
 import qualified Control.Exception.Lifted as LE (try)
+import Control.Lens
 import Control.Monad
 import Control.Monad.Logger
 import Control.Monad.Reader
@@ -92,6 +93,7 @@ import Network.Xoken.Node.P2P.Types
 import Network.Xoken.Script.Standard
 import Network.Xoken.Transaction.Common
 import Network.Xoken.Util
+import Numeric.Lens (base)
 import StmContainers.Map as SM
 import StmContainers.Set as SS
 import Streamly
@@ -715,6 +717,12 @@ processConfTransaction tx bhash blkht txind = do
                  return
                      ((txHashToHex $ outPointHash $ prevOutput b, fromIntegral $ outPointIndex $ prevOutput b), j, val))
             inAddrs
+    -- calculate Tx fees
+    let ipSum = foldl (+) 0 $ (\(_, _, (_, _, val)) -> val) <$> inputs
+        opSum = foldl (+) 0 $ (\(_, o, _) -> fromIntegral $ outValue o) <$> outAddrs
+        fees = ipSum - opSum
+    --
+    trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": calculated fees"
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": fetched input(s): " ++ show inputs
     --
     -- cache compile output values
@@ -738,6 +746,20 @@ processConfTransaction tx bhash blkht txind = do
              let sh = txHashToHex $ TxHash $ sha256 (scriptOutput o)
              let bi = (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
              let output = (txHashToHex txhs, i)
+             let bsh = B16.encode $ scriptOutput o
+             let (op_false, rem) = B.splitAt 2 bsh
+             let (op_return, remD) = B.splitAt 2 rem
+             let (lengthD, orgData) = B.splitAt 2 remD
+             let lenIntM = (T.unpack . DTE.decodeUtf8 $ lengthD) ^? (base 10)
+             let maxLength = maxProtocolLength $ nodeConfig bp2pEnv
+             when (op_return == "6a" && lenIntM <= Just maxLength) $ do
+                 commitScriptOutputProtocol
+                     conn
+                     (DTE.decodeUtf8 $ B.take (fromJust lenIntM) orgData)
+                     output
+                     bi
+                     fees
+                     (fromIntegral $ B.length $ B.drop (fromJust lenIntM) orgData) -- :TODO storing the remaining data bytes size, check with nitin
              insertTxIdOutputs conn output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o)
              commitScriptHashOutputs
                  conn --
@@ -770,12 +792,6 @@ processConfTransaction tx bhash blkht txind = do
         (zip (inAddrs) (map (\x -> (fst3 $ thd3 x, snd3 $ thd3 $ x)) inputs))
     --
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": updated spend info for inputs"
-    -- calculate Tx fees
-    let ipSum = foldl (+) 0 $ (\(_, _, (_, _, val)) -> val) <$> inputs
-        opSum = foldl (+) 0 $ (\(_, o, _) -> fromIntegral $ outValue o) <$> outAddrs
-        fees = ipSum - opSum
-    --
-    trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": calculated fees"
     -- persist tx
     let qstr :: Q.QueryString Q.W (Text, (Text, Int32, Int32), Blob, [((Text, Int32), Int32, (Text, Int64))], Int64) ()
         qstr = "insert INTO xoken.transactions (tx_id, block_info, tx_serialized , inputs, fees) values (?, ?, ?, ?, ?)"
@@ -996,3 +1012,29 @@ handleIfAllegoryTx tx revert = do
         case eres of
             Right () -> return True
             Left (SomeException e) -> throw e
+
+commitScriptOutputProtocol ::
+       (HasLogger m, MonadIO m)
+    => XCqlClientState
+    -> Text
+    -> (Text, Int32)
+    -> (Text, Int32, Int32)
+    -> Int64
+    -> Int32
+    -> m ()
+commitScriptOutputProtocol conn protocol (txid, output_index) blockInfo fees size = do
+    lg <- getLogger
+    let blkHeight = fromIntegral $ snd3 blockInfo
+        txIndex = fromIntegral $ thd3 blockInfo
+        nominalTxIndex = blkHeight * 1000000000 + txIndex
+        qstrAddrOuts :: Q.QueryString Q.W (Text, Text, Int64, Int32, Int32, Int64) ()
+        qstrAddrOuts =
+            "INSERT INTO xoken.script_output_protocol (protocol, txid, fees, size, output_index, nominal_tx_index) VALUES (?,?,?,?,?,?)"
+        parAddrOuts = getSimpleQueryParam (protocol, txid, fees, size, output_index, nominalTxIndex)
+    queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstrAddrOuts))
+    resAddrOuts <- liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryId parAddrOuts))
+    case resAddrOuts of
+        Right _ -> return ()
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: INSERTing into 'script_output_protocol: " ++ show e
+            throw KeyValueDBInsertException

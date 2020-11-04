@@ -65,3 +65,5 @@ maxConnectionsXCql: 4
 maxTxProcessingThreads: 100
 
 maxTxProcessingBuffer: 100
+
+maxProtocolLength: 64
