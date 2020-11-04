@@ -17,6 +17,7 @@ module Network.Xoken.Node.P2P.BlockSync
     , runPeerSync
     , runBlockCacheQueue
     , getSatsValueFromOutpoint
+    , fetchBestSyncedBlock
     , sendRequestMessages
     , handleIfAllegoryTx
     , commitTxPage

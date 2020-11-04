@@ -58,6 +58,7 @@ import Network.Xoken.Network.Message
 import Network.Xoken.Node.Data
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.GraphDB
+import qualified Network.Xoken.Node.P2P.BlockSync as NXB (fetchBestSyncedBlock)
 import Network.Xoken.Node.P2P.Common
 import Network.Xoken.Node.P2P.Types
 import Network.Xoken.Node.Service.Block
@@ -207,31 +208,6 @@ fetchBestBlock conn net = do
                         Nothing -> throw InvalidMetaDataException
         Left (e :: SomeException) -> throw InvalidMetaDataException
 
-fetchBestSynced :: (HasLogger m, MonadIO m) => XCqlClientState -> Network -> m (BlockHash, Int32)
-fetchBestSynced conn net = do
-    lg <- getLogger
-    let qstr :: Q.QueryString Q.R (Identity Text) (Identity (Maybe Bool, Maybe Int32, Maybe Int64, Maybe T.Text))
-        qstr = "SELECT value from xoken.misc_store where key = ?"
-        p = getSimpleQueryParam "best-synced"
-    res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr p)
-    case res of
-        (Right iop) -> do
-            if L.null iop
-                then do
-                    return ((headerHash $ getGenesisHeader net), 0)
-                else do
-                    let record = runIdentity $ iop !! 0
-                    case getTextVal record of
-                        Just tx -> do
-                            case (hexToBlockHash $ tx) of
-                                Just x -> do
-                                    case getIntVal record of
-                                        Just y -> return (x, y)
-                                        Nothing -> throw InvalidMetaDataException
-                                Nothing -> throw InvalidBlockHashException
-                        Nothing -> throw InvalidMetaDataException
-        Left (e :: SomeException) -> throw InvalidMetaDataException
-
 setBestSynced :: (HasLogger m, MonadIO m) => XCqlClientState -> Network -> Int32 -> T.Text -> m ()
 setBestSynced conn net bsHeight bsHash = do
     lg <- getLogger
@@ -301,11 +277,22 @@ processHeaders hdrs = do
                                                          debug lg $
                                                              LG.msg $
                                                              LG.val
-                                                                 ("Does not match best-block, potential block re-org ")
+                                                                 ("Does not match best-block, potential block re-org...")
                                                          let reOrgDiff = zip [(matchBHt + 1) ..] (headersList hdrs) -- potential re-org
-                                                         bestSynced <- fetchBestSynced conn net
+                                                         bestSynced <- NXB.fetchBestSyncedBlock conn net
                                                          if snd bestSynced >= (fst $ head reOrgDiff)
                                                              then do
+                                                                 debug lg $
+                                                                     LG.msg $
+                                                                     "Have synced blocks beyond point of re-org: synced @ " <>
+                                                                     (show bestSynced) <>
+                                                                     " versus point of re-org: " <>
+                                                                     (show $ head reOrgDiff)
+                                                                 debug lg $
+                                                                     LG.msg $
+                                                                     "Setting new best-synced to " <>
+                                                                     (show $ head reOrgDiff) <>
+                                                                     ", re-syncing from thereon"
                                                                  setBestSynced
                                                                      conn
                                                                      net
