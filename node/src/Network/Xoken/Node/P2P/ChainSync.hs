@@ -207,11 +207,52 @@ fetchBestBlock conn net = do
                         Nothing -> throw InvalidMetaDataException
         Left (e :: SomeException) -> throw InvalidMetaDataException
 
+fetchBestSynced :: (HasLogger m, MonadIO m) => XCqlClientState -> Network -> m (BlockHash, Int32)
+fetchBestSynced conn net = do
+    lg <- getLogger
+    let qstr :: Q.QueryString Q.R (Identity Text) (Identity (Maybe Bool, Maybe Int32, Maybe Int64, Maybe T.Text))
+        qstr = "SELECT value from xoken.misc_store where key = ?"
+        p = getSimpleQueryParam "best-synced"
+    res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr p)
+    case res of
+        (Right iop) -> do
+            if L.null iop
+                then do
+                    return ((headerHash $ getGenesisHeader net), 0)
+                else do
+                    let record = runIdentity $ iop !! 0
+                    case getTextVal record of
+                        Just tx -> do
+                            case (hexToBlockHash $ tx) of
+                                Just x -> do
+                                    case getIntVal record of
+                                        Just y -> return (x, y)
+                                        Nothing -> throw InvalidMetaDataException
+                                Nothing -> throw InvalidBlockHashException
+                        Nothing -> throw InvalidMetaDataException
+        Left (e :: SomeException) -> throw InvalidMetaDataException
+
+setBestSynced :: (HasLogger m, MonadIO m) => XCqlClientState -> Network -> Int32 -> T.Text -> m ()
+setBestSynced conn net bsHeight bsHash = do
+    lg <- getLogger
+    let qstr :: Q.QueryString Q.W (Identity (Maybe Bool, Maybe Int32, Maybe Int64, Maybe T.Text)) ()
+        qstr = "UPDATE xoken.misc_store SET value = (?,?,?,?) WHERE key = 'best-synced'"
+        par = getSimpleQueryParam (Identity (Nothing, Just bsHeight, Nothing, Just bsHash))
+    queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstr))
+    res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryId par)
+    case res of
+        Right _ -> return ()
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: INSERTing into misc_store (best-synced): " <> (show e)
+            throw KeyValueDBInsertException
+
 processHeaders :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Headers -> m ()
 processHeaders hdrs = do
     dbe' <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
+    let net = bitcoinNetwork $ nodeConfig bp2pEnv
+        conn = xCqlClientState dbe'
     if (L.null $ headersList hdrs)
         then do
             debug lg $ LG.msg $ val "Nothing to process!"
@@ -261,7 +302,18 @@ processHeaders hdrs = do
                                                              LG.msg $
                                                              LG.val
                                                                  ("Does not match best-block, potential block re-org ")
-                                                         return $ zip [(matchBHt + 1) ..] (headersList hdrs) -- potential re-org
+                                                         let reOrgDiff = zip [(matchBHt + 1) ..] (headersList hdrs) -- potential re-org
+                                                         bestSynced <- fetchBestSynced conn net
+                                                         if snd bestSynced >= (fst $ head reOrgDiff)
+                                                             then do
+                                                                 setBestSynced
+                                                                     conn
+                                                                     net
+                                                                     (fst $ head reOrgDiff)
+                                                                     (blockHashToHex $
+                                                                      headerHash $ fst $ snd $ head reOrgDiff)
+                                                                 return reOrgDiff
+                                                             else return reOrgDiff
                                              Nothing -> throw BlockHashNotFoundException
             let q1 :: Q.QueryString Q.W (Text, Text, Int32, Text) ()
                 q1 =
