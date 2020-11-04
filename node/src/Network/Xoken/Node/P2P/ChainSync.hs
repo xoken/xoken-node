@@ -280,25 +280,20 @@ processHeaders hdrs = do
                                                                  ("Does not match best-block, potential block re-org...")
                                                          let reOrgDiff = zip [(matchBHt + 1) ..] (headersList hdrs) -- potential re-org
                                                          bestSynced <- NXB.fetchBestSyncedBlock conn net
-                                                         if snd bestSynced >= (fst $ head reOrgDiff)
+                                                         if snd bestSynced >= matchBHt
                                                              then do
                                                                  debug lg $
                                                                      LG.msg $
                                                                      "Have synced blocks beyond point of re-org: synced @ " <>
                                                                      (show bestSynced) <>
                                                                      " versus point of re-org: " <>
-                                                                     (show $ head reOrgDiff)
+                                                                     (show $ (matchBHash, matchBHt))
                                                                  debug lg $
                                                                      LG.msg $
                                                                      "Setting new best-synced to " <>
-                                                                     (show $ head reOrgDiff) <>
+                                                                     (show $ (matchBHash, matchBHt)) <>
                                                                      ", re-syncing from thereon"
-                                                                 setBestSynced
-                                                                     conn
-                                                                     net
-                                                                     (fst $ head reOrgDiff)
-                                                                     (blockHashToHex $
-                                                                      headerHash $ fst $ snd $ head reOrgDiff)
+                                                                 setBestSynced conn net matchBHt matchBHash
                                                                  return reOrgDiff
                                                              else return reOrgDiff
                                              Nothing -> throw BlockHashNotFoundException
