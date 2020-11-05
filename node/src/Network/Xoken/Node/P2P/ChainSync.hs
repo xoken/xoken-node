@@ -58,7 +58,7 @@ import Network.Xoken.Network.Message
 import Network.Xoken.Node.Data
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.GraphDB
-import qualified Network.Xoken.Node.P2P.BlockSync as NXB (fetchBestSyncedBlock)
+import qualified Network.Xoken.Node.P2P.BlockSync as NXB (fetchBestSyncedBlock, markBestSyncedBlock)
 import Network.Xoken.Node.P2P.Common
 import Network.Xoken.Node.P2P.Types
 import Network.Xoken.Node.Service.Block
@@ -208,20 +208,6 @@ fetchBestBlock conn net = do
                         Nothing -> throw InvalidMetaDataException
         Left (e :: SomeException) -> throw InvalidMetaDataException
 
-setBestSynced :: (HasLogger m, MonadIO m) => XCqlClientState -> Network -> Int32 -> T.Text -> m ()
-setBestSynced conn net bsHeight bsHash = do
-    lg <- getLogger
-    let qstr :: Q.QueryString Q.W (Identity (Maybe Bool, Maybe Int32, Maybe Int64, Maybe T.Text)) ()
-        qstr = "UPDATE xoken.misc_store SET value = (?,?,?,?) WHERE key = 'best-synced'"
-        par = getSimpleQueryParam (Identity (Nothing, Just bsHeight, Nothing, Just bsHash))
-    queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstr))
-    res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryId par)
-    case res of
-        Right _ -> return ()
-        Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: INSERTing into misc_store (best-synced): " <> (show e)
-            throw KeyValueDBInsertException
-
 processHeaders :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Headers -> m ()
 processHeaders hdrs = do
     dbe' <- getDB
@@ -293,7 +279,10 @@ processHeaders hdrs = do
                                                                      "Setting new best-synced to " <>
                                                                      (show $ (matchBHash, matchBHt)) <>
                                                                      ", re-syncing from thereon"
-                                                                 setBestSynced conn net matchBHt matchBHash
+                                                                 NXB.markBestSyncedBlock
+                                                                     (fromJust $ hexToBlockHash matchBHash)
+                                                                     matchBHt
+                                                                     conn
                                                                  return reOrgDiff
                                                              else return reOrgDiff
                                              Nothing -> throw BlockHashNotFoundException
