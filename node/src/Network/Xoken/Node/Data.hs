@@ -247,8 +247,9 @@ data RPCReqParams'
     | RelayMultipleTx
           { rTxns :: [ByteString]
           }
-    | GetProducer
-          { gpName :: [Int]
+    | FindNameReseller
+          { frName :: [Int]
+          , frIsProducer :: Bool
           }
     | GetTxOutputSpendStatus
           { gtssHash :: String
@@ -285,7 +286,7 @@ instance FromJSON RPCReqParams' where
         (GetAllegoryNameBranch <$> o .: "name" <*> o .: "isProducer") <|>
         (RelayTx . B64.decodeLenient . T.encodeUtf8 <$> o .: "rawTx") <|>
         (RelayMultipleTx . (B64.decodeLenient . T.encodeUtf8 <$>) <$> o .: "rawTransactions") <|>
-        (GetProducer <$> o .: "name") <|>
+        (FindNameReseller <$> o .: "name" <*> o .: "isProducer") <|>
         (AddUser <$> o .: "username" <*> o .:? "apiExpiryTime" <*> o .:? "apiQuota" <*> o .: "firstName" <*>
          o .: "lastName" <*>
          o .: "email" <*>
@@ -379,10 +380,9 @@ data RPCResponseBody
     | RespRelayMultipleTx
           { rrMultipleTx :: [Bool]
           }
-    | RespGetProducer
-          { producerName :: [Int]
-          , producerOutpoint :: OutPoint'
-          , producerScript :: String
+    | RespFindNameReseller
+          { frProtocol :: String
+          , frUri :: String
           }
     | RespTxOutputSpendStatus
           { spendStatus :: Maybe TxOutputSpendStatus
@@ -418,7 +418,7 @@ instance ToJSON RPCResponseBody where
     toJSON (RespAllegoryNameBranch nb) = object ["nameBranch" .= nb]
     toJSON (RespRelayTx rrTx) = object ["txBroadcast" .= rrTx]
     toJSON (RespRelayMultipleTx rrMultipleTx) = object ["txnsBroadcast" .= rrMultipleTx]
-    toJSON (RespGetProducer name op scr) = object ["name" .= name, "outpoint" .= op, "script" .= scr]
+    toJSON (RespFindNameReseller p u) = object ["protocol" .= p, "uri" .= u]
     toJSON (RespTxOutputSpendStatus ss) = object ["spendStatus" .= ss]
     toJSON (RespUser u) = object ["user" .= u]
 

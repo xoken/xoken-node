@@ -505,15 +505,16 @@ relayMultipleTx RelayMultipleTx {..} = do
         Right ops -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespRelayMultipleTx ops
 relayMultipleTx _ = throwBadRequest
 
-getProducer :: RPCReqParams' -> Handler App App ()
-getProducer (GetProducer nameArray) = do
+findNameReseller :: RPCReqParams' -> Handler App App ()
+findNameReseller (FindNameReseller nameArray isProducer) = do
     pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
-    res <- LE.try $ xGetProducer nameArray
+    res <- LE.try $ xFindNameReseller nameArray isProducer
     case res of
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
-            writeBS "INTERNAL_SERVER_ERROR"
-        Right (name, op, scr) -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespGetProducer name op (DT.unpack scr)
+            writeBS (S.pack $ show e)
+        Right (protocol, uri) -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespFindNameReseller protocol uri
+
 getProducer _ = throwBadRequest
 
 getCurrentUser :: Handler App App ()
@@ -614,7 +615,7 @@ withReq handler = do
                 Right r -> handler r
                 Left err -> do
                     modifyResponse $ setResponseStatus 400 "Bad Request"
-                    writeBS "400 error"
+                    writeBS "Error: failed to decode request body JSON"
         else throwBadRequest
 
 parseAuthorizationHeader :: Maybe B.ByteString -> Maybe B.ByteString

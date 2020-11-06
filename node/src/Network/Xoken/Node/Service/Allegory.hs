@@ -90,6 +90,7 @@ import Network.Xoken.Node.P2P.Common
 import Network.Xoken.Node.P2P.Types
 import Network.Xoken.Node.Service.Address
 import Network.Xoken.Node.Service.Transaction
+import Network.Xoken.Script
 import Network.Xoken.Util (bsToInteger, integerToBS)
 import Numeric (showHex)
 import StmContainers.Map as SM
@@ -134,12 +135,12 @@ xGetAllegoryNameBranch name isProducer = do
             err lg $ LG.msg $ "Error: xGetAllegoryNameBranch: " ++ show e
             throw KeyValueDBLookupException
 
-xGetProducer :: (HasXokenNodeEnv env m, MonadIO m) => [Int] -> m ([Int], OutPoint', DT.Text)
-xGetProducer nameArr = do
+getProducerRoot :: (HasXokenNodeEnv env m, MonadIO m) => [Int] -> m ([Int], OutPoint', DT.Text)
+getProducerRoot nameArr = do
     dbe <- getDB
     lg <- getLogger
     let name = DT.pack $ L.map (\x -> chr x) (nameArr)
-    res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameScriptOp (name) True)
+    res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameScriptOp name True)
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error fetching Allegory name input: " <> show e
@@ -149,11 +150,109 @@ xGetProducer nameArr = do
                 then do
                     err lg $ LG.msg $ show "Allegory root not initialised!"
                     throw KeyValueDBLookupException
-                else xGetProducer $ init nameArr
+                else getProducerRoot $ init nameArr
         Right nb -> do
             let sp = DT.split (== ':') $ fst (head nb)
             let txid = DT.unpack $ sp !! 0
             let index = readMaybe (DT.unpack $ sp !! 1) :: Maybe Int
             case index of
-                Just i -> return $ (nameArr, OutPoint' txid (fromIntegral i), (snd $ head nb))
+                Just i -> return (nameArr, OutPoint' txid (fromIntegral i), (snd $ head nb))
                 Nothing -> throw KeyValueDBLookupException
+
+getOwnerRoot :: (HasXokenNodeEnv env m, MonadIO m) => [Int] -> m ([Int], OutPoint', DT.Text)
+getOwnerRoot nameArr = do
+    dbe <- getDB
+    lg <- getLogger
+    let name = DT.pack $ L.map (\x -> chr x) (nameArr)
+    res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameScriptOp name False)
+    case res of
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: While fetching Allegory name input: " <> show e
+            throw e
+        Right [] -> do
+            if nameArr == []
+                then do
+                    err lg $ LG.msg $ show "Error: Allegory root not initialised!"
+                    throw KeyValueDBLookupException
+                else getProducerRoot nameArr
+        Right nb -> do
+            let sp = DT.split (== ':') $ fst (head nb)
+            let txid = DT.unpack $ sp !! 0
+            let index = readMaybe (DT.unpack $ sp !! 1) :: Maybe Int
+            case index of
+                Just i -> return (nameArr, OutPoint' txid (fromIntegral i), (snd $ head nb))
+                Nothing -> throw KeyValueDBLookupException
+
+getAllegoryOutpoint :: (HasXokenNodeEnv env m, MonadIO m) => [Int] -> Bool -> m ([Int], OutPoint', DT.Text)
+getAllegoryOutpoint nameArr isProducer = do
+    op' <-
+        if isProducer
+            then LE.try $ getProducerRoot nameArr
+            else LE.try $ getOwnerRoot nameArr
+    case op' of
+        Left (e :: SomeException) -> throw e
+        Right op -> return op
+
+xFindNameReseller :: (HasXokenNodeEnv env m, MonadIO m) => [Int] -> Bool -> m (String, String)
+xFindNameReseller nameArr isProducer = do
+    lg <- getLogger
+    op' <- LE.try $ getAllegoryOutpoint nameArr isProducer
+    case op' of
+        Left (e :: SomeException) -> throw e
+        Right op@(forName, OutPoint' txid index, scr) -> do
+            tx' <- xGetTxHash (DT.pack txid)
+            case tx' of
+                Nothing -> do
+                    err lg $
+                        LG.msg $
+                        "Error: Name outpoint not found; transaction " <> (show txid) <> " missing in database."
+                    throw KeyValueDBLookupException
+                Just tx -> do
+                    case txOutputs tx of
+                        Nothing -> do
+                            err lg $ LG.msg $ "Error: Outputs for transaction " <> (show txid) <> " missing."
+                            throw KeyValueDBLookupException
+                        Just ops -> do
+                            case decodeOutputScript $ lockingScript $ head ops of
+                                Left e -> do
+                                    err lg $
+                                        LG.msg $
+                                        "Error: Could not read Allegory metadata, failed to read output script ('" <> e <>
+                                        "')"
+                                    throw KeyValueDBLookupException
+                                Right os -> do
+                                    let allegoryHeader = scriptOps os !! 2
+                                        allegoryData = scriptOps os !! 3
+                                    case (allegoryHeader, allegoryData) of
+                                        (OP_PUSHDATA "Allegory/AllPay" OPCODE, OP_PUSHDATA allegory OPDATA1) -> do
+                                            let da = deserialise $ C.fromStrict allegory :: Allegory
+                                            let eps (ProducerAction _ (ProducerOutput (Index prIndex) mbEndpoint) _ _) key
+                                                    | prIndex == key = mbEndpoint
+                                                eps (ProducerAction _ _ (Just (OwnerOutput (Index owIndex) mbEndpoint)) _) key
+                                                    | owIndex == key = mbEndpoint
+                                                eps (OwnerAction _ (OwnerOutput (Index owIndex) mbEndpoint) _) key
+                                                    | owIndex == key = mbEndpoint
+                                                eps (ProducerAction _ _ _ ext) key =
+                                                    (\l ->
+                                                         if length l == 0
+                                                             then Nothing
+                                                             else head l) $
+                                                    L.filter (\r -> (r /= Nothing)) $ L.map (exs key) ext
+                                                exs key (OwnerExtension (OwnerOutput (Index oIndex) mbEndpoint) _)
+                                                    | oIndex == key = mbEndpoint
+                                                exs key (ProducerExtension (ProducerOutput (Index pIndex) mbEndpoint) _)
+                                                    | pIndex == key = mbEndpoint
+                                                exs _ _ = Nothing
+                                                endPoint = eps (action da) (fromIntegral index)
+                                            case endPoint of
+                                                Nothing -> do
+                                                    err lg $
+                                                        LG.msg $
+                                                        show
+                                                            "Error: No endpoint protocol/URI information in Allegory metadata."
+                                                    throw KeyValueDBLookupException
+                                                Just ep -> return (protocol ep, uri ep)
+                                        _ -> do
+                                            err lg $
+                                                LG.msg $ show "Error: Not a valid Allegory/AllPay OP_RETURN output."
+                                            throw KeyValueDBLookupException
