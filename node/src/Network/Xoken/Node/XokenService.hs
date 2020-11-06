@@ -477,8 +477,8 @@ goGetResource msg net roles sessKey pretty = do
                         Left (e :: SomeException) -> do
                             debug lg $ LG.msg $ "Allegory error: xFindNameReseller: " ++ show e
                             return $ RPCResponse 400 pretty $ Left $ RPCError INTERNAL_ERROR Nothing
-                        Right (protocol, uri) ->
-                            return $ RPCResponse 200 pretty $ Right $ Just $ RespFindNameReseller protocol uri
+                        Right (forName, protocol, uri, isProducer) ->
+                            return $ RPCResponse 200 pretty $ Right $ Just $ RespFindNameReseller forName protocol uri isProducer
                 _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
         "OUTPOINT->SPEND_STATUS" -> do
             case methodParams $ rqParams msg of

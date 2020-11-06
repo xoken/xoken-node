@@ -513,7 +513,7 @@ findNameReseller (FindNameReseller nameArray isProducer) = do
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS (S.pack $ show e)
-        Right (protocol, uri) -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespFindNameReseller protocol uri
+        Right (forName, protocol, uri, isProducer) -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespFindNameReseller forName protocol uri isProducer
 
 getProducer _ = throwBadRequest
 

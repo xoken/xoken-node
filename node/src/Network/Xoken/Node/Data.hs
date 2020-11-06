@@ -381,8 +381,10 @@ data RPCResponseBody
           { rrMultipleTx :: [Bool]
           }
     | RespFindNameReseller
-          { frProtocol :: String
+          { frName :: [Int]
+          , frProtocol :: String
           , frUri :: String
+          , frIsProducer :: Bool
           }
     | RespTxOutputSpendStatus
           { spendStatus :: Maybe TxOutputSpendStatus
@@ -418,7 +420,7 @@ instance ToJSON RPCResponseBody where
     toJSON (RespAllegoryNameBranch nb) = object ["nameBranch" .= nb]
     toJSON (RespRelayTx rrTx) = object ["txBroadcast" .= rrTx]
     toJSON (RespRelayMultipleTx rrMultipleTx) = object ["txnsBroadcast" .= rrMultipleTx]
-    toJSON (RespFindNameReseller p u) = object ["protocol" .= p, "uri" .= u]
+    toJSON (RespFindNameReseller n p u ip) = object ["forName" .= n, "protocol" .= p, "uri" .= u, "isProducer" .= ip]
     toJSON (RespTxOutputSpendStatus ss) = object ["spendStatus" .= ss]
     toJSON (RespUser u) = object ["user" .= u]
 

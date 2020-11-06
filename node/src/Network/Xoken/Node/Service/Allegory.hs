@@ -135,7 +135,7 @@ xGetAllegoryNameBranch name isProducer = do
             err lg $ LG.msg $ "Error: xGetAllegoryNameBranch: " ++ show e
             throw KeyValueDBLookupException
 
-getProducerRoot :: (HasXokenNodeEnv env m, MonadIO m) => [Int] -> m ([Int], OutPoint', DT.Text)
+getProducerRoot :: (HasXokenNodeEnv env m, MonadIO m) => [Int] -> m ([Int], OutPoint', DT.Text, Bool)
 getProducerRoot nameArr = do
     dbe <- getDB
     lg <- getLogger
@@ -156,10 +156,10 @@ getProducerRoot nameArr = do
             let txid = DT.unpack $ sp !! 0
             let index = readMaybe (DT.unpack $ sp !! 1) :: Maybe Int
             case index of
-                Just i -> return (nameArr, OutPoint' txid (fromIntegral i), (snd $ head nb))
+                Just i -> return (nameArr, OutPoint' txid (fromIntegral i), (snd $ head nb), True)
                 Nothing -> throw KeyValueDBLookupException
 
-getOwnerRoot :: (HasXokenNodeEnv env m, MonadIO m) => [Int] -> m ([Int], OutPoint', DT.Text)
+getOwnerRoot :: (HasXokenNodeEnv env m, MonadIO m) => [Int] -> m ([Int], OutPoint', DT.Text, Bool)
 getOwnerRoot nameArr = do
     dbe <- getDB
     lg <- getLogger
@@ -180,10 +180,10 @@ getOwnerRoot nameArr = do
             let txid = DT.unpack $ sp !! 0
             let index = readMaybe (DT.unpack $ sp !! 1) :: Maybe Int
             case index of
-                Just i -> return (nameArr, OutPoint' txid (fromIntegral i), (snd $ head nb))
+                Just i -> return (nameArr, OutPoint' txid (fromIntegral i), (snd $ head nb), False)
                 Nothing -> throw KeyValueDBLookupException
 
-getAllegoryOutpoint :: (HasXokenNodeEnv env m, MonadIO m) => [Int] -> Bool -> m ([Int], OutPoint', DT.Text)
+getAllegoryOutpoint :: (HasXokenNodeEnv env m, MonadIO m) => [Int] -> Bool -> m ([Int], OutPoint', DT.Text, Bool)
 getAllegoryOutpoint nameArr isProducer = do
     op' <-
         if isProducer
@@ -193,24 +193,26 @@ getAllegoryOutpoint nameArr isProducer = do
         Left (e :: SomeException) -> throw e
         Right op -> return op
 
-xFindNameReseller :: (HasXokenNodeEnv env m, MonadIO m) => [Int] -> Bool -> m (String, String)
+xFindNameReseller :: (HasXokenNodeEnv env m, MonadIO m) => [Int] -> Bool -> m ([Int], String, String, Bool)
 xFindNameReseller nameArr isProducer = do
     lg <- getLogger
     op' <- LE.try $ getAllegoryOutpoint nameArr isProducer
     case op' of
-        Left (e :: SomeException) -> throw e
-        Right op@(forName, OutPoint' txid index, scr) -> do
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: Failed to fetch outpoint for Allegory name: " <> (show e)
+            throw e
+        Right op@(forName, OutPoint' txid index, scr, isProducer) -> do
             tx' <- xGetTxHash (DT.pack txid)
             case tx' of
                 Nothing -> do
                     err lg $
                         LG.msg $
-                        "Error: Name outpoint not found; transaction " <> (show txid) <> " missing in database."
+                        "Error: Name outpoint not found; transaction " <> (show txid) <> " missing in database"
                     throw KeyValueDBLookupException
                 Just tx -> do
                     case txOutputs tx of
                         Nothing -> do
-                            err lg $ LG.msg $ "Error: Outputs for transaction " <> (show txid) <> " missing."
+                            err lg $ LG.msg $ "Error: Outputs for transaction " <> (show txid) <> " missing"
                             throw KeyValueDBLookupException
                         Just ops -> do
                             case decodeOutputScript $ lockingScript $ head ops of
@@ -225,34 +227,45 @@ xFindNameReseller nameArr isProducer = do
                                         allegoryData = scriptOps os !! 3
                                     case (allegoryHeader, allegoryData) of
                                         (OP_PUSHDATA "Allegory/AllPay" OPCODE, OP_PUSHDATA allegory OPDATA1) -> do
-                                            let da = deserialise $ C.fromStrict allegory :: Allegory
-                                            let eps (ProducerAction _ (ProducerOutput (Index prIndex) mbEndpoint) _ _) key
-                                                    | prIndex == key = mbEndpoint
-                                                eps (ProducerAction _ _ (Just (OwnerOutput (Index owIndex) mbEndpoint)) _) key
-                                                    | owIndex == key = mbEndpoint
-                                                eps (OwnerAction _ (OwnerOutput (Index owIndex) mbEndpoint) _) key
-                                                    | owIndex == key = mbEndpoint
-                                                eps (ProducerAction _ _ _ ext) key =
-                                                    (\l ->
-                                                         if length l == 0
-                                                             then Nothing
-                                                             else head l) $
-                                                    L.filter (\r -> (r /= Nothing)) $ L.map (exs key) ext
-                                                exs key (OwnerExtension (OwnerOutput (Index oIndex) mbEndpoint) _)
-                                                    | oIndex == key = mbEndpoint
-                                                exs key (ProducerExtension (ProducerOutput (Index pIndex) mbEndpoint) _)
-                                                    | pIndex == key = mbEndpoint
-                                                exs _ _ = Nothing
-                                                endPoint = eps (action da) (fromIntegral index)
-                                            case endPoint of
-                                                Nothing -> do
+                                            let alg' =
+                                                    deserialiseOrFail $ C.fromStrict allegory :: Either DeserialiseFailure Allegory
+                                            case alg' of
+                                                Left df@(DeserialiseFailure b s) -> do
                                                     err lg $
                                                         LG.msg $
-                                                        show
-                                                            "Error: No endpoint protocol/URI information in Allegory metadata."
-                                                    throw KeyValueDBLookupException
-                                                Just ep -> return (protocol ep, uri ep)
+                                                        "Error: Failed to deserialise Allegory metadata, at byte offset " <>
+                                                        (show b) <>
+                                                        ", cause: " <>
+                                                        (show s)
+                                                    throw df
+                                                Right alg -> do
+                                                    let eps (ProducerAction _ (ProducerOutput (Index pri) mbe) _ _) key
+                                                            | pri == key = mbe
+                                                        eps (ProducerAction _ _ (Just (OwnerOutput (Index owi) mbe)) _) key
+                                                            | owi == key = mbe
+                                                        eps (OwnerAction _ (OwnerOutput (Index owi) mbe) _) key
+                                                            | owi == key = mbe
+                                                        eps (ProducerAction _ _ _ ext) key =
+                                                            (\l ->
+                                                                 if length l == 0
+                                                                     then Nothing
+                                                                     else head l) $
+                                                            L.filter (Nothing /=) $ exs key <$> ext
+                                                        exs key (OwnerExtension (OwnerOutput (Index oIndex) mbe) _)
+                                                            | oIndex == key = mbe
+                                                        exs key (ProducerExtension (ProducerOutput (Index pIndex) mbe) _)
+                                                            | pIndex == key = mbe
+                                                        exs _ _ = Nothing
+                                                        endPoint = eps (action alg) (fromIntegral index)
+                                                    case endPoint of
+                                                        Nothing -> do
+                                                            err lg $
+                                                                LG.msg $
+                                                                show
+                                                                    "Error: No endpoint information in Allegory metadata"
+                                                            throw KeyValueDBLookupException
+                                                        Just ep -> return (forName, protocol ep, uri ep, isProducer)
                                         _ -> do
                                             err lg $
-                                                LG.msg $ show "Error: Not a valid Allegory/AllPay OP_RETURN output."
+                                                LG.msg $ show "Error: Not a valid Allegory/AllPay OP_RETURN output"
                                             throw KeyValueDBLookupException
