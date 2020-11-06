@@ -247,9 +247,9 @@ data RPCReqParams'
     | RelayMultipleTx
           { rTxns :: [ByteString]
           }
-    | FindNameReseller
-          { frName :: [Int]
-          , frIsProducer :: Bool
+    | AllegoryNameQuery
+          { anqName :: [Int]
+          , anqIsProducer :: Bool
           }
     | GetTxOutputSpendStatus
           { gtssHash :: String
@@ -286,7 +286,7 @@ instance FromJSON RPCReqParams' where
         (GetAllegoryNameBranch <$> o .: "name" <*> o .: "isProducer") <|>
         (RelayTx . B64.decodeLenient . T.encodeUtf8 <$> o .: "rawTx") <|>
         (RelayMultipleTx . (B64.decodeLenient . T.encodeUtf8 <$>) <$> o .: "rawTransactions") <|>
-        (FindNameReseller <$> o .: "name" <*> o .: "isProducer") <|>
+        (AllegoryNameQuery <$> o .: "name" <*> o .: "isProducer") <|>
         (AddUser <$> o .: "username" <*> o .:? "apiExpiryTime" <*> o .:? "apiQuota" <*> o .: "firstName" <*>
          o .: "lastName" <*>
          o .: "email" <*>
@@ -380,6 +380,12 @@ data RPCResponseBody
     | RespRelayMultipleTx
           { rrMultipleTx :: [Bool]
           }
+    | RespOutpointByName
+          { roName :: [Int]
+          , roOutPoint :: OutPoint'
+          , roScript :: String
+          , roIsProducer :: Bool
+          }
     | RespFindNameReseller
           { frName :: [Int]
           , frProtocol :: String
@@ -420,6 +426,7 @@ instance ToJSON RPCResponseBody where
     toJSON (RespAllegoryNameBranch nb) = object ["nameBranch" .= nb]
     toJSON (RespRelayTx rrTx) = object ["txBroadcast" .= rrTx]
     toJSON (RespRelayMultipleTx rrMultipleTx) = object ["txnsBroadcast" .= rrMultipleTx]
+    toJSON (RespOutpointByName n o s i) = object ["forName" .= n, "outPoint" .= o, "script" .= s, "isProducer" .= i]
     toJSON (RespFindNameReseller n p u ip) = object ["forName" .= n, "protocol" .= p, "uri" .= u, "isProducer" .= ip]
     toJSON (RespTxOutputSpendStatus ss) = object ["spendStatus" .= ss]
     toJSON (RespUser u) = object ["user" .= u]

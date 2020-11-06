@@ -183,8 +183,8 @@ getOwnerRoot nameArr = do
                 Just i -> return (nameArr, OutPoint' txid (fromIntegral i), (snd $ head nb), False)
                 Nothing -> throw KeyValueDBLookupException
 
-getAllegoryOutpoint :: (HasXokenNodeEnv env m, MonadIO m) => [Int] -> Bool -> m ([Int], OutPoint', DT.Text, Bool)
-getAllegoryOutpoint nameArr isProducer = do
+xGetOutpointByName :: (HasXokenNodeEnv env m, MonadIO m) => [Int] -> Bool -> m ([Int], OutPoint', DT.Text, Bool)
+xGetOutpointByName nameArr isProducer = do
     op' <-
         if isProducer
             then LE.try $ getProducerRoot nameArr
@@ -196,7 +196,7 @@ getAllegoryOutpoint nameArr isProducer = do
 xFindNameReseller :: (HasXokenNodeEnv env m, MonadIO m) => [Int] -> Bool -> m ([Int], String, String, Bool)
 xFindNameReseller nameArr isProducer = do
     lg <- getLogger
-    op' <- LE.try $ getAllegoryOutpoint nameArr isProducer
+    op' <- LE.try $ xGetOutpointByName nameArr isProducer
     case op' of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: Failed to fetch outpoint for Allegory name: " <> (show e)
@@ -206,8 +206,7 @@ xFindNameReseller nameArr isProducer = do
             case tx' of
                 Nothing -> do
                     err lg $
-                        LG.msg $
-                        "Error: Name outpoint not found; transaction " <> (show txid) <> " missing in database"
+                        LG.msg $ "Error: Name outpoint not found; transaction " <> (show txid) <> " missing in database"
                     throw KeyValueDBLookupException
                 Just tx -> do
                     case txOutputs tx of
@@ -266,6 +265,5 @@ xFindNameReseller nameArr isProducer = do
                                                             throw KeyValueDBLookupException
                                                         Just ep -> return (forName, protocol ep, uri ep, isProducer)
                                         _ -> do
-                                            err lg $
-                                                LG.msg $ show "Error: Not a valid Allegory/AllPay OP_RETURN output"
+                                            err lg $ LG.msg $ show "Error: Not a valid Allegory/AllPay OP_RETURN output"
                                             throw KeyValueDBLookupException

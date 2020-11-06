@@ -505,15 +505,28 @@ relayMultipleTx RelayMultipleTx {..} = do
         Right ops -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespRelayMultipleTx ops
 relayMultipleTx _ = throwBadRequest
 
+getOutpointByName :: RPCReqParams' -> Handler App App ()
+getOutpointByName (AllegoryNameQuery nameArray isProducer) = do
+    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    res <- LE.try $ xGetOutpointByName nameArray isProducer
+    case res of
+        Left (e :: SomeException) -> do
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS (S.pack $ show e)
+        Right (forName, outpoint, script, isProducer) ->
+            writeBS $
+            BSL.toStrict $ encodeResp pretty $ RespOutpointByName forName outpoint (DT.unpack script) isProducer
+
 findNameReseller :: RPCReqParams' -> Handler App App ()
-findNameReseller (FindNameReseller nameArray isProducer) = do
+findNameReseller (AllegoryNameQuery nameArray isProducer) = do
     pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     res <- LE.try $ xFindNameReseller nameArray isProducer
     case res of
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS (S.pack $ show e)
-        Right (forName, protocol, uri, isProducer) -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespFindNameReseller forName protocol uri isProducer
+        Right (forName, protocol, uri, isProducer) ->
+            writeBS $ BSL.toStrict $ encodeResp pretty $ RespFindNameReseller forName protocol uri isProducer
 
 getProducer _ = throwBadRequest
 

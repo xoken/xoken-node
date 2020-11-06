@@ -469,16 +469,30 @@ goGetResource msg net roles sessKey pretty = do
                     ops <- xRelayMultipleTx txns
                     return $ RPCResponse 200 pretty $ Right $ Just $ RespRelayMultipleTx ops
                 _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
-        "FIND_NAME_RESELLER" -> do
+        "NAME->OUTPOINT" -> do
             case methodParams $ rqParams msg of
-                Just (FindNameReseller name isProducer) -> do
+                Just (AllegoryNameQuery name isProducer) -> do
+                    res <- LE.try $ xGetOutpointByName name isProducer
+                    case res of
+                        Left (e :: SomeException) -> do
+                            debug lg $ LG.msg $ "Allegory error: xFindNameReseller: " ++ show e
+                            return $ RPCResponse 400 pretty $ Left $ RPCError INTERNAL_ERROR Nothing
+                        Right (forName, outpoint, script, isProducer) ->
+                            return $
+                            RPCResponse 200 pretty $
+                            Right $ Just $ RespOutpointByName forName outpoint (DT.unpack script) isProducer
+                _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
+        "NAME->RESELLER" -> do
+            case methodParams $ rqParams msg of
+                Just (AllegoryNameQuery name isProducer) -> do
                     res <- LE.try $ xFindNameReseller name isProducer
                     case res of
                         Left (e :: SomeException) -> do
                             debug lg $ LG.msg $ "Allegory error: xFindNameReseller: " ++ show e
                             return $ RPCResponse 400 pretty $ Left $ RPCError INTERNAL_ERROR Nothing
                         Right (forName, protocol, uri, isProducer) ->
-                            return $ RPCResponse 200 pretty $ Right $ Just $ RespFindNameReseller forName protocol uri isProducer
+                            return $
+                            RPCResponse 200 pretty $ Right $ Just $ RespFindNameReseller forName protocol uri isProducer
                 _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
         "OUTPOINT->SPEND_STATUS" -> do
             case methodParams $ rqParams msg of
