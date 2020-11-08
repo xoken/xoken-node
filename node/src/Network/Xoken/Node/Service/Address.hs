@@ -269,11 +269,13 @@ xGetOutputsAddress address pgSize mbNomTxInd = do
 
 xGetUTXOsAddress ::
        (HasXokenNodeEnv env m, MonadIO m)
-    => String
+    => Maybe Int64
+    -> Maybe Int64
+    -> String
     -> Maybe Int32
     -> Maybe (DT.Text, Int32)
     -> m ([ResultWithCursor AddressOutputs (DT.Text, Int32)])
-xGetUTXOsAddress address pgSize mbFromOutput = do
+xGetUTXOsAddress mbMinValueSats mbMaxValueSats address pgSize mbFromOutput = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
@@ -285,6 +287,14 @@ xGetUTXOsAddress address pgSize mbFromOutput = do
             case mbFromOutput of
                 (Just n) -> n
                 Nothing -> maxBoundOutput
+        minValueSats =
+            case mbMinValueSats of
+                (Just v) -> v
+                Nothing -> 0
+        maxValueSats =
+            case mbMaxValueSats of
+                (Just v) -> v
+                Nothing -> maxBound
         str = "SELECT output FROM xoken.script_hash_unspent_outputs WHERE script_hash=? AND output<?"
         qstr = str :: Q.QueryString Q.R (DT.Text, (DT.Text, Int32)) (Identity (DT.Text, Int32))
         ustr = "SELECT output FROM xoken.ep_script_hash_unspent_outputs WHERE epoch = ?  AND script_hash=? AND output<?"
@@ -349,6 +359,12 @@ xGetUTXOsAddress address pgSize mbFromOutput = do
                                     res' <-
                                         sequence $
                                         (\(Identity (txid, index)) -> getUnConfTxOutputsData (txid, index)) <$> iop
+                                    let res'' =
+                                            (\op@(TxOutputData _ _ _ val _ _ _) ->
+                                                 if val > minValueSats && val < maxValueSats
+                                                     then Just op
+                                                     else Nothing) <$>
+                                            res'
                                     return $
                                         ((\((Identity (op_txid, op_txidx)), TxOutputData _ _ _ val bi ips si) ->
                                               ResultWithCursor
@@ -363,13 +379,20 @@ xGetUTXOsAddress address pgSize mbFromOutput = do
                                                              , fromIntegral ov)) <$>
                                                         ips)
                                                        val)
-                                                  (op_txid, op_txidx)) <$>)
-                                            (zip iop res')
+                                                  (op_txid, op_txidx)) <$>) $
+                                        (\(f, s) -> (f, fromJust s)) <$>
+                                        L.filter (\t -> snd t /= Nothing) (zip iop res'')
                         Left (e :: SomeException) -> do
                             err lg $ LG.msg $ "Error: xGetUTXOsAddress:" ++ show e
                             throw KeyValueDBLookupException
                 else do
                     res' <- sequence $ (\(Identity (txid, index)) -> getTxOutputsData (txid, index)) <$> iop
+                    let res'' =
+                            (\op@(TxOutputData _ _ _ val _ _ _) ->
+                                 if val > minValueSats && val < maxValueSats
+                                     then Just op
+                                     else Nothing) <$>
+                            res'
                     return $
                         ((\((Identity (op_txid, op_txidx)), TxOutputData _ _ _ val bi ips si) ->
                               ResultWithCursor
@@ -384,8 +407,8 @@ xGetUTXOsAddress address pgSize mbFromOutput = do
                                              , fromIntegral ov)) <$>
                                         ips)
                                        val)
-                                  (op_txid, op_txidx)) <$>)
-                            (zip iop res')
+                                  (op_txid, op_txidx)) <$>) $
+                        (\(f, s) -> (f, fromJust s)) <$> L.filter (\t -> snd t /= Nothing) (zip iop res'')
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetUTXOsAddress:" ++ show e
             throw KeyValueDBLookupException
@@ -445,11 +468,13 @@ xGetOutputsScriptHash scriptHash pgSize mbNomTxInd = do
 
 xGetUTXOsScriptHash ::
        (HasXokenNodeEnv env m, MonadIO m)
-    => String
+    => Maybe Int64
+    -> Maybe Int64
+    -> String
     -> Maybe Int32
     -> Maybe (DT.Text, Int32)
     -> m ([ResultWithCursor ScriptOutputs (DT.Text, Int32)])
-xGetUTXOsScriptHash scriptHash pgSize mbFromOutput = do
+xGetUTXOsScriptHash mbMinValueSats mbMaxValueSats scriptHash pgSize mbFromOutput = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
@@ -459,6 +484,14 @@ xGetUTXOsScriptHash scriptHash pgSize mbFromOutput = do
             case mbFromOutput of
                 (Just n) -> n
                 Nothing -> maxBoundOutput
+        minValueSats =
+            case mbMinValueSats of
+                (Just v) -> v
+                Nothing -> 0
+        maxValueSats =
+            case mbMaxValueSats of
+                (Just v) -> v
+                Nothing -> maxBound
         str = "SELECT script_hash,output FROM xoken.script_hash_unspent_outputs WHERE script_hash=? AND output<?"
         qstr = str :: Q.QueryString Q.R (DT.Text, (DT.Text, Int32)) (DT.Text, (DT.Text, Int32))
         par = getSimpleQueryParam (DT.pack scriptHash, fromOutput)
@@ -479,6 +512,12 @@ xGetUTXOsScriptHash scriptHash pgSize mbFromOutput = do
                                 else do
                                     res <-
                                         sequence $ (\(_, (txid, index)) -> getUnConfTxOutputsData (txid, index)) <$> iop
+                                    let res' =
+                                            (\op@(TxOutputData _ _ _ val _ _ _) ->
+                                                 if val > minValueSats && val < maxValueSats
+                                                     then Just op
+                                                     else Nothing) <$>
+                                            res
                                     return $
                                         ((\((addr, (op_txid, op_txidx)), TxOutputData _ _ _ val bi ips si) ->
                                               ResultWithCursor
@@ -493,13 +532,20 @@ xGetUTXOsScriptHash scriptHash pgSize mbFromOutput = do
                                                              , fromIntegral ov)) <$>
                                                         ips)
                                                        val)
-                                                  (op_txid, op_txidx)) <$>)
-                                            (zip iop res)
+                                                  (op_txid, op_txidx)) <$>) $
+                                        (\(f, s) -> (f, fromJust s)) <$>
+                                        L.filter (\t -> snd t /= Nothing) (zip iop res')
                         Left (e :: SomeException) -> do
                             err lg $ LG.msg $ "Error: xGetUTXOsScriptHash':" ++ show e
                             throw KeyValueDBLookupException
                 else do
                     res <- sequence $ (\(_, (txid, index)) -> getTxOutputsData (txid, index)) <$> iop
+                    let res' =
+                            (\op@(TxOutputData _ _ _ val _ _ _) ->
+                                 if val > minValueSats && val < maxValueSats
+                                     then Just op
+                                     else Nothing) <$>
+                            res
                     return $
                         ((\((addr, (op_txid, op_txidx)), TxOutputData _ _ _ val bi ips si) ->
                               ResultWithCursor
@@ -514,8 +560,8 @@ xGetUTXOsScriptHash scriptHash pgSize mbFromOutput = do
                                              , fromIntegral ov)) <$>
                                         ips)
                                        val)
-                                  (op_txid, op_txidx)) <$>)
-                            (zip iop res)
+                                  (op_txid, op_txidx)) <$>) $
+                        (\(f, s) -> (f, fromJust s)) <$> L.filter (\t -> snd t /= Nothing) (zip iop res')
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetUTXOsScriptHash':" ++ show e
             throw KeyValueDBLookupException

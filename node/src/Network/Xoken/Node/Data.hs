@@ -218,21 +218,29 @@ data RPCReqParams'
           { guaAddrOutputs :: String
           , guaPageSize :: Maybe Int32
           , guaCursor :: Maybe String
+          , guaMinValue :: Maybe Int64
+          , guaMaxValue :: Maybe Int64
           }
     | GetUTXOsByScriptHash
           { guScriptHashOutputs :: String
           , guScriptHashPageSize :: Maybe Int32
           , guScriptHashCursor :: Maybe String
+          , guMinValue :: Maybe Int64
+          , guMaxValue :: Maybe Int64
           }
     | GetUTXOsByAddresses
           { guasAddrOutputs :: [String]
           , guasPageSize :: Maybe Int32
           , guasCursor :: Maybe String
+          , guasMinValue :: Maybe Int64
+          , guasMaxValue :: Maybe Int64
           }
     | GetUTXOsByScriptHashes
           { gusScriptHashOutputs :: [String]
           , gusScriptHashPageSize :: Maybe Int32
           , gusScriptHashCursor :: Maybe String
+          , gusMinValue :: Maybe Int64
+          , gusMaxValue :: Maybe Int64
           }
     | GetMerkleBranchByTxID
           { gmbMerkleBranch :: String
@@ -278,10 +286,14 @@ instance FromJSON RPCReqParams' where
         (GetOutputsByAddresses <$> o .: "addresses" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
         (GetOutputsByScriptHash <$> o .: "scriptHash" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
         (GetOutputsByScriptHashes <$> o .: "scriptHashes" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
-        (GetUTXOsByAddress <$> o .: "address" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
-        (GetUTXOsByAddresses <$> o .: "addresses" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
-        (GetUTXOsByScriptHash <$> o .: "scriptHash" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
-        (GetUTXOsByScriptHashes <$> o .: "scriptHashes" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
+        (GetUTXOsByAddress <$> o .: "address" <*> o .:? "pageSize" <*> o .:? "cursor" <*> o .:? "minValue" <*>
+         o .:? "maxValue") <|>
+        (GetUTXOsByAddresses <$> o .: "addresses" <*> o .:? "pageSize" <*> o .:? "cursor" <*> o .:? "minValue" <*>
+         o .:? "maxValue") <|>
+        (GetUTXOsByScriptHash <$> o .: "scriptHash" <*> o .:? "pageSize" <*> o .:? "cursor" <*> o .:? "minValue" <*>
+         o .:? "maxValue") <|>
+        (GetUTXOsByScriptHashes <$> o .: "scriptHashes" <*> o .:? "pageSize" <*> o .:? "cursor" <*> o .:? "minValue" <*>
+         o .:? "maxValue") <|>
         (GetMerkleBranchByTxID <$> o .: "txid") <|>
         (GetAllegoryNameBranch <$> o .: "name" <*> o .: "isProducer") <|>
         (RelayTx . B64.decodeLenient . T.encodeUtf8 <$> o .: "rawTx") <|>

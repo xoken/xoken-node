@@ -412,16 +412,16 @@ goGetResource msg net roles sessKey pretty = do
                 _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
         "ADDR->[UTXO]" -> do
             case methodParams $ rqParams msg of
-                Just (GetUTXOsByAddress addr psize cursor) -> do
-                    ops <- xGetUTXOsAddress addr psize (decodeOP cursor)
+                Just (GetUTXOsByAddress addr psize cursor minVal maxVal) -> do
+                    ops <- xGetUTXOsAddress minVal maxVal addr psize (decodeOP cursor)
                     return $
                         RPCResponse 200 pretty $
                         Right $ Just $ RespUTXOsByAddress (encodeOP $ getNextCursor ops) (fromResultWithCursor <$> ops)
                 _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
         "[ADDR]->[UTXO]" -> do
             case methodParams $ rqParams msg of
-                Just (GetUTXOsByAddresses addrs pgSize cursor) -> do
-                    ops <- runWithManyInputs xGetUTXOsAddress addrs pgSize (decodeOP cursor)
+                Just (GetUTXOsByAddresses addrs pgSize cursor minVal maxVal) -> do
+                    ops <- runWithManyInputs (xGetUTXOsAddress minVal maxVal) addrs pgSize (decodeOP cursor)
                     return $
                         RPCResponse 200 pretty $
                         Right $
@@ -429,8 +429,8 @@ goGetResource msg net roles sessKey pretty = do
                 _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
         "SCRIPTHASH->[UTXO]" -> do
             case methodParams $ rqParams msg of
-                Just (GetUTXOsByScriptHash sh pgSize cursor) -> do
-                    ops <- xGetUTXOsScriptHash sh pgSize (decodeOP cursor)
+                Just (GetUTXOsByScriptHash sh pgSize cursor minVal maxVal) -> do
+                    ops <- xGetUTXOsScriptHash minVal maxVal sh pgSize (decodeOP cursor)
                     return $
                         RPCResponse 200 pretty $
                         Right $
@@ -438,8 +438,8 @@ goGetResource msg net roles sessKey pretty = do
                 _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
         "[SCRIPTHASH]->[UTXO]" -> do
             case methodParams $ rqParams msg of
-                Just (GetUTXOsByScriptHashes shs pgSize cursor) -> do
-                    ops <- runWithManyInputs xGetUTXOsScriptHash shs pgSize (decodeOP cursor)
+                Just (GetUTXOsByScriptHashes shs pgSize cursor minVal maxVal) -> do
+                    ops <- runWithManyInputs (xGetUTXOsScriptHash minVal maxVal) shs pgSize (decodeOP cursor)
                     return $
                         RPCResponse 200 pretty $
                         Right $
