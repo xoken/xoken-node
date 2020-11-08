@@ -100,7 +100,7 @@ addUser _ = throwBadRequest
 getChainInfo :: Handler App App ()
 getChainInfo = do
     lg <- getLogger
-    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     res <- LE.try $ xGetChainInfo
     case res of
         Left (e :: SomeException) -> do
@@ -113,7 +113,7 @@ getChainInfo = do
 getChainHeaders :: Handler App App ()
 getChainHeaders = do
     lg <- getLogger
-    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     ht <- (maybe 1 (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "startBlockHeight")
     pgsize <- (maybe 2000 (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pagesize")
     res <- LE.try $ xGetChainHeaders ht pgsize
@@ -128,7 +128,7 @@ getBlockByHash :: Handler App App ()
 getBlockByHash = do
     hash <- getParam "hash"
     lg <- getLogger
-    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     res <- LE.try $ xGetBlockHash (DTE.decodeUtf8 $ fromJust hash)
     case res of
         Left (e :: SomeException) -> do
@@ -142,7 +142,7 @@ getBlocksByHash :: Handler App App ()
 getBlocksByHash = do
     allMap <- getQueryParams
     lg <- getLogger
-    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     res <- LE.try $ xGetBlocksHashes (DTE.decodeUtf8 <$> (fromJust $ Map.lookup "hash" allMap))
     case res of
         Left (e :: SomeException) -> do
@@ -155,7 +155,7 @@ getBlockByHeight :: Handler App App ()
 getBlockByHeight = do
     height <- getParam "height"
     lg <- getLogger
-    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     res <- LE.try $ xGetBlockHeight (read $ DT.unpack $ DTE.decodeUtf8 $ fromJust height)
     case res of
         Left (e :: SomeException) -> do
@@ -169,7 +169,7 @@ getBlocksByHeight :: Handler App App ()
 getBlocksByHeight = do
     allMap <- getQueryParams
     lg <- getLogger
-    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     res <- LE.try $ xGetBlocksHeights (read . DT.unpack . DTE.decodeUtf8 <$> (fromJust $ Map.lookup "height" allMap))
     case res of
         Left (e :: SomeException) -> do
@@ -182,7 +182,7 @@ getRawTxById :: Handler App App ()
 getRawTxById = do
     txId <- getParam "id"
     lg <- getLogger
-    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     res <- LE.try $ xGetTxHash (DTE.decodeUtf8 $ fromJust txId)
     case res of
         Left (e :: SomeException) -> do
@@ -196,7 +196,7 @@ getRawTxByIds :: Handler App App ()
 getRawTxByIds = do
     allMap <- getQueryParams
     lg <- getLogger
-    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     res <- LE.try $ xGetTxHashes (DTE.decodeUtf8 <$> (fromJust $ Map.lookup "id" allMap))
     case res of
         Left (e :: SomeException) -> do
@@ -209,7 +209,7 @@ getTxById :: Handler App App ()
 getTxById = do
     txId <- getParam "id"
     lg <- getLogger
-    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     res <- LE.try $ xGetTxHash (DTE.decodeUtf8 $ fromJust txId)
     case res of
         Left (e :: SomeException) -> do
@@ -239,7 +239,7 @@ getTxByIds :: Handler App App ()
 getTxByIds = do
     allMap <- getQueryParams
     lg <- getLogger
-    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     res <- LE.try $ xGetTxHashes (DTE.decodeUtf8 <$> (fromJust $ Map.lookup "id" allMap))
     case res of
         Left (e :: SomeException) -> do
@@ -263,7 +263,7 @@ getTxIDsByBlockHash = do
     hash <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getParam "hash")
     pgNumber <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagenumber")
     pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
-    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     res <- LE.try $ xGetTxIDsByBlockHash (fromJust hash) (fromMaybe 100 pgSize) (fromMaybe 1 pgNumber)
     case res of
         Left (e :: SomeException) -> do
@@ -276,7 +276,7 @@ getTxOutputSpendStatus :: Handler App App ()
 getTxOutputSpendStatus = do
     txid <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getParam "txid")
     index <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getParam "index")
-    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     lg <- getLogger
     res <- LE.try $ xGetTxOutputSpendStatus (fromJust txid) (fromJust index)
     case res of
@@ -291,7 +291,7 @@ getOutputsByAddr = do
     addr <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getParam "address")
     pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
     cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
-    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     bp2pEnv <- getBitcoinP2P
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
     lg <- getLogger
@@ -313,7 +313,7 @@ getOutputsByAddrs = do
         Just (addrs :: [String]) -> do
             pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
             cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
-            pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+            pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
             bp2pEnv <- getBitcoinP2P
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
             lg <- getLogger
@@ -335,7 +335,7 @@ getOutputsByScriptHash = do
     sh <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getParam "scripthash")
     pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
     cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
-    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     bp2pEnv <- getBitcoinP2P
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
     lg <- getLogger
@@ -357,7 +357,7 @@ getOutputsByScriptHashes = do
         Just sh -> do
             pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
             cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
-            pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+            pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
             bp2pEnv <- getBitcoinP2P
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
             lg <- getLogger
@@ -379,7 +379,7 @@ getUTXOsByAddr = do
     addr <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getParam "address")
     pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
     cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
-    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     bp2pEnv <- getBitcoinP2P
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
     res <- LE.try $ xGetUTXOsAddress (fromJust addr) pgSize (decodeOP cursor)
@@ -400,7 +400,7 @@ getUTXOsByAddrs = do
         Just (addrs :: [String]) -> do
             pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
             cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
-            pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+            pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
             bp2pEnv <- getBitcoinP2P
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
             lg <- getLogger
@@ -422,7 +422,7 @@ getUTXOsByScriptHash = do
     sh <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getParam "scripthash")
     pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
     cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
-    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     bp2pEnv <- getBitcoinP2P
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
     lg <- getLogger
@@ -443,7 +443,7 @@ getUTXOsByScriptHashes = do
         Just sh -> do
             pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
             cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
-            pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+            pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
             bp2pEnv <- getBitcoinP2P
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
             lg <- getLogger
@@ -462,7 +462,7 @@ getUTXOsByScriptHashes = do
 getMNodesByTxID :: Handler App App ()
 getMNodesByTxID = do
     txId <- (DT.unpack . DTE.decodeUtf8 . fromJust) <$> getParam "txid"
-    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     res <- LE.try $ xGetMerkleBranch txId
     case res of
         Left (e :: SomeException) -> do
@@ -474,7 +474,7 @@ getMNodesByTxID = do
 getOutpointsByName :: Handler App App ()
 getOutpointsByName = do
     name <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getParam "name")
-    isProducer <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "isProducer")
+    isProducer <- (fmap $ read . DT.unpack . DT.toTitle . DTE.decodeUtf8) <$> (getQueryParam "isProducer")
     pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     res <- LE.try $ xGetAllegoryNameBranch (fromJust name) (fromJust isProducer)
     case res of
@@ -485,7 +485,7 @@ getOutpointsByName = do
 
 relayTx :: RPCReqParams' -> Handler App App ()
 relayTx RelayTx {..} = do
-    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     res <- LE.try $ xRelayTx rTx
     case res of
         Left (e :: SomeException) -> do
@@ -496,7 +496,7 @@ relayTx _ = throwBadRequest
 
 relayMultipleTx :: RPCReqParams' -> Handler App App ()
 relayMultipleTx RelayMultipleTx {..} = do
-    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     res <- LE.try $ xRelayMultipleTx rTxns
     case res of
         Left (e :: SomeException) -> do
@@ -507,7 +507,7 @@ relayMultipleTx _ = throwBadRequest
 
 getOutpointByName :: RPCReqParams' -> Handler App App ()
 getOutpointByName (AllegoryNameQuery nameArray isProducer) = do
-    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     res <- LE.try $ xGetOutpointByName nameArray isProducer
     case res of
         Left (e :: SomeException) -> do
@@ -519,7 +519,7 @@ getOutpointByName (AllegoryNameQuery nameArray isProducer) = do
 
 findNameReseller :: RPCReqParams' -> Handler App App ()
 findNameReseller (AllegoryNameQuery nameArray isProducer) = do
-    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     res <- LE.try $ xFindNameReseller nameArray isProducer
     case res of
         Left (e :: SomeException) -> do
@@ -533,7 +533,7 @@ getProducer _ = throwBadRequest
 getCurrentUser :: Handler App App ()
 getCurrentUser = do
     sk <- (fmap $ DTE.decodeUtf8) <$> (getParam "sessionKey")
-    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     res <- LE.try $ xGetUserBySessionKey (fromJust sk)
     case res of
         Left (e :: SomeException) -> do
@@ -545,7 +545,7 @@ getCurrentUser = do
 getUserByUsername :: Handler App App ()
 getUserByUsername = do
     uname <- (fmap $ DTE.decodeUtf8) <$> (getParam "username")
-    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     res <- LE.try $ xGetUserByUsername (fromJust uname)
     case res of
         Left (e :: SomeException) -> do
@@ -557,7 +557,7 @@ getUserByUsername = do
 deleteUserByUsername :: Handler App App ()
 deleteUserByUsername = do
     uname <- (fmap $ DTE.decodeUtf8) <$> (getParam "username")
-    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     res <- LE.try $ xDeleteUserByUsername (fromJust uname)
     case res of
         Left (e :: SomeException) -> do
@@ -570,7 +570,7 @@ deleteUserByUsername = do
 updateUserByUsername :: UpdateUserByUsername' -> Handler App App ()
 updateUserByUsername updates = do
     uname <- (fmap $ DTE.decodeUtf8) <$> (getParam "username")
-    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     res <- LE.try $ xUpdateUserByUsername (fromJust uname) updates
     case res of
         Left (e :: SomeException) -> do

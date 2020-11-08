@@ -43,9 +43,9 @@ apiRoutes =
     , ("/v1/scripthash/:scripthash/utxos", method GET (withAuth getUTXOsByScriptHash))
     , ("/v1/scripthashes/utxos", method GET (withAuth getUTXOsByScriptHashes))
     , ("/v1/merklebranch/:txid", method GET (withAuth getMNodesByTxID))
-    , ("/v1/allegory/:name", method GET (withAuth getOutpointsByName))
-    , ("/v1/name", method POST (withAuth $ withReq getOutpointByName))
-    , ("/v1/reseller", method POST (withAuth $ withReq findNameReseller))
+    , ("/v1/allegory/name-branch/:name", method GET (withAuth getOutpointsByName))
+    , ("/v1/allegory/name-outpoint", method POST (withAuth $ withReq getOutpointByName))
+    , ("/v1/allegory/reseller-uri", method POST (withAuth $ withReq findNameReseller))
     , ("/v1/relaytx", method POST (withAuth $ withReq relayTx))
     , ("/v1/relaymultipletx", method POST (withAuth $ withReq relayMultipleTx))
     ]
