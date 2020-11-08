@@ -60,7 +60,6 @@ data NodeConfig =
         , maxConnectionsXCql :: Int
         , maxTxProcessingThreads :: Int
         , maxTxProcessingBuffer :: Int
-        , maxProtocolLength :: Int
         }
     deriving (Show, Generic)
 

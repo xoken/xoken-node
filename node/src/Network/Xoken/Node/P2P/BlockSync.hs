@@ -721,6 +721,8 @@ processConfTransaction tx bhash blkht txind = do
     let ipSum = foldl (+) 0 $ (\(_, _, (_, _, val)) -> val) <$> inputs
         opSum = foldl (+) 0 $ (\(_, o, _) -> fromIntegral $ outValue o) <$> outAddrs
         fees = ipSum - opSum
+        serbs = runPutLazy $ putLazyByteString $ S.encodeLazy tx
+        count = BSL.length serbs
     --
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": calculated fees"
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": fetched input(s): " ++ show inputs
@@ -747,19 +749,23 @@ processConfTransaction tx bhash blkht txind = do
              let bi = (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
              let output = (txHashToHex txhs, i)
              let bsh = B16.encode $ scriptOutput o
-             let (op_false, rem) = B.splitAt 2 bsh
-             let (op_return, remD) = B.splitAt 2 rem
-             let (lengthD, orgData) = B.splitAt 2 remD
-             let lenIntM = (T.unpack . DTE.decodeUtf8 $ lengthD) ^? (base 10)
-             let maxLength = maxProtocolLength $ nodeConfig bp2pEnv
-             when (op_return == "6a" && lenIntM <= Just maxLength) $ do
+             let (op, rem) = B.splitAt 2 bsh
+             let (op_false, op_return, remD) =
+                     if op == "6a"
+                         then ("00", op, rem)
+                         else (\(a, b) -> (op, a, b)) $ B.splitAt 2 rem
+             let lm = B.uncons remD
+             -- read word8 and convert it into base 10
+             let lenIntM = lm >>= (\l -> (T.unpack . DTE.decodeUtf8 . B.singleton . fst $ l) ^? (base 10))
+             -- check if op_false is 00 and op_return is 6a and first word (length) of remaining is less than 0xfd
+             when (op_false == "00" && op_return == "6a" && (fst <$> lm) <= Just 0xfc) $ do
                  commitScriptOutputProtocol
                      conn
-                     (DTE.decodeUtf8 $ B.take (fromJust lenIntM) orgData)
+                     (DTE.decodeUtf8 $ B.take (fromJust lenIntM) (snd $ fromJust lm))
                      output
                      bi
                      fees
-                     (fromIntegral $ B.length $ B.drop (fromJust lenIntM) orgData) -- :TODO storing the remaining data bytes size, check with nitin
+                     (fromIntegral count)
              insertTxIdOutputs conn output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o)
              commitScriptHashOutputs
                  conn --
@@ -795,8 +801,6 @@ processConfTransaction tx bhash blkht txind = do
     -- persist tx
     let qstr :: Q.QueryString Q.W (Text, (Text, Int32, Int32), Blob, [((Text, Int32), Int32, (Text, Int64))], Int64) ()
         qstr = "insert INTO xoken.transactions (tx_id, block_info, tx_serialized , inputs, fees) values (?, ?, ?, ?, ?)"
-        serbs = runPutLazy $ putLazyByteString $ S.encodeLazy tx
-        count = BSL.length serbs
         smb a = a * 16 * 1000 * 1000
         segments =
             let (d, m) = divMod count (smb 1)
