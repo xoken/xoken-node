@@ -5,6 +5,7 @@ module Network.Xoken.Node.HTTP.Server where
 import qualified Data.ByteString as B
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.HTTP.Handler
+import Network.Xoken.Node.HTTP.QueryHandler
 import Network.Xoken.Node.HTTP.Types
 import Snap
 
@@ -12,6 +13,7 @@ appInit :: XokenNodeEnv -> SnapletInit App App
 appInit env =
     makeSnaplet "v1" "API's" Nothing $ do
         addRoutes apiRoutes
+        addRoutes queryRoutes
         return $ App env
 
 apiRoutes :: [(B.ByteString, Handler App App ())]
@@ -48,3 +50,6 @@ apiRoutes =
     , ("/v1/relaytx", method POST (withAuth $ withReq relayTx))
     , ("/v1/relaymultipletx", method POST (withAuth $ withReq relayMultipleTx))
     ]
+
+queryRoutes :: [(B.ByteString, Handler App App ())]
+queryRoutes = [("v1/query", method POST (withReq queryHandler))]
