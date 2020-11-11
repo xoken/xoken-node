@@ -22,6 +22,14 @@ import Snap
 tshow :: Show a => a -> Text
 tshow = Data.Text.pack . show
 
+showValue :: Value -> Text
+showValue (String t) = t
+showValue (Number s) = tshow s
+showValue (Bool b) = tshow b
+showValue (Array v) = tshow $ showValue <$> Data.Vector.toList v
+showValue Null = ""
+showValue (Object o) = tshow o -- :TODO not correct, yet shouldn't be used
+
 operators :: [Text]
 operators = ["$or", "$and", "$gt", "$gte", "$lt", "$lte", "$in", "$nin", "$eq", "$neq"]
 
@@ -56,7 +64,7 @@ instance FromJSON QueryRequest where
 
 encodeQuery :: HashMap Text Value -> Maybe Value -> Text
 encodeQuery req ret =
-    let m = "Match (protocol: Protocol), (block: Block) Where "
+    let m = "Match (protocol: Protocol)-[r:PRESENT_IN]->(block: Block) Where "
         withWhere = foldlWithKey' (\acc k v -> acc <> handleOp k v) m req
      in (fromMaybe withWhere $
          (\(Object hm) -> foldlWithKey' (\acc k v -> acc <> handleReturn k v) (withWhere <> " RETURN ") hm) <$> ret)
@@ -67,26 +75,28 @@ handleOp op v =
         "$or" ->
             case v of
                 Array v ->
-                    intercalate (tshow op) $
+                    intercalate (showOp op) $
                     fmap
                         (\x ->
                              case x of
                                  Object y -> foldlWithKey' (\acc k v -> acc <> handleOp k v) "" y)
                         (Data.Vector.toList v)
-                _ -> ""
+                _ -> undefined
         "$and" ->
             case v of
-                Array v ->
-                    intercalate (tshow op) $
-                    fmap
-                        (\x ->
-                             case x of
-                                 Object y -> foldlWithKey' (\acc k v -> acc <> handleOp k v) "" y)
-                        (Data.Vector.toList v)
-                _ -> ""
+                (Object y) ->
+                    foldlWithKey'
+                        (\acc k v ->
+                             acc <>
+                             if acc == ""
+                                 then handleOp k v
+                                 else showOp op <> " " <> handleOp k v)
+                        ""
+                        y
+                _ -> undefined
         k ->
             let (t, va) = dec v
-             in tshow k <> showOp t <> tshow va
+             in k <> showOp t <> showValue va
 
 dec :: Value -> (Text, Value)
 dec v =
@@ -95,10 +105,29 @@ dec v =
             if Prelude.length (keys hm) == 1
                 then (Prelude.head $ keys hm, Prelude.head $ elems hm)
                 else (tshow $ keys hm, String "dum")
-        x -> (tshow x, String "dum")
+        x -> (showValue x, String "dum")
 
 handleReturn :: Text -> Value -> Text
-handleReturn op v = undefined
+handleReturn "relation" (Object hm) =
+    foldlWithKey'
+        (\acc k v ->
+             acc <>
+             (if acc == ""
+                  then " r."
+                  else " , r.") <>
+             showValue v <> "(" <> k <> ")")
+        ""
+        hm
+handleReturn x (Object hm) =
+    foldlWithKey'
+        (\acc k v ->
+             acc <>
+             (if acc == ""
+                  then " "
+                  else " , ") <>
+             showValue v <> "(" <> k <> ")")
+        ""
+        hm
 
 queryHandler :: QueryRequest -> Handler App App ()
 queryHandler qr = do
