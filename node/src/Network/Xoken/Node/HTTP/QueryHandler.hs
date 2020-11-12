@@ -1,6 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE DeriveGeneric #-}
 
 module Network.Xoken.Node.HTTP.QueryHandler where
 
@@ -14,7 +13,7 @@ import Data.Vector
 import GHC.Generics
 import Network.Xoken.Node.HTTP.Types
 import Network.Xoken.Node.P2P.Common (addNewUser, generateSessionKey, getSimpleQueryParam, query, write)
-import Network.Xoken.Node.P2P.Types
+import Network.Xoken.Node.P2P.Types hiding (node)
 import Network.Xoken.Node.Service
 import Prelude
 import Snap
@@ -45,37 +44,6 @@ showOp "$nin" = " NOT IN "
 showOp "$eq" = " == "
 showOp "$neq" = " <> "
 showOp x = x
-
-stripLensPrefixOptions :: Options
-stripLensPrefixOptions = defaultOptions {fieldLabelModifier = Prelude.drop 1}
-
-data QueryRequest =
-    QueryRequest
-        { _where :: Maybe Value
-        , _return :: Maybe Value
-        , _on :: NodeRelation
-        }
-    deriving (Generic)
-
-instance ToJSON QueryRequest where
-    toJSON = genericToJSON stripLensPrefixOptions
-
-instance FromJSON QueryRequest where
-    parseJSON = genericParseJSON stripLensPrefixOptions
-
-data NodeRelation =
-    NodeRelation
-        { _from :: Text
-        , _via :: Maybe Text
-        , _to :: Text
-        }
-    deriving (Generic)
-
-instance ToJSON NodeRelation where
-    toJSON = genericToJSON stripLensPrefixOptions
-
-instance FromJSON NodeRelation where
-    parseJSON = genericParseJSON stripLensPrefixOptions
 
 encodeQuery :: HashMap Text Value -> Maybe Value -> NodeRelation -> Text
 encodeQuery req ret nr =
@@ -147,12 +115,26 @@ handleReturn x (Object hm) =
 getMatch :: NodeRelation -> Text
 getMatch nr =
     let m = "Match "
-        f = "(" <> toLower (_from nr) <> ": " <> (_from nr) <> " )"
-        t = "(" <> toLower (_to nr) <> ": " <> (_to nr) <> " )"
+        f = "(" <> (aliasNode (_from nr :: Node)) <> ": " <> (node $ _from nr) <> " )"
+        t =
+            case _to nr of
+                Just x -> "(" <> (aliasNode (x :: Node)) <> ": " <> (node x) <> " )"
+                Nothing -> ""
         v =
             case _via nr of
-                Just x -> "-[r:" <> x <> "]->"
-                Nothing -> ","
+                Just x ->
+                    "-[" <>
+                    (aliasRel (x :: Relation)) <>
+                    ":" <>
+                    (relationship x) <>
+                    "]-" <>
+                    (if direction x == Just True
+                         then ">"
+                         else "")
+                Nothing ->
+                    if isJust (_to nr)
+                        then ","
+                        else ""
      in m <> f <> v <> t
 
 queryHandler :: QueryRequest -> Handler App App ()
