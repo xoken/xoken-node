@@ -53,6 +53,7 @@ data QueryRequest =
     QueryRequest
         { _where :: Maybe Value
         , _return :: Maybe Value
+        , _on :: NodeRelation
         }
     deriving (Generic)
 
@@ -62,9 +63,23 @@ instance ToJSON QueryRequest where
 instance FromJSON QueryRequest where
     parseJSON = genericParseJSON stripLensPrefixOptions
 
-encodeQuery :: HashMap Text Value -> Maybe Value -> Text
-encodeQuery req ret =
-    let m = "Match (protocol: Protocol)-[r:PRESENT_IN]->(block: Block) Where "
+data NodeRelation =
+    NodeRelation
+        { _from :: Text
+        , _via :: Maybe Text
+        , _to :: Text
+        }
+    deriving (Generic)
+
+instance ToJSON NodeRelation where
+    toJSON = genericToJSON stripLensPrefixOptions
+
+instance FromJSON NodeRelation where
+    parseJSON = genericParseJSON stripLensPrefixOptions
+
+encodeQuery :: HashMap Text Value -> Maybe Value -> NodeRelation -> Text
+encodeQuery req ret nr =
+    let m = getMatch nr <> " Where "
         withWhere = foldlWithKey' (\acc k v -> acc <> handleOp k v) m req
      in (fromMaybe withWhere $
          (\(Object hm) -> foldlWithKey' (\acc k v -> acc <> handleReturn k v) (withWhere <> " RETURN ") hm) <$> ret)
@@ -129,10 +144,21 @@ handleReturn x (Object hm) =
         ""
         hm
 
+getMatch :: NodeRelation -> Text
+getMatch nr =
+    let m = "Match "
+        f = "(" <> toLower (_from nr) <> ": " <> (_from nr) <> " )"
+        t = "(" <> toLower (_to nr) <> ": " <> (_to nr) <> " )"
+        v =
+            case _via nr of
+                Just x -> "-[r:" <> x <> "]->"
+                Nothing -> ","
+     in m <> f <> v <> t
+
 queryHandler :: QueryRequest -> Handler App App ()
 queryHandler qr = do
     case _where qr of
         Just (Object hm) -> do
-            let resp = encodeQuery hm (_return qr)
+            let resp = encodeQuery hm (_return qr) (_on qr)
             writeBS $ DTE.encodeUtf8 resp
         _ -> undefined
