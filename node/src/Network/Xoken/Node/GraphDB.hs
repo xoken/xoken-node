@@ -544,7 +544,6 @@ deleteMerkleSubTree inodes = do
     cypher = (pack matchTemplate) <> inMatch <> (pack deleteTemplate)
     txtTx i = txHashToHex $ TxHash $ fromJust i
 
--- :TODO create if not exists
 createBlockNode :: BlockPInfo -> BoltActionT IO ()
 createBlockNode BlockPInfo {..} = do
     res <- LE.try $ queryP cypher params
@@ -555,7 +554,7 @@ createBlockNode BlockPInfo {..} = do
         Right (records) -> return ()
   where
     cypher =
-        " CREATE (b: Block { hash: {hash}, height: {height}, timestamp: {timestamp}, day: {day }, month: {month}, year: {year} }) WITH a, b"
+        " MERGE (b: Block { hash: {hash}, height: {height}, timestamp: {timestamp}, day: {day }, month: {month}, year: {year} }) WITH a, b"
     params =
         fromList $
         [ ("height", I height)
@@ -566,7 +565,6 @@ createBlockNode BlockPInfo {..} = do
         , ("year", I year)
         ]
 
--- :TODO create if not exists
 createProtocolNode :: Text -> [(Text, Text)] -> BoltActionT IO ()
 createProtocolNode name properties = do
     res <- LE.try $ queryP cypher params
@@ -576,7 +574,7 @@ createProtocolNode name properties = do
             throw e
         Right (records) -> return ()
   where
-    cypher = " CREATE (a: Protocol { name: {name}," <> props <> "  }) "
+    cypher = " MERGE (a: Protocol { name: {name}," <> props <> "  }) "
     props = intercalate "," $ Prelude.map (\(a, _) -> a <> ": {" <> a <> "}") properties
     propsV = Prelude.map (\(a, b) -> (a, T b)) properties
     params = fromList $ [("name", T name)] <> propsV
@@ -592,12 +590,5 @@ insertProtocolWithBlockInfo name properties BlockPInfo {..} = do
         Right (records) -> return ()
   where
     cypher =
-        " MATCH (a: Protocol), (b: Block) WHERE a.name = {name} AND b.hash = {hash} CREATE (a)-[r:PRESENT_IN{avg_byte: {bytes}, avg_fee: {fees}, tx_count: {count}}]->(b)"
-    params =
-        fromList $
-        [ ("name", T name)
-        , ("hash", T hash)
-        , ("bytes", F (int2Double bytes / int2Double count))
-        , ("fees", F (int2Double fees / int2Double count))
-        , ("count", I count)
-        ]
+        " MATCH (a: Protocol), (b: Block) WHERE a.name = {name} AND b.hash = {hash} CREATE (a)-[r:PRESENT_IN{bytes: {bytes}, fees: {fees}, tx_count: {count}}]->(b)"
+    params = fromList $ [("name", T name), ("hash", T hash), ("bytes", I bytes), ("fees", I fees), ("count", I count)]
