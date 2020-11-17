@@ -84,12 +84,13 @@ import Network.Xoken.Constants
 import Network.Xoken.Crypto.Hash
 import Network.Xoken.Network.Common
 import Network.Xoken.Network.Message
-import Network.Xoken.Node.Data
+import Network.Xoken.Node.Data as DA
 import qualified Network.Xoken.Node.Data.ThreadSafeHashTable as TSH
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.GraphDB
 import Network.Xoken.Node.P2P.Common
 import Network.Xoken.Node.P2P.Types as Type
+import Network.Xoken.Node.Service.Chain
 import Network.Xoken.Script.Standard
 import Network.Xoken.Transaction.Common
 import Network.Xoken.Util
@@ -760,7 +761,7 @@ processConfTransaction bis tx bhash blkht txind = do
              when (op_false == "00" && op_return == "6a" && (fst <$> lm) <= Just 0xfc) $ do
                  let props = getProps (B.drop (fromJust lenIntM) (snd $ fromJust lm))
                  let protocol = DTE.decodeUtf8 $ B.take (fromJust lenIntM) (snd $ fromJust lm)
-                 ts <- liftIO $ readTVarIO (currentBlockTimestamp bp2pEnv)
+                 ts <- (blockTimestamp' . DA.blockHeader . head) <$> xGetChainHeaders (fromIntegral blkht) 1
                  let (y, m, d) = toGregorian $ utctDay $ posixSecondsToUTCTime (fromIntegral ts)
                  let curBi =
                          BlockPInfo

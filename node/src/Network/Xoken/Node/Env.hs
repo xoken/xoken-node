@@ -87,7 +87,6 @@ data BitcoinP2P =
         , txProcFailAttempts :: !(TVar Int)
         , bestSyncedBlock :: !(TVar (Maybe BlockInfo))
         , protocolInfo :: !(TSH.TSHashTable Text ([(Text, Text)], BlockPInfo))
-        , currentBlockTimestamp :: !(TVar Timestamp)
         }
 
 class HasBitcoinP2P m where

@@ -799,11 +799,7 @@ messageHandler peer (mm, ingss) = do
                         Left (e :: SomeException) -> throw MerkleSubTreeDBInsertException
                     res <- LE.try $ processBlock blk
                     case res of
-                        Right () -> do
-                            liftIO $
-                                atomically $
-                                writeTVar (currentBlockTimestamp bp2pEnv) (blockTimestamp $ defBlockHeader blk)
-                            return ()
+                        Right () -> return ()
                         Left BlockHashNotFoundException -> return ()
                         Left EmptyHeadersMessageException -> return ()
                         Left e -> do
