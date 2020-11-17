@@ -779,24 +779,6 @@ messageHandler peer (mm, ingss) = do
                     processUnconfTransaction tx
                     return $ msgType msg
                 MBlock blk -> do
-                    pi <- liftIO $ TSH.toList (protocolInfo bp2pEnv)
-                    pres <-
-                        liftIO $
-                        try $ do
-                            tryWithResource
-                                (pool $ graphDB dbe)
-                                (`BT.run` (createBlockNode (snd $ snd $ head pi) *>
-                                           (createProtocolNode (fst $ head pi) (fst $ snd $ head pi))))
-                            traverse
-                                (\(protocol, (props, blockInf)) -> do
-                                     TSH.delete (protocolInfo bp2pEnv) protocol
-                                     tryWithResource
-                                         (pool $ graphDB dbe)
-                                         (`BT.run` insertProtocolWithBlockInfo protocol props blockInf))
-                                pi
-                    case pres of
-                        Right rt -> return ()
-                        Left (e :: SomeException) -> throw MerkleSubTreeDBInsertException
                     res <- LE.try $ processBlock blk
                     case res of
                         Right () -> return ()
@@ -872,9 +854,16 @@ processTxBatch txns iss = do
 --
 processTxStream :: (HasXokenNodeEnv env m, MonadIO m) => BlockIngestState -> (Tx, BlockInfo, Int) -> m ()
 processTxStream bi (tx, binfo, txIndex) = do
+    bp2pEnv <- getBitcoinP2P
     let bhash = biBlockHash binfo
         bheight = biBlockHeight binfo
     lg <- getLogger
+    v <- liftIO $ TSH.lookup (protocolInfo bp2pEnv) bhash
+    case v of
+        Just x -> return ()
+        Nothing -> do
+            pi <- liftIO $ TSH.new 32
+            liftIO $ TSH.insert (protocolInfo bp2pEnv) bhash pi
     res <- LE.try $ processConfTransaction bi (tx) bhash (fromIntegral bheight) txIndex
     case res of
         Right () -> return ()

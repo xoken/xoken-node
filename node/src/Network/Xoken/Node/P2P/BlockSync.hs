@@ -368,7 +368,31 @@ runBlockCacheQueue =
                                                      (blockSyncStatusMap bp2pEnv)
                                                      (bsh)
                                                      (BlockProcessingComplete, ht)
-                                             return ()
+                                             v <- liftIO $ TSH.lookup (protocolInfo bp2pEnv) bsh
+                                             pi <- liftIO $ TSH.toList (fromJust v)
+                                             pres <-
+                                                 liftIO $
+                                                 try $ do
+                                                     tryWithResource
+                                                         (pool $ graphDB dbe)
+                                                         (`BT.run` (createBlockNode (snd $ snd $ head pi) *>
+                                                                    (createProtocolNode
+                                                                         (fst $ head pi)
+                                                                         (fst $ snd $ head pi))))
+                                                     traverse
+                                                         (\(protocol, (props, blockInf)) -> do
+                                                              TSH.delete (fromJust v) protocol
+                                                              tryWithResource
+                                                                  (pool $ graphDB dbe)
+                                                                  (`BT.run` insertProtocolWithBlockInfo
+                                                                                protocol
+                                                                                props
+                                                                                blockInf))
+                                                         pi
+                                                     TSH.delete (protocolInfo bp2pEnv) bsh
+                                             case pres of
+                                                 Right rt -> return ()
+                                                 Left (e :: SomeException) -> throw MerkleSubTreeDBInsertException
                                          else return ()
                                  Nothing -> return ())
                         (syt)
@@ -791,7 +815,8 @@ processConfTransaction bis tx bhash blkht txind = do
                              Just (p, bi) -> (Just (p <> props, upf bi), ())
                              Nothing -> (Just (props, curBi), ())
                  commitScriptOutputProtocol conn protocol output bi fees (fromIntegral count)
-                 liftIO $ TSH.mutate (protocolInfo bp2pEnv) protocol fn
+                 v <- liftIO $ TSH.lookup (protocolInfo bp2pEnv) bhash
+                 liftIO $ TSH.mutate (fromJust v) protocol fn
              insertTxIdOutputs conn output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o)
              commitScriptHashOutputs
                  conn --
