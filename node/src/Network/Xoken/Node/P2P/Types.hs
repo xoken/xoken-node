@@ -21,6 +21,7 @@ import Data.IORef
 import Data.Int
 import qualified Data.Map.Strict as M
 import Data.Pool
+import Data.Text
 import Data.Time.Clock
 import Data.Word
 import Database.Bolt as BT
@@ -102,6 +103,20 @@ data BlockInfo =
     BlockInfo
         { biBlockHash :: !BlockHash
         , biBlockHeight :: !BlockHeight
+        }
+    deriving (Show)
+
+data BlockPInfo =
+    BlockPInfo
+        { height :: Int
+        , hash :: Text
+        , timestamp :: Int
+        , day :: Int
+        , month :: Int
+        , year :: Int
+        , fees :: Int
+        , bytes :: Int
+        , count :: Int
         }
     deriving (Show)
 

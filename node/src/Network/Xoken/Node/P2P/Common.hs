@@ -17,6 +17,7 @@ import Control.Concurrent.MVar
 import Control.Concurrent.STM.TVar
 import Control.Exception
 import qualified Control.Exception.Lifted as LE (try)
+import Control.Lens
 import Control.Monad
 import Control.Monad.Logger
 import Control.Monad.Reader
@@ -67,6 +68,7 @@ import Network.Xoken.Node.Env
 import Network.Xoken.Node.P2P.Types
 import Network.Xoken.Transaction.Common
 import Network.Xoken.Util
+import Numeric.Lens (base)
 import Streamly
 import Streamly.Prelude ((|:), nil)
 import qualified Streamly.Prelude as S
@@ -568,3 +570,22 @@ getTx conn qstr hash segments = do
                            in acc <> fromBlob sz)
         BSL.empty
         [1 .. segments]
+
+getProps :: B.ByteString -> [(Text, Text)]
+getProps = go mempty 4 -- 4 properties
+  where
+    go acc 0 _ = acc
+    go acc n b = do
+        let lm = B.uncons b
+        let lenIntM = lm >>= (\l -> (T.unpack . DTE.decodeUtf8 . B.singleton . fst $ l) ^? (base 10))
+        if (fst <$> lm) <= Just 0xfc
+            then go (( "prop" <> (T.pack $ show (4 - n))
+                     , (DTE.decodeUtf8 $ B.take (fromJust lenIntM) (snd $ fromJust lm))) :
+                     acc)
+                     (n - 1)
+                     (B.drop (fromJust lenIntM) (snd $ fromJust lm))
+            else acc
+
+headMaybe :: [a] -> Maybe a
+headMaybe [] = Nothing
+headMaybe (x:xs) = Just x

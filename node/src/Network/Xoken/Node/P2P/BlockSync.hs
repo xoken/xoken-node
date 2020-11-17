@@ -89,7 +89,7 @@ import qualified Network.Xoken.Node.Data.ThreadSafeHashTable as TSH
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.GraphDB
 import Network.Xoken.Node.P2P.Common
-import Network.Xoken.Node.P2P.Types
+import Network.Xoken.Node.P2P.Types as Type
 import Network.Xoken.Script.Standard
 import Network.Xoken.Transaction.Common
 import Network.Xoken.Util
@@ -612,8 +612,9 @@ commitTxPage txhash bhash page = do
             liftIO $ err lg $ LG.msg ("Error: INSERTing into 'xoken.blockhash_txids': " ++ show e)
             throw KeyValueDBInsertException
 
-processConfTransaction :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Tx -> BlockHash -> Int -> Int -> m ()
-processConfTransaction tx bhash blkht txind = do
+processConfTransaction ::
+       (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BlockIngestState -> Tx -> BlockHash -> Int -> Int -> m ()
+processConfTransaction bis tx bhash blkht txind = do
     dbe' <- getDB
     bp2pEnv <- getBitcoinP2P
     lg <- getLogger
@@ -755,17 +756,41 @@ processConfTransaction tx bhash blkht txind = do
                          then ("00", op, rem)
                          else (\(a, b) -> (op, a, b)) $ B.splitAt 2 rem
              let lm = B.uncons remD
-             -- read word8 and convert it into base 10
              let lenIntM = lm >>= (\l -> (T.unpack . DTE.decodeUtf8 . B.singleton . fst $ l) ^? (base 10))
-             -- check if op_false is 00 and op_return is 6a and first word (length) of remaining is less than 0xfd
              when (op_false == "00" && op_return == "6a" && (fst <$> lm) <= Just 0xfc) $ do
-                 commitScriptOutputProtocol
-                     conn
-                     (DTE.decodeUtf8 $ B.take (fromJust lenIntM) (snd $ fromJust lm))
-                     output
-                     bi
-                     fees
-                     (fromIntegral count)
+                 let props = getProps (B.drop (fromJust lenIntM) (snd $ fromJust lm))
+                 let protocol = DTE.decodeUtf8 $ B.take (fromJust lenIntM) (snd $ fromJust lm)
+                 ts <- liftIO $ readTVarIO (currentBlockTimestamp bp2pEnv)
+                 let (y, m, d) = toGregorian $ utctDay $ posixSecondsToUTCTime (fromIntegral ts)
+                 let curBi =
+                         BlockPInfo
+                             { height = blkht
+                             , hash = T.pack $ show bhash
+                             , timestamp = fromIntegral ts
+                             , day = d
+                             , month = m
+                             , year = fromIntegral y
+                             , fees = fromIntegral fees
+                             , bytes = binBlockSize bis
+                             , count = 1
+                             }
+                 let upf b =
+                         BlockPInfo
+                             blkht
+                             (Type.hash b)
+                             (Type.timestamp b)
+                             (day b)
+                             (month b)
+                             (year b)
+                             ((fromIntegral fees) + (Type.fees b))
+                             ((binBlockSize bis) + (Type.bytes b))
+                             ((Type.count b) + 1)
+                 let fn x =
+                         case x of
+                             Just (p, bi) -> (Just (p <> props, upf bi), ())
+                             Nothing -> (Just (props, curBi), ())
+                 commitScriptOutputProtocol conn protocol output bi fees (fromIntegral count)
+                 liftIO $ TSH.mutate (protocolInfo bp2pEnv) protocol fn
              insertTxIdOutputs conn output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o)
              commitScriptHashOutputs
                  conn --

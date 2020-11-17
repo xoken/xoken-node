@@ -1,16 +1,24 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
 module Network.Xoken.Node.HTTP.QueryHandler where
 
+import Control.Exception
+import Control.Monad.IO.Class
 import Data.Aeson
+import qualified Data.ByteString.Lazy as BSL
 import Data.Either
 import Data.HashMap.Strict
 import Data.Maybe
+import Data.Pool
 import Data.Text
 import qualified Data.Text.Encoding as DTE
 import Data.Vector
+import qualified Database.Bolt as BT
 import GHC.Generics
+import Network.Xoken.Node.Env
+import Network.Xoken.Node.HTTP.Handler
 import Network.Xoken.Node.HTTP.Types
 import Network.Xoken.Node.P2P.Common (addNewUser, generateSessionKey, getSimpleQueryParam, query, write)
 import Network.Xoken.Node.P2P.Types hiding (node)
@@ -137,10 +145,14 @@ getMatch nr =
                         else ""
      in m <> f <> v <> t
 
-queryHandler :: QueryRequest -> Handler App App ()
+queryHandler :: QueryRequest -> Snap.Handler App App ()
 queryHandler qr = do
     case _where qr of
         Just (Object hm) -> do
-            let resp = encodeQuery hm (_return qr) (_on qr)
-            writeBS $ DTE.encodeUtf8 resp
-        _ -> undefined
+            let resp = BT.query $ encodeQuery hm (_return qr) (_on qr)
+            dbe <- getDB
+            pres <- liftIO $ try $ tryWithResource (pool $ graphDB dbe) (`BT.run` resp)
+            case pres of
+                Right rt -> writeBS $ BSL.toStrict $ encode rt
+                Left (e :: SomeException) -> throwBadRequest
+        _ -> throwBadRequest

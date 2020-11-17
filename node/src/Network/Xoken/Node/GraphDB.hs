@@ -38,6 +38,7 @@ import Data.Text (Text, append, concat, filter, intercalate, isInfixOf, map, nul
 import Data.Time.Clock
 import Data.Word
 import Database.Bolt as BT
+import GHC.Float
 import GHC.Generics
 import Network.Socket hiding (send)
 import Network.Xoken.Crypto.Hash
@@ -150,8 +151,7 @@ queryAllegoryNameScriptOp name isProducer = do
 initAllegoryRoot :: Tx -> BoltActionT IO ()
 initAllegoryRoot tx = do
     let oops = pack $ "fe38e79e4067304d382b3ba8d67970f4f0cd26f988aac6c88bddffb4ec628daf" ++ ":" ++ show 0
-    let scr =
-            "76a91447dc5f6dd425347e6aeacd226c3196b385394fb488ac"
+    let scr = "76a91447dc5f6dd425347e6aeacd226c3196b385394fb488ac"
     let cypher =
             " MERGE (rr:namestate {name:{dummyroot} })  " <>
             " MERGE (ns:namestate { name:{nsname}, type: {type} })-[r:REVISION]->(nu:nutxo { outpoint: {out_op}, name:{name}, producer:{isProducer} ,script: {scr} , root:{isInit}}) "
@@ -543,3 +543,61 @@ deleteMerkleSubTree inodes = do
         Prelude.map (\repl -> replace ("<h>") (repl) (pack " \'<h>\' ")) (Prelude.map (\z -> txtTx z) nodes)
     cypher = (pack matchTemplate) <> inMatch <> (pack deleteTemplate)
     txtTx i = txHashToHex $ TxHash $ fromJust i
+
+-- :TODO create if not exists
+createBlockNode :: BlockPInfo -> BoltActionT IO ()
+createBlockNode BlockPInfo {..} = do
+    res <- LE.try $ queryP cypher params
+    case res of
+        Left (e :: SomeException) -> do
+            liftIO $ print ("[ERROR] createblock node " ++ show e)
+            throw e
+        Right (records) -> return ()
+  where
+    cypher =
+        " CREATE (b: Block { hash: {hash}, height: {height}, timestamp: {timestamp}, day: {day }, month: {month}, year: {year} }) WITH a, b"
+    params =
+        fromList $
+        [ ("height", I height)
+        , ("hash", T hash)
+        , ("timestamp", I timestamp)
+        , ("day", I day)
+        , ("month", I month)
+        , ("year", I year)
+        ]
+
+-- :TODO create if not exists
+createProtocolNode :: Text -> [(Text, Text)] -> BoltActionT IO ()
+createProtocolNode name properties = do
+    res <- LE.try $ queryP cypher params
+    case res of
+        Left (e :: SomeException) -> do
+            liftIO $ print ("[ERROR] createProtocolNode node " ++ show e)
+            throw e
+        Right (records) -> return ()
+  where
+    cypher = " CREATE (a: Protocol { name: {name}," <> props <> "  }) "
+    props = intercalate "," $ Prelude.map (\(a, _) -> a <> ": {" <> a <> "}") properties
+    propsV = Prelude.map (\(a, b) -> (a, T b)) properties
+    params = fromList $ [("name", T name)] <> propsV
+
+-- Insert protocol with properties and block info
+insertProtocolWithBlockInfo :: Text -> [(Text, Text)] -> BlockPInfo -> BoltActionT IO ()
+insertProtocolWithBlockInfo name properties BlockPInfo {..} = do
+    res <- LE.try $ queryP cypher params
+    case res of
+        Left (e :: SomeException) -> do
+            liftIO $ print ("[ERROR] insertProtocolWithBlockInfo " ++ show e)
+            throw e
+        Right (records) -> return ()
+  where
+    cypher =
+        " MATCH (a: Protocol), (b: Block) WHERE a.name = {name} AND b.hash = {hash} CREATE (a)-[r:PRESENT_IN{avg_byte: {bytes}, avg_fee: {fees}, tx_count: {count}}]->(b)"
+    params =
+        fromList $
+        [ ("name", T name)
+        , ("hash", T hash)
+        , ("bytes", F (int2Double bytes / int2Double count))
+        , ("fees", F (int2Double fees / int2Double count))
+        , ("count", I count)
+        ]

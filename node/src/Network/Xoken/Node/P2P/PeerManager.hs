@@ -707,6 +707,7 @@ messageHandler ::
     -> m (MessageCommand)
 messageHandler peer (mm, ingss) = do
     bp2pEnv <- getBitcoinP2P
+    dbe <- getDB
     lg <- getLogger
     case mm of
         Just msg -> do
@@ -777,12 +778,32 @@ messageHandler peer (mm, ingss) = do
                 MTx tx -> do
                     processUnconfTransaction tx
                     return $ msgType msg
-                MBlock blk
-                    -- debug lg $ LG.msg $ LG.val ("DEBUG receiving block ")
-                 -> do
+                MBlock blk -> do
+                    pi <- liftIO $ TSH.toList (protocolInfo bp2pEnv)
+                    pres <-
+                        liftIO $
+                        try $ do
+                            tryWithResource
+                                (pool $ graphDB dbe)
+                                (`BT.run` (createBlockNode (snd $ snd $ head pi) *>
+                                           (createProtocolNode (fst $ head pi) (fst $ snd $ head pi))))
+                            traverse
+                                (\(protocol, (props, blockInf)) -> do
+                                     TSH.delete (protocolInfo bp2pEnv) protocol
+                                     tryWithResource
+                                         (pool $ graphDB dbe)
+                                         (`BT.run` insertProtocolWithBlockInfo protocol props blockInf))
+                                pi
+                    case pres of
+                        Right rt -> return ()
+                        Left (e :: SomeException) -> throw MerkleSubTreeDBInsertException
                     res <- LE.try $ processBlock blk
                     case res of
-                        Right () -> return ()
+                        Right () -> do
+                            liftIO $
+                                atomically $
+                                writeTVar (currentBlockTimestamp bp2pEnv) (blockTimestamp $ defBlockHeader blk)
+                            return ()
                         Left BlockHashNotFoundException -> return ()
                         Left EmptyHeadersMessageException -> return ()
                         Left e -> do
@@ -839,7 +860,7 @@ processTxBatch txns iss = do
                                      then debug lg $ LG.msg $ (" (error) Tx__index: " ++ show idx ++ show bf)
                                      else debug lg $ LG.msg $ ("Tx__index: " ++ show idx)
                                  return ((txns !! idx), bf, cidx)) &
-                        S.mapM (processTxStream) &
+                        S.mapM (processTxStream bi) &
                         S.maxBuffer (maxTxProcessingBuffer $ nodeConfig bp2pEnv) &
                         S.maxThreads (maxTxProcessingThreads $ nodeConfig bp2pEnv)
                     valy <- liftIO $ TSH.lookup (blockTxProcessingLeftMap bp2pEnv) (biBlockHash bf)
@@ -852,13 +873,13 @@ processTxBatch txns iss = do
         Nothing -> throw InvalidStreamStateException
 
 --
--- 
-processTxStream :: (HasXokenNodeEnv env m, MonadIO m) => (Tx, BlockInfo, Int) -> m ()
-processTxStream (tx, binfo, txIndex) = do
+--
+processTxStream :: (HasXokenNodeEnv env m, MonadIO m) => BlockIngestState -> (Tx, BlockInfo, Int) -> m ()
+processTxStream bi (tx, binfo, txIndex) = do
     let bhash = biBlockHash binfo
         bheight = biBlockHeight binfo
     lg <- getLogger
-    res <- LE.try $ processConfTransaction (tx) bhash (fromIntegral bheight) txIndex
+    res <- LE.try $ processConfTransaction bi (tx) bhash (fromIntegral bheight) txIndex
     case res of
         Right () -> return ()
         Left TxIDNotFoundException -> do
