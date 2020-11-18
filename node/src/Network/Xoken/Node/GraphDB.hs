@@ -544,41 +544,6 @@ deleteMerkleSubTree inodes = do
     cypher = (pack matchTemplate) <> inMatch <> (pack deleteTemplate)
     txtTx i = txHashToHex $ TxHash $ fromJust i
 
-createBlockNode :: BlockPInfo -> BoltActionT IO ()
-createBlockNode BlockPInfo {..} = do
-    res <- LE.try $ queryP cypher params
-    case res of
-        Left (e :: SomeException) -> do
-            liftIO $ print ("[ERROR] createblock node " ++ show e)
-            throw e
-        Right (records) -> return ()
-  where
-    cypher =
-        " MERGE (b: Block { hash: {hash}, height: {height}, timestamp: {timestamp}, day: {day }, month: {month}, year: {year} }) WITH a, b"
-    params =
-        fromList $
-        [ ("height", I height)
-        , ("hash", T hash)
-        , ("timestamp", I timestamp)
-        , ("day", I day)
-        , ("month", I month)
-        , ("year", I year)
-        ]
-
-createProtocolNode :: Text -> [(Text, Text)] -> BoltActionT IO ()
-createProtocolNode name properties = do
-    res <- LE.try $ queryP cypher params
-    case res of
-        Left (e :: SomeException) -> do
-            liftIO $ print ("[ERROR] createProtocolNode node " ++ show e)
-            throw e
-        Right (records) -> return ()
-  where
-    cypher = " MERGE (a: Protocol { name: {name}," <> props <> "  }) "
-    props = intercalate "," $ Prelude.map (\(a, _) -> a <> ": {" <> a <> "}") properties
-    propsV = Prelude.map (\(a, b) -> (a, T b)) properties
-    params = fromList $ [("name", T name)] <> propsV
-
 -- Insert protocol with properties and block info
 insertProtocolWithBlockInfo :: Text -> [(Text, Text)] -> BlockPInfo -> BoltActionT IO ()
 insertProtocolWithBlockInfo name properties BlockPInfo {..} = do
@@ -590,5 +555,21 @@ insertProtocolWithBlockInfo name properties BlockPInfo {..} = do
         Right (records) -> return ()
   where
     cypher =
+        " MERGE (a: Protocol { name: {name}," <>
+        props <>
+        "  }) " <>
+        " MERGE (b: Block { hash: {hash}, height: {height}, timestamp: {timestamp}, day: {day }, month: {month}, year: {year} }) WITH a, b" <>
         " MATCH (a: Protocol), (b: Block) WHERE a.name = {name} AND b.hash = {hash} CREATE (a)-[r:PRESENT_IN{bytes: {bytes}, fees: {fees}, tx_count: {count}}]->(b)"
-    params = fromList $ [("name", T name), ("hash", T hash), ("bytes", I bytes), ("fees", I fees), ("count", I count)]
+    props = intercalate "," $ Prelude.map (\(a, _) -> a <> ": {" <> a <> "}") properties
+    propsV = Prelude.map (\(a, b) -> (a, T b)) properties
+    params =
+        fromList $
+        [ ("height", I height)
+        , ("hash", T hash)
+        , ("timestamp", I timestamp)
+        , ("day", I day)
+        , ("month", I month)
+        , ("year", I year)
+        , ("name", T name)
+        ] <>
+        propsV

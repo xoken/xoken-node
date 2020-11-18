@@ -373,12 +373,6 @@ runBlockCacheQueue =
                                              pres <-
                                                  liftIO $
                                                  try $ do
-                                                     tryWithResource
-                                                         (pool $ graphDB dbe)
-                                                         (`BT.run` (createBlockNode (snd $ snd $ head pi) *>
-                                                                    (createProtocolNode
-                                                                         (fst $ head pi)
-                                                                         (fst $ snd $ head pi))))
                                                      traverse
                                                          (\(protocol, (props, blockInf)) -> do
                                                               TSH.delete (fromJust v) protocol
