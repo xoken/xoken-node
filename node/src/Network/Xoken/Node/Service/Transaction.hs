@@ -212,7 +212,7 @@ xGetTxHashes hashes = do
         uqstr =
             ustr :: Q.QueryString Q.R (Bool, DT.Text) ( DT.Text
                                                       , Blob
-                                                      , [((DT.Text, Int32), Int32, (DT.Text, Int64))]
+                                                      , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
                                                       , Int64)
         p = getSimpleQueryParam $ Identity $ hashes
         up a = getSimpleQueryParam $ (ep, a)
@@ -231,7 +231,7 @@ xGetTxHashes hashes = do
                 throw KeyValueDBLookupException
     cures <-
         case ures of
-            Right iop -> pure $ L.map (\(txid, psz, sinps, fees) -> (txid, Nothing, psz, sinps, fees)) (L.concat iop)
+            Right iop -> pure $ L.map (\(txid, psz, sinps, fees) -> (txid, Nothing, psz, Q.fromSet sinps, fees)) (L.concat iop)
             Left (e :: SomeException) -> do
                 err lg $ LG.msg $ "Error: xGetTxHashes: " ++ show e
                 throw KeyValueDBLookupException
