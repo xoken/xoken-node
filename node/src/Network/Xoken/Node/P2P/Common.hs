@@ -572,14 +572,14 @@ getTx conn qstr hash segments = do
         [1 .. segments]
 
 getProps :: B.ByteString -> [(Text, Text)]
-getProps = go mempty 4 -- 4 properties
+getProps = go mempty 5 -- name, 4 properties
   where
     go acc 0 _ = acc
     go acc n b = do
         let lm = B.uncons b
         let lenIntM = lm >>= (\l -> (T.unpack . DTE.decodeUtf8 . B.singleton . fst $ l) ^? (base 10))
         if (fst <$> lm) <= Just 0xfc
-            then go (( "prop" <> (T.pack $ show (4 - n))
+            then go (( "prop" <> (T.pack $ show (6 - n)) -- starts at prop1
                      , (DTE.decodeUtf8 $ B.take (fromJust lenIntM) (snd $ fromJust lm))) :
                      acc)
                      (n - 1)

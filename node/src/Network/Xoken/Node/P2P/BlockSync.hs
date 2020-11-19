@@ -774,11 +774,9 @@ processConfTransaction bis tx bhash blkht txind = do
                      if op == "6a"
                          then ("00", op, rem)
                          else (\(a, b) -> (op, a, b)) $ B.splitAt 2 rem
-             let lm = B.uncons remD
-             let lenIntM = lm >>= (\l -> (T.unpack . DTE.decodeUtf8 . B.singleton . fst $ l) ^? (base 10))
-             when (op_false == "00" && op_return == "6a" && (fst <$> lm) <= Just 0xfc) $ do
-                 let props = getProps (B.drop (fromJust lenIntM) (snd $ fromJust lm))
-                 let protocol = DTE.decodeUtf8 $ B.take (fromJust lenIntM) (snd $ fromJust lm)
+             let props = getProps remD
+             when (op_false == "00" && op_return == "6a" && isJust (headMaybe props)) $ do
+                 let protocol = foldl (\a (_, b) -> a <> "_" <> b) "" props
                  ts <- (blockTimestamp' . DA.blockHeader . head) <$> xGetChainHeaders (fromIntegral blkht) 1
                  let (y, m, d) = toGregorian $ utctDay $ posixSecondsToUTCTime (fromIntegral ts)
                  let curBi =
@@ -806,7 +804,7 @@ processConfTransaction bis tx bhash blkht txind = do
                              ((Type.count b) + 1)
                  let fn x =
                          case x of
-                             Just (p, bi) -> (Just (p <> props, upf bi), ())
+                             Just (p, bi) -> (Just (props, upf bi), ())
                              Nothing -> (Just (props, curBi), ())
                  commitScriptOutputProtocol conn protocol output bi fees (fromIntegral count)
                  v <- liftIO $ TSH.lookup (protocolInfo bp2pEnv) bhash
