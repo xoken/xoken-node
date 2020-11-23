@@ -348,7 +348,16 @@ runBlockCacheQueue =
                                                                       Just (h, (RequestQueued, fromIntegral $ fst x))
                                                                   Nothing -> Nothing)
                                                          (op)
-                                             mapM (\(k, v) -> liftIO $ TSH.insert (blockSyncStatusMap bp2pEnv) k v) p
+                                             mapM
+                                                 (\(k, v) -> do
+                                                      liftIO $ TSH.insert (blockSyncStatusMap bp2pEnv) k v
+                                                      piEnv <- liftIO $ TSH.lookup (protocolInfo bp2pEnv) k
+                                                      case piEnv of
+                                                          Just _ -> return ()
+                                                          Nothing -> do
+                                                              pie <- liftIO $ TSH.new 32
+                                                              liftIO $ TSH.insert (protocolInfo bp2pEnv) k pie)
+                                                 p
                                              let e = p !! 0
                                              return (Just $ BlockInfo (fst e) (snd $ snd e))
                                          else do
@@ -369,24 +378,32 @@ runBlockCacheQueue =
                                                      (bsh)
                                                      (BlockProcessingComplete, ht)
                                              v <- liftIO $ TSH.lookup (protocolInfo bp2pEnv) bsh
-                                             pi <- liftIO $ TSH.toList (fromJust v)
-                                             pres <-
-                                                 liftIO $
-                                                 try $ do
-                                                     traverse
-                                                         (\(protocol, (props, blockInf)) -> do
-                                                              TSH.delete (fromJust v) protocol
-                                                              tryWithResource
-                                                                  (pool $ graphDB dbe)
-                                                                  (`BT.run` insertProtocolWithBlockInfo
-                                                                                protocol
-                                                                                props
-                                                                                blockInf))
-                                                         pi
-                                                     TSH.delete (protocolInfo bp2pEnv) bsh
-                                             case pres of
-                                                 Right rt -> return ()
-                                                 Left (e :: SomeException) -> throw MerkleSubTreeDBInsertException
+                                             case v of
+                                                 Just v' -> do
+                                                     pi <- liftIO $ TSH.toList v'
+                                                     pres <-
+                                                         liftIO $
+                                                         try $ do
+                                                             traverse
+                                                                 (\(protocol, (props, blockInf)) -> do
+                                                                      TSH.delete (fromJust v) protocol
+                                                                      tryWithResource
+                                                                          (pool $ graphDB dbe)
+                                                                          (`BT.run` insertProtocolWithBlockInfo
+                                                                                        protocol
+                                                                                        props
+                                                                                        blockInf))
+                                                                 pi
+                                                             TSH.delete (protocolInfo bp2pEnv) bsh
+                                                     case pres of
+                                                         Right rt -> return ()
+                                                         Left (e :: SomeException) ->
+                                                             throw MerkleSubTreeDBInsertException
+                                                 Nothing -> do
+                                                     err lg $
+                                                         LG.msg $
+                                                         "Error: No Information available for block hash " ++ show bsh
+                                                     return ()
                                          else return ()
                                  Nothing -> return ())
                         (syt)
