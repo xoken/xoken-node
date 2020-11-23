@@ -386,7 +386,7 @@ runBlockCacheQueue =
                                                          try $ do
                                                              traverse
                                                                  (\(protocol, (props, blockInf)) -> do
-                                                                      TSH.delete (fromJust v) protocol
+                                                                      TSH.delete v' protocol
                                                                       tryWithResource
                                                                           (pool $ graphDB dbe)
                                                                           (`BT.run` insertProtocolWithBlockInfo
@@ -825,7 +825,13 @@ processConfTransaction bis tx bhash blkht txind = do
                              Nothing -> (Just (props, curBi), ())
                  commitScriptOutputProtocol conn protocol output bi fees (fromIntegral count)
                  v <- liftIO $ TSH.lookup (protocolInfo bp2pEnv) bhash
-                 liftIO $ TSH.mutate (fromJust v) protocol fn
+                 case v of
+                     Just v' -> liftIO $ TSH.mutate v' protocol fn
+                     Nothing -> do
+                         pie <- liftIO $ TSH.new 32
+                         liftIO $ TSH.insert (protocolInfo bp2pEnv) bhash pie
+                         vn <- liftIO $ TSH.lookup (protocolInfo bp2pEnv) bhash
+                         liftIO $ TSH.mutate (fromJust vn) protocol fn
              insertTxIdOutputs conn output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o)
              commitScriptHashOutputs
                  conn --
