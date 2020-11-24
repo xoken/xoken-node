@@ -578,7 +578,7 @@ getProps = go mempty 5 -- name, 4 properties
     go acc n b = do
         let lm = B.uncons b
         let lenIntM = lm >>= (\l -> (T.unpack . DTE.decodeUtf8 . B.singleton . fst $ l) ^? (base 10))
-        if (fst <$> lm) <= Just 0xfc
+        if isJust lm && (fst <$> lm) <= Just 0xfc && isJust lenIntM
             then go (( "prop" <> (T.pack $ show (6 - n)) -- starts at prop1
                      , (DTE.decodeUtf8 $ B.take (fromJust lenIntM) (snd $ fromJust lm))) :
                      acc)
