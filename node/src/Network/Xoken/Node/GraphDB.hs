@@ -571,5 +571,8 @@ insertProtocolWithBlockInfo name properties BlockPInfo {..} = do
         , ("month", I month)
         , ("year", I year)
         , ("name", T name)
+        , ("bytes", I bytes)
+        , ("fees", I fees)
+        , ("count", I count)
         ] <>
         propsV
