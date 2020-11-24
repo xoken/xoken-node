@@ -753,7 +753,10 @@ processConfTransaction bis tx bhash blkht txind = do
     -- calculate Tx fees
     let ipSum = foldl (+) 0 $ (\(_, _, (_, _, val)) -> val) <$> inputs
         opSum = foldl (+) 0 $ (\(_, o, _) -> fromIntegral $ outValue o) <$> outAddrs
-        fees = ipSum - opSum
+        fees =
+            if txind == 0 -- coinbase tx
+                then 0
+                else ipSum - opSum
         serbs = runPutLazy $ putLazyByteString $ S.encodeLazy tx
         count = BSL.length serbs
     --
