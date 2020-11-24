@@ -572,7 +572,7 @@ getTx conn qstr hash segments = do
         [1 .. segments]
 
 getProps :: B.ByteString -> [(Text, Text)]
-getProps = go mempty 5 -- name, 4 properties
+getProps = reverse . go mempty 5 -- name, 4 properties
   where
     go acc 0 _ = acc
     go acc n b = do

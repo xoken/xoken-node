@@ -858,12 +858,6 @@ processTxStream bi (tx, binfo, txIndex) = do
     let bhash = biBlockHash binfo
         bheight = biBlockHeight binfo
     lg <- getLogger
-    v <- liftIO $ TSH.lookup (protocolInfo bp2pEnv) bhash
-    case v of
-        Just x -> return ()
-        Nothing -> do
-            pi <- liftIO $ TSH.new 32
-            liftIO $ TSH.insert (protocolInfo bp2pEnv) bhash pi
     res <- LE.try $ processConfTransaction bi (tx) bhash (fromIntegral bheight) txIndex
     case res of
         Right () -> return ()

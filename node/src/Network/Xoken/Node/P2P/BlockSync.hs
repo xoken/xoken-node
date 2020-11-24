@@ -351,12 +351,8 @@ runBlockCacheQueue =
                                              mapM
                                                  (\(k, v) -> do
                                                       liftIO $ TSH.insert (blockSyncStatusMap bp2pEnv) k v
-                                                      piEnv <- liftIO $ TSH.lookup (protocolInfo bp2pEnv) k
-                                                      case piEnv of
-                                                          Just _ -> return ()
-                                                          Nothing -> do
-                                                              pie <- liftIO $ TSH.new 32
-                                                              liftIO $ TSH.insert (protocolInfo bp2pEnv) k pie)
+                                                      pie <- liftIO $ TSH.new 32
+                                                      liftIO $ TSH.insert (protocolInfo bp2pEnv) k pie)
                                                  p
                                              let e = p !! 0
                                              return (Just $ BlockInfo (fst e) (snd $ snd e))
@@ -400,7 +396,7 @@ runBlockCacheQueue =
                                                          Left (e :: SomeException) ->
                                                              throw MerkleSubTreeDBInsertException
                                                  Nothing -> do
-                                                     err lg $
+                                                     debug lg $
                                                          LG.msg $
                                                          "Error: No Information available for block hash " ++ show bsh
                                                      return ()
@@ -793,7 +789,7 @@ processConfTransaction bis tx bhash blkht txind = do
                          else (\(a, b) -> (op, a, b)) $ B.splitAt 2 rem
              let props = getProps remD
              when (op_false == "00" && op_return == "6a" && isJust (headMaybe props)) $ do
-                 let protocol = foldl (\a (_, b) -> a <> "_" <> b) "" props
+                 let protocol = T.intercalate "_" . fmap snd $ props
                  ts <- (blockTimestamp' . DA.blockHeader . head) <$> xGetChainHeaders (fromIntegral blkht) 1
                  let (y, m, d) = toGregorian $ utctDay $ posixSecondsToUTCTime (fromIntegral ts)
                  let curBi =
@@ -827,11 +823,7 @@ processConfTransaction bis tx bhash blkht txind = do
                  v <- liftIO $ TSH.lookup (protocolInfo bp2pEnv) bhash
                  case v of
                      Just v' -> liftIO $ TSH.mutate v' protocol fn
-                     Nothing -> do
-                         pie <- liftIO $ TSH.new 32
-                         liftIO $ TSH.insert (protocolInfo bp2pEnv) bhash pie
-                         vn <- liftIO $ TSH.lookup (protocolInfo bp2pEnv) bhash
-                         liftIO $ TSH.mutate (fromJust vn) protocol fn
+                     Nothing -> debug lg $ LG.msg $ "No ProtocolInfo Available for: " ++ show bhash
              insertTxIdOutputs conn output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o)
              commitScriptHashOutputs
                  conn --
