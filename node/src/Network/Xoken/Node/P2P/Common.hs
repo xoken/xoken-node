@@ -576,14 +576,14 @@ getProps = reverse . go mempty 5 -- name, 4 properties
   where
     go acc 0 _ = acc
     go acc n b = do
-        let lm = B.uncons b
-        let lenIntM = lm >>= (\l -> (T.unpack . DTE.decodeUtf8 . B.singleton . fst $ l) ^? (base 10))
-        if isJust lm && (fst <$> lm) <= Just 0xfc && isJust lenIntM
+        let (len, r) = B.splitAt 2 b
+        let lenIntM = (T.unpack . DTE.decodeUtf8 $ len) ^? (base 16)
+        if (not $ B.null r) && isJust lenIntM && lenIntM > Just 0 && lenIntM <= Just 252
             then go (( "prop" <> (T.pack $ show (6 - n)) -- starts at prop1
-                     , (DTE.decodeUtf8 $ B.take (fromJust lenIntM) (snd $ fromJust lm))) :
+                     , (DTE.decodeUtf8 $ B.take (2 * (fromJust lenIntM)) r)) :
                      acc)
                      (n - 1)
-                     (B.drop (fromJust lenIntM) (snd $ fromJust lm))
+                     (B.drop (2 * (fromJust lenIntM)) r)
             else acc
 
 headMaybe :: [a] -> Maybe a
