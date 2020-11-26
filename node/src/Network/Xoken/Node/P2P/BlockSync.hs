@@ -725,6 +725,12 @@ processConfTransaction bis tx bhash blkht txind = do
                                           ("", "", fromIntegral $ computeSubsidy net $ (fromIntegral blkht :: Word32))
                                  else do
                                      debug lg $ LG.msg $ C.pack $ "txOutputValuesCache: cache-miss (2)"
+                                     debug lg $
+                                         LG.msg $
+                                         " outputindex: " ++
+                                         show
+                                             ( txHashToHex $ outPointHash $ prevOutput b
+                                             , fromIntegral $ outPointIndex $ prevOutput b)
                                      dbRes <-
                                          liftIO $
                                          LE.try $
@@ -737,7 +743,10 @@ processConfTransaction bis tx bhash blkht txind = do
                                              (5)
                                              (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
                                      case dbRes of
-                                         Right v -> return $ v
+                                         Right v -> do
+                                             debug lg $
+                                                 LG.msg $ " value returned from getStatsValueFromOutpoint: " ++ show v
+                                             return $ v
                                          Left (e :: SomeException) -> do
                                              err lg $
                                                  LG.msg $
