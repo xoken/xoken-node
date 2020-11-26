@@ -948,9 +948,10 @@ getSatsValueFromOutpoint ::
     -> Int
     -> IO ((Text, Text, Int64))
 getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait = do
-    let qstr :: Q.QueryString Q.R (Text, Int32) (Text, Text, Int64)
-        qstr = "SELECT address, script_hash, value FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
-        par = getSimpleQueryParam (txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint)
+    let qstr :: Q.QueryString Q.R (Text, Int32, Bool) (Text, Text, Int64)
+        qstr =
+            "SELECT address, script_hash, value FROM xoken.txid_outputs WHERE txid=? AND output_index=? AND is_recv=?"
+        par = getSimpleQueryParam (txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint, True)
     queryI <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstr))
     res <- liftIO $ try $ query conn (Q.RqExecute (Q.Execute queryI par))
     case res of
