@@ -398,7 +398,7 @@ runBlockCacheQueue =
                                                  Nothing -> do
                                                      debug lg $
                                                          LG.msg $
-                                                         "Error: No Information available for block hash " ++ show bsh
+                                                         "Debug: No Information available for block hash " ++ show bsh
                                                      return ()
                                          else return ()
                                  Nothing -> return ())
@@ -759,6 +759,12 @@ processConfTransaction bis tx bhash blkht txind = do
                 else ipSum - opSum
         serbs = runPutLazy $ putLazyByteString $ S.encodeLazy tx
         count = BSL.length serbs
+    debug lg $
+        LG.msg $
+        "processing Tx " ++
+        show txhs ++
+        ": calculated fees: " ++
+        show fees ++ " tx_index: " ++ show txind ++ " inputs: " ++ show inputs ++ " : outputs " ++ show outAddrs
     --
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": calculated fees"
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": fetched input(s): " ++ show inputs
