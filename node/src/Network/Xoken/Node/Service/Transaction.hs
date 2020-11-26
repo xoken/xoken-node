@@ -231,7 +231,8 @@ xGetTxHashes hashes = do
                 throw KeyValueDBLookupException
     cures <-
         case ures of
-            Right iop -> pure $ L.map (\(txid, psz, sinps, fees) -> (txid, Nothing, psz, Q.fromSet sinps, fees)) (L.concat iop)
+            Right iop ->
+                pure $ L.map (\(txid, psz, sinps, fees) -> (txid, Nothing, psz, Q.fromSet sinps, fees)) (L.concat iop)
             Left (e :: SomeException) -> do
                 err lg $ LG.msg $ "Error: xGetTxHashes: " ++ show e
                 throw KeyValueDBLookupException
@@ -493,3 +494,24 @@ xRelayTx rawTx = do
                 Nothing -> do
                     err lg $ LG.msg $ val $ "error decoding rawTx (2)"
                     return $ False
+
+xGetTxIDByProtocol :: (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> Maybe Int32 -> Maybe Int64 -> m [DT.Text]
+xGetTxIDByProtocol protocol pgSize mbNomTxInd = do
+    dbe <- getDB
+    lg <- getLogger
+    bp2pEnv <- getBitcoinP2P
+    let conn = xCqlClientState dbe
+        net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
+        nominalTxIndex =
+            case mbNomTxInd of
+                (Just n) -> n
+                Nothing -> maxBound
+        str = "SELECT txid FROM xoken.script_output_protocol WHERE prop1=? AND nominal_tx_index<?"
+        qstr = str :: Q.QueryString Q.R (DT.Text, Int64) (Identity DT.Text)
+        uqstr = getSimpleQueryParam $ (protocol, nominalTxIndex)
+    eResp <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr (uqstr {pageSize = pgSize}))
+    case eResp of
+        Right mb -> return $ runIdentity <$> mb
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: xGetTxIDByProtocol: " ++ show e
+            throw KeyValueDBLookupException

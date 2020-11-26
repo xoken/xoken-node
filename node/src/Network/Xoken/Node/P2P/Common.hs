@@ -589,3 +589,9 @@ getProps = reverse . go mempty 5 -- name, 4 properties
 headMaybe :: [a] -> Maybe a
 headMaybe [] = Nothing
 headMaybe (x:xs) = Just x
+
+indexMaybe :: [a] -> Int -> Maybe a
+indexMaybe xs n
+    | n < 0 = Nothing
+    | n >= L.length xs = Nothing
+    | otherwise = Just $ xs !! n

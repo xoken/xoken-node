@@ -50,6 +50,8 @@ apiRoutes =
     , ("/v1/allegory/reseller-uri", method POST (withAuth $ withReq findNameReseller))
     , ("/v1/relaytx", method POST (withAuth $ withReq relayTx))
     , ("/v1/relaymultipletx", method POST (withAuth $ withReq relayMultipleTx))
+    , ("/v1/transactions/protocol/:protocol", method GET (withAuth getTxByProtocol))
+    , ("/v1/transactions/protocols", method GET (withAuth getTxByProtocols))
     ]
 
 queryRoutes :: [(B.ByteString, Handler App App ())]

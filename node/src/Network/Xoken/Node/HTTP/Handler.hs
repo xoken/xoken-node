@@ -581,6 +581,58 @@ updateUserByUsername updates = do
             writeBS $ "User updated"
         Right False -> throwNotFound
 
+getTxByProtocol :: Handler App App ()
+getTxByProtocol = do
+    proto <- getParam "protocol"
+    lg <- getLogger
+    pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
+    cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
+    pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    res <- LE.try $ xGetTxIDByProtocol (DTE.decodeUtf8 $ fromJust proto) pgSize (decodeNTI cursor) >>= xGetTxHashes
+    case res of
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: xGetTxProtocol: " ++ show e
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+        Right txs -> do
+            let rawTxs =
+                    (\RawTxRecord {..} ->
+                         (TxRecord txId size txBlockInfo <$>
+                          (txToTx' <$> (Extra.hush $ S.decodeLazy txSerialized) <*> (pure $ fromMaybe [] txOutputs) <*>
+                           (pure txInputs)) <*>
+                          (pure fees) <*>
+                          (pure txMerkleBranch))) <$>
+                    txs
+            writeBS $ BSL.toStrict $ encodeResp pretty $ RespTransactionsByProtocol $ catMaybes rawTxs
+
+getTxByProtocols :: Handler App App ()
+getTxByProtocols = do
+    allMap <- getQueryParams
+    lg <- getLogger
+    pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
+    cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
+    pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    let protocols = DTE.decodeUtf8 <$> (fromJust $ Map.lookup "protocol" allMap)
+    res <-
+        LE.try $
+        traverse (\proto -> xGetTxIDByProtocol proto pgSize (decodeNTI cursor)) protocols >>= (xGetTxHashes . concat)
+    case res of
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: xGetTxProtocol: " ++ show e
+            debug lg $ LG.msg $ "Error: xGetTxProtocol: " ++ show e
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+        Right txs -> do
+            let rawTxs =
+                    (\RawTxRecord {..} ->
+                         (TxRecord txId size txBlockInfo <$>
+                          (txToTx' <$> (Extra.hush $ S.decodeLazy txSerialized) <*> (pure $ fromMaybe [] txOutputs) <*>
+                           (pure txInputs)) <*>
+                          (pure fees) <*>
+                          (pure txMerkleBranch))) <$>
+                    txs
+            writeBS $ BSL.toStrict $ encodeResp pretty $ RespTransactionsByProtocols $ catMaybes rawTxs
+
 --- |
 -- Helper functions
 withAuth :: Handler App App () -> Handler App App ()

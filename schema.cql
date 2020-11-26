@@ -118,10 +118,15 @@ CREATE TABLE xoken.blockhash_txids (
 
 CREATE TABLE xoken.script_output_protocol (
     protocol text,
+    prop1 text,
+    prop2 text,
+    prop3 text,
+    prop4 text,
+    prop5 text,
     txid text,
     fees bigint,
     size int,
     output_index int,
     nominal_tx_index bigint,
-    PRIMARY KEY (protocol, nominal_tx_index)
+    PRIMARY KEY (prop1, nominal_tx_index)
 ) WITH CLUSTERING ORDER BY (nominal_tx_index ASC);

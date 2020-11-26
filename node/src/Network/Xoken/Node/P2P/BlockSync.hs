@@ -1108,10 +1108,34 @@ commitScriptOutputProtocol conn protocol (txid, output_index) blockInfo fees siz
     let blkHeight = fromIntegral $ snd3 blockInfo
         txIndex = fromIntegral $ thd3 blockInfo
         nominalTxIndex = blkHeight * 1000000000 + txIndex
-        qstrAddrOuts :: Q.QueryString Q.W (Text, Text, Int64, Int32, Int32, Int64) ()
+        props = T.split (== '_') protocol
+        qstrAddrOuts ::
+               Q.QueryString Q.W ( Text
+                                 , Text
+                                 , Maybe Text
+                                 , Maybe Text
+                                 , Maybe Text
+                                 , Maybe Text
+                                 , Text
+                                 , Int64
+                                 , Int32
+                                 , Int32
+                                 , Int64) ()
         qstrAddrOuts =
-            "INSERT INTO xoken.script_output_protocol (protocol, txid, fees, size, output_index, nominal_tx_index) VALUES (?,?,?,?,?,?)"
-        parAddrOuts = getSimpleQueryParam (protocol, txid, fees, size, output_index, nominalTxIndex)
+            "INSERT INTO xoken.script_output_protocol (protocol, prop1, prop2, prop3, prop4, prop5, txid, fees, size, output_index, nominal_tx_index) VALUES (?,?,?,?,?,?,?,?,?,?,?)"
+        parAddrOuts =
+            getSimpleQueryParam
+                ( protocol
+                , fromMaybe "" (headMaybe props)
+                , indexMaybe props 1
+                , indexMaybe props 2
+                , indexMaybe props 3
+                , indexMaybe props 4
+                , txid
+                , fees
+                , size
+                , output_index
+                , nominalTxIndex)
     queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstrAddrOuts))
     resAddrOuts <- liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryId parAddrOuts))
     case resAddrOuts of
