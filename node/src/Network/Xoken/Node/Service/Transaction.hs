@@ -495,8 +495,14 @@ xRelayTx rawTx = do
                     err lg $ LG.msg $ val $ "error decoding rawTx (2)"
                     return $ False
 
-xGetTxIDByProtocol :: (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> Maybe Int32 -> Maybe Int64 -> m [DT.Text]
-xGetTxIDByProtocol protocol pgSize mbNomTxInd = do
+xGetTxIDByProtocol ::
+       (HasXokenNodeEnv env m, MonadIO m)
+    => DT.Text
+    -> [(DT.Text, DT.Text)]
+    -> Maybe Int32
+    -> Maybe Int64
+    -> m [DT.Text]
+xGetTxIDByProtocol protocol props pgSize mbNomTxInd = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
@@ -506,10 +512,39 @@ xGetTxIDByProtocol protocol pgSize mbNomTxInd = do
             case mbNomTxInd of
                 (Just n) -> n
                 Nothing -> maxBound
-        str = "SELECT txid FROM xoken.script_output_protocol WHERE prop1=? AND nominal_tx_index<?"
-        qstr = str :: Q.QueryString Q.R (DT.Text, Int64) (Identity DT.Text)
-        uqstr = getSimpleQueryParam $ (protocol, nominalTxIndex)
-    eResp <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr (uqstr {pageSize = pgSize}))
+    eResp <-
+        case props of
+            [] -> do
+                let str = "SELECT txid FROM xoken.script_output_protocol WHERE prop1=? AND nominal_tx_index<?"
+                    qstr = str :: Q.QueryString Q.R (DT.Text, Int64) (Identity DT.Text)
+                    uqstr = getSimpleQueryParam $ (protocol, nominalTxIndex)
+                liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr (uqstr {pageSize = pgSize}))
+            [("prop2", p1)] -> do
+                let str =
+                        "SELECT txid FROM xoken.script_output_protocol WHERE prop1=? AND nominal_tx_index<? AND prop2=?"
+                    qstr = str :: Q.QueryString Q.R (DT.Text, Int64, DT.Text) (Identity DT.Text)
+                    uqstr = getSimpleQueryParam $ (protocol, nominalTxIndex, p1)
+                debug lg $ LG.msg $ "inside prop2" ++ show p1
+                liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr (uqstr {pageSize = pgSize}))
+            [("prop2", p1), ("prop3", p2)] -> do
+                let str =
+                        "SELECT txid FROM xoken.script_output_protocol WHERE prop1=? AND nominal_tx_index<? AND prop2=? AND prop3=?"
+                    qstr = str :: Q.QueryString Q.R (DT.Text, Int64, DT.Text, DT.Text) (Identity DT.Text)
+                    uqstr = getSimpleQueryParam $ (protocol, nominalTxIndex, p1, p2)
+                liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr (uqstr {pageSize = pgSize}))
+            [("prop2", p1), ("prop3", p2), ("prop4", p3)] -> do
+                let str =
+                        "SELECT txid FROM xoken.script_output_protocol WHERE prop1=? AND nominal_tx_index<? AND prop2=? AND prop3=? AND prop4=?"
+                    qstr = str :: Q.QueryString Q.R (DT.Text, Int64, DT.Text, DT.Text, DT.Text) (Identity DT.Text)
+                    uqstr = getSimpleQueryParam $ (protocol, nominalTxIndex, p1, p2, p3)
+                liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr (uqstr {pageSize = pgSize}))
+            [("prop2", p1), ("prop3", p2), ("prop4", p3), ("prop5", p4)] -> do
+                let str =
+                        "SELECT txid FROM xoken.script_output_protocol WHERE prop1=? AND nominal_tx_index<? AND prop2=? AND prop3=? AND prop4=? AND prop5=?"
+                    qstr =
+                        str :: Q.QueryString Q.R (DT.Text, Int64, DT.Text, DT.Text, DT.Text, DT.Text) (Identity DT.Text)
+                    uqstr = getSimpleQueryParam $ (protocol, nominalTxIndex, p1, p2, p3, p4)
+                liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr (uqstr {pageSize = pgSize}))
     case eResp of
         Right mb -> return $ runIdentity <$> mb
         Left (e :: SomeException) -> do

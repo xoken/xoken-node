@@ -128,5 +128,5 @@ CREATE TABLE xoken.script_output_protocol (
     size int,
     output_index int,
     nominal_tx_index bigint,
-    PRIMARY KEY (prop1, nominal_tx_index)
-) WITH CLUSTERING ORDER BY (nominal_tx_index ASC);
+    PRIMARY KEY (prop1, nominal_tx_index, prop2, prop3, prop4, prop5)
+) WITH CLUSTERING ORDER BY (nominal_tx_index ASC, prop2 ASC, prop3 ASC, prop4 ASC, prop5 ASC);
