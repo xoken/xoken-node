@@ -807,7 +807,7 @@ processConfTransaction bis tx bhash blkht txind = do
                          else (\(a, b) -> (op, a, b)) $ B.splitAt 2 rem
              let props = getProps remD
              when (op_false == "00" && op_return == "6a" && isJust (headMaybe props)) $ do
-                 let protocol = T.intercalate "_" . fmap snd $ props
+                 let protocol = snd <$> props
                  ts <- (blockTimestamp' . DA.blockHeader . head) <$> xGetChainHeaders (fromIntegral blkht) 1
                  let (y, m, d) = toGregorian $ utctDay $ posixSecondsToUTCTime (fromIntegral ts)
                  let curBi =
@@ -837,10 +837,13 @@ processConfTransaction bis tx bhash blkht txind = do
                          case x of
                              Just (p, bi) -> (Just (props, upf bi), ())
                              Nothing -> (Just (props, curBi), ())
-                 commitScriptOutputProtocol conn protocol output bi fees (fromIntegral count)
+                     prot = tail $ L.inits protocol
+                 mapM_
+                     (\p -> commitScriptOutputProtocol conn (T.intercalate "." p) output bi fees (fromIntegral count))
+                     prot
                  v <- liftIO $ TSH.lookup (protocolInfo bp2pEnv) bhash
                  case v of
-                     Just v' -> liftIO $ TSH.mutate v' protocol fn
+                     Just v' -> liftIO $ TSH.mutate v' (T.intercalate "_" protocol) fn
                      Nothing -> debug lg $ LG.msg $ "No ProtocolInfo Available for: " ++ show bhash
              insertTxIdOutputs conn output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o)
              commitScriptHashOutputs
@@ -1108,34 +1111,10 @@ commitScriptOutputProtocol conn protocol (txid, output_index) blockInfo fees siz
     let blkHeight = fromIntegral $ snd3 blockInfo
         txIndex = fromIntegral $ thd3 blockInfo
         nominalTxIndex = blkHeight * 1000000000 + txIndex
-        props = T.split (== '_') protocol
-        qstrAddrOuts ::
-               Q.QueryString Q.W ( Text
-                                 , Text
-                                 , Maybe Text
-                                 , Maybe Text
-                                 , Maybe Text
-                                 , Maybe Text
-                                 , Text
-                                 , Int64
-                                 , Int32
-                                 , Int32
-                                 , Int64) ()
+        qstrAddrOuts :: Q.QueryString Q.W (Text, Text, Int64, Int32, Int32, Int64) ()
         qstrAddrOuts =
-            "INSERT INTO xoken.script_output_protocol (protocol, prop1, prop2, prop3, prop4, prop5, txid, fees, size, output_index, nominal_tx_index) VALUES (?,?,?,?,?,?,?,?,?,?,?)"
-        parAddrOuts =
-            getSimpleQueryParam
-                ( protocol
-                , fromMaybe "" (headMaybe props)
-                , indexMaybe props 1
-                , indexMaybe props 2
-                , indexMaybe props 3
-                , indexMaybe props 4
-                , txid
-                , fees
-                , size
-                , output_index
-                , nominalTxIndex)
+            "INSERT INTO xoken.script_output_protocol (proto_str, txid, fees, size, output_index, nominal_tx_index) VALUES (?,?,?,?,?,?)"
+        parAddrOuts = getSimpleQueryParam (protocol, txid, fees, size, output_index, nominalTxIndex)
     queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstrAddrOuts))
     resAddrOuts <- liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryId parAddrOuts))
     case resAddrOuts of

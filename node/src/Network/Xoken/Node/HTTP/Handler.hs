@@ -609,10 +609,10 @@ getTxByProtocol = do
             writeBS $ BSL.toStrict $ encodeResp pretty $ RespTransactionsByProtocol $ catMaybes rawTxs
   where
     getQueryProps = do
-        prop2 <- (fmap $ ("prop2", ) . DTE.decodeUtf8) <$> getQueryParam "prop2"
-        prop3 <- (fmap $ ("prop3", ) . DTE.decodeUtf8) <$> getQueryParam "prop3"
-        prop4 <- (fmap $ ("prop4", ) . DTE.decodeUtf8) <$> getQueryParam "prop4"
-        prop5 <- (fmap $ ("prop5", ) . DTE.decodeUtf8) <$> getQueryParam "prop5"
+        prop2 <- (fmap DTE.decodeUtf8) <$> getQueryParam "prop2"
+        prop3 <- (fmap DTE.decodeUtf8) <$> getQueryParam "prop3"
+        prop4 <- (fmap DTE.decodeUtf8) <$> getQueryParam "prop4"
+        prop5 <- (fmap DTE.decodeUtf8) <$> getQueryParam "prop5"
         pure $ catMaybes [prop2, prop3, prop4, prop5]
 
 getTxByProtocols :: Handler App App ()
@@ -646,10 +646,10 @@ getTxByProtocols = do
             writeBS $ BSL.toStrict $ encodeResp pretty $ RespTransactionsByProtocols $ catMaybes rawTxs
   where
     getQueryProps allMap = do
-        let prop2 = (("prop2", ) . DTE.decodeUtf8) <$> (fromMaybe [] $ Map.lookup "prop2" allMap)
-            prop3 = (("prop3", ) . DTE.decodeUtf8) <$> (fromMaybe [] $ Map.lookup "prop3" allMap)
-            prop4 = (("prop4", ) . DTE.decodeUtf8) <$> (fromMaybe [] $ Map.lookup "prop4" allMap)
-            prop5 = (("prop5", ) . DTE.decodeUtf8) <$> (fromMaybe [] $ Map.lookup "prop5" allMap)
+        let prop2 = DTE.decodeUtf8 <$> (fromMaybe [] $ Map.lookup "prop2" allMap)
+            prop3 = DTE.decodeUtf8 <$> (fromMaybe [] $ Map.lookup "prop3" allMap)
+            prop4 = DTE.decodeUtf8 <$> (fromMaybe [] $ Map.lookup "prop4" allMap)
+            prop5 = DTE.decodeUtf8 <$> (fromMaybe [] $ Map.lookup "prop5" allMap)
         (\x y z a -> [x, y, z, a]) <$> prop2 <*> prop3 <*> prop4 <*> prop5
 
 --- |
