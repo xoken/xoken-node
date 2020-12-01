@@ -85,7 +85,8 @@ import Network.Xoken.Node.Data
 import Network.Xoken.Node.Data.Allegory
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.GraphDB
-import Network.Xoken.Node.P2P.BlockSync
+
+--import Network.Xoken.Node.P2P.BlockSync
 import Network.Xoken.Node.P2P.Common
 import Network.Xoken.Node.P2P.Types
 import Network.Xoken.Util (bsToInteger, integerToBS)

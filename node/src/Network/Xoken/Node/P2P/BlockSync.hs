@@ -37,6 +37,7 @@ import Control.Concurrent.STM.TVar
 import Control.Exception
 import qualified Control.Exception.Extra as EX
 import qualified Control.Exception.Lifted as LE (try)
+import Control.Lens
 import Control.Monad
 import Control.Monad.Logger
 import Control.Monad.Reader
@@ -85,15 +86,17 @@ import Network.Xoken.Constants
 import Network.Xoken.Crypto.Hash
 import Network.Xoken.Network.Common
 import Network.Xoken.Network.Message
-import Network.Xoken.Node.Data
+import Network.Xoken.Node.Data as DA
 import qualified Network.Xoken.Node.Data.ThreadSafeHashTable as TSH
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.GraphDB
 import Network.Xoken.Node.P2P.Common
-import Network.Xoken.Node.P2P.Types
+import Network.Xoken.Node.P2P.Types as Type
+import Network.Xoken.Node.Service.Chain
 import Network.Xoken.Script.Standard
 import Network.Xoken.Transaction.Common
 import Network.Xoken.Util
+import Numeric.Lens (base)
 import StmContainers.Map as SM
 import StmContainers.Set as SS
 import Streamly
@@ -347,7 +350,12 @@ runBlockCacheQueue =
                                                                       Just (h, (RequestQueued, fromIntegral $ fst x))
                                                                   Nothing -> Nothing)
                                                          (op)
-                                             mapM (\(k, v) -> liftIO $ TSH.insert (blockSyncStatusMap bp2pEnv) k v) p
+                                             mapM
+                                                 (\(k, v) -> do
+                                                      liftIO $ TSH.insert (blockSyncStatusMap bp2pEnv) k v
+                                                      pie <- liftIO $ TSH.new 32
+                                                      liftIO $ TSH.insert (protocolInfo bp2pEnv) k pie)
+                                                 p
                                              let e = p !! 0
                                              return (Just $ BlockInfo (fst e) (snd $ snd e))
                                          else do
@@ -367,7 +375,33 @@ runBlockCacheQueue =
                                                      (blockSyncStatusMap bp2pEnv)
                                                      (bsh)
                                                      (BlockProcessingComplete, ht)
-                                             return ()
+                                             v <- liftIO $ TSH.lookup (protocolInfo bp2pEnv) bsh
+                                             case v of
+                                                 Just v' -> do
+                                                     pi <- liftIO $ TSH.toList v'
+                                                     pres <-
+                                                         liftIO $
+                                                         try $ do
+                                                             traverse
+                                                                 (\(protocol, (props, blockInf)) -> do
+                                                                      TSH.delete v' protocol
+                                                                      tryWithResource
+                                                                          (pool $ graphDB dbe)
+                                                                          (`BT.run` insertProtocolWithBlockInfo
+                                                                                        protocol
+                                                                                        props
+                                                                                        blockInf))
+                                                                 pi
+                                                             TSH.delete (protocolInfo bp2pEnv) bsh
+                                                     case pres of
+                                                         Right rt -> return ()
+                                                         Left (e :: SomeException) ->
+                                                             throw MerkleSubTreeDBInsertException
+                                                 Nothing -> do
+                                                     debug lg $
+                                                         LG.msg $
+                                                         "Debug: No Information available for block hash " ++ show bsh
+                                                     return ()
                                          else return ()
                                  Nothing -> return ())
                         (syt)
@@ -612,8 +646,9 @@ commitTxPage txhash bhash page = do
             liftIO $ err lg $ LG.msg ("Error: INSERTing into 'xoken.blockhash_txids': " ++ show e)
             throw KeyValueDBInsertException
 
-processConfTransaction :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Tx -> BlockHash -> Int -> Int -> m ()
-processConfTransaction tx bhash blkht txind = do
+processConfTransaction ::
+       (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BlockIngestState -> Tx -> BlockHash -> Int -> Int -> m ()
+processConfTransaction bis tx bhash blkht txind = do
     dbe' <- getDB
     bp2pEnv <- getBitcoinP2P
     lg <- getLogger
@@ -692,6 +727,12 @@ processConfTransaction tx bhash blkht txind = do
                                           ("", "", fromIntegral $ computeSubsidy net $ (fromIntegral blkht :: Word32))
                                  else do
                                      debug lg $ LG.msg $ C.pack $ "txOutputValuesCache: cache-miss (2)"
+                                     debug lg $
+                                         LG.msg $
+                                         " outputindex: " ++
+                                         show
+                                             ( txHashToHex $ outPointHash $ prevOutput b
+                                             , fromIntegral $ outPointIndex $ prevOutput b)
                                      dbRes <-
                                          liftIO $
                                          LE.try $
@@ -704,7 +745,10 @@ processConfTransaction tx bhash blkht txind = do
                                              (5)
                                              (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
                                      case dbRes of
-                                         Right v -> return $ v
+                                         Right v -> do
+                                             debug lg $
+                                                 LG.msg $ " value returned from getStatsValueFromOutpoint: " ++ show v
+                                             return $ v
                                          Left (e :: SomeException) -> do
                                              err lg $
                                                  LG.msg $
@@ -717,7 +761,25 @@ processConfTransaction tx bhash blkht txind = do
                  return
                      ((txHashToHex $ outPointHash $ prevOutput b, fromIntegral $ outPointIndex $ prevOutput b), j, val))
             inAddrs
-    debug lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": fetched input(s): " ++ show inputs
+
+    -- calculate Tx fees
+    let ipSum = foldl (+) 0 $ (\(_, _, (_, _, val)) -> val) <$> inputs
+        opSum = foldl (+) 0 $ (\(_, o, _) -> fromIntegral $ outValue o) <$> outAddrs
+        fees =
+            if txind == 0 -- coinbase tx
+                then 0
+                else ipSum - opSum
+        serbs = runPutLazy $ putLazyByteString $ S.encodeLazy tx
+        count = BSL.length serbs
+    debug lg $
+        LG.msg $
+        "processing Tx " ++
+        show txhs ++
+        ": calculated fees: " ++
+        show fees ++ " tx_index: " ++ show txind ++ " inputs: " ++ show inputs ++ " : outputs " ++ show outAddrs
+    --
+    trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": calculated fees"
+    trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": fetched input(s): " ++ show inputs
     --
     -- cache compile output values
     -- imp: order is (address, scriptHash, value)
@@ -740,6 +802,52 @@ processConfTransaction tx bhash blkht txind = do
              let sh = txHashToHex $ TxHash $ sha256 (scriptOutput o)
              let bi = (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
              let output = (txHashToHex txhs, i)
+             let bsh = B16.encode $ scriptOutput o
+             let (op, rem) = B.splitAt 2 bsh
+             let (op_false, op_return, remD) =
+                     if op == "6a"
+                         then ("00", op, rem)
+                         else (\(a, b) -> (op, a, b)) $ B.splitAt 2 rem
+             let props = getProps remD
+             when (op_false == "00" && op_return == "6a" && isJust (headMaybe props)) $ do
+                 let protocol = snd <$> props
+                 ts <- (blockTimestamp' . DA.blockHeader . head) <$> xGetChainHeaders (fromIntegral blkht) 1
+                 let (y, m, d) = toGregorian $ utctDay $ posixSecondsToUTCTime (fromIntegral ts)
+                 let curBi =
+                         BlockPInfo
+                             { height = blkht
+                             , hash = T.pack $ show bhash
+                             , timestamp = fromIntegral ts
+                             , day = d
+                             , month = m
+                             , year = fromIntegral y
+                             , fees = fromIntegral fees
+                             , bytes = binBlockSize bis
+                             , count = 1
+                             }
+                 let upf b =
+                         BlockPInfo
+                             blkht
+                             (Type.hash b)
+                             (Type.timestamp b)
+                             (day b)
+                             (month b)
+                             (year b)
+                             ((fromIntegral fees) + (Type.fees b))
+                             ((binBlockSize bis) + (Type.bytes b))
+                             ((Type.count b) + 1)
+                 let fn x =
+                         case x of
+                             Just (p, bi) -> (Just (props, upf bi), ())
+                             Nothing -> (Just (props, curBi), ())
+                     prot = tail $ L.inits protocol
+                 mapM_
+                     (\p -> commitScriptOutputProtocol conn (T.intercalate "." p) output bi fees (fromIntegral count))
+                     prot
+                 v <- liftIO $ TSH.lookup (protocolInfo bp2pEnv) bhash
+                 case v of
+                     Just v' -> liftIO $ TSH.mutate v' (T.intercalate "_" protocol) fn
+                     Nothing -> debug lg $ LG.msg $ "No ProtocolInfo Available for: " ++ show bhash
              insertTxIdOutputs conn output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o)
              commitScriptHashOutputs
                  conn --
@@ -771,18 +879,10 @@ processConfTransaction tx bhash blkht txind = do
                      deleteScriptHashUnspentOutputs conn a prevOutpoint)
         (zip (inAddrs) (map (\x -> (fst3 $ thd3 x, snd3 $ thd3 $ x)) inputs))
     --
-    debug lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": updated spend info for inputs"
-    -- calculate Tx fees
-    let ipSum = foldl (+) 0 $ (\(_, _, (_, _, val)) -> val) <$> inputs
-        opSum = foldl (+) 0 $ (\(_, o, _) -> fromIntegral $ outValue o) <$> outAddrs
-        fees = ipSum - opSum
-    --
-    trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": calculated fees"
+    trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": updated spend info for inputs"
     -- persist tx
     let qstr :: Q.QueryString Q.W (Text, (Text, Int32, Int32), Blob, [((Text, Int32), Int32, (Text, Int64))], Int64) ()
         qstr = "insert INTO xoken.transactions (tx_id, block_info, tx_serialized , inputs, fees) values (?, ?, ?, ?, ?)"
-        serbs = runPutLazy $ putLazyByteString $ S.encodeLazy tx
-        count = BSL.length serbs
         smb a = a * 16 * 1000 * 1000
         segments =
             let (d, m) = divMod count (smb 1)
@@ -854,9 +954,10 @@ getSatsValueFromOutpoint ::
     -> Int
     -> IO ((Text, Text, Int64))
 getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait = do
-    let qstr :: Q.QueryString Q.R (Text, Int32) (Text, Text, Int64)
-        qstr = "SELECT address, script_hash, value FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
-        par = getSimpleQueryParam (txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint)
+    let qstr :: Q.QueryString Q.R (Text, Int32, Bool) (Text, Text, Int64)
+        qstr =
+            "SELECT address, script_hash, value FROM xoken.txid_outputs WHERE txid=? AND output_index=? AND is_recv=?"
+        par = getSimpleQueryParam (txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint, True)
     queryI <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstr))
     res <- liftIO $ try $ query conn (Q.RqExecute (Q.Execute queryI par))
     case res of
@@ -1012,3 +1113,29 @@ handleIfAllegoryTx tx revert = do
         case eres of
             Right () -> return True
             Left (SomeException e) -> throw e
+
+commitScriptOutputProtocol ::
+       (HasLogger m, MonadIO m)
+    => XCqlClientState
+    -> Text
+    -> (Text, Int32)
+    -> (Text, Int32, Int32)
+    -> Int64
+    -> Int32
+    -> m ()
+commitScriptOutputProtocol conn protocol (txid, output_index) blockInfo fees size = do
+    lg <- getLogger
+    let blkHeight = fromIntegral $ snd3 blockInfo
+        txIndex = fromIntegral $ thd3 blockInfo
+        nominalTxIndex = blkHeight * 1000000000 + txIndex
+        qstrAddrOuts :: Q.QueryString Q.W (Text, Text, Int64, Int32, Int32, Int64) ()
+        qstrAddrOuts =
+            "INSERT INTO xoken.script_output_protocol (proto_str, txid, fees, size, output_index, nominal_tx_index) VALUES (?,?,?,?,?,?)"
+        parAddrOuts = getSimpleQueryParam (protocol, txid, fees, size, output_index, nominalTxIndex)
+    queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstrAddrOuts))
+    resAddrOuts <- liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryId parAddrOuts))
+    case resAddrOuts of
+        Right _ -> return ()
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: INSERTing into 'script_output_protocol: " ++ show e
+            throw KeyValueDBInsertException

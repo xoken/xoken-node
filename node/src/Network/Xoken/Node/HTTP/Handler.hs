@@ -2,6 +2,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE Rank2Types #-}
+{-# LANGUAGE TupleSections #-}
 
 module Network.Xoken.Node.HTTP.Handler where
 
@@ -580,6 +581,76 @@ updateUserByUsername updates = do
             modifyResponse $ setResponseStatus 200 "Updated"
             writeBS $ "User updated"
         Right False -> throwNotFound
+
+getTxByProtocol :: Handler App App ()
+getTxByProtocol = do
+    proto <- getParam "protocol"
+    lg <- getLogger
+    pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
+    cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
+    pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    props <- getQueryProps
+    res <-
+        LE.try $ xGetTxIDByProtocol (DTE.decodeUtf8 $ fromJust proto) props pgSize (decodeNTI cursor) >>= xGetTxHashes
+    case res of
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: xGetTxProtocol: " ++ show e
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+        Right txs -> do
+            let rawTxs =
+                    (\RawTxRecord {..} ->
+                         (TxRecord txId size txBlockInfo <$>
+                          (txToTx' <$> (Extra.hush $ S.decodeLazy txSerialized) <*> (pure $ fromMaybe [] txOutputs) <*>
+                           (pure txInputs)) <*>
+                          (pure fees) <*>
+                          (pure txMerkleBranch))) <$>
+                    txs
+            writeBS $ BSL.toStrict $ encodeResp pretty $ RespTransactionsByProtocol $ catMaybes rawTxs
+  where
+    getQueryProps = do
+        prop2 <- (fmap DTE.decodeUtf8) <$> getQueryParam "prop2"
+        prop3 <- (fmap DTE.decodeUtf8) <$> getQueryParam "prop3"
+        prop4 <- (fmap DTE.decodeUtf8) <$> getQueryParam "prop4"
+        prop5 <- (fmap DTE.decodeUtf8) <$> getQueryParam "prop5"
+        pure $ catMaybes [prop2, prop3, prop4, prop5]
+
+getTxByProtocols :: Handler App App ()
+getTxByProtocols = do
+    allMap <- getQueryParams
+    lg <- getLogger
+    pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
+    cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
+    pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    let props = getQueryProps allMap
+    let protocols = DTE.decodeUtf8 <$> (fromJust $ Map.lookup "protocol" allMap)
+    res <-
+        LE.try $
+        traverse (\(proto, prop) -> xGetTxIDByProtocol proto prop pgSize (decodeNTI cursor)) (zip protocols props) >>=
+        (xGetTxHashes . concat)
+    case res of
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: xGetTxProtocol: " ++ show e
+            debug lg $ LG.msg $ "Error: xGetTxProtocol: " ++ show e
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+        Right txs -> do
+            let rawTxs =
+                    (\RawTxRecord {..} ->
+                         (TxRecord txId size txBlockInfo <$>
+                          (txToTx' <$> (Extra.hush $ S.decodeLazy txSerialized) <*> (pure $ fromMaybe [] txOutputs) <*>
+                           (pure txInputs)) <*>
+                          (pure fees) <*>
+                          (pure txMerkleBranch))) <$>
+                    txs
+            writeBS $ BSL.toStrict $ encodeResp pretty $ RespTransactionsByProtocols $ catMaybes rawTxs
+  where
+    getQueryProps allMap = do
+        let prop2 = DTE.decodeUtf8 <$> (fromMaybe [] $ Map.lookup "prop2" allMap)
+            prop3 = DTE.decodeUtf8 <$> (fromMaybe [] $ Map.lookup "prop3" allMap)
+            prop4 = DTE.decodeUtf8 <$> (fromMaybe [] $ Map.lookup "prop4" allMap)
+            prop5 = DTE.decodeUtf8 <$> (fromMaybe [] $ Map.lookup "prop5" allMap)
+        (\x y z a -> [x, y, z, a]) <$> prop2 <*> prop3 <*> prop4 <*> prop5
 
 --- |
 -- Helper functions

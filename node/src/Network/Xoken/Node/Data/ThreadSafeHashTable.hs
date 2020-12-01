@@ -92,7 +92,7 @@ fromList size kv = do
     tsh <- new size
     traverse (\(k, v) -> insert tsh k v) kv
     return tsh
---    
+--
 -- lookupIndex :: (Eq k, Hashable k) => TSHashTable k v -> k -> IO (Maybe (Int, Word))
 -- lookupIndex tsh k = lookupIndex' (hashTableList tsh) k 0
 --   where

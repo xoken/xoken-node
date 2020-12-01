@@ -38,6 +38,7 @@ import Data.Text (Text, append, concat, filter, intercalate, isInfixOf, map, nul
 import Data.Time.Clock
 import Data.Word
 import Database.Bolt as BT
+import GHC.Float
 import GHC.Generics
 import Network.Socket hiding (send)
 import Network.Xoken.Crypto.Hash
@@ -150,8 +151,7 @@ queryAllegoryNameScriptOp name isProducer = do
 initAllegoryRoot :: Tx -> BoltActionT IO ()
 initAllegoryRoot tx = do
     let oops = pack $ "fe38e79e4067304d382b3ba8d67970f4f0cd26f988aac6c88bddffb4ec628daf" ++ ":" ++ show 0
-    let scr =
-            "76a91447dc5f6dd425347e6aeacd226c3196b385394fb488ac"
+    let scr = "76a91447dc5f6dd425347e6aeacd226c3196b385394fb488ac"
     let cypher =
             " MERGE (rr:namestate {name:{dummyroot} })  " <>
             " MERGE (ns:namestate { name:{nsname}, type: {type} })-[r:REVISION]->(nu:nutxo { outpoint: {out_op}, name:{name}, producer:{isProducer} ,script: {scr} , root:{isInit}}) "
@@ -543,3 +543,36 @@ deleteMerkleSubTree inodes = do
         Prelude.map (\repl -> replace ("<h>") (repl) (pack " \'<h>\' ")) (Prelude.map (\z -> txtTx z) nodes)
     cypher = (pack matchTemplate) <> inMatch <> (pack deleteTemplate)
     txtTx i = txHashToHex $ TxHash $ fromJust i
+
+-- Insert protocol with properties and block info
+insertProtocolWithBlockInfo :: Text -> [(Text, Text)] -> BlockPInfo -> BoltActionT IO ()
+insertProtocolWithBlockInfo name properties BlockPInfo {..} = do
+    res <- LE.try $ queryP cypher params
+    case res of
+        Left (e :: SomeException) -> do
+            liftIO $ print ("[ERROR] insertProtocolWithBlockInfo " ++ show e)
+            throw e
+        Right (records) -> return ()
+  where
+    cypher =
+        " MERGE (a: protocol { name: {name}," <>
+        props <>
+        "  }) " <>
+        " MERGE (b: block { hash: {hash}, height: {height}, timestamp: {timestamp}, day: {day }, month: {month}, year: {year} }) WITH a, b" <>
+        " MATCH (a: protocol), (b: block) WHERE a.name = {name} AND b.hash = {hash} MERGE (a)-[r:PRESENT_IN{bytes: {bytes}, fees: {fees}, tx_count: {count}}]->(b)"
+    props = intercalate "," $ Prelude.map (\(a, _) -> a <> ": {" <> a <> "}") properties
+    propsV = Prelude.map (\(a, b) -> (a, T b)) properties
+    params =
+        fromList $
+        [ ("height", I height)
+        , ("hash", T hash)
+        , ("timestamp", I timestamp)
+        , ("day", I day)
+        , ("month", I month)
+        , ("year", I year)
+        , ("name", T name)
+        , ("bytes", I bytes)
+        , ("fees", I fees)
+        , ("count", I count)
+        ] <>
+        propsV

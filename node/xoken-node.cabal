@@ -49,6 +49,7 @@ executable xoken-nexa
       Network.Xoken.Node.Service.Address
       Network.Xoken.Node.Service.Allegory
       Network.Xoken.Node.Service.Block
+      Network.Xoken.Node.HTTP.QueryHandler
       Network.Xoken.Node.Service.Chain
       Network.Xoken.Node.Service.Transaction
       Network.Xoken.Node.Service.User
@@ -72,6 +73,7 @@ executable xoken-nexa
     , hashable
     , hashable-time
     , http-types
+    , lens
     , monad-logger
     , mtl
     , network
@@ -147,6 +149,7 @@ test-suite xoken-node-test
         Network.Xoken.Node.Data
         Network.Xoken.Node.Env
         Network.Xoken.Node.GraphDB
+        Network.Xoken.Node.HTTP.QueryHandler
         Network.Xoken.Node.P2P.Common
         Network.Xoken.Node.P2P.Types
         Network.Xoken.Node.XokenService
