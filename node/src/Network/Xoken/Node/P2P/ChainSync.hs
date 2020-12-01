@@ -58,6 +58,7 @@ import Network.Xoken.Network.Message
 import Network.Xoken.Node.Data
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.GraphDB
+import qualified Network.Xoken.Node.P2P.BlockSync as NXB (fetchBestSyncedBlock, markBestSyncedBlock)
 import Network.Xoken.Node.P2P.Common
 import Network.Xoken.Node.P2P.Types
 import Network.Xoken.Node.Service.Block
@@ -140,10 +141,12 @@ msgOrder m1 m2 = do
 runEgressChainSync :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
 runEgressChainSync = do
     lg <- getLogger
-    res1 <- LE.try $ forever $ do produceGetHeadersMessage >>= sendRequestMessages
-    case res1 of
-        Right () -> return ()
-        Left (e :: SomeException) -> err lg $ LG.msg $ "[ERROR] runEgressChainSync " ++ show e
+    forever $ do
+        gethdr <- produceGetHeadersMessage
+        res <- LE.try $ sendRequestMessages gethdr
+        case res of
+            Right () -> return ()
+            Left (e :: SomeException) -> err lg $ LG.msg $ "[ERROR] runEgressChainSync (sendRequestMessages) " ++ show e
 
 validateChainedBlockHeaders :: Headers -> Bool
 validateChainedBlockHeaders hdrs = do
@@ -212,6 +215,8 @@ processHeaders hdrs = do
     dbe' <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
+    let net = bitcoinNetwork $ nodeConfig bp2pEnv
+        conn = xCqlClientState dbe'
     if (L.null $ headersList hdrs)
         then do
             debug lg $ LG.msg $ val "Nothing to process!"
@@ -260,8 +265,28 @@ processHeaders hdrs = do
                                                          debug lg $
                                                              LG.msg $
                                                              LG.val
-                                                                 ("Does not match best-block, potential block re-org ")
-                                                         return $ zip [(matchBHt + 1) ..] (headersList hdrs) -- potential re-org
+                                                                 ("Does not match best-block, potential block re-org...")
+                                                         let reOrgDiff = zip [(matchBHt + 1) ..] (headersList hdrs) -- potential re-org
+                                                         bestSynced <- NXB.fetchBestSyncedBlock conn net
+                                                         if snd bestSynced >= matchBHt
+                                                             then do
+                                                                 debug lg $
+                                                                     LG.msg $
+                                                                     "Have synced blocks beyond point of re-org: synced @ " <>
+                                                                     (show bestSynced) <>
+                                                                     " versus point of re-org: " <>
+                                                                     (show $ (matchBHash, matchBHt))
+                                                                 debug lg $
+                                                                     LG.msg $
+                                                                     "Setting new best-synced to " <>
+                                                                     (show $ (matchBHash, matchBHt)) <>
+                                                                     ", re-syncing from thereon"
+                                                                 NXB.markBestSyncedBlock
+                                                                     (fromJust $ hexToBlockHash matchBHash)
+                                                                     matchBHt
+                                                                     conn
+                                                                 return reOrgDiff
+                                                             else return reOrgDiff
                                              Nothing -> throw BlockHashNotFoundException
             let q1 :: Q.QueryString Q.W (Text, Text, Int32, Text) ()
                 q1 =
