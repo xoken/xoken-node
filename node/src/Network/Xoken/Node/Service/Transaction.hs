@@ -231,7 +231,7 @@ xGetTxHashes hashes = do
                 throw KeyValueDBLookupException
     cures <-
         case ures of
-            Right iop ->
+            Right iop -> do
                 pure $ L.map (\(txid, psz, sinps, fees) -> (txid, Nothing, psz, Q.fromSet sinps, fees)) (L.concat iop)
             Left (e :: SomeException) -> do
                 err lg $ LG.msg $ "Error: xGetTxHashes: " ++ show e
