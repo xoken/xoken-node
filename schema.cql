@@ -27,7 +27,7 @@ CREATE TABLE xoken.ep_transactions (
     epoch boolean,
     tx_id text,
     tx_serialized blob,
-    inputs set  <frozen<tuple<frozen<tuple<text, int>>, int, frozen<tuple<text, bigint>>>>>,
+    inputs set <frozen<tuple<frozen<tuple<text, int>>, int, frozen<tuple<text, bigint>>>>>,
     fees bigint,
     PRIMARY KEY (epoch, tx_id)
 );
@@ -38,7 +38,7 @@ CREATE TABLE xoken.ep_script_hash_outputs (
     nominal_tx_index bigint,
     output frozen<tuple<text, int>>,
     PRIMARY KEY (epoch, script_hash, nominal_tx_index, output)
-) WITH CLUSTERING ORDER BY (nominal_tx_index DESC);
+) WITH CLUSTERING ORDER BY (script_hash ASC, nominal_tx_index DESC, output ASC);
 
 CREATE TABLE xoken.ep_script_hash_unspent_outputs (
     epoch boolean,

@@ -94,7 +94,7 @@ data BlockSyncException
     | InvalidBlockInfoException
     | OutpointAddressNotFoundException
     | InvalidAddressException
-    | TxIDNotFoundException
+    | TxIDNotFoundException (String, Maybe Int) String
     | InvalidOutpointException
     | DBTxParseException
     | MerkleTreeComputeException

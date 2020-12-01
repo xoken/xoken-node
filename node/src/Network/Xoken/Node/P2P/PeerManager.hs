@@ -776,7 +776,11 @@ messageHandler peer (mm, ingss) = do
                             err lg $ LG.msg $ val ("[???] Unconfirmed Tx ")
                     return $ msgType msg
                 MTx tx -> do
-                    processUnconfTransaction tx
+                    res <- LE.try $ processUnconfTransaction tx
+                    case res of
+                        Right () -> return ()
+                        Left (TxIDNotFoundException _ _) -> return ()
+                        Left e -> throw e
                     return $ msgType msg
                 MBlock blk -> do
                     res <- LE.try $ processBlock blk
@@ -861,8 +865,8 @@ processTxStream bi (tx, binfo, txIndex) = do
     res <- LE.try $ processConfTransaction bi (tx) bhash (fromIntegral bheight) txIndex
     case res of
         Right () -> return ()
-        Left TxIDNotFoundException -> do
-            throw TxIDNotFoundException
+        Left (TxIDNotFoundException (txid, index) src) -> do
+            throw $ TxIDNotFoundException (txid, index) src
         Left KeyValueDBInsertException -> do
             err lg $ LG.msg $ val "[ERROR] KeyValueDBInsertException"
             throw KeyValueDBInsertException

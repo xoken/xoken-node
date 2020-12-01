@@ -17,6 +17,8 @@ module Network.Xoken.Node.P2P.BlockSync
     , runPeerSync
     , runBlockCacheQueue
     , getSatsValueFromOutpoint
+    , markBestSyncedBlock
+    , fetchBestSyncedBlock
     , sendRequestMessages
     , handleIfAllegoryTx
     , commitTxPage
@@ -333,8 +335,8 @@ runBlockCacheQueue =
                             throw e
                         Right (op) -> do
                             if L.length op == 0
+                                    --debug lg $ LG.msg $ val "Synced fully!"
                                 then do
-                                    debug lg $ LG.msg $ val "Synced fully!"
                                     return (Nothing)
                                 else if L.length op == (fromIntegral $ last cacheInd)
                                          then do
@@ -532,7 +534,7 @@ fetchBestSyncedBlock conn net = do
                     return ((headerHash $ getGenesisHeader net), 0)
                 else do
                     let record = runIdentity $ iop !! 0
-                    debug lg $ LG.msg $ "Best-synced-block from DB: " ++ (show record)
+                    --debug lg $ LG.msg $ "Best-synced-block from DB: " ++ (show record)
                     case getTextVal record of
                         Just tx -> do
                             case (hexToBlockHash $ tx) of
@@ -759,6 +761,7 @@ processConfTransaction bis tx bhash blkht txind = do
                  return
                      ((txHashToHex $ outPointHash $ prevOutput b, fromIntegral $ outPointIndex $ prevOutput b), j, val))
             inAddrs
+
     -- calculate Tx fees
     let ipSum = foldl (+) 0 $ (\(_, _, (_, _, val)) -> val) <$> inputs
         opSum = foldl (+) 0 $ (\(_, o, _) -> fromIntegral $ outValue o) <$> outAddrs
@@ -861,7 +864,7 @@ processConfTransaction bis tx bhash blkht txind = do
                          else return ()
                  (Left e) -> return ())
         outAddrs
-    trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": committed scripthash,txid_outputs tables"
+    debug lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": committed scripthash,txid_outputs tables"
     mapM_
         (\((o, i), (a, sh)) -> do
              let bi = (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
@@ -977,7 +980,14 @@ getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait = do
                                      getSatsValueFromOutpoint conn txSync lg net outPoint maxWait maxWait -- re-attempt
                                  else do
                                      liftIO $ TSH.delete txSync (outPointHash outPoint)
-                                     throw TxIDNotFoundException
+                                     err lg $
+                                         LG.msg $
+                                         "[ERROR] TxID not found: " <> (show $ txHashToHex $ outPointHash outPoint)
+                                     throw $
+                                         TxIDNotFoundException
+                                             ( show $ txHashToHex $ outPointHash outPoint
+                                             , Just $ fromIntegral $ outPointIndex outPoint)
+                                             "getSatsValueFromOutpoint"
                         else do
                             debug lg $
                                 LG.msg $ "event received _available_: " ++ (show $ txHashToHex $ outPointHash outPoint)
@@ -988,7 +998,10 @@ getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait = do
                         else return ()
                     return $ head results
         Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: getSatsValueFromOutpoint: " ++ show e
+            err lg $
+                LG.msg $
+                "Error: getSatsValueFromOutpoint (txid: " ++
+                (show $ txHashToHex $ outPointHash outPoint) ++ "): " ++ show e
             throw e
 
 getScriptHashFromOutpoint ::
@@ -1023,7 +1036,11 @@ getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs = do
                         then do
                             liftIO $ TSH.delete txSync (outPointHash outPoint)
                             debug lg $ LG.msg ("TxIDNotFoundException" ++ (show $ txHashToHex $ outPointHash outPoint))
-                            throw TxIDNotFoundException
+                            throw $
+                                TxIDNotFoundException
+                                    ( show $ txHashToHex $ outPointHash outPoint
+                                    , Just $ fromIntegral $ outPointIndex outPoint)
+                                    "getScriptHashFromOutpoint"
                         else getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs -- if being signalled, try again to success
                     --
                     return Nothing
