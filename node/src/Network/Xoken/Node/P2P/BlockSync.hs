@@ -361,9 +361,9 @@ runBlockCacheQueue =
                                                               (\(e :: SomeException) ->
                                                                    err lg $
                                                                    LG.msg $
-                                                                   "Error: BlockSync.hs:360: Exception while inserting k=" <>
+                                                                   "Error: Failed to insert into protocolInfo TSH (key " <>
                                                                    (show k) <>
-                                                                   " into protocolInfo TSH: " <>
+                                                                   "): " <>
                                                                    (show e)))
                                                  p
                                              let e = p !! 0
@@ -419,8 +419,8 @@ runBlockCacheQueue =
                                                      (\(e :: SomeException) ->
                                                           err lg $
                                                           LG.msg $
-                                                          "Error: BlockSync.hs:388: bsh=" <> (show bsh) <> ", ht=" <>
-                                                          (show ht) <>
+                                                          "Error: Failed to insert into graph DB block " <>
+                                                          (show (bsh, ht)) <>
                                                           ": " <>
                                                           (show e))
                                          else return ()
