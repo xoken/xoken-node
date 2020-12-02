@@ -239,7 +239,9 @@ processHeaders hdrs = do
                         return $ zip [((snd bb) + 1) ..] (headersList hdrs)
                     else if (blockHashToHex $ fst bb) == headPrevHash
                              then do
-                                 unless (validate (snd bb)) $ throw InvalidBlocksException
+                                 unless (validate (snd bb)) $
+                                     ((err lg $ LG.msg $ "Invalid block: " <> (show $ snd bb)) >>
+                                      throw InvalidBlocksException)
                                  debug lg $ LG.msg $ val "Building on current Best block"
                                  return $ zip [((snd bb) + 1) ..] (headersList hdrs)
                              else do
@@ -251,7 +253,9 @@ processHeaders hdrs = do
                                          res <- fetchMatchBlockOffset conn net headPrevHash
                                          case res of
                                              Just (matchBHash, matchBHt) -> do
-                                                 unless (validate matchBHt) $ throw InvalidBlocksException
+                                                 unless (validate matchBHt) $
+                                                     ((err lg $ LG.msg $ "Invalid block: " <> (show matchBHt)) >>
+                                                      throw InvalidBlocksException)
                                                  if ((snd bb) >
                                                      (matchBHt + fromIntegral (L.length $ headersList hdrs) + 12) -- reorg limit of 12 blocks
                                                      )
