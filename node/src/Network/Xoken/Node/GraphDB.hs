@@ -192,7 +192,7 @@ revertAllegoryStateTree tx allegory = do
             fromList
                 [ ("in_op", T $ iops)
                 , ("name", T $ pack $ Prelude.map (\x -> chr x) (name allegory))
-                , ("nn_str", T $ pack $ Prelude.map (\x -> chr x) (name allegory) ++ "|producer")
+                , ("nn_str", T $ pack $ Prelude.map (\x -> chr x) (name allegory) ++ (if isProd then "|producer" else "|owner"))
                 , ("is_prod", B $ isProd)
                 ]
     liftIO $ print (cypher)
