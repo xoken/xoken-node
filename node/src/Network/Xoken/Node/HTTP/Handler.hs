@@ -591,13 +591,15 @@ getTxByProtocol = do
     pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     props <- getQueryProps
     res <-
-        LE.try $ xGetTxIDByProtocol (DTE.decodeUtf8 $ fromJust proto) props pgSize (decodeNTI cursor) >>= xGetTxHashes
+        LE.try $
+        xGetTxIDByProtocol (DTE.decodeUtf8 $ fromJust proto) props pgSize (decodeNTI cursor) >>=
+        (\c -> (encodeNTI $ getNextCursor c, ) <$> xGetTxHashes (fromResultWithCursor <$> c))
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetTxProtocol: " ++ show e
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
-        Right txs -> do
+        Right (nt, txs) -> do
             let rawTxs =
                     (\RawTxRecord {..} ->
                          (TxRecord txId size txBlockInfo <$>
@@ -606,7 +608,7 @@ getTxByProtocol = do
                           (pure fees) <*>
                           (pure txMerkleBranch))) <$>
                     txs
-            writeBS $ BSL.toStrict $ encodeResp pretty $ RespTransactionsByProtocol $ catMaybes rawTxs
+            writeBS $ BSL.toStrict $ encodeResp pretty $ RespTransactionsByProtocol nt (catMaybes rawTxs)
   where
     getQueryProps = do
         prop2 <- (fmap DTE.decodeUtf8) <$> getQueryParam "prop1"
@@ -629,14 +631,14 @@ getTxByProtocols = do
         traverse
             (\(proto, ind) -> xGetTxIDByProtocol proto (fromMaybe [] $ indexMaybe props ind) pgSize (decodeNTI cursor))
             (zip protocols [0 ..]) >>=
-        (xGetTxHashes . concat)
+        ((\c -> (encodeNTI $ getNextCursor c, ) <$> xGetTxHashes (fromResultWithCursor <$> c)) . concat)
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetTxProtocol: " ++ show e
             debug lg $ LG.msg $ "Error: xGetTxProtocol: " ++ show e
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
-        Right txs -> do
+        Right (nt, txs) -> do
             let rawTxs =
                     (\RawTxRecord {..} ->
                          (TxRecord txId size txBlockInfo <$>
@@ -645,7 +647,7 @@ getTxByProtocols = do
                           (pure fees) <*>
                           (pure txMerkleBranch))) <$>
                     txs
-            writeBS $ BSL.toStrict $ encodeResp pretty $ RespTransactionsByProtocols $ catMaybes rawTxs
+            writeBS $ BSL.toStrict $ encodeResp pretty $ RespTransactionsByProtocols nt (catMaybes rawTxs)
   where
     getQueryProps allMap = do
         let prop2 = DTE.decodeUtf8 <$> (fromMaybe [] $ Map.lookup "prop1" allMap)

@@ -500,7 +500,12 @@ xRelayTx rawTx = do
                     return $ False
 
 xGetTxIDByProtocol ::
-       (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> [DT.Text] -> Maybe Int32 -> Maybe Int64 -> m [DT.Text]
+       (HasXokenNodeEnv env m, MonadIO m)
+    => DT.Text
+    -> [DT.Text]
+    -> Maybe Int32
+    -> Maybe Int64
+    -> m [ResultWithCursor DT.Text Int64]
 xGetTxIDByProtocol prop1 props pgSize mbNomTxInd = do
     dbe <- getDB
     lg <- getLogger
@@ -512,12 +517,12 @@ xGetTxIDByProtocol prop1 props pgSize mbNomTxInd = do
                 (Just n) -> n
                 Nothing -> maxBound
         protocol = DT.intercalate "." $ prop1 : props
-        str = "SELECT txid FROM xoken.script_output_protocol WHERE proto_str=? AND nominal_tx_index<?"
-        qstr = str :: Q.QueryString Q.R (DT.Text, Int64) (Identity DT.Text)
+        str = "SELECT txid, nominal_tx_index FROM xoken.script_output_protocol WHERE proto_str=? AND nominal_tx_index<?"
+        qstr = str :: Q.QueryString Q.R (DT.Text, Int64) (DT.Text, Int64)
         uqstr = getSimpleQueryParam $ (protocol, nominalTxIndex)
-    eResp <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr (uqstr {pageSize = pgSize}))
+    eResp <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr (uqstr {pageSize = maybe (Just 100) Just pgSize}))
     case eResp of
-        Right mb -> return $ runIdentity <$> mb
+        Right mb -> return $ (\(x, y) -> ResultWithCursor x y) <$> mb
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetTxIDByProtocol: " ++ show e
             throw KeyValueDBLookupException

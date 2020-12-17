@@ -337,10 +337,12 @@ data RPCResponseBody
           { rawTxs :: [RawTxRecord]
           }
     | RespTransactionsByProtocol
-          { ptxs :: [TxRecord]
+          { nextCursor :: Maybe String
+          , ptxs :: [TxRecord]
           }
     | RespTransactionsByProtocols
-          { ptxs :: [TxRecord]
+          { nextCursor :: Maybe String
+          , ptxs :: [TxRecord]
           }
     | RespOutputsByAddress
           { nextCursor :: Maybe String
@@ -420,8 +422,8 @@ instance ToJSON RPCResponseBody where
     toJSON (RespTransactionsByTxIDs txs) = object ["txs" .= txs]
     toJSON (RespRawTransactionByTxID tx) = object ["rawTx" .= tx]
     toJSON (RespRawTransactionsByTxIDs txs) = object ["rawTxs" .= txs]
-    toJSON (RespTransactionsByProtocol tx) = object ["ptxs" .= tx]
-    toJSON (RespTransactionsByProtocols txs) = object ["ptxs" .= txs]
+    toJSON (RespTransactionsByProtocol nc tx) = object ["ptxs" .= tx, "nextCursor" .= nc]
+    toJSON (RespTransactionsByProtocols nc txs) = object ["nextCursor" .= nc, "ptxs" .= txs]
     toJSON (RespOutputsByAddress nc sa) = object ["nextCursor" .= nc, "outputs" .= sa]
     toJSON (RespOutputsByAddresses nc ma) = object ["nextCursor" .= nc, "outputs" .= ma]
     toJSON (RespOutputsByScriptHash nc sa) = object ["nextCursor" .= nc, "outputs" .= sa]
