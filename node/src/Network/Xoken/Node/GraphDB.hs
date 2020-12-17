@@ -128,9 +128,7 @@ queryAllegoryNameBranch name isProducer = do
   where
     cypher =
         " MATCH p=(pointer:namestate {name: {namestr}})-[:REVISION]-()-[:INPUT*]->(start:nutxo) " <>
-        " WHERE NOT (start)-[:INPUT]->() " <>
-        " UNWIND tail(nodes(p)) AS elem " <>
-        " RETURN elem.outpoint as outpoint "
+        " WHERE NOT (start)-[:INPUT]->() " <> " UNWIND tail(nodes(p)) AS elem " <> " RETURN elem.outpoint as outpoint "
     params =
         if isProducer
             then fromList [("namestr", T (name <> pack "|producer"))]
@@ -549,7 +547,6 @@ deleteMerkleSubTree inodes = do
 -- Insert protocol with properties and block info
 insertProtocolWithBlockInfo :: Text -> [(Text, Text)] -> BlockPInfo -> BoltActionT IO ()
 insertProtocolWithBlockInfo name properties BlockPInfo {..} = do
-    liftIO $ print ("insertProtocolWithBlockInfo: query: " <> (show cypher) <> ", params: " <> (show params))
     res <- LE.try $ queryP cypher params
     case res of
         Left (e :: SomeException) -> do
@@ -558,7 +555,9 @@ insertProtocolWithBlockInfo name properties BlockPInfo {..} = do
         Right (records) -> return ()
   where
     cypher =
-        " MERGE (a: protocol { name: {name}," <> props <> "  }) " <>
+        " MERGE (a: protocol { name: {name}," <>
+        props <>
+        "  }) " <>
         " MERGE (b: block { hash: {hash}, height: {height}, timestamp: {timestamp}, day: {day }, month: {month}, year: {year} }) WITH a, b" <>
         " MATCH (a: protocol), (b: block) WHERE a.name = {name} AND b.hash = {hash} MERGE (a)-[r:PRESENT_IN{bytes: {bytes}, fees: {fees}, tx_count: {count}}]->(b)"
     props = intercalate "," $ Prelude.map (\(a, _) -> a <> ": {" <> a <> "}") properties
