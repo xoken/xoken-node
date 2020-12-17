@@ -51,7 +51,7 @@ import Network.Xoken.Node.Data
     )
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.HTTP.Types
-import Network.Xoken.Node.P2P.Common (addNewUser, generateSessionKey, getSimpleQueryParam, query, write)
+import Network.Xoken.Node.P2P.Common (addNewUser, generateSessionKey, getSimpleQueryParam, indexMaybe, query, write)
 import Network.Xoken.Node.P2P.Types
 import Network.Xoken.Node.Service
 import Snap
@@ -589,7 +589,9 @@ getTxByProtocol = do
     pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
     cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
     pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
-    res <- LE.try $ xGetTxIDByProtocol (DTE.decodeUtf8 $ fromJust proto) [] pgSize (decodeNTI cursor) >>= xGetTxHashes
+    props <- getQueryProps
+    res <-
+        LE.try $ xGetTxIDByProtocol (DTE.decodeUtf8 $ fromJust proto) props pgSize (decodeNTI cursor) >>= xGetTxHashes
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetTxProtocol: " ++ show e
@@ -605,6 +607,13 @@ getTxByProtocol = do
                           (pure txMerkleBranch))) <$>
                     txs
             writeBS $ BSL.toStrict $ encodeResp pretty $ RespTransactionsByProtocol $ catMaybes rawTxs
+  where
+    getQueryProps = do
+        prop2 <- (fmap DTE.decodeUtf8) <$> getQueryParam "prop1"
+        prop3 <- (fmap DTE.decodeUtf8) <$> getQueryParam "prop2"
+        prop4 <- (fmap DTE.decodeUtf8) <$> getQueryParam "prop3"
+        prop5 <- (fmap DTE.decodeUtf8) <$> getQueryParam "prop4"
+        pure $ catMaybes [prop2, prop3, prop4, prop5]
 
 getTxByProtocols :: Handler App App ()
 getTxByProtocols = do
@@ -614,9 +623,13 @@ getTxByProtocols = do
     cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
     pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     let protocols = DTE.decodeUtf8 <$> (fromJust $ Map.lookup "protocol" allMap)
+    let props = getQueryProps allMap
     res <-
         LE.try $
-        traverse (\proto -> xGetTxIDByProtocol proto [] pgSize (decodeNTI cursor)) protocols >>= (xGetTxHashes . concat)
+        traverse
+            (\(proto, ind) -> xGetTxIDByProtocol proto (fromMaybe [] $ indexMaybe props ind) pgSize (decodeNTI cursor))
+            (zip protocols [0 ..]) >>=
+        (xGetTxHashes . concat)
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetTxProtocol: " ++ show e
@@ -633,6 +646,16 @@ getTxByProtocols = do
                           (pure txMerkleBranch))) <$>
                     txs
             writeBS $ BSL.toStrict $ encodeResp pretty $ RespTransactionsByProtocols $ catMaybes rawTxs
+  where
+    getQueryProps allMap = do
+        let prop2 = DTE.decodeUtf8 <$> (fromMaybe [] $ Map.lookup "prop1" allMap)
+            prop3 = DTE.decodeUtf8 <$> (fromMaybe [] $ Map.lookup "prop2" allMap)
+            prop4 = DTE.decodeUtf8 <$> (fromMaybe [] $ Map.lookup "prop3" allMap)
+            prop5 = DTE.decodeUtf8 <$> (fromMaybe [] $ Map.lookup "prop4" allMap)
+        foldr
+            (\(p, i) acc -> (catMaybes [Just p, indexMaybe prop3 i, indexMaybe prop4 i, indexMaybe prop5 i]) : acc)
+            []
+            (zip prop2 [0 ..])
 
 --- |
 -- Helper functions
