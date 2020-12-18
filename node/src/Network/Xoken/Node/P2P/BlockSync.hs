@@ -829,49 +829,45 @@ processConfTransaction bis tx bhash blkht txind = do
                          then ("00", op, rem)
                          else (\(a, b) -> (op, a, b)) $ B.splitAt 2 rem
              let props = getProps remD
-             --when (op_false == "00" && op_return == "6a" && isJust (headMaybe props)) $ do
-                 --let protocol = snd <$> props
-                 --ts <- (blockTimestamp' . DA.blockHeader . head) <$> xGetChainHeaders (fromIntegral blkht) 1
-                 --let (y, m, d) = toGregorian $ utctDay $ posixSecondsToUTCTime (fromIntegral ts)
-                 --let curBi =
-                         --BlockPInfo
-                             --{ height = blkht
-                             --, hash = T.pack $ show bhash
-                             --, timestamp = fromIntegral ts
-                             --, day = d
-                             --, month = m
-                             --, year = fromIntegral y
-                             --, fees = fromIntegral fees
-                             --, bytes = binBlockSize bis
-                             --, count = 1
-                             --}
-                 --let upf b =
-                         --BlockPInfo
-                             --blkht
-                             --(Type.hash b)
-                             --(Type.timestamp b)
-                             --(day b)
-                             --(month b)
-                             --(year b)
-                             --((fromIntegral fees) + (Type.fees b))
-                             --((binBlockSize bis) + (Type.bytes b))
-                             --((Type.count b) + 1)
-                 --let fn x =
-                         --case x of
-                             --Just (p, bi) -> (Just (props, upf bi), ())
-                             --Nothing -> (Just (props, curBi), ())
-                     --prot = tail $ L.inits protocol
-                 --mapM_
-                     --(\p -> commitScriptOutputProtocol conn (T.intercalate "." p) output bi fees (fromIntegral count))
-                     --prot
-                 --v <- liftIO $ TSH.lookup (protocolInfo bp2pEnv) bhash
-                 --case v of
-                     --Just v' -> liftIO $ TSH.mutate v' (T.intercalate "_" protocol) fn
-                     --Nothing -> debug lg $ LG.msg $ "No ProtocolInfo Available for: " ++ show bhash
-             debug lg $
-                 LG.msg $
-                 "processing Tx " ++
-                 show txhs ++ " : sh: " ++ show sh ++ ": bsh: " ++ show bsh ++ ": started script hash commit"
+             when (op_false == "00" && op_return == "6a" && isJust (headMaybe props)) $ do
+                 let protocol = snd <$> props
+                 ts <- (blockTimestamp' . DA.blockHeader . head) <$> xGetChainHeaders (fromIntegral blkht) 1
+                 let (y, m, d) = toGregorian $ utctDay $ posixSecondsToUTCTime (fromIntegral ts)
+                 let curBi =
+                         BlockPInfo
+                             { height = blkht
+                             , hash = T.pack $ show bhash
+                             , timestamp = fromIntegral ts
+                             , day = d
+                             , month = m
+                             , year = fromIntegral y
+                             , fees = fromIntegral fees
+                             , bytes = binBlockSize bis
+                             , count = 1
+                             }
+                 let upf b =
+                         BlockPInfo
+                             blkht
+                             (Type.hash b)
+                             (Type.timestamp b)
+                             (day b)
+                             (month b)
+                             (year b)
+                             ((fromIntegral fees) + (Type.fees b))
+                             ((binBlockSize bis) + (Type.bytes b))
+                             ((Type.count b) + 1)
+                 let fn x =
+                         case x of
+                             Just (p, bi) -> (Just (props, upf bi), ())
+                             Nothing -> (Just (props, curBi), ())
+                     prot = tail $ L.inits protocol
+                 mapM_
+                     (\p -> commitScriptOutputProtocol conn (T.intercalate "." p) output bi fees (fromIntegral count))
+                     prot
+                 v <- liftIO $ TSH.lookup (protocolInfo bp2pEnv) bhash
+                 case v of
+                     Just v' -> liftIO $ TSH.mutate v' (T.intercalate "_" protocol) fn
+                     Nothing -> debug lg $ LG.msg $ "No ProtocolInfo Available for: " ++ show bhash
              insertTxIdOutputs conn output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o)
              commitScriptHashOutputs
                  conn --
@@ -886,11 +882,7 @@ processConfTransaction bis tx bhash blkht txind = do
                              commitScriptHashOutputs conn a output bi
                              commitScriptHashUnspentOutputs conn a output
                          else return ()
-                 (Left e) -> return ()
-             debug lg $
-                 LG.msg $
-                 "processing Tx " ++
-                 show txhs ++ ": sh: " ++ show sh ++ ": bsh: " ++ show bsh ++ ": stopped script hash commit")
+                 (Left e) -> return ())
         outAddrs
     debug lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": committed scripthash,txid_outputs tables"
     mapM_
