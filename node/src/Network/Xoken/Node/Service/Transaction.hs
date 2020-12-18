@@ -512,12 +512,15 @@ xGetTxIDByProtocol prop1 props pgSize mbNomTxInd = do
     bp2pEnv <- getBitcoinP2P
     let conn = xCqlClientState dbe
         net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
-        nominalTxIndex =
+        (str, nominalTxIndex) =
             case mbNomTxInd of
-                (Just n) -> n
-                Nothing -> maxBound
+                (Just n) ->
+                    ( "SELECT txid, nominal_tx_index FROM xoken.script_output_protocol WHERE proto_str=? AND nominal_tx_index>?"
+                    , n)
+                Nothing ->
+                    ( "SELECT txid, nominal_tx_index FROM xoken.script_output_protocol WHERE proto_str=? AND nominal_tx_index<?"
+                    , maxBound)
         protocol = DT.intercalate "." $ prop1 : props
-        str = "SELECT txid, nominal_tx_index FROM xoken.script_output_protocol WHERE proto_str=? AND nominal_tx_index<?"
         qstr = str :: Q.QueryString Q.R (DT.Text, Int64) (DT.Text, Int64)
         uqstr = getSimpleQueryParam $ (protocol, nominalTxIndex)
     eResp <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr (uqstr {pageSize = maybe (Just 100) Just pgSize}))
