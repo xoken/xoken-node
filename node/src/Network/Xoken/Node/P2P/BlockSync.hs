@@ -868,6 +868,10 @@ processConfTransaction bis tx bhash blkht txind = do
                  --case v of
                      --Just v' -> liftIO $ TSH.mutate v' (T.intercalate "_" protocol) fn
                      --Nothing -> debug lg $ LG.msg $ "No ProtocolInfo Available for: " ++ show bhash
+             debug lg $
+                 LG.msg $
+                 "processing Tx " ++
+                 show txhs ++ " : sh: " ++ show sh ++ ": bsh: " ++ show bsh ++ ": started script hash commit"
              insertTxIdOutputs conn output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o)
              commitScriptHashOutputs
                  conn --
@@ -882,7 +886,11 @@ processConfTransaction bis tx bhash blkht txind = do
                              commitScriptHashOutputs conn a output bi
                              commitScriptHashUnspentOutputs conn a output
                          else return ()
-                 (Left e) -> return ())
+                 (Left e) -> return ()
+             debug lg $
+                 LG.msg $
+                 "processing Tx " ++
+                 show txhs ++ ": sh: " ++ show sh ++ ": bsh: " ++ show bsh ++ ": stopped script hash commit")
         outAddrs
     debug lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": committed scripthash,txid_outputs tables"
     mapM_
