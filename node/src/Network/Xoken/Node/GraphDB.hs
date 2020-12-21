@@ -558,7 +558,7 @@ insertProtocolWithBlockInfo name properties BlockPInfo {..} = do
         " MERGE (a: protocol { name: {name}," <>
         props <>
         "  }) " <>
-        " MERGE (b: block { hash: {hash}, height: {height}, timestamp: {timestamp}, day: {day }, month: {month}, year: {year} }) WITH a, b" <>
+        " MERGE (b: block { hash: {hash}, height: {height}, timestamp: {timestamp}, day: {day }, month: {month}, year: {year}, hour: {hour} }) WITH a, b" <>
         " MATCH (a: protocol), (b: block) WHERE a.name = {name} AND b.hash = {hash} MERGE (a)-[r:PRESENT_IN{bytes: {bytes}, fees: {fees}, tx_count: {count}}]->(b)"
     props = intercalate "," $ Prelude.map (\(a, _) -> a <> ": {" <> a <> "}") properties
     propsV = Prelude.map (\(a, b) -> (a, T b)) properties
@@ -574,5 +574,6 @@ insertProtocolWithBlockInfo name properties BlockPInfo {..} = do
         , ("bytes", I bytes)
         , ("fees", I fees)
         , ("count", I count)
+        , ("hour", I hour)
         ] <>
         propsV

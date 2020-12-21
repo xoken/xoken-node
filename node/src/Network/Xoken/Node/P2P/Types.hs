@@ -111,6 +111,7 @@ data BlockPInfo =
         { height :: Int
         , hash :: Text
         , timestamp :: Int
+        , hour :: Int
         , day :: Int
         , month :: Int
         , year :: Int

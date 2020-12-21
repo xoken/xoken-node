@@ -23,6 +23,7 @@ module Network.Xoken.Node.P2P.BlockSync
     , handleIfAllegoryTx
     , commitTxPage
     , getScriptHashFromOutpoint
+    , diffGregorianDurationClip
     ) where
 
 import Codec.Serialise
@@ -68,6 +69,7 @@ import Data.String.Conversions
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as DTE
+import Data.Time.Calendar
 import Data.Time.Calendar
 import Data.Time.Clock
 import Data.Time.Clock
@@ -832,14 +834,22 @@ processConfTransaction bis tx bhash blkht txind = do
              when (op_false == "00" && op_return == "6a" && isJust (headMaybe props)) $ do
                  let protocol = snd <$> props
                  ts <- (blockTimestamp' . DA.blockHeader . head) <$> xGetChainHeaders (fromIntegral blkht) 1
-                 let (y, m, d) = toGregorian $ utctDay $ posixSecondsToUTCTime (fromIntegral ts)
+                 let epd = utctDay $ posixSecondsToUTCTime 0
+                 let cd = utctDay $ posixSecondsToUTCTime (fromIntegral ts)
+                 let sec = diffUTCTime (posixSecondsToUTCTime (fromIntegral ts)) (posixSecondsToUTCTime 0)
+                 let (m, d) = diffGregorianDurationClip cd epd
+                 let (y', _, _) = toGregorian cd
+                 let (y'', _, _) = toGregorian epd
+                 let y = y' - y''
+                 let h = div (fromEnum $ sec / (10 ^ 12)) (60 * 60)
                  let curBi =
                          BlockPInfo
                              { height = blkht
                              , hash = T.pack $ show bhash
                              , timestamp = fromIntegral ts
-                             , day = d
-                             , month = m
+                             , hour = h
+                             , day = div h 24
+                             , month = fromIntegral m
                              , year = fromIntegral y
                              , fees = fromIntegral fees
                              , bytes = binBlockSize bis
@@ -850,6 +860,7 @@ processConfTransaction bis tx bhash blkht txind = do
                              blkht
                              (Type.hash b)
                              (Type.timestamp b)
+                             (hour b)
                              (day b)
                              (month b)
                              (year b)
@@ -1159,3 +1170,21 @@ commitScriptOutputProtocol conn protocol (txid, output_index) blockInfo fees siz
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: INSERTing into 'script_output_protocol: " ++ show e
             throw KeyValueDBInsertException
+
+diffGregorianDurationClip :: Day -> Day -> (Integer, Integer)
+diffGregorianDurationClip day2 day1 =
+    let (y1, m1, d1) = toGregorian day1
+        (y2, m2, d2) = toGregorian day2
+        ym1 = y1 * 12 + toInteger m1
+        ym2 = y2 * 12 + toInteger m2
+        ymdiff = ym2 - ym1
+        ymAllowed =
+            if day2 >= day1
+                then if d2 >= d1
+                         then ymdiff
+                         else ymdiff - 1
+                else if d2 <= d1
+                         then ymdiff
+                         else ymdiff + 1
+        dayAllowed = addGregorianMonthsClip ymAllowed day1
+     in (ymAllowed, diffDays day2 dayAllowed)

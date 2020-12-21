@@ -58,7 +58,16 @@ encodeQuery req ret nr =
     let m = getMatch nr <> " Where "
         withWhere = foldlWithKey' (\acc k v -> acc <> handleOp k v) m req
      in (fromMaybe withWhere $
-         (\(Object hm) -> foldlWithKey' (\acc k v -> acc <> handleReturn k v) (withWhere <> " RETURN ") hm) <$> ret)
+         (\r ->
+              case r of
+                  (Array v) ->
+                      intercalate
+                          " , "
+                          ((\(Object hm) ->
+                                foldlWithKey' (\acc k v -> acc <> handleReturn k v) (withWhere <> " RETURN ") hm) <$>
+                           (Data.Vector.toList v))
+                  (Object hm) -> foldlWithKey' (\acc k v -> acc <> handleReturn k v) (withWhere <> " RETURN ") hm) <$>
+         ret)
 
 handleOp :: Text -> Value -> Text
 handleOp op v =
@@ -100,8 +109,8 @@ dec v =
 
 handleReturn :: Text -> Value -> Text
 handleReturn "relation" (Object hm) =
-    foldlWithKey'
-        (\acc k v ->
+    foldrWithKey
+        (\k v acc ->
              acc <>
              (if acc == ""
                   then " r."
@@ -110,13 +119,15 @@ handleReturn "relation" (Object hm) =
         ""
         hm
 handleReturn x (Object hm) =
-    foldlWithKey'
-        (\acc k v ->
+    foldrWithKey
+        (\k v acc ->
              acc <>
              (if acc == ""
                   then " "
                   else " , ") <>
-             showValue v <> "(" <> k <> ")")
+             (if showValue v == ""
+                  then k
+                  else showValue v <> "(" <> k <> ")"))
         ""
         hm
 
