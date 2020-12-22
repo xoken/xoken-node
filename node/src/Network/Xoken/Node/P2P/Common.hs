@@ -17,6 +17,7 @@ import Control.Concurrent.MVar
 import Control.Concurrent.STM.TVar
 import Control.Exception
 import qualified Control.Exception.Lifted as LE (try)
+import Control.Lens
 import Control.Monad
 import Control.Monad.Logger
 import Control.Monad.Reader
@@ -67,6 +68,7 @@ import Network.Xoken.Node.Env
 import Network.Xoken.Node.P2P.Types
 import Network.Xoken.Transaction.Common
 import Network.Xoken.Util
+import Numeric.Lens (base)
 import Streamly
 import Streamly.Prelude ((|:), nil)
 import qualified Streamly.Prelude as S
@@ -92,7 +94,7 @@ data BlockSyncException
     | InvalidBlockInfoException
     | OutpointAddressNotFoundException
     | InvalidAddressException
-    | TxIDNotFoundException
+    | TxIDNotFoundException (String, Maybe Int) String
     | InvalidOutpointException
     | DBTxParseException
     | MerkleTreeComputeException
@@ -568,3 +570,28 @@ getTx conn qstr hash segments = do
                            in acc <> fromBlob sz)
         BSL.empty
         [1 .. segments]
+
+getProps :: B.ByteString -> [(Text, Text)]
+getProps = reverse . go mempty 5 -- name, 4 properties
+  where
+    go acc 0 _ = acc
+    go acc n b = do
+        let (len, r) = B.splitAt 2 b
+        let lenIntM = (T.unpack . DTE.decodeUtf8 $ len) ^? (base 16)
+        if (not $ B.null r) && isJust lenIntM && lenIntM > Just 0 && lenIntM <= Just 252
+            then go (( "prop" <> (T.pack $ show (6 - n)) -- starts at prop1
+                     , (DTE.decodeUtf8 $ B.take (2 * (fromJust lenIntM)) r)) :
+                     acc)
+                     (n - 1)
+                     (B.drop (2 * (fromJust lenIntM)) r)
+            else acc
+
+headMaybe :: [a] -> Maybe a
+headMaybe [] = Nothing
+headMaybe (x:xs) = Just x
+
+indexMaybe :: [a] -> Int -> Maybe a
+indexMaybe xs n
+    | n < 0 = Nothing
+    | n >= L.length xs = Nothing
+    | otherwise = Just $ xs !! n

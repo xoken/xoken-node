@@ -41,5 +41,6 @@ extra-deps:
   - pwstore-fast-2.4.4
   - xmlhtml-0.2.5.2
   - concurrent-hashtable-0.1.8
+  - lens-4.19.2
   - git: https://github.com/xoken/snap-server.git
     commit: 20d4a32b9da8c927230016b76185dff223b3907e

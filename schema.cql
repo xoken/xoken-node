@@ -27,7 +27,7 @@ CREATE TABLE xoken.ep_transactions (
     epoch boolean,
     tx_id text,
     tx_serialized blob,
-    inputs set  <frozen<tuple<frozen<tuple<text, int>>, int, frozen<tuple<text, bigint>>>>>,
+    inputs set <frozen<tuple<frozen<tuple<text, int>>, int, frozen<tuple<text, bigint>>>>>,
     fees bigint,
     PRIMARY KEY (epoch, tx_id)
 );
@@ -38,7 +38,7 @@ CREATE TABLE xoken.ep_script_hash_outputs (
     nominal_tx_index bigint,
     output frozen<tuple<text, int>>,
     PRIMARY KEY (epoch, script_hash, nominal_tx_index, output)
-) WITH CLUSTERING ORDER BY (nominal_tx_index DESC);
+) WITH CLUSTERING ORDER BY (script_hash ASC, nominal_tx_index DESC, output ASC);
 
 CREATE TABLE xoken.ep_script_hash_unspent_outputs (
     epoch boolean,
@@ -116,6 +116,7 @@ CREATE TABLE xoken.blockhash_txids (
     PRIMARY KEY((block_hash, page_number))
 );
 
+<<<<<<< HEAD
 DROP TABLE xoken.script_output_protocol;
 DROP TABLE xoken.blockhash_txids;
 DROP TABLE xoken.blocks_by_height;
@@ -129,3 +130,14 @@ DROP TABLE xoken.ep_transactions;
 DROP TABLE xoken.blocks_by_hash;
 DROP TABLE xoken.transactions;
 DROP TABLE xoken.misc_store;
+=======
+CREATE TABLE xoken.script_output_protocol (
+    proto_str text,
+    txid text,
+    fees bigint,
+    size int,
+    output_index int,
+    nominal_tx_index bigint,
+    PRIMARY KEY (proto_str, nominal_tx_index)
+) WITH CLUSTERING ORDER BY (nominal_tx_index ASC);
+>>>>>>> 259139e98ffcdd496a277f6e4aa489fa62ef310e

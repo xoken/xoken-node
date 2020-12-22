@@ -118,7 +118,7 @@ xGetTxHash hash = do
             ustr :: Q.QueryString Q.R (Bool, DT.Text) ( Bool
                                                       , DT.Text
                                                       , Blob
-                                                      , [((DT.Text, Int32), Int32, (DT.Text, Int64))]
+                                                      , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
                                                       , Int64)
         p = getSimpleQueryParam $ Identity $ hash
         up = getSimpleQueryParam $ (ep, hash)
@@ -138,7 +138,7 @@ xGetTxHash hash = do
                                 then return Nothing
                                 else do
                                     let (epoch, txid, psz, sinps, fees) = uiop !! 0
-                                        inps = L.sortBy (\(_, x, _) (_, y, _) -> compare x y) sinps
+                                        inps = L.sortBy (\(_, x, _) (_, y, _) -> compare x y) $ Q.fromSet sinps
                                     sz <-
                                         if isSegmented $ fromBlob psz
                                             then liftIO $ getCompleteUnConfTx conn hash (getSegmentCount (fromBlob psz))
@@ -151,7 +151,7 @@ xGetTxHash hash = do
                                             (fromIntegral $ C.length sz)
                                             Nothing
                                             (sz)
-                                            Nothing
+                                            (Just $ zipWith mergeTxOutTxOutput (txOut tx) outs)
                                             (zipWith mergeTxInTxInput (txIn tx) $
                                              (\((outTxId, outTxIndex), inpTxIndex, (addr, value)) ->
                                                   TxInput
@@ -231,7 +231,8 @@ xGetTxHashes hashes = do
                 throw KeyValueDBLookupException
     cures <-
         case ures of
-            Right iop -> pure $ L.map (\(txid, psz, sinps, fees) -> (txid, Nothing, psz, Q.fromSet sinps, fees)) (L.concat iop)
+            Right iop -> do
+                pure $ L.map (\(txid, psz, sinps, fees) -> (txid, Nothing, psz, Q.fromSet sinps, fees)) (L.concat iop)
             Left (e :: SomeException) -> do
                 err lg $ LG.msg $ "Error: xGetTxHashes: " ++ show e
                 throw KeyValueDBLookupException
@@ -249,10 +250,7 @@ xGetTxHashes hashes = do
                          case bi of
                              Just b -> Just <$> (xGetMerkleBranch $ DT.unpack txid)
                              Nothing -> pure Nothing
-                 let oF =
-                         case bi of
-                             Just b -> Just <$> getTxOutputsFromTxId txid
-                             Nothing -> pure Nothing
+                 let oF = Just <$> getTxOutputsFromTxId txid
                  res' <- LE.try $ LA.concurrently oF mrklF
                  case res' of
                      Right (outs, mrkl) ->
@@ -282,6 +280,8 @@ getTxOutputsFromTxId :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => DT.Te
 getTxOutputsFromTxId txid = do
     dbe <- getDB
     lg <- getLogger
+    bp2pEnv <- getBitcoinP2P
+    ep <- liftIO $ readTVarIO (epochType bp2pEnv)
     let conn = xCqlClientState dbe
         toStr = "SELECT output_index,block_info,is_recv,other,value,address FROM xoken.txid_outputs WHERE txid=?"
         toQStr =
@@ -292,68 +292,73 @@ getTxOutputsFromTxId txid = do
                                                           , Int64
                                                           , DT.Text)
         par = getSimpleQueryParam (Identity txid)
-        utoStr = "SELECT output_index,is_recv,other,value,address FROM xoken.ep_txid_outputs WHERE txid=?"
+        utoStr = "SELECT output_index,is_recv,other,value,address FROM xoken.ep_txid_outputs WHERE epoch = ? AND txid=?"
         utoQStr =
-            utoStr :: Q.QueryString Q.R (Identity DT.Text) ( Int32
-                                                           , Bool
-                                                           , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
-                                                           , Int64
-                                                           , DT.Text)
+            utoStr :: Q.QueryString Q.R ((Bool, DT.Text)) ( Int32
+                                                          , Bool
+                                                          , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
+                                                          , Int64
+                                                          , DT.Text)
+        upar = getSimpleQueryParam (ep, txid)
+    ures <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query utoQStr upar)
     res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query toQStr par)
-    case res of
-        Right t -> do
-            if length t == 0
-                then do
-                    ures <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query utoQStr par)
-                    case ures of
-                        Right ut -> do
-                            if L.null ut
-                                then do
-                                    err lg $
-                                        LG.msg $
-                                        "Error: getTxOutputsFromTxId: No entry in txid_outputs for txid: " ++ show txid
-                                    return []
-                                else do
-                                    let txg =
-                                            (L.sortBy (\(_, x, _, _, _) (_, y, _, _, _) -> compare x y)) <$>
-                                            (L.groupBy (\(x, _, _, _, _) (y, _, _, _, _) -> x == y) ut)
-                                        txOutData =
-                                            (\inp ->
-                                                 case inp of
-                                                     [(idx, recv, oth, val, addr)] ->
-                                                         genUnConfTxOutputData
-                                                             (txid, idx, (recv, oth, val, addr), Nothing)
-                                                     [(idx1, recv1, oth1, val1, addr1), (_, recv2, oth2, val2, addr2)] ->
-                                                         genUnConfTxOutputData
-                                                             ( txid
-                                                             , idx1
-                                                             , (recv2, oth2, val2, addr2)
-                                                             , Just (recv1, oth1, val1, addr1))) <$>
-                                            txg
-                                    return $ txOutputDataToOutput <$> txOutData
-                        Left (e :: SomeException) -> do
-                            err lg $ LG.msg $ "Error: getTxOutputsFromTxId: " ++ show e
-                            throw KeyValueDBLookupException
-                else do
-                    let txg =
-                            (L.sortBy (\(_, _, x, _, _, _) (_, _, y, _, _, _) -> compare x y)) <$>
-                            (L.groupBy (\(x, _, _, _, _, _) (y, _, _, _, _, _) -> x == y) t)
-                        txOutData =
-                            (\inp ->
-                                 case inp of
-                                     [(idx, bif, recv, oth, val, addr)] ->
-                                         genTxOutputData (txid, idx, (bif, recv, oth, val, addr), Nothing)
-                                     [(idx1, bif1, recv1, oth1, val1, addr1), (_, bif2, recv2, oth2, val2, addr2)] ->
-                                         genTxOutputData
-                                             ( txid
-                                             , idx1
-                                             , (bif2, recv2, oth2, val2, addr2)
-                                             , Just (bif1, recv1, oth1, val1, addr1))) <$>
-                            txg
-                    return $ txOutputDataToOutput <$> txOutData
-        Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: getTxOutputsFromTxId: " ++ show e
-            throw KeyValueDBLookupException
+    uout <-
+        case ures of
+            Right ut -> do
+                if L.null ut
+                    then do
+                        err lg $
+                            LG.msg $ "Error: getTxOutputsFromTxId: No entry in ep_txid_outputs for txid: " ++ show txid
+                        return []
+                    else do
+                        let txg =
+                                (L.sortBy (\(_, x, _, _, _) (_, y, _, _, _) -> compare x y)) <$>
+                                (L.groupBy (\(x, _, _, _, _) (y, _, _, _, _) -> x == y) ut)
+                            txOutData =
+                                (\inp ->
+                                     case inp of
+                                         [(idx, recv, oth, val, addr)] ->
+                                             genUnConfTxOutputData (txid, idx, (recv, oth, val, addr), Nothing)
+                                         [(idx1, recv1, oth1, val1, addr1), (_, recv2, oth2, val2, addr2)] ->
+                                             genUnConfTxOutputData
+                                                 ( txid
+                                                 , idx1
+                                                 , (recv2, oth2, val2, addr2)
+                                                 , Just (recv1, oth1, val1, addr1))) <$>
+                                txg
+                        return $ txOutputDataToOutput <$> txOutData
+            Left (e :: SomeException) -> do
+                err lg $ LG.msg $ "Error: getTxOutputsFromTxId: " ++ show e
+                throw KeyValueDBLookupException
+    out <-
+        case res of
+            Right t -> do
+                if length t == 0
+                    then do
+                        err lg $
+                            LG.msg $ "Error: getTxOutputsFromTxId: No entry in txid_outputs for txid: " ++ show txid
+                        return []
+                    else do
+                        let txg =
+                                (L.sortBy (\(_, _, x, _, _, _) (_, _, y, _, _, _) -> compare x y)) <$>
+                                (L.groupBy (\(x, _, _, _, _, _) (y, _, _, _, _, _) -> x == y) t)
+                            txOutData =
+                                (\inp ->
+                                     case inp of
+                                         [(idx, bif, recv, oth, val, addr)] ->
+                                             genTxOutputData (txid, idx, (bif, recv, oth, val, addr), Nothing)
+                                         [(idx1, bif1, recv1, oth1, val1, addr1), (_, bif2, recv2, oth2, val2, addr2)] ->
+                                             genTxOutputData
+                                                 ( txid
+                                                 , idx1
+                                                 , (bif2, recv2, oth2, val2, addr2)
+                                                 , Just (bif1, recv1, oth1, val1, addr1))) <$>
+                                txg
+                        return $ txOutputDataToOutput <$> txOutData
+            Left (e :: SomeException) -> do
+                err lg $ LG.msg $ "Error: getTxOutputsFromTxId: " ++ show e
+                throw KeyValueDBLookupException
+    return $ uout ++ out
 
 xGetTxIDsByBlockHash :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => String -> Int32 -> Int32 -> m [String]
 xGetTxIDsByBlockHash hash pgSize pgNum = do
@@ -493,3 +498,26 @@ xRelayTx rawTx = do
                 Nothing -> do
                     err lg $ LG.msg $ val $ "error decoding rawTx (2)"
                     return $ False
+
+xGetTxIDByProtocol ::
+       (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> [DT.Text] -> Maybe Int32 -> Maybe Int64 -> m [DT.Text]
+xGetTxIDByProtocol prop1 props pgSize mbNomTxInd = do
+    dbe <- getDB
+    lg <- getLogger
+    bp2pEnv <- getBitcoinP2P
+    let conn = xCqlClientState dbe
+        net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
+        nominalTxIndex =
+            case mbNomTxInd of
+                (Just n) -> n
+                Nothing -> maxBound
+        protocol = DT.intercalate "." $ prop1 : props
+        str = "SELECT txid FROM xoken.script_output_protocol WHERE proto_str=? AND nominal_tx_index<?"
+        qstr = str :: Q.QueryString Q.R (DT.Text, Int64) (Identity DT.Text)
+        uqstr = getSimpleQueryParam $ (protocol, nominalTxIndex)
+    eResp <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr (uqstr {pageSize = pgSize}))
+    case eResp of
+        Right mb -> return $ runIdentity <$> mb
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: xGetTxIDByProtocol: " ++ show e
+            throw KeyValueDBLookupException

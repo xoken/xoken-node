@@ -85,7 +85,8 @@ import Network.Xoken.Node.Data
 import Network.Xoken.Node.Data.Allegory
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.GraphDB
-import Network.Xoken.Node.P2P.BlockSync
+
+--import Network.Xoken.Node.P2P.BlockSync
 import Network.Xoken.Node.P2P.Common
 import Network.Xoken.Node.P2P.Types
 import Network.Xoken.Util (bsToInteger, integerToBS)
@@ -101,6 +102,7 @@ xGetChainInfo :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m (Maybe Cha
 xGetChainInfo = do
     dbe <- getDB
     lg <- getLogger
+    net <- (NC.bitcoinNetwork . nodeConfig) <$> getBitcoinP2P
     let conn = xCqlClientState $ dbe
     let conn = xCqlClientState dbe
         str = "SELECT key,value from xoken.misc_store"
@@ -120,7 +122,7 @@ xGetChainInfo = do
                     return $
                         Just $
                         ChainInfo
-                            "main"
+                            (getNetworkName net)
                             (showHex (lagCW + (read . DT.unpack $ chainwork)) "")
                             (headers)
                             (blocks)
