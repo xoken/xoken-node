@@ -62,18 +62,21 @@ encodeQuery req ret grouped nr =
         withWhere = foldlWithKey' (\acc k v -> acc <> handleOp k v) m req
      in (fromMaybe withWhere $
          (\r ->
-              case r of
-                  (Array v) ->
-                      intercalate
-                          " , "
-                          ((\(Object hm) ->
-                                foldlWithKey'
-                                    (\acc k v -> acc <> handleReturn k v)
-                                    (withWhere <> " RETURN ")
-                                    (hm <> grouped)) <$>
-                           (Data.Vector.toList v))
-                  (Object hm) ->
-                      foldlWithKey' (\acc k v -> acc <> handleReturn k v) (withWhere <> " RETURN ") (hm <> grouped)) <$>
+              let current =
+                      case r of
+                          (Array v) ->
+                              intercalate
+                                  " , "
+                                  ((\(Object hm) ->
+                                        foldlWithKey' (\acc k v -> acc <> handleReturn k v) (withWhere <> " RETURN ") hm) <$>
+                                   (Data.Vector.toList v))
+                          (Object hm) ->
+                              foldlWithKey' (\acc k v -> acc <> handleReturn k v) (withWhere <> " RETURN ") hm
+                  other = foldlWithKey' (\acc k v -> acc <> handleReturn k v) " , " grouped
+               in current <>
+                  if " , " == other
+                      then ""
+                      else other) <$>
          ret)
 
 handleOp :: Text -> Value -> Text
@@ -168,11 +171,11 @@ getMap groupeds =
     Prelude.foldl
         (\acc g -> do
              case g of
-                 Day -> Map.insert "p.month" (String "") acc
+                 Day -> Map.insert "b.month" (String "") acc
                  Month -> acc
                  Hour ->
-                     Map.insert "p.day" (String "") .
-                     Map.insert "p.month" (String "") . Map.insert "p.absoluteHour" (String "") $
+                     Map.insert "b.day" (String "") .
+                     Map.insert "b.month" (String "") . Map.insert "b.absoluteHour" (String "") $
                      acc
                  Year -> acc)
         Map.empty
@@ -184,19 +187,19 @@ handleResponse group = fmap go
     go m =
         case group of
             Day ->
-                case Data.List.find (isPrefixOf "day") (MMap.keys m) of
+                case Data.List.find (isInfixOf "day") (MMap.keys m) of
                     Just k -> do
-                        let (Just (BT.I mon)) = MMap.lookup "p.month" m
+                        let (Just (BT.I mon)) = MMap.lookup "b.month" m
                         let years = 1970 + (div mon 12)
                         let month = Prelude.rem mon 12
-                        MMap.alter
-                            (\(Just (BT.I x)) ->
-                                 Just (BT.T (pack $ show (x + 1) <> "/" <> show mon <> "/" <> show years)))
-                            k
-                            m
+                        MMap.alter (const Nothing) "b.month" $
+                            MMap.alter
+                                (\(Just (BT.I x)) -> Just (BT.T (pack $ show x <> "/" <> show mon <> "/" <> show years)))
+                                k
+                                m
                     Nothing -> m
             Month ->
-                case Data.List.find (isPrefixOf "month") (MMap.keys m) of
+                case Data.List.find (isInfixOf "month") (MMap.keys m) of
                     Just k ->
                         MMap.alter
                             (\(Just (BT.I mon)) ->
@@ -205,25 +208,28 @@ handleResponse group = fmap go
                             m
                     Nothing -> m
             Year ->
-                case Data.List.find (isPrefixOf "year") (MMap.keys m) of
+                case Data.List.find (isInfixOf "year") (MMap.keys m) of
                     Just k -> MMap.alter (\(Just (BT.I year)) -> Just (BT.T (pack $ show (1970 + year)))) k m
                     Nothing -> m
             Hour ->
-                case Data.List.find (isPrefixOf "hour") (MMap.keys m) of
+                case Data.List.find (isInfixOf "hour") (MMap.keys m) of
                     Just k -> do
-                        let (Just (BT.I day)) = MMap.lookup "p.day" m
-                        let (Just (BT.I mon)) = MMap.lookup "p.month" m
-                        let (Just (BT.I hr)) = MMap.lookup "p.absoluteHour" m
+                        let (Just (BT.I day)) = MMap.lookup "b.day" m
+                        let (Just (BT.I mon)) = MMap.lookup "b.month" m
+                        let (Just (BT.I hr)) = MMap.lookup "b.absoluteHour" m
                         let years = 1970 + (div mon 12)
                         let month = Prelude.rem mon 12
-                        MMap.alter
-                            (\(Just (BT.I x)) ->
-                                 Just
-                                     (BT.T
-                                          (pack $
-                                           show hr <> "/" <> show (day + 1) <> "/" <> show mon <> "/" <> show years)))
-                            k
-                            m
+                        MMap.alter (const Nothing) "b.day" $
+                            MMap.alter (const Nothing) "b.month" $
+                            MMap.alter (const Nothing) "b.absoluteHour" $
+                            MMap.alter
+                                (\(Just (BT.I x)) ->
+                                     Just
+                                         (BT.T
+                                              (pack $
+                                               show hr <> "H:" <> show day <> "/" <> show mon <> "/" <> show years)))
+                                k
+                                m
                     Nothing -> m
 
 queryHandler :: QueryRequest -> Snap.Handler App App ()
@@ -232,9 +238,18 @@ queryHandler qr = do
         Just (Object hm) -> do
             let groupeds =
                     case _return qr of
-                        (Just (Object rh)) -> grouped <$> Map.keys rh
+                        (Just (Object rh)) ->
+                            case Map.lookup "$fields" rh of
+                                (Just (Object x)) -> grouped <$> Map.keys x
+                                _ -> []
                         _ -> []
-            let resp = BT.query $ encodeQuery hm (_return qr) (getMap $ catMaybes groupeds) (_on qr)
+            let resp =
+                    BT.query $
+                    encodeQuery
+                        hm
+                        (_return qr)
+                        (Map.insert "$fields" (Object (getMap $ catMaybes groupeds)) Map.empty)
+                        (_on qr)
             dbe <- getDB
             pres <- liftIO $ try $ tryWithResource (pool $ graphDB dbe) (`BT.run` resp)
             case pres of

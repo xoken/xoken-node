@@ -91,15 +91,21 @@ data Grouped
     | Month
     | Year
 
+instance Show Grouped where
+    show (Hour) = "Hour"
+    show (Day) = "Day"
+    show (Month) = "Month"
+    show (Year) = "Year"
+
 grouped :: Text -> Maybe Grouped
 grouped x =
-    if isPrefixOf "day" x
+    if isInfixOf "day" x
         then Just Day
-        else if isPrefixOf "hour" x
+        else if isInfixOf "hour" x
                  then Just Hour
-                 else if isPrefixOf "month" x
+                 else if isInfixOf "month" x
                           then Just Month
-                          else if isPrefixOf "year" x
+                          else if isInfixOf "year" x
                                    then Just Year
                                    else Nothing
 
