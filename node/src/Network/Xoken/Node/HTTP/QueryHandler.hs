@@ -227,7 +227,8 @@ handleResponse group = fmap go
                                      Just
                                          (BT.T
                                               (pack $
-                                               show hr <> "H:" <> show day <> "/" <> show mon <> "/" <> show years)))
+                                               show day <>
+                                               "/" <> show mon <> "/" <> show years <> " " <> show hr <> ":00:00")))
                                 k
                                 m
                     Nothing -> m
