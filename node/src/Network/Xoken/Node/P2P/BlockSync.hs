@@ -849,6 +849,7 @@ processConfTransaction bis tx bhash blkht txind = do
                              , timestamp = fromIntegral ts
                              , hour = h
                              , day = div h 24
+                             , absoluteHour = Prelude.rem h 24
                              , month = fromIntegral m
                              , year = fromIntegral y
                              , fees = fromIntegral fees
@@ -867,6 +868,7 @@ processConfTransaction bis tx bhash blkht txind = do
                              ((fromIntegral fees) + (Type.fees b))
                              ((binBlockSize bis) + (Type.bytes b))
                              ((Type.count b) + 1)
+                             (absoluteHour b)
                  let fn x =
                          case x of
                              Just (p, bi) -> (Just (props, upf bi), ())

@@ -118,6 +118,7 @@ data BlockPInfo =
         , fees :: Int
         , bytes :: Int
         , count :: Int
+        , absoluteHour :: Int
         }
     deriving (Show)
 
