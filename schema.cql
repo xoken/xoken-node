@@ -116,21 +116,6 @@ CREATE TABLE xoken.blockhash_txids (
     PRIMARY KEY((block_hash, page_number))
 );
 
-<<<<<<< HEAD
-DROP TABLE xoken.script_output_protocol;
-DROP TABLE xoken.blockhash_txids;
-DROP TABLE xoken.blocks_by_height;
-DROP TABLE xoken.txid_outputs;
-DROP TABLE xoken.script_hash_unspent_outputs;
-DROP TABLE xoken.script_hash_outputs;
-DROP TABLE xoken.ep_txid_outputs;
-DROP TABLE xoken.ep_script_hash_unspent_outputs;
-DROP TABLE xoken.ep_script_hash_outputs;
-DROP TABLE xoken.ep_transactions;
-DROP TABLE xoken.blocks_by_hash;
-DROP TABLE xoken.transactions;
-DROP TABLE xoken.misc_store;
-=======
 CREATE TABLE xoken.script_output_protocol (
     proto_str text,
     txid text,
@@ -140,4 +125,3 @@ CREATE TABLE xoken.script_output_protocol (
     nominal_tx_index bigint,
     PRIMARY KEY (proto_str, nominal_tx_index)
 ) WITH CLUSTERING ORDER BY (nominal_tx_index ASC);
->>>>>>> 259139e98ffcdd496a277f6e4aa489fa62ef310e
