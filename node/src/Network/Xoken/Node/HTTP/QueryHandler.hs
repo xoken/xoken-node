@@ -52,7 +52,7 @@ showOp "$lt" = " < "
 showOp "$lte" = " <= "
 showOp "$in" = " IN "
 showOp "$nin" = " NOT IN "
-showOp "$eq" = " == "
+showOp "$eq" = " = "
 showOp "$neq" = " <> "
 showOp x = x
 
