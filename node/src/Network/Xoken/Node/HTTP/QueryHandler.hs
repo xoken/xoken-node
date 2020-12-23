@@ -28,6 +28,7 @@ import Network.Xoken.Node.P2P.Types hiding (node)
 import Network.Xoken.Node.Service
 import Prelude
 import Snap
+import qualified Text.Read as TR
 
 tshow :: Show a => a -> Text
 tshow = Data.Text.pack . show
@@ -241,6 +242,10 @@ handleResponse group = fmap go
 
 queryHandler :: QueryRequest -> Snap.Handler App App ()
 queryHandler qr = do
+    offset <- (flip (>>=) (TR.readMaybe . unpack . DTE.decodeUtf8)) <$> (getQueryParam "offset")
+    limitv <- (flip (>>=) (TR.readMaybe . unpack . DTE.decodeUtf8)) <$> (getQueryParam "limit")
+    let skip = " SKIP " <> (show $ fromMaybe 0 offset)
+    let limit = " LIMIT " <> (show $ fromMaybe 200 limitv)
     case _where qr of
         Just (Object hm) -> do
             let groupeds =
@@ -252,11 +257,12 @@ queryHandler qr = do
                         _ -> []
             let resp =
                     BT.query $
-                    encodeQuery
-                        hm
-                        (_return qr)
-                        (Map.insert "$fields" (Object (getMap $ catMaybes groupeds)) Map.empty)
-                        (_on qr)
+                    (encodeQuery
+                         hm
+                         (_return qr)
+                         (Map.insert "$fields" (Object (getMap $ catMaybes groupeds)) Map.empty)
+                         (_on qr)) <>
+                    (pack $ skip <> limit)
             dbe <- getDB
             pres <- liftIO $ try $ tryWithResource (pool $ graphDB dbe) (`BT.run` resp)
             case pres of
