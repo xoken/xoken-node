@@ -89,7 +89,7 @@ handleOp op v =
                     fmap
                         (\x ->
                              case x of
-                                 Object y -> foldlWithKey' (\acc k v -> acc <> handleOp k v) "" y)
+                                 Object y -> foldlWithKey' (\acc k v -> acc <> handleOp' k v (showOp op)) "" y)
                         (Data.Vector.toList v)
                 _ -> undefined
         "$and" ->
@@ -99,14 +99,20 @@ handleOp op v =
                         (\acc k v ->
                              acc <>
                              if acc == ""
-                                 then handleOp k v
-                                 else showOp op <> " " <> handleOp k v)
+                                 then handleOp' k v (showOp op)
+                                 else showOp op <> " " <> handleOp' k v (showOp op))
                         ""
                         y
                 _ -> undefined
         k ->
             let (t, va) = dec v
              in k <> showOp t <> showValue va
+
+handleOp' :: Text -> Value -> Text -> Text
+handleOp' k v op =
+    case v of
+        Object hm -> intercalate op $ (\(k', v') -> k <> showOp k' <> showValue v') <$> Map.toList hm
+        _ -> ""
 
 dec :: Value -> (Text, Value)
 dec v =
