@@ -188,6 +188,42 @@ getMap groupeds =
         Map.empty
         groupeds
 
+formatResponse :: [BT.Record] -> [BT.Record]
+formatResponse = fmap go
+  where
+    go mapR = do
+        let yearF = MMap.alter (fmap (\(BT.I y) -> BT.I (1970 + y))) "b.year"
+        let month m =
+                let x = Prelude.rem m 12
+                 in if x == 0
+                        then 12
+                        else x
+        let years mon = 1970 + (div mon 12)
+        let monF =
+                MMap.alter
+                    (fmap (\(BT.I mon) -> BT.T (pack $ show (month mon) <> "/" <> show (1970 + (div mon 12)))))
+                    "b.month"
+        let mon = MMap.lookup "b.month" mapR
+        let dayF map' =
+                case mon of
+                    Just (BT.I m) ->
+                        MMap.alter
+                            (\(Just (BT.I x)) ->
+                                 Just
+                                     (BT.T
+                                          (pack $
+                                           show x <>
+                                           "/" <>
+                                           show
+                                               (if month m == 0
+                                                    then 12
+                                                    else m) <>
+                                           "/" <> show (years m))))
+                            "b.day"
+                            map'
+                    Nothing -> map'
+        yearF . monF . dayF $ mapR
+
 handleResponse :: Grouped -> [BT.Record] -> [BT.Record]
 handleResponse group = fmap go
   where
@@ -201,16 +237,31 @@ handleResponse group = fmap go
                         let month = Prelude.rem mon 12
                         MMap.alter (const Nothing) "b.month" $
                             MMap.alter
-                                (\(Just (BT.I x)) -> Just (BT.T (pack $ show x <> "/" <> show mon <> "/" <> show years)))
+                                (\(Just (BT.I x)) ->
+                                     Just
+                                         (BT.T
+                                              (pack $
+                                               show x <>
+                                               "/" <>
+                                               show
+                                                   (if month == 0
+                                                        then 12
+                                                        else month) <>
+                                               "/" <> show years)))
                                 k
                                 m
                     Nothing -> m
             Month ->
                 case Data.List.find (isInfixOf "month") (MMap.keys m) of
-                    Just k ->
+                    Just k -> do
+                        let month m =
+                                let x = Prelude.rem m 12
+                                 in if x == 0
+                                        then 12
+                                        else x
                         MMap.alter
                             (\(Just (BT.I mon)) ->
-                                 Just (BT.T (pack $ show (Prelude.rem mon 12) <> "/" <> show (1970 + (div mon 12)))))
+                                 Just (BT.T (pack $ show (month mon) <> "/" <> show (1970 + (div mon 12)))))
                             k
                             m
                     Nothing -> m
@@ -225,7 +276,11 @@ handleResponse group = fmap go
                         let (Just (BT.I mon)) = MMap.lookup "b.month" m
                         let (Just (BT.I hr)) = MMap.lookup "b.absoluteHour" m
                         let years = 1970 + (div mon 12)
-                        let month = Prelude.rem mon 12
+                        let month =
+                                let x = Prelude.rem mon 12
+                                 in if x == 0
+                                        then 12
+                                        else x
                         MMap.alter (const Nothing) "b.day" $
                             MMap.alter (const Nothing) "b.month" $
                             MMap.alter (const Nothing) "b.absoluteHour" $
@@ -234,8 +289,8 @@ handleResponse group = fmap go
                                      Just
                                          (BT.T
                                               (pack $
-                                               show day <>
-                                               "/" <> show mon <> "/" <> show years <> " " <> show hr <> ":00:00")))
+                                               show (div x 24) <>
+                                               "/" <> show month <> "/" <> show years <> " " <> show hr <> ":00:00")))
                                 k
                                 m
                     Nothing -> m

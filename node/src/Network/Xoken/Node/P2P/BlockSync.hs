@@ -848,7 +848,11 @@ processConfTransaction bis tx bhash blkht txind = do
                              , hash = T.pack $ show bhash
                              , timestamp = fromIntegral ts
                              , hour = h
-                             , day = 1 + div h 24
+                             , day =
+                                   let hh = div h 24
+                                    in if hh == 0
+                                           then 1
+                                           else hh
                              , absoluteHour = Prelude.rem h 24
                              , month = 1 + fromIntegral m
                              , year = fromIntegral y
