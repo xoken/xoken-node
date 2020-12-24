@@ -17,12 +17,16 @@ import Data.Maybe
 import Data.Pool
 import Data.Text
 import qualified Data.Text.Encoding as DTE
+import Data.Time.Calendar
+import Data.Time.Clock
+import Data.Time.Clock.POSIX
 import Data.Vector
 import qualified Database.Bolt as BT
 import GHC.Generics
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.HTTP.Handler
 import Network.Xoken.Node.HTTP.Types
+import Network.Xoken.Node.P2P.BlockSync
 import Network.Xoken.Node.P2P.Common (addNewUser, generateSessionKey, getSimpleQueryParam, query, write)
 import Network.Xoken.Node.P2P.Types hiding (node)
 import Network.Xoken.Node.Service
@@ -178,10 +182,10 @@ getMap groupeds =
     Prelude.foldl
         (\acc g -> do
              case g of
-                 Day -> Map.insert "b.month" (String "") acc
+                 Day -> Map.insert "b.timestamp" (String "") $ Map.insert "b.month" (String "") acc
                  Month -> acc
                  Hour ->
-                     Map.insert "b.day" (String "") .
+                     Map.insert "b.timestamp" (String "") .
                      Map.insert "b.month" (String "") . Map.insert "b.absoluteHour" (String "") $
                      acc
                  Year -> acc)
@@ -233,15 +237,19 @@ handleResponse group = fmap go
                 case Data.List.find (isInfixOf "day") (MMap.keys m) of
                     Just k -> do
                         let (Just (BT.I mon)) = MMap.lookup "b.month" m
+                        let (Just (BT.I ts)) = MMap.lookup "b.timestamp" m
                         let years = 1970 + (div mon 12)
                         let month = Prelude.rem mon 12
+                        let epd = utctDay $ posixSecondsToUTCTime 0
+                        let cd = utctDay $ posixSecondsToUTCTime (fromIntegral ts)
+                        let (_, d) = diffGregorianDurationClip cd epd
                         MMap.alter (const Nothing) "b.month" $
                             MMap.alter
                                 (\(Just (BT.I x)) ->
                                      Just
                                          (BT.T
                                               (pack $
-                                               show x <>
+                                               show (d + 1) <>
                                                "/" <>
                                                show
                                                    (if month == 0
@@ -272,9 +280,12 @@ handleResponse group = fmap go
             Hour ->
                 case Data.List.find (isInfixOf "hour") (MMap.keys m) of
                     Just k -> do
-                        let (Just (BT.I day)) = MMap.lookup "b.day" m
+                        let (Just (BT.I ts)) = MMap.lookup "b.timestamp" m
                         let (Just (BT.I mon)) = MMap.lookup "b.month" m
                         let (Just (BT.I hr)) = MMap.lookup "b.absoluteHour" m
+                        let epd = utctDay $ posixSecondsToUTCTime 0
+                        let cd = utctDay $ posixSecondsToUTCTime (fromIntegral ts)
+                        let (_, day) = diffGregorianDurationClip cd epd
                         let years = 1970 + (div mon 12)
                         let month =
                                 let x = Prelude.rem mon 12
@@ -289,7 +300,7 @@ handleResponse group = fmap go
                                      Just
                                          (BT.T
                                               (pack $
-                                               show (div x 24) <>
+                                               show (day + 1) <>
                                                "/" <> show month <> "/" <> show years <> " " <> show hr <> ":00:00")))
                                 k
                                 m
