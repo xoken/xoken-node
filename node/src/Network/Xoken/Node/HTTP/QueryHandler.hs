@@ -182,11 +182,11 @@ getMap groupeds =
     Prelude.foldl
         (\acc g -> do
              case g of
-                 Day -> Map.insert "b.timestamp" (String "") $ Map.insert "b.month" (String "") acc
+                 Day -> Map.insert "b.timestamp" (String "collect") $ Map.insert "b.month" (String "collect") acc
                  Month -> acc
                  Hour ->
-                     Map.insert "b.timestamp" (String "") .
-                     Map.insert "b.month" (String "") . Map.insert "b.absoluteHour" (String "") $
+                     Map.insert "b.timestamp" (String "collect") .
+                     Map.insert "b.month" (String "collect") . Map.insert "b.absoluteHour" (String "collect") $
                      acc
                  Year -> acc)
         Map.empty
@@ -196,7 +196,7 @@ formatResponse :: [BT.Record] -> [BT.Record]
 formatResponse = fmap go
   where
     go mapR = do
-        let yearF = MMap.alter (fmap (\(BT.I y) -> BT.I (1970 + y))) "b.year"
+        let yearF = MMap.alter (fmap (\(BT.L ((BT.I y):xs)) -> BT.I (1970 + y))) "collect(b.year)"
         let month m =
                 let x = Prelude.rem m 12
                  in if x == 0
@@ -205,12 +205,13 @@ formatResponse = fmap go
         let years mon = 1970 + (div mon 12)
         let monF =
                 MMap.alter
-                    (fmap (\(BT.I mon) -> BT.T (pack $ show (month mon) <> "/" <> show (1970 + (div mon 12)))))
-                    "b.month"
-        let mon = MMap.lookup "b.month" mapR
+                    (fmap
+                         (\(BT.L ((BT.I mon):xs)) -> BT.T (pack $ show (month mon) <> "/" <> show (1970 + (div mon 12)))))
+                    "collect(b.month)"
+        let mon = MMap.lookup "collect(b.month)" mapR
         let dayF map' =
                 case mon of
-                    Just (BT.I m) ->
+                    Just (BT.L ((BT.I m):xs)) ->
                         MMap.alter
                             (\(Just (BT.I x)) ->
                                  Just
@@ -236,14 +237,15 @@ handleResponse group = fmap go
             Day ->
                 case Data.List.find (isInfixOf "day") (MMap.keys m) of
                     Just k -> do
-                        let (Just (BT.I mon)) = MMap.lookup "b.month" m
-                        let (Just (BT.I ts)) = MMap.lookup "b.timestamp" m
+                        let (Just (BT.L ((BT.I mon):xs))) = MMap.lookup "collect(b.month)" m
+                        let (Just (BT.L ((BT.I ts):txs))) = MMap.lookup "collect(b.timestamp)" m
                         let years = 1970 + (div mon 12)
                         let month = Prelude.rem mon 12
                         let epd = utctDay $ posixSecondsToUTCTime 0
                         let cd = utctDay $ posixSecondsToUTCTime (fromIntegral ts)
                         let (_, d) = diffGregorianDurationClip cd epd
-                        MMap.alter (const Nothing) "b.month" $
+                        MMap.alter (const Nothing) "collect(b.timestamp)" $
+                            MMap.alter (const Nothing) "collect(b.month)" $
                             MMap.alter
                                 (\(Just (BT.I x)) ->
                                      Just
@@ -280,9 +282,9 @@ handleResponse group = fmap go
             Hour ->
                 case Data.List.find (isInfixOf "hour") (MMap.keys m) of
                     Just k -> do
-                        let (Just (BT.I ts)) = MMap.lookup "b.timestamp" m
-                        let (Just (BT.I mon)) = MMap.lookup "b.month" m
-                        let (Just (BT.I hr)) = MMap.lookup "b.absoluteHour" m
+                        let (Just (BT.L ((BT.I ts):txs))) = MMap.lookup "collect(b.timestamp)" m
+                        let (Just (BT.L ((BT.I mon):mxs))) = MMap.lookup "collect(b.month)" m
+                        let (Just (BT.L ((BT.I hr):hxs))) = MMap.lookup "collect(b.absoluteHour)" m
                         let epd = utctDay $ posixSecondsToUTCTime 0
                         let cd = utctDay $ posixSecondsToUTCTime (fromIntegral ts)
                         let (_, day) = diffGregorianDurationClip cd epd
@@ -292,9 +294,9 @@ handleResponse group = fmap go
                                  in if x == 0
                                         then 12
                                         else x
-                        MMap.alter (const Nothing) "b.day" $
-                            MMap.alter (const Nothing) "b.month" $
-                            MMap.alter (const Nothing) "b.absoluteHour" $
+                        MMap.alter (const Nothing) "collect(b.timestamp)" $
+                            MMap.alter (const Nothing) "collect(b.month)" $
+                            MMap.alter (const Nothing) "collect(b.absoluteHour)" $
                             MMap.alter
                                 (\(Just (BT.I x)) ->
                                      Just
