@@ -150,7 +150,7 @@ queryAllegoryNameScriptOp name isProducer = do
 
 initAllegoryRoot :: Tx -> BoltActionT IO ()
 initAllegoryRoot tx = do
-    let oops = pack $ "fe38e79e4067304d382b3ba8d67970f4f0cd26f988aac6c88bddffb4ec628daf" ++ ":" ++ show 0
+    let oops = pack $ "3f3e8e9ca9b7749bfe14a98c9ca5853d2df1b17122fb2ffa029158098c80cbd5" ++ ":" ++ show 0
     let scr = "76a91447dc5f6dd425347e6aeacd226c3196b385394fb488ac"
     let cypher =
             " MERGE (rr:namestate {name:{dummyroot} })  " <>
