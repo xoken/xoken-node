@@ -396,7 +396,7 @@ runBlockCacheQueue =
                                                                  debug lg $
                                                                      LG.msg $
                                                                      "Number of protocols for block: " <>
-                                                                     show ht <> " height: " <> show (Prelude.length pi)
+                                                                     show (Prelude.length pi) <> " height: " <> show ht
                                                                  pres <-
                                                                      liftIO $
                                                                      try $ do
