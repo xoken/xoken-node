@@ -380,6 +380,8 @@ runBlockCacheQueue =
                                      siza <- liftIO $ TSH.toList (fst xv)
                                      if ((sum $ snd $ unzip siza) == snd xv)
                                          then do
+                                             debug lg $
+                                                 LG.msg $ "Marking block as completed started with height: " <> show ht
                                              liftIO $
                                                  TSH.insert
                                                      (blockSyncStatusMap bp2pEnv)
@@ -391,6 +393,10 @@ runBlockCacheQueue =
                                                          case v of
                                                              Just v' -> do
                                                                  pi <- liftIO $ TSH.toList v'
+                                                                 debug lg $
+                                                                     LG.msg $
+                                                                     "Number of protocols for block: " <>
+                                                                     show ht <> " height: " <> show (Prelude.length pi)
                                                                  pres <-
                                                                      liftIO $
                                                                      try $ do
@@ -425,6 +431,8 @@ runBlockCacheQueue =
                                                           LG.msg $
                                                           "Error: Failed to insert into graph DB block " <>
                                                           (show (bsh, ht)) <> ": " <> (show e))
+                                             debug lg $
+                                                 LG.msg $ "Marking block as completed ended for height: " <> show ht
                                          else return ()
                                  Nothing -> return ())
                         (syt)
