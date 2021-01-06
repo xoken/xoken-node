@@ -595,3 +595,13 @@ indexMaybe xs n
     | n < 0 = Nothing
     | n >= L.length xs = Nothing
     | otherwise = Just $ xs !! n
+
+runInBatch :: (a -> IO b) -> [a] -> Int -> IO [b]
+runInBatch fn inps batch = do
+    go (take batch inps) (drop batch inps)
+  where
+    go cur next = do
+        res <- mapConcurrently fn cur
+        if Prelude.null next
+            then return res
+            else ((++) res) <$> go (take batch next) (drop batch next)

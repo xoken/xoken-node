@@ -400,7 +400,7 @@ runBlockCacheQueue =
                                                                  pres <-
                                                                      liftIO $
                                                                      try $ do
-                                                                         traverse
+                                                                         runInBatch
                                                                              (\(protocol, (props, blockInf)) -> do
                                                                                   TSH.delete v' protocol
                                                                                   tryWithResource
@@ -410,6 +410,7 @@ runBlockCacheQueue =
                                                                                                     props
                                                                                                     blockInf))
                                                                              pi
+                                                                             (maxInsertsProtocol $ nodeConfig bp2pEnv)
                                                                          TSH.delete (protocolInfo bp2pEnv) bsh
                                                                  case pres of
                                                                      Right rt -> return ()
