@@ -839,7 +839,12 @@ processConfTransaction bis tx bhash blkht txind = do
                      if op == "6a"
                          then ("00", op, rem)
                          else (\(a, b) -> (op, a, b)) $ B.splitAt 2 rem
-             let props = getProps remD
+             props <-
+                 case runGet (getPropsG 3) (fst $ B16.decode remD) of
+                     Right p -> return p
+                     Left str -> do
+                         liftIO $ err lg $ LG.msg ("Error: Getting protocol name " ++ show str)
+                         return []
              when (op_false == "00" && op_return == "6a" && isJust (headMaybe props)) $ do
                  let protocol = snd <$> props
                  ts <- (blockTimestamp' . DA.blockHeader . head) <$> xGetChainHeaders (fromIntegral blkht) 1
