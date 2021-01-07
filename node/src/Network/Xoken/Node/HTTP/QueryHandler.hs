@@ -4,6 +4,7 @@
 
 module Network.Xoken.Node.HTTP.QueryHandler where
 
+import Control.Arrow
 import Control.Exception
 import Control.Monad.IO.Class
 import Data.Aeson
@@ -11,7 +12,7 @@ import qualified Data.ByteString.Lazy as BSL
 import Data.Either
 import Data.HashMap.Strict
 import qualified Data.HashMap.Strict as Map
-import Data.List (find)
+import Data.List (find, nub)
 import qualified Data.Map.Strict as MMap
 import Data.Maybe
 import Data.Pool
@@ -48,18 +49,27 @@ showValue (Object o) = tshow o -- :TODO not correct, yet shouldn't be used
 operators :: [Text]
 operators = ["$or", "$and", "$gt", "$gte", "$lt", "$lte", "$in", "$nin", "$eq", "$neq"]
 
-showOp :: Text -> Text
-showOp "$or" = " OR "
-showOp "$and" = " AND "
-showOp "$gt" = " > "
-showOp "$gte" = " >= "
-showOp "$lt" = " < "
-showOp "$lte" = " <= "
-showOp "$in" = " IN "
-showOp "$nin" = " NOT IN "
-showOp "$eq" = " = "
-showOp "$neq" = " <> "
-showOp x = x
+showOp :: Maybe Text -> Text -> Text
+showOp Nothing "$or" = " OR "
+showOp (Just k) "$or" = k <> " OR "
+showOp Nothing "$and" = " AND "
+showOp (Just k) "$and" = k <> " AND "
+showOp Nothing "$gt" = " > "
+showOp (Just k) "$gt" = k <> " > "
+showOp Nothing "$gte" = " >= "
+showOp (Just k) "$gte" = k <> " >= "
+showOp Nothing "$lt" = " < "
+showOp (Just k) "$lt" = k <> " < "
+showOp Nothing "$lte" = " <= "
+showOp (Just k) "$lte" = k <> " <= "
+showOp Nothing "$in" = " IN "
+showOp (Just k) "$in" = k <> " IN "
+showOp (Just k) "$nin" = " NOT " <> k <> " IN "
+showOp Nothing "$eq" = " = "
+showOp (Just k) "$eq" = k <> " = "
+showOp Nothing "$neq" = " <> "
+showOp (Just k) "$neq" = k <> " <> "
+showOp _ x = x
 
 encodeQuery :: HashMap Text Value -> Maybe Value -> HashMap Text Value -> NodeRelation -> Text
 encodeQuery req ret grouped nr =
@@ -90,11 +100,26 @@ handleOp op v =
         "$or" ->
             case v of
                 Array v ->
-                    intercalate (showOp op) $
+                    intercalate (showOp Nothing op) $
                     fmap
                         (\x ->
                              case x of
-                                 Object y -> foldlWithKey' (\acc k v -> acc <> handleOp' k v (showOp op)) "" y)
+                                 Object y ->
+                                     foldlWithKey'
+                                         (\acc k v ->
+                                              acc <>
+                                              if k == "p.name"
+                                                  then case v of
+                                                           Object v' ->
+                                                               intercalate (showOp Nothing op) $
+                                                               elems $ mapWithKey (handleOpInd op) v'
+                                                           _ -> undefined
+                                                  else if acc == ""
+                                                           then handleOp' k v (showOp Nothing op)
+                                                           else showOp Nothing op <>
+                                                                " " <> handleOp' k v (showOp Nothing op))
+                                         ""
+                                         y)
                         (Data.Vector.toList v)
                 _ -> undefined
         "$and" ->
@@ -103,20 +128,48 @@ handleOp op v =
                     foldlWithKey'
                         (\acc k v ->
                              acc <>
-                             if acc == ""
-                                 then handleOp' k v (showOp op)
-                                 else showOp op <> " " <> handleOp' k v (showOp op))
+                             if k == "p.name"
+                                 then case v of
+                                          Object v' ->
+                                              intercalate (showOp Nothing op) $ elems $ mapWithKey (handleOpInd op) v'
+                                          _ -> undefined
+                                 else if acc == ""
+                                          then handleOp' k v (showOp Nothing op)
+                                          else showOp Nothing op <> " " <> handleOp' k v (showOp Nothing op))
                         ""
                         y
                 _ -> undefined
         k ->
             let (t, va) = dec v
-             in k <> showOp t <> showValue va
+                resp =
+                    case t of
+                        "$in" -> handlePropsArray (k, va)
+                        "$nin" -> handlePropsArray (k, va)
+                        _ -> handleProps (k, va)
+             in intercalate (showOp Nothing "$and") ((\(k', va') -> showOp (Just k') t <> showValue va') <$> resp)
+
+handleOpInd :: Text -> Text -> Value -> Text
+handleOpInd m op v =
+    case op of
+        "$and" -> handleOp op v
+        "$or" -> handleOp op v
+        "$in" ->
+            intercalate
+                (showOp Nothing "$and")
+                ((\(k', va') -> showOp (Just k') op <> showValue va') <$> handlePropsArray ("p.name", v))
+        "$nin" ->
+            intercalate
+                (showOp Nothing "$and")
+                ((\(k', va') -> showOp (Just k') op <> showValue va') <$> handlePropsArray ("p.name", v))
+        _ ->
+            intercalate
+                (showOp Nothing "$and")
+                ((\(k', va') -> showOp (Just k') op <> showValue va') <$> handleProps ("p.name", v))
 
 handleOp' :: Text -> Value -> Text -> Text
 handleOp' k v op =
     case v of
-        Object hm -> intercalate op $ (\(k', v') -> k <> showOp k' <> showValue v') <$> Map.toList hm
+        Object hm -> intercalate op $ (\(k', v') -> showOp (Just k) k' <> showValue v') <$> Map.toList hm
         _ -> ""
 
 dec :: Value -> (Text, Value)
@@ -126,7 +179,47 @@ dec v =
             if Prelude.length (keys hm) == 1
                 then (Prelude.head $ keys hm, Prelude.head $ elems hm)
                 else (tshow $ keys hm, String "dum")
-        x -> (showValue x, String "dum")
+        x -> (showValue x, String (showValue x))
+
+handlePropsArray :: (Text, Value) -> [(Text, Value)]
+handlePropsArray (k, v) =
+    if k == "p.name"
+        then case v of
+                 Array x ->
+                     let res =
+                             Prelude.reverse $
+                             Prelude.foldl
+                                 (\acc (e, ind) -> do
+                                      case e of
+                                          Array y ->
+                                              Prelude.foldl
+                                                  (\acc (e', ind') -> ("p.prop" <> (tshow ind'), e') : acc)
+                                                  acc
+                                                  (Prelude.zip (Data.Vector.toList y) [1 ..])
+                                          _ -> ("p.prop" <> (tshow ind), e) : acc)
+                                 []
+                                 (Prelude.zip (Data.Vector.toList x) [1 ..])
+                      in Map.toList $
+                         fmap
+                             (Array . Data.Vector.fromList . Data.List.nub)
+                             (Map.fromListWith (\a b -> a Prelude.++ b) (fmap (second pure) res))
+                 String s -> [("p.prop1", v)]
+                 _ -> [(k, v)]
+        else [(k, v)]
+
+handleProps :: (Text, Value) -> [(Text, Value)]
+handleProps (k, v) =
+    if k == "p.name"
+        then case v of
+                 Array x ->
+                     Prelude.reverse $
+                     Prelude.foldl
+                         (\acc (e, ind) -> ("p.prop" <> (tshow ind), e) : acc)
+                         []
+                         (Prelude.zip (Data.Vector.toList x) [1 ..])
+                 String s -> [("p.prop1", v)]
+                 _ -> [(k, v)]
+        else [(k, v)]
 
 handleReturn :: Text -> Value -> Text
 handleReturn "relation" (Object hm) =
@@ -323,6 +416,14 @@ queryHandler qr = do
                                 (Just (Object x)) -> grouped <$> Map.keys x
                                 _ -> []
                         _ -> []
+            liftIO $
+                print $
+                (encodeQuery
+                     hm
+                     (_return qr)
+                     (Map.insert "$fields" (Object (getMap $ catMaybes groupeds)) Map.empty)
+                     (_on qr)) <>
+                (pack $ skip <> limit)
             let resp =
                     BT.query $
                     (encodeQuery
@@ -339,5 +440,7 @@ queryHandler qr = do
                         Just rt ->
                             writeBS $ BSL.toStrict $ encode $ Prelude.foldr handleResponse rt (catMaybes groupeds)
                         Nothing -> writeBS $ BSL.toStrict $ encode rtm
-                Left (e :: SomeException) -> throwBadRequest
+                Left (e :: SomeException) -> do
+                    liftIO $ print $ "Error occurred: " Prelude.++ show e
+                    throwBadRequest
         _ -> throwBadRequest
