@@ -556,12 +556,11 @@ insertProtocolWithBlockInfo name properties BlockPInfo {..} = do
         Right (records) -> return ()
   where
     cypher =
-        " MERGE (a: protocol { name: {name}," <>
+        " MERGE (a: protocol { name: {name}}) ON CREATE SET " <>
         props <>
-        "  }) " <>
-        " MERGE (b: block { hash: {hash}, height: {height}, timestamp: {timestamp}, day: {day }, month: {month}, year: {year}, hour: {hour}, absoluteHour: {absoluteHour} }) " <>
+        " MERGE (b: block { hash: {hash}}) ON CREATE SET b.height= {height}, b.timestamp= {timestamp}, b.day= {day }, b.month= {month}, b.year= {year}, b.hour= {hour}, b.absoluteHour= {absoluteHour} " <>
         " MERGE (a)-[r:PRESENT_IN{bytes: {bytes}, fees: {fees}, tx_count: {count}}]->(b)"
-    props = intercalate "," $ Prelude.map (\(a, _) -> a <> ": {" <> a <> "}") properties
+    props = intercalate "," $ Prelude.map (\(a, _) -> "a." <> a <> "= {" <> a <> "}") properties
     propsV = Prelude.map (\(a, b) -> (a, T b)) properties
     params =
         fromList $
