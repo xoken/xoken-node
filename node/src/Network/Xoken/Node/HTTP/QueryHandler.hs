@@ -416,14 +416,6 @@ queryHandler qr = do
                                 (Just (Object x)) -> grouped <$> Map.keys x
                                 _ -> []
                         _ -> []
-            liftIO $
-                print $
-                (encodeQuery
-                     hm
-                     (_return qr)
-                     (Map.insert "$fields" (Object (getMap $ catMaybes groupeds)) Map.empty)
-                     (_on qr)) <>
-                (pack $ skip <> limit)
             let resp =
                     BT.query $
                     (encodeQuery
