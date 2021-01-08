@@ -418,14 +418,25 @@ handleResponse group = fmap go
 handleProtocol :: MMap.Map Text BT.Value -> MMap.Map Text BT.Value
 handleProtocol = MMap.mapWithKey go
   where
-    go "p.name" v =
-        case v of
-            BT.T x ->
-                if Data.Text.isInfixOf "_" x
-                    then BT.L $ BT.T <$> (Data.Text.split ((==) '_') x)
-                    else v
-            _ -> v
-    go x v = v
+    go k v =
+        if Data.Text.isInfixOf "p.name" k
+            then case v of
+                     BT.T x ->
+                         if Data.Text.isInfixOf "_" x
+                             then BT.L $ BT.T <$> (Data.Text.split ((==) '_') x)
+                             else v
+                     BT.L x ->
+                         BT.L $
+                         (\y ->
+                              case y of
+                                  BT.T x' ->
+                                      if Data.Text.isInfixOf "_" x'
+                                          then BT.L $ BT.T <$> (Data.Text.split ((==) '_') x')
+                                          else v
+                                  _ -> y) <$>
+                         x
+                     _ -> v
+            else v
 
 queryHandler :: QueryRequest -> Snap.Handler App App ()
 queryHandler qr = do
