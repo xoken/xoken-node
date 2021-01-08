@@ -421,8 +421,8 @@ handleProtocol = MMap.mapWithKey go
     go "p.name" v =
         case v of
             BT.T x ->
-                if Data.Text.isInfixOf "." x
-                    then BT.L $ BT.T <$> (Data.Text.split ((==) '.') x)
+                if Data.Text.isInfixOf "_" x
+                    then BT.L $ BT.T <$> (Data.Text.split ((==) '_') x)
                     else v
             _ -> v
     go x v = v
