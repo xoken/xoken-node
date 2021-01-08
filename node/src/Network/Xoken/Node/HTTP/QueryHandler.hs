@@ -38,13 +38,18 @@ import qualified Text.Read as TR
 tshow :: Show a => a -> Text
 tshow = Data.Text.pack . show
 
+showValueNS :: Value -> Text
+showValueNS (String t) = t
+showValueNS (Number s) = tshow s
+showValueNS (Bool b) = tshow b
+showValueNS (Array v) = tshow $ showValueNS <$> Data.Vector.toList v
+showValueNS Null = ""
+showValueNS (Object o) = tshow o -- :TODO not correct, yet shouldn't be used
+
 showValue :: Value -> Text
-showValue (String t) = t
-showValue (Number s) = tshow s
-showValue (Bool b) = tshow b
-showValue (Array v) = tshow $ showValue <$> Data.Vector.toList v
-showValue Null = ""
-showValue (Object o) = tshow o -- :TODO not correct, yet shouldn't be used
+showValue (String t) = tshow t
+showValue (Array v) = "[" <> (Data.Text.intercalate "," $ showValue <$> Data.Vector.toList v) <> "]"
+showValue x = showValueNS x
 
 operators :: [Text]
 operators = ["$or", "$and", "$gt", "$gte", "$lt", "$lte", "$in", "$nin", "$eq", "$neq"]
@@ -229,7 +234,7 @@ handleReturn "relation" (Object hm) =
              (if acc == ""
                   then " r."
                   else " , r.") <>
-             showValue v <> "(" <> k <> ")")
+             showValueNS v <> "(" <> k <> ")")
         ""
         hm
 handleReturn x (Object hm) =
@@ -239,9 +244,9 @@ handleReturn x (Object hm) =
              (if acc == ""
                   then " "
                   else " , ") <>
-             (if showValue v == ""
+             (if showValueNS v == ""
                   then k
-                  else showValue v <> "(" <> k <> ")"))
+                  else showValueNS v <> "(" <> k <> ")"))
         ""
         hm
 
