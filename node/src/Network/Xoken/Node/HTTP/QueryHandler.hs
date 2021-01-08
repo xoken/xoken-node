@@ -406,6 +406,18 @@ handleResponse group = fmap go
                                 m
                     Nothing -> m
 
+handleProtocol :: MMap.Map Text BT.Value -> MMap.Map Text BT.Value
+handleProtocol = MMap.mapWithKey go
+  where
+    go "p.name" v =
+        case v of
+            BT.T x ->
+                if Data.Text.isInfixOf "." x
+                    then BT.L $ BT.T <$> (Data.Text.split ((==) '.') x)
+                    else v
+            _ -> v
+    go x v = v
+
 queryHandler :: QueryRequest -> Snap.Handler App App ()
 queryHandler qr = do
     offset <- (flip (>>=) (TR.readMaybe . unpack . DTE.decodeUtf8)) <$> (getQueryParam "offset")
@@ -435,7 +447,9 @@ queryHandler qr = do
                 Right rtm ->
                     case rtm of
                         Just rt ->
-                            writeBS $ BSL.toStrict $ encode $ Prelude.foldr handleResponse rt (catMaybes groupeds)
+                            writeBS $
+                            BSL.toStrict $
+                            encode $ fmap handleProtocol $ Prelude.foldr handleResponse rt (catMaybes groupeds)
                         Nothing -> writeBS $ BSL.toStrict $ encode rtm
                 Left (e :: SomeException) -> do
                     liftIO $ print $ "Error occurred: " Prelude.++ show e
