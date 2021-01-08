@@ -114,11 +114,15 @@ handleOp op v =
                                          (\acc k v ->
                                               acc <>
                                               if k == "p.name"
-                                                  then case v of
-                                                           Object v' ->
-                                                               intercalate (showOp Nothing op) $
-                                                               elems $ mapWithKey (handleOpInd op) v'
-                                                           _ -> undefined
+                                                  then let resp =
+                                                               case v of
+                                                                   Object v' ->
+                                                                       intercalate (showOp Nothing op) $
+                                                                       elems $ mapWithKey (handleOpInd op) v'
+                                                                   _ -> undefined
+                                                        in if acc == ""
+                                                               then resp
+                                                               else showOp Nothing op <> " " <> resp
                                                   else if acc == ""
                                                            then handleOp' k v (showOp Nothing op)
                                                            else showOp Nothing op <>
@@ -134,10 +138,15 @@ handleOp op v =
                         (\acc k v ->
                              acc <>
                              if k == "p.name"
-                                 then case v of
-                                          Object v' ->
-                                              intercalate (showOp Nothing op) $ elems $ mapWithKey (handleOpInd op) v'
-                                          _ -> undefined
+                                 then let resp =
+                                              case v of
+                                                  Object v' ->
+                                                      intercalate (showOp Nothing op) $
+                                                      elems $ mapWithKey (handleOpInd op) v'
+                                                  _ -> undefined
+                                       in if acc == ""
+                                              then resp
+                                              else showOp Nothing op <> " " <> resp
                                  else if acc == ""
                                           then handleOp' k v (showOp Nothing op)
                                           else showOp Nothing op <> " " <> handleOp' k v (showOp Nothing op))
