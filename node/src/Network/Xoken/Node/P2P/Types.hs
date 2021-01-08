@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE ConstraintKinds #-}
 
@@ -21,11 +22,13 @@ import Data.IORef
 import Data.Int
 import qualified Data.Map.Strict as M
 import Data.Pool
+import Data.Serialize
 import Data.Text
 import Data.Time.Clock
 import Data.Word
 import Database.Bolt as BT
 import qualified Database.XCQL.Protocol as Q
+import GHC.Generics
 import Network.Socket hiding (send)
 import Network.Xoken.Block
 import Network.Xoken.Constants
@@ -167,3 +170,21 @@ data ServerState =
     ServerState
         { pool :: !(Pool Pipe)
         }
+
+data ProtocolName
+    = OK !B.ByteString
+    | FAIL
+    deriving (Generic)
+
+instance Serialize ProtocolName where
+    get = go =<< (fromIntegral <$> getWord8)
+      where
+        go op
+            | op <= 0x4b = do
+                payload <- getByteString (fromIntegral op)
+                return $ OK payload
+            | op == 0x4c = do
+                len <- getWord8
+                payload <- getByteString (fromIntegral len)
+                return $ OK payload
+            | otherwise = return FAIL

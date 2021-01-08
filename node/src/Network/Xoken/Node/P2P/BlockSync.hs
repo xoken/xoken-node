@@ -394,7 +394,7 @@ runBlockCacheQueue =
                                                                  pres <-
                                                                      liftIO $
                                                                      try $ do
-                                                                         traverse
+                                                                         runInBatch
                                                                              (\(protocol, (props, blockInf)) -> do
                                                                                   TSH.delete v' protocol
                                                                                   tryWithResource
@@ -404,6 +404,7 @@ runBlockCacheQueue =
                                                                                                     props
                                                                                                     blockInf))
                                                                              pi
+                                                                             (maxInsertsProtocol $ nodeConfig bp2pEnv)
                                                                          TSH.delete (protocolInfo bp2pEnv) bsh
                                                                  case pres of
                                                                      Right rt -> return ()
@@ -830,61 +831,74 @@ processConfTransaction bis tx bhash blkht txind = do
                      if op == "6a"
                          then ("00", op, rem)
                          else (\(a, b) -> (op, a, b)) $ B.splitAt 2 rem
-             let props = getProps remD
-             when (op_false == "00" && op_return == "6a" && isJust (headMaybe props)) $ do
-                 let protocol = snd <$> props
-                 ts <- (blockTimestamp' . DA.blockHeader . head) <$> xGetChainHeaders (fromIntegral blkht) 1
-                 let epd = utctDay $ posixSecondsToUTCTime 0
-                 let cd = utctDay $ posixSecondsToUTCTime (fromIntegral ts)
-                 let sec = diffUTCTime (posixSecondsToUTCTime (fromIntegral ts)) (posixSecondsToUTCTime 0)
-                 let (m, d) = diffGregorianDurationClip cd epd
-                 let (y', _, _) = toGregorian cd
-                 let (y'', _, _) = toGregorian epd
-                 let y = y' - y''
-                 let h = div (fromEnum $ sec / (10 ^ 12)) (60 * 60)
-                 let curBi =
-                         BlockPInfo
-                             { height = blkht
-                             , hash = T.pack $ show bhash
-                             , timestamp = fromIntegral ts
-                             , hour = h
-                             , day =
-                                   let hh = div h 24
-                                    in if hh == 0
-                                           then 1
-                                           else hh
-                             , absoluteHour = Prelude.rem h 24
-                             , month = 1 + fromIntegral m
-                             , year = fromIntegral y
-                             , fees = fromIntegral fees
-                             , bytes = binBlockSize bis
-                             , count = 1
-                             }
-                 let upf b =
-                         BlockPInfo
-                             blkht
-                             (Type.hash b)
-                             (Type.timestamp b)
-                             (hour b)
-                             (day b)
-                             (month b)
-                             (year b)
-                             ((fromIntegral fees) + (Type.fees b))
-                             ((binBlockSize bis) + (Type.bytes b))
-                             ((Type.count b) + 1)
-                             (absoluteHour b)
-                 let fn x =
-                         case x of
-                             Just (p, bi) -> (Just (props, upf bi), ())
-                             Nothing -> (Just (props, curBi), ())
-                     prot = tail $ L.inits protocol
-                 mapM_
-                     (\p -> commitScriptOutputProtocol conn (T.intercalate "." p) output bi fees (fromIntegral count))
-                     prot
-                 v <- liftIO $ TSH.lookup (protocolInfo bp2pEnv) bhash
-                 case v of
-                     Just v' -> liftIO $ TSH.mutate v' (T.intercalate "_" protocol) fn
-                     Nothing -> debug lg $ LG.msg $ "No ProtocolInfo Available for: " ++ show bhash
+             when (op_false == "00" && op_return == "6a") $ do
+                 props <-
+                     case runGet (getPropsG 3) (fst $ B16.decode remD) of
+                         Right p -> return p
+                         Left str -> do
+                             liftIO $
+                                 err lg $
+                                 LG.msg
+                                     ("Error: Getting protocol name " ++
+                                      show str ++
+                                      " for height: " ++
+                                      show blkht ++ " with bsh: " ++ show bsh ++ " with remD: " ++ show remD)
+                             return []
+                 when (isJust (headMaybe props)) $ do
+                     let protocol = snd <$> props
+                     ts <- (blockTimestamp' . DA.blockHeader . head) <$> xGetChainHeaders (fromIntegral blkht) 1
+                     let epd = utctDay $ posixSecondsToUTCTime 0
+                     let cd = utctDay $ posixSecondsToUTCTime (fromIntegral ts)
+                     let sec = diffUTCTime (posixSecondsToUTCTime (fromIntegral ts)) (posixSecondsToUTCTime 0)
+                     let (m, d) = diffGregorianDurationClip cd epd
+                     let (y', _, _) = toGregorian cd
+                     let (y'', _, _) = toGregorian epd
+                     let y = y' - y''
+                     let h = div (fromEnum $ sec / (10 ^ 12)) (60 * 60)
+                     let curBi =
+                             BlockPInfo
+                                 { height = blkht
+                                 , hash = T.pack $ show bhash
+                                 , timestamp = fromIntegral ts
+                                 , hour = h
+                                 , day =
+                                       let hh = div h 24
+                                        in if hh == 0
+                                               then 1
+                                               else hh
+                                 , absoluteHour = Prelude.rem h 24
+                                 , month = 1 + fromIntegral m
+                                 , year = fromIntegral y
+                                 , fees = fromIntegral fees
+                                 , bytes = binBlockSize bis
+                                 , count = 1
+                                 }
+                     let upf b =
+                             BlockPInfo
+                                 blkht
+                                 (Type.hash b)
+                                 (Type.timestamp b)
+                                 (hour b)
+                                 (day b)
+                                 (month b)
+                                 (year b)
+                                 ((fromIntegral fees) + (Type.fees b))
+                                 ((binBlockSize bis) + (Type.bytes b))
+                                 ((Type.count b) + 1)
+                                 (absoluteHour b)
+                     let fn x =
+                             case x of
+                                 Just (p, bi) -> (Just (props, upf bi), ())
+                                 Nothing -> (Just (props, curBi), ())
+                         prot = tail $ L.inits protocol
+                     mapM_
+                         (\p ->
+                              commitScriptOutputProtocol conn (T.intercalate "." p) output bi fees (fromIntegral count))
+                         prot
+                     v <- liftIO $ TSH.lookup (protocolInfo bp2pEnv) bhash
+                     case v of
+                         Just v' -> liftIO $ TSH.mutate v' (T.intercalate "_" protocol) fn
+                         Nothing -> debug lg $ LG.msg $ "No ProtocolInfo Available for: " ++ show bhash
              insertTxIdOutputs conn output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o)
              commitScriptHashOutputs
                  conn --
