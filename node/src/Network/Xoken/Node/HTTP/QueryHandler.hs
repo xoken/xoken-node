@@ -113,20 +113,25 @@ handleOp op v =
                                      foldlWithKey'
                                          (\acc k v ->
                                               acc <>
-                                              if k == "p.name"
-                                                  then let resp =
-                                                               case v of
-                                                                   Object v' ->
-                                                                       intercalate (showOp Nothing op) $
-                                                                       elems $ mapWithKey (handleOpInd op) v'
-                                                                   _ -> undefined
+                                              if k == "$or" || k == "$and"
+                                                  then let res = handleOp k v
                                                         in if acc == ""
-                                                               then resp
-                                                               else showOp Nothing op <> " " <> resp
-                                                  else if acc == ""
-                                                           then handleOp' k v (showOp Nothing op)
-                                                           else showOp Nothing op <>
-                                                                " " <> handleOp' k v (showOp Nothing op))
+                                                               then res
+                                                               else showOp Nothing op <> " " <> res
+                                                  else if k == "p.name"
+                                                           then let resp =
+                                                                        case v of
+                                                                            Object v' ->
+                                                                                intercalate (showOp Nothing op) $
+                                                                                elems $ mapWithKey (handleOpInd op) v'
+                                                                            _ -> undefined
+                                                                 in if acc == ""
+                                                                        then resp
+                                                                        else showOp Nothing op <> " " <> resp
+                                                           else if acc == ""
+                                                                    then handleOp' k v (showOp Nothing op)
+                                                                    else showOp Nothing op <>
+                                                                         " " <> handleOp' k v (showOp Nothing op))
                                          ""
                                          y)
                         (Data.Vector.toList v)
@@ -137,19 +142,24 @@ handleOp op v =
                     foldlWithKey'
                         (\acc k v ->
                              acc <>
-                             if k == "p.name"
-                                 then let resp =
-                                              case v of
-                                                  Object v' ->
-                                                      intercalate (showOp Nothing op) $
-                                                      elems $ mapWithKey (handleOpInd op) v'
-                                                  _ -> undefined
+                             if k == "$or" || k == "$and"
+                                 then let res = handleOp k v
                                        in if acc == ""
-                                              then resp
-                                              else showOp Nothing op <> " " <> resp
-                                 else if acc == ""
-                                          then handleOp' k v (showOp Nothing op)
-                                          else showOp Nothing op <> " " <> handleOp' k v (showOp Nothing op))
+                                              then res
+                                              else showOp Nothing op <> " " <> res
+                                 else if k == "p.name"
+                                          then let resp =
+                                                       case v of
+                                                           Object v' ->
+                                                               intercalate (showOp Nothing op) $
+                                                               elems $ mapWithKey (handleOpInd op) v'
+                                                           _ -> undefined
+                                                in if acc == ""
+                                                       then resp
+                                                       else showOp Nothing op <> " " <> resp
+                                          else if acc == ""
+                                                   then handleOp' k v (showOp Nothing op)
+                                                   else showOp Nothing op <> " " <> handleOp' k v (showOp Nothing op))
                         ""
                         y
                 _ -> undefined
