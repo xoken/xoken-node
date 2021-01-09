@@ -432,8 +432,7 @@ runBlockCacheQueue =
                                                           LG.msg $
                                                           "Error: Failed to insert into graph DB block " <>
                                                           (show (bsh, ht)) <> ": " <> (show e))
-                                                     debug
-                                                     lg $
+                                             debug lg $
                                                  LG.msg $ "Marking block as completed ended for height: " <> show ht
                                          else return ()
                                  Nothing -> return ())

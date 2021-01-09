@@ -547,7 +547,7 @@ deleteMerkleSubTree inodes = do
 -- Insert protocol with properties and block info
 insertProtocolWithBlockInfo :: Text -> [(Text, Text)] -> BlockPInfo -> BoltActionT IO ()
 insertProtocolWithBlockInfo name properties BlockPInfo {..} = do
-    liftIO $ print $ "insertProtocolWithBlockInfo for height: " <> show height <> " query: " <> cypher
+    liftIO $ print $ "insertProtocolWithBlockInfo for height: " <> (pack $ show height) <> " query: " <> cypher
     res <- LE.try $ queryP cypher params
     case res of
         Left (e :: SomeException) -> do
