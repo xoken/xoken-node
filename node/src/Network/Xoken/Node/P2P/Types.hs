@@ -180,6 +180,7 @@ instance Serialize ProtocolName where
     get = go =<< (fromIntegral <$> getWord8)
       where
         go op
+            | op == 0x00 = return FAIL
             | op <= 0x4b = do
                 payload <- getByteString (fromIntegral op)
                 return $ OK payload
