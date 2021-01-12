@@ -88,6 +88,7 @@ import Network.Xoken.Node.GraphDB
 import Network.Xoken.Node.P2P.BlockSync
 import Network.Xoken.Node.P2P.Common
 import Network.Xoken.Node.P2P.Types
+import Network.Xoken.Node.P2P.UnconfTxSync
 import Network.Xoken.Util (bsToInteger, integerToBS)
 import Numeric (showHex)
 import System.Logger as LG
@@ -491,6 +492,7 @@ xRelayTx rawTx = do
                     let !connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
                     debug lg $ LG.msg $ val $ "transaction verified - broadcasting tx"
                     mapM_ (\(_, peer) -> do sendRequestMessages peer (MTx (fromJust $ fst res))) connPeers
+                    -- processUnconfTransaction tx
                     eres <- LE.try $ handleIfAllegoryTx tx True -- MUST be False
                     case eres of
                         Right (flg) -> return True

@@ -150,7 +150,7 @@ queryAllegoryNameScriptOp name isProducer = do
 
 initAllegoryRoot :: Tx -> BoltActionT IO ()
 initAllegoryRoot tx = do
-    let oops = pack $ "fe38e79e4067304d382b3ba8d67970f4f0cd26f988aac6c88bddffb4ec628daf" ++ ":" ++ show 0
+    let oops = pack $ "2d46d47eb284955ed83329eca13303c2faa2387893b1129b114f73d429f019e9" ++ ":" ++ show 0
     let scr = "76a91447dc5f6dd425347e6aeacd226c3196b385394fb488ac"
     let cypher =
             " MERGE (rr:namestate {name:{dummyroot} })  " <>
@@ -192,7 +192,7 @@ revertAllegoryStateTree tx allegory = do
             fromList
                 [ ("in_op", T $ iops)
                 , ("name", T $ pack $ Prelude.map (\x -> chr x) (name allegory))
-                , ("nn_str", T $ pack $ Prelude.map (\x -> chr x) (name allegory) ++ "|producer")
+                , ("nn_str", T $ pack $ Prelude.map (\x -> chr x) (name allegory) ++ (if isProd then "|producer" else "|owner"))
                 , ("is_prod", B $ isProd)
                 ]
     liftIO $ print (cypher)
