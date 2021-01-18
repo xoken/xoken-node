@@ -553,7 +553,7 @@ sortPeers peers = do
                      Just lr -> return lr
                      Nothing -> return longlongago)
             peers
-    return $ snd $ unzip $ L.sortBy (\(a, _) (b, _) -> compare b a) (zip ts peers)
+    return $ snd $ unzip $ L.sortBy (\(a, _) (b, _) -> compare a b) (zip ts peers)
 
 fetchBestSyncedBlock ::
        (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => XCqlClientState -> Network -> m ((BlockHash, Int32))
