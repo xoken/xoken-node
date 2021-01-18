@@ -537,7 +537,7 @@ runBlockCacheQueue =
             Nothing -> do
                 trace lg $ LG.msg $ "nothing yet" ++ ""
         --
-        liftIO $ threadDelay (10000) -- 0.01 sec
+        liftIO $ threadDelay (100000) -- 0.1 sec
         return ()
   where
     getHead l = head $ L.sortOn (snd . snd) (l)
