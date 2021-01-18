@@ -439,7 +439,8 @@ runBlockCacheQueue =
                              then do
                                  trace lg $ LG.msg $ "Marking block as completed started with height: " <> show ht
                                  liftIO $ TSH.insert (blockSyncStatusMap bp2pEnv) (bsh) (BlockProcessingComplete, ht)
-                                 liftIO $
+                                 LA.async $
+                                     liftIO $
                                      catch
                                          (do v <- liftIO $ TSH.lookup (protocolInfo bp2pEnv) bsh
                                              case v of
