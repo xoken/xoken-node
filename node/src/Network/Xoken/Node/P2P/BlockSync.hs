@@ -437,54 +437,7 @@ runBlockCacheQueue =
                          siza <- liftIO $ TSH.toList (fst xv)
                          if ((sum $ snd $ unzip siza) == snd xv)
                              then do
-                                 trace lg $ LG.msg $ "Marking block as completed started with height: " <> show ht
                                  liftIO $ TSH.insert (blockSyncStatusMap bp2pEnv) (bsh) (BlockProcessingComplete, ht)
-                                 LA.async $
-                                     liftIO $
-                                     catch
-                                         (do v <- liftIO $ TSH.lookup (protocolInfo bp2pEnv) bsh
-                                             case v of
-                                                 Just v' -> do
-                                                     pi <- liftIO $ TSH.toList v'
-                                                     debug lg $
-                                                         LG.msg $
-                                                         "Number of protocols for block: " <>
-                                                         show (Prelude.length pi) <> " height: " <> show ht
-                                                     pres <-
-                                                         liftIO $
-                                                         try $ do
-                                                             runInBatch
-                                                                 (\(protocol, (props, blockInf)) -> do
-                                                                      TSH.delete v' protocol
-                                                                      tryWithResource
-                                                                          (pool $ graphDB dbe)
-                                                                          (`BT.run` insertProtocolWithBlockInfo
-                                                                                        protocol
-                                                                                        props
-                                                                                        blockInf))
-                                                                 pi
-                                                                 (maxInsertsProtocol $ nodeConfig bp2pEnv)
-                                                             TSH.delete (protocolInfo bp2pEnv) bsh
-                                                     case pres of
-                                                         Right rt -> return ()
-                                                         Left (e :: SomeException) -> do
-                                                             err lg $
-                                                                 LG.msg $
-                                                                 "Error: Failed to insert protocol with blockInfo:" <>
-                                                                 (show (bsh, ht)) <> ": " <> (show e)
-                                                             throw MerkleSubTreeDBInsertException
-                                                 Nothing -> do
-                                                     debug lg $
-                                                         LG.msg $
-                                                         "Debug: No Information available for block hash " ++ show bsh
-                                                     return ()
-                                             return ())
-                                         (\(e :: SomeException) ->
-                                              err lg $
-                                              LG.msg $
-                                              "Error: Failed to insert into graph DB block " <>
-                                              (show (bsh, ht)) <> ": " <> (show e))
-                                 trace lg $ LG.msg $ "Marking block as completed ended for height: " <> show ht
                              else return ()
                      Nothing -> return ())
             (syt)
@@ -503,7 +456,56 @@ runBlockCacheQueue =
                     (\(k, _) -> do
                          trace lg $ LG.msg $ "deleting from blockSyncStatusMap: " <> show k
                          liftIO $ TSH.delete (blockSyncStatusMap bp2pEnv) k
-                         liftIO $ TSH.delete (blockTxProcessingLeftMap bp2pEnv) k)
+                         liftIO $ TSH.delete (blockTxProcessingLeftMap bp2pEnv) k
+                         --
+                         let bsh = fst $ lelm
+                         let ht = snd $ snd $ lelm
+                         LA.async $
+                             liftIO $
+                             catch
+                                 (do v <- liftIO $ TSH.lookup (protocolInfo bp2pEnv) bsh
+                                     case v of
+                                         Just v' -> do
+                                             pi <- liftIO $ TSH.toList v'
+                                             debug lg $
+                                                 LG.msg $
+                                                 "Number of protocols for block: " <>
+                                                 show (Prelude.length pi) <> " height: " <> show ht
+                                             pres <-
+                                                 liftIO $
+                                                 try $ do
+                                                     runInBatch
+                                                         (\(protocol, (props, blockInf)) -> do
+                                                              TSH.delete v' protocol
+                                                              tryWithResource
+                                                                  (pool $ graphDB dbe)
+                                                                  (`BT.run` insertProtocolWithBlockInfo
+                                                                                protocol
+                                                                                props
+                                                                                blockInf))
+                                                         pi
+                                                         (maxInsertsProtocol $ nodeConfig bp2pEnv)
+                                                     TSH.delete (protocolInfo bp2pEnv) bsh
+                                             case pres of
+                                                 Right rt -> return ()
+                                                 Left (e :: SomeException) -> do
+                                                     err lg $
+                                                         LG.msg $
+                                                         "Error: Failed to insert protocol with blockInfo:" <>
+                                                         (show (bsh, ht)) <> ": " <> (show e)
+                                                     throw MerkleSubTreeDBInsertException
+                                         Nothing -> do
+                                             debug lg $
+                                                 LG.msg $ "Debug: No Information available for block hash " ++ show bsh
+                                             return ()
+                                     return ())
+                                 (\(e :: SomeException) ->
+                                      err lg $
+                                      LG.msg $
+                                      "Error: Failed to insert into graph DB block " <>
+                                      (show (bsh, ht)) <> ": " <> (show e))
+                         --
+                     )
                     compl
                 return ()
             else return ()
