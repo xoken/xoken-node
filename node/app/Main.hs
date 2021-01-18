@@ -218,16 +218,41 @@ runThreads config nodeConf bp2p conn lg certPaths = do
     runAppM
         serviceEnv
         (do bp2pEnv <- getBitcoinP2P
-            withAsync runEpochSwitcher $ \_ -> do
-                withAsync setupSeedPeerConnection $ \_ -> do
-                    withAsync runEgressChainSync $ \_ -> do
-                        withAsync runBlockCacheQueue $ \_ -> do
-                            withAsync (handleNewConnectionRequest epHandler) $ \_ -> do
-                                withAsync runPeerSync $ \_ -> do
-                                    withAsync runSyncStatusChecker $ \_ -> do
-                                        withAsync runWatchDog $ \z -> do
-                                            _ <- LA.wait z
-                                            return ())
+            res <- try $ withAsync runEpochSwitcher $ \_ -> do
+                sspc <- try $ withAsync setupSeedPeerConnection $ \_ -> do
+                    recs <- try $ withAsync runEgressChainSync $ \_ -> do
+                        rbcq <- try $ withAsync runBlockCacheQueue $ \_ -> do
+                            hncr <- try $ withAsync (handleNewConnectionRequest epHandler) $ \_ -> do
+                                rps <- try $ withAsync runPeerSync $ \_ -> do
+                                    rssc <- try $ withAsync runSyncStatusChecker $ \_ -> do
+                                        rwd <- try $ withAsync runWatchDog $ \z -> do
+                                                        _ <- LA.wait z
+                                                        return ()
+                                        case rwd of
+                                            Right _ -> return ()
+                                            Left (e :: SomeException) -> liftIO $ print $ "Error runWatchDog" ++ show e
+                                    case rssc of
+                                        Right _ -> return ()
+                                        Left (e :: SomeException) -> liftIO $ print $ "Error runEpochSwitcher" ++ show e
+                                case rps of
+                                    Right _ -> return ()
+                                    Left (e :: SomeException) -> liftIO $ print $ "Error runSyncStatusChecker" ++ show e
+                            case hncr of
+                                Right _ -> return ()
+                                Left (e :: SomeException) -> liftIO $ print $ "Error handleNewConnectionRequest" ++ show e
+                        case rbcq of
+                            Right _ -> return ()
+                            Left (e :: SomeException) -> liftIO $ print $ "Error runBlockCacheQueue" ++ show e
+                    case recs of
+                        Right _ -> return ()
+                        Left (e :: SomeException) -> liftIO $ print $ "Error runEgressChainSync" ++ show e
+                case sspc of
+                    Right _ -> return ()
+                    Left (e :: SomeException) -> liftIO $ print $ "Error setupSeedPeerConnection" ++ show e
+            case res of
+                Right _ -> return ()
+                Left (e :: SomeException) -> liftIO $ print $ "Error runEpochSwitcher" ++ show e
+                )
     liftIO $ destroyAllResources $ pool gdbState
     liftIO $ putStrLn $ "node recovering from fatal DB connection failure!"
     return ()
@@ -287,7 +312,11 @@ runNode config nodeConf conn bp2p certPaths = do
             (LG.setOutput
                  (LG.Path $ T.unpack $ NC.logFileName nodeConf)
                  (LG.setLogLevel (logLevel nodeConf) LG.defSettings))
-    runThreads config nodeConf bp2p conn lg certPaths
+    rn <- try $ runThreads config nodeConf bp2p conn lg certPaths
+    case rn of
+        Right _ -> return ()
+        Left (e :: SomeException) -> print $ "Error runNode" ++ show e
+
 
 data Config =
     Config
