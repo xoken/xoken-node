@@ -67,3 +67,5 @@ maxTxProcessingThreads: 32
 maxTxProcessingBuffer: 32
 
 maxInsertsProtocol: 20
+
+blocksFetchWindow: 4
