@@ -453,13 +453,11 @@ runBlockCacheQueue =
                 debug lg $ LG.msg $ "Marking best synced block: " <> show lelm
                 markBestSyncedBlock (fst $ lelm) (fromIntegral $ snd $ snd $ lelm) conn
                 mapM
-                    (\(k, _) -> do
-                         trace lg $ LG.msg $ "deleting from blockSyncStatusMap: " <> show k
-                         liftIO $ TSH.delete (blockSyncStatusMap bp2pEnv) k
-                         liftIO $ TSH.delete (blockTxProcessingLeftMap bp2pEnv) k
+                    (\(bsh, (_, ht)) -> do
+                         trace lg $ LG.msg $ "deleting from blockSyncStatusMap: " <> show bsh
+                         liftIO $ TSH.delete (blockSyncStatusMap bp2pEnv) bsh
+                         liftIO $ TSH.delete (blockTxProcessingLeftMap bp2pEnv) bsh
                          --
-                         let bsh = fst $ lelm
-                         let ht = snd $ snd $ lelm
                          LA.async $
                              liftIO $
                              catch
