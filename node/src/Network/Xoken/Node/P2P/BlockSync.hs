@@ -319,14 +319,12 @@ runBlockCacheQueue =
         fullySynced <- liftIO $ readTVarIO $ indexUnconfirmedTx bp2pEnv
         -- reload cache
         retn <-
-            if sysz == 0
+            if sysz < (blocksFetchWindow $ nodeConfig bp2pEnv)
                 then do
                     (hash, ht) <- fetchBestSyncedBlock conn net
-                    let cacheInd =
-                            if fullySynced
-                                then [1]
-                                else [1 .. 20] -- getBatchSize net (fromIntegral $ L.length connPeers) ht
-                    let !bks = map (\x -> ht + x) cacheInd
+                    let fetchMore = (blocksFetchWindow $ nodeConfig bp2pEnv) - sysz
+                    let cacheInd = [1 .. fetchMore] -- getBatchSize net (fromIntegral $ L.length connPeers) ht
+                    let !bks = map (\x -> ht + (fromIntegral x)) cacheInd
                     let qstr :: Q.QueryString Q.R (Identity [Int32]) ((Int32, T.Text))
                         qstr = "SELECT block_height, block_hash from xoken.blocks_by_height where block_height in ?"
                         p = getSimpleQueryParam $ Identity (bks)
@@ -340,45 +338,42 @@ runBlockCacheQueue =
                                     --debug lg $ LG.msg $ val "Synced fully!"
                                 then do
                                     return (Nothing)
-                                else if L.length op == (fromIntegral $ last cacheInd)
-                                         then do
-                                             debug lg $ LG.msg $ val "Reloading cache."
-                                             p <-
-                                                 mapM
-                                                     (\x ->
-                                                          case (hexToBlockHash $ snd x) of
-                                                              Just h -> do
-                                                                  val <-
-                                                                      liftIO $ TSH.lookup (blockSyncStatusMap bp2pEnv) h
-                                                                  case val of
-                                                                      Nothing -> do
-                                                                          return $
-                                                                              Just
-                                                                                  ( h
-                                                                                  , ( RequestQueued
-                                                                                    , fromIntegral $ fst x))
-                                                                      Just v -> return Nothing
-                                                              Nothing -> return Nothing)
-                                                     (op)
-                                             mapM
-                                                 (\(k, v) -> do
-                                                      liftIO $ TSH.insert (blockSyncStatusMap bp2pEnv) k v
-                                                      liftIO $
-                                                          catch
-                                                              (liftIO $
-                                                               TSH.new 32 >>= \pie ->
-                                                                   liftIO $ TSH.insert (protocolInfo bp2pEnv) k pie)
-                                                              (\(e :: SomeException) ->
-                                                                   err lg $
-                                                                   LG.msg $
-                                                                   "Error: Failed to insert into protocolInfo TSH (key " <>
-                                                                   (show k) <> "): " <> (show e)))
-                                                 (catMaybes p)
-                                             let e = (catMaybes p) !! 0
-                                             return (Just $ BlockInfo (fst e) (snd $ snd e))
-                                         else do
-                                             debug lg $ LG.msg $ val "Still loading block headers, try again!"
-                                             return (Nothing)
+                                else do
+                                    debug lg $ LG.msg $ val "Adding to cache."
+                                    p <-
+                                        mapM
+                                            (\x ->
+                                                 case (hexToBlockHash $ snd x) of
+                                                     Just h -> do
+                                                         val <- liftIO $ TSH.lookup (blockSyncStatusMap bp2pEnv) h
+                                                         case val of
+                                                             Nothing -> do
+                                                                 return $
+                                                                     Just (h, (RequestQueued, fromIntegral $ fst x))
+                                                             Just v -> return Nothing
+                                                     Nothing -> return Nothing)
+                                            (op)
+                                    let cmp = catMaybes p
+                                    if L.null p
+                                        then do
+                                            return Nothing
+                                        else do
+                                            mapM
+                                                (\(k, v) -> do
+                                                     liftIO $ TSH.insert (blockSyncStatusMap bp2pEnv) k v
+                                                     liftIO $
+                                                         catch
+                                                             (liftIO $
+                                                              TSH.new 32 >>= \pie ->
+                                                                  liftIO $ TSH.insert (protocolInfo bp2pEnv) k pie)
+                                                             (\(e :: SomeException) ->
+                                                                  err lg $
+                                                                  LG.msg $
+                                                                  "Error: Failed to insert into protocolInfo TSH (key " <>
+                                                                  (show k) <> "): " <> (show e)))
+                                                (cmp)
+                                            let e = cmp !! 0
+                                            return (Just $ BlockInfo (fst e) (snd $ snd e))
                 else do
                     mapM_
                         (\(bsh, (_, ht)) -> do
