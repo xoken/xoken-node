@@ -164,7 +164,7 @@ peerBlockSync peer =
                             Right () -> do
                                 debug lg $ LG.msg $ val "updating state."
                                 liftIO $ writeIORef (ptLastGetDataSent tracker) $ Just tm
-                                liftIO $ modifyIORef' (blockFetchWindow bp2pEnv) (\z -> z + 1)
+                                liftIO $ atomicModifyIORef' (blockFetchWindow bp2pEnv) (\z -> (z + 1, ()))
                             Left (e :: SomeException) -> do
                                 err lg $ LG.msg ("[ERROR] peerBlockSync " ++ show e)
                                 ------------
@@ -199,7 +199,7 @@ peerBlockSync peer =
                                     Right () -> do
                                         debug lg $ LG.msg $ val "updating state."
                                         liftIO $ writeIORef (ptLastGetDataSent tracker) $ Just tm
-                                        liftIO $ modifyIORef' (blockFetchWindow bp2pEnv) (\z -> z + 1)
+                                        liftIO $ atomicModifyIORef' (blockFetchWindow bp2pEnv) (\z -> (z + 1, ()))
                                     Left (e :: SomeException) -> do
                                         err lg $ LG.msg ("[ERROR] peerBlockSync " ++ show e)
                                         throw e
