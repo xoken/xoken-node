@@ -517,7 +517,7 @@ runBlockCacheQueue =
         case retn of
             Just bbi -> do
                 latest <- liftIO $ newIORef True
-                sortedPeers <- liftIO $ sortPeers (snd $ unzip connPeers)
+                sortedPeers <- liftIO $ sortPeersRandom (snd $ unzip connPeers)
                 mapM_
                     (\pr -> do
                          ltst <- liftIO $ readIORef latest
@@ -546,6 +546,12 @@ runBlockCacheQueue =
   where
     getHead l = head $ L.sortOn (snd . snd) (l)
     mkBlkInf h = Just $ BlockInfo (fst h) (snd $ snd h)
+
+sortPeersRandom :: [BitcoinPeer] -> IO ([BitcoinPeer])
+sortPeersRandom peers = do
+    mark <- randomRIO (0, (L.length peers - 1))
+    let parts = L.splitAt mark peers
+    return $ snd parts ++ fst parts
 
 sortPeers :: [BitcoinPeer] -> IO ([BitcoinPeer])
 sortPeers peers = do
