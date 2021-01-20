@@ -22,6 +22,7 @@ import qualified Data.ByteString.Lazy.Char8 as C
 import qualified Data.HashTable as CHT
 import qualified Data.HashTable.IO as H
 import Data.Hashable
+import Data.IORef
 import Data.Int
 import qualified Data.Map.Strict as M
 import Data.Text
@@ -87,6 +88,7 @@ data BitcoinP2P =
         , txProcFailAttempts :: !(TVar Int)
         , bestSyncedBlock :: !(TVar (Maybe BlockInfo))
         , protocolInfo :: !(TSH.TSHashTable BlockHash (TSH.TSHashTable Text ([(Text, Text)], BlockPInfo)))
+        , blockFetchWindow :: !(IORef Int) -- number of outstanding blocks
         }
 
 class HasBitcoinP2P m where

@@ -150,7 +150,7 @@ peerBlockSync peer =
         trace lg $ LG.msg $ ("peer block sync : " ++ (show peer))
         !tm <- liftIO $ getCurrentTime
         let tracker = statsTracker peer
-        fw <- liftIO $ readIORef $ ptBlockFetchWindow tracker
+        fw <- liftIO $ readIORef $ blockFetchWindow bp2pEnv
         recvtm <- liftIO $ readIORef $ ptLastTxRecvTime tracker
         sendtm <- liftIO $ readIORef $ ptLastGetDataSent tracker
         let staleTime = fromInteger $ fromIntegral (unresponsivePeerConnTimeoutSecs $ nodeConfig bp2pEnv)
@@ -164,7 +164,7 @@ peerBlockSync peer =
                             Right () -> do
                                 debug lg $ LG.msg $ val "updating state."
                                 liftIO $ writeIORef (ptLastGetDataSent tracker) $ Just tm
-                                liftIO $ modifyIORef' (ptBlockFetchWindow tracker) (\z -> z + 1)
+                                liftIO $ modifyIORef' (blockFetchWindow bp2pEnv) (\z -> z + 1)
                             Left (e :: SomeException) -> do
                                 err lg $ LG.msg ("[ERROR] peerBlockSync " ++ show e)
                                 ------------
@@ -199,7 +199,7 @@ peerBlockSync peer =
                                     Right () -> do
                                         debug lg $ LG.msg $ val "updating state."
                                         liftIO $ writeIORef (ptLastGetDataSent tracker) $ Just tm
-                                        liftIO $ modifyIORef' (ptBlockFetchWindow tracker) (\z -> z + 1)
+                                        liftIO $ modifyIORef' (blockFetchWindow bp2pEnv) (\z -> z + 1)
                                     Left (e :: SomeException) -> do
                                         err lg $ LG.msg ("[ERROR] peerBlockSync " ++ show e)
                                         throw e
