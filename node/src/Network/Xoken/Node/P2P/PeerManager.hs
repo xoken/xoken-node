@@ -568,37 +568,38 @@ readNextMessage net sock ingss = do
                                                 (biBlockHash $ bf)
                                                 (ar, (binTxTotalCount blin))
                                             return ()
-                                qq <- liftIO $ atomically $ newTQueue
+                                -- qq <- liftIO $ atomically $ newTQueue
                                         -- wait for TMT threads alloc
-                                liftIO $ MS.wait (maxTMTBuilderThreadLock p2pEnv)
-                                liftIO $ TSH.insert (merkleQueueMap p2pEnv) (biBlockHash $ bf) qq
-                                LA.async $
-                                    merkleTreeBuilder qq (biBlockHash $ bf) (computeTreeHeight $ binTxTotalCount blin)
+                                -- liftIO $ MS.wait (maxTMTBuilderThreadLock p2pEnv)
+                                -- liftIO $ TSH.insert (merkleQueueMap p2pEnv) (biBlockHash $ bf) qq
+                                -- LA.async $
+                                --     merkleTreeBuilder qq (biBlockHash $ bf) (computeTreeHeight $ binTxTotalCount blin)
                                 updateBlocks
                                     (biBlockHash bf)
                                     (biBlockHeight bf)
                                     (binBlockSize blin)
                                     (binTxTotalCount blin)
                                     (txns !! 0)
-                                return qq
+                                return ()
                             else do
-                                valx <- liftIO $ TSH.lookup (merkleQueueMap p2pEnv) (biBlockHash $ bf)
-                                case valx of
-                                    Just q -> return q
-                                    Nothing -> throw MerkleQueueNotFoundException
+                                return ()
+                                -- valx <- liftIO $ TSH.lookup (merkleQueueMap p2pEnv) (biBlockHash $ bf)
+                                -- case valx of
+                                --     Just q -> return q
+                                --     Nothing -> throw MerkleQueueNotFoundException
                     Nothing -> throw MessageParsingException
             let isLastBatch = ((binTxTotalCount blin) == ((L.length txns) + binTxIngested blin))
             let txct = L.length txns
-            liftIO $
-                atomically $
-                mapM_
-                    (\(tx, ct) -> do
-                         let isLast =
-                                 if isLastBatch
-                                     then txct == ct
-                                     else False
-                         writeTQueue qe ((txHash tx), isLast))
-                    (zip txns [1 ..])
+            -- liftIO $
+            --     atomically $
+            --     mapM_
+            --         (\(tx, ct) -> do
+            --              let isLast =
+            --                      if isLastBatch
+            --                          then txct == ct
+            --                          else False
+            --              writeTQueue qe ((txHash tx), isLast))
+            --         (zip txns [1 ..])
             let bio =
                     BlockIngestState
                         { binUnspentBytes = unused
