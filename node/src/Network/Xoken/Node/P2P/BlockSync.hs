@@ -661,7 +661,8 @@ insertTxIdOutputs conn (txid, outputIndex) address scriptHash isRecv blockInfo o
                                  , Int64) ()
         qstr =
             "INSERT INTO xoken.txid_outputs (txid,output_index,address,script_hash,is_recv,block_info,other,value) VALUES (?,?,?,?,?,?,?,?)"
-        par = getSimpleQueryParam (txid, outputIndex, address, scriptHash, isRecv, blockInfo, other, value)
+        -- par = getSimpleQueryParam (txid, outputIndex, address, scriptHash, isRecv, blockInfo, other, value)
+        par = getSimpleQueryParam (txid, outputIndex, T.empty, T.empty, isRecv, (T.empty, 0, 0), [], value)
     queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstr))
     res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryId par)
     case res of
@@ -678,19 +679,20 @@ commitTxPage ::
     -> Int32
     -> m ()
 commitTxPage txhash bhash page = do
-    dbe' <- getDB
-    lg <- getLogger
-    let conn = xCqlClientState $ dbe'
-        txids = txHashToHex <$> txhash
-        qstr :: Q.QueryString Q.W (Text, Int32, [Text]) ()
-        qstr = "insert INTO xoken.blockhash_txids (block_hash, page_number, txids) values (?, ?, ?)"
-        par = getSimpleQueryParam (blockHashToHex bhash, page, txids)
-    res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr par)
-    case res of
-        Right _ -> return ()
-        Left (e :: SomeException) -> do
-            liftIO $ err lg $ LG.msg ("Error: INSERTing into 'xoken.blockhash_txids': " ++ show e)
-            throw KeyValueDBInsertException
+    return ()
+    -- dbe' <- getDB
+    -- lg <- getLogger
+    -- let conn = xCqlClientState $ dbe'
+    --     txids = txHashToHex <$> txhash
+    --     qstr :: Q.QueryString Q.W (Text, Int32, [Text]) ()
+    --     qstr = "insert INTO xoken.blockhash_txids (block_hash, page_number, txids) values (?, ?, ?)"
+    --     par = getSimpleQueryParam (blockHashToHex bhash, page, txids)
+    -- res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr par)
+    -- case res of
+    --     Right _ -> return ()
+    --     Left (e :: SomeException) -> do
+    --         liftIO $ err lg $ LG.msg ("Error: INSERTing into 'xoken.blockhash_txids': " ++ show e)
+    --         throw KeyValueDBInsertException
 
 processConfTransaction ::
        (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BlockIngestState -> Tx -> BlockHash -> Int -> Int -> m ()
@@ -922,18 +924,20 @@ processConfTransaction bis tx bhash blkht txind = do
                          Just v' -> liftIO $ TSH.mutate v' (T.intercalate "_" protocol) fn
                          Nothing -> debug lg $ LG.msg $ "No ProtocolInfo Available for: " ++ show bhash
              insertTxIdOutputs conn output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o)
-             commitScriptHashOutputs
-                 conn --
-                 sh -- scriptHash
-                 output
-                 bi
-             commitScriptHashUnspentOutputs conn sh output
+            --  commitScriptHashOutputs
+            --      conn --
+            --      sh -- scriptHash
+            --      output
+            --      bi
+            --  commitScriptHashUnspentOutputs conn sh output
              case decodeOutputBS $ scriptOutput o of
-                 (Right so) ->
+                 (Right so)
+                            --  commitScriptHashOutputs conn a output bi
+                            --  commitScriptHashUnspentOutputs conn a output
+                  ->
                      if isPayPK so
                          then do
-                             commitScriptHashOutputs conn a output bi
-                             commitScriptHashUnspentOutputs conn a output
+                             return ()
                          else return ()
                  (Left e) -> return ())
         outAddrs
@@ -948,68 +952,69 @@ processConfTransaction bis tx bhash blkht txind = do
                  then return ()
                  else do
                      insertTxIdOutputs conn prevOutpoint a sh False bi (stripScriptHash <$> spendInfo) 0
-                     deleteScriptHashUnspentOutputs conn sh prevOutpoint
-                     deleteScriptHashUnspentOutputs conn a prevOutpoint)
+                    --  deleteScriptHashUnspentOutputs conn sh prevOutpoint
+                    --  deleteScriptHashUnspentOutputs conn a prevOutpoint
+         )
         (zip (inAddrs) (map (\x -> (fst3 $ thd3 x, snd3 $ thd3 $ x)) inputs))
     --
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": updated spend info for inputs"
     -- persist tx
-    let qstr :: Q.QueryString Q.W (Text, (Text, Int32, Int32), Blob, [((Text, Int32), Int32, (Text, Int64))], Int64) ()
-        qstr = "insert INTO xoken.transactions (tx_id, block_info, tx_serialized , inputs, fees) values (?, ?, ?, ?, ?)"
-        smb a = a * 16 * 1000 * 1000
-        segments =
-            let (d, m) = divMod count (smb 1)
-             in d +
-                (if m == 0
-                     then 0
-                     else 1)
-        fst =
-            if segments > 1
-                then (LC.replicate 32 'f') <> (BSL.fromStrict $ DTE.encodeUtf8 $ T.pack $ show $ segments)
-                else serbs
-    let par =
-            getSimpleQueryParam
-                ( txHashToHex txhs
-                , (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
-                , Blob fst
-                , (stripScriptHash <$> inputs)
-                , fees)
-    queryI <- liftIO $ queryPrepared conn (Q.RqPrepare $ Q.Prepare qstr)
-    res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryI par)
-    case res of
-        Right _ -> return ()
-        Left (e :: SomeException) -> do
-            liftIO $ err lg $ LG.msg ("Error: INSERTing into 'xoken.transactions': " ++ show e)
-            throw KeyValueDBInsertException
-    when (segments > 1) $ do
-        let segmentsData = chunksOf (smb 1) serbs
-        mapM_
-            (\(seg, i) -> do
-                 let par =
-                         getSimpleQueryParam
-                             ( (txHashToHex txhs) <> (T.pack $ show i)
-                             , (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
-                             , Blob seg
-                             , []
-                             , fees)
-                 queryI <- liftIO $ queryPrepared conn (Q.RqPrepare $ Q.Prepare qstr)
-                 res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryI par)
-                 case res of
-                     Right _ -> return ()
-                     Left (e :: SomeException) -> do
-                         liftIO $ err lg $ LG.msg ("Error: INSERTing into 'xoken.transactions': " ++ show e)
-                         throw KeyValueDBInsertException)
-            (zip segmentsData [1 ..])
-    --
-    trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": persisted in DB"
-    -- handle allegory
-    eres <- LE.try $ handleIfAllegoryTx tx True
-    case eres of
-        Right (flg) -> return ()
-        Left (e :: SomeException) -> err lg $ LG.msg ("Error: " ++ show e)
-    --
-    trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": handled Allegory Tx"
-    -- signal 'done' event for tx's that were processed out of sequence
+    -- let qstr :: Q.QueryString Q.W (Text, (Text, Int32, Int32), Blob, [((Text, Int32), Int32, (Text, Int64))], Int64) ()
+    --     qstr = "insert INTO xoken.transactions (tx_id, block_info, tx_serialized , inputs, fees) values (?, ?, ?, ?, ?)"
+    --     smb a = a * 16 * 1000 * 1000
+    --     segments =
+    --         let (d, m) = divMod count (smb 1)
+    --          in d +
+    --             (if m == 0
+    --                  then 0
+    --                  else 1)
+    --     fst =
+    --         if segments > 1
+    --             then (LC.replicate 32 'f') <> (BSL.fromStrict $ DTE.encodeUtf8 $ T.pack $ show $ segments)
+    --             else serbs
+    -- let par =
+    --         getSimpleQueryParam
+    --             ( txHashToHex txhs
+    --             , (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
+    --             , Blob fst
+    --             , (stripScriptHash <$> inputs)
+    --             , fees)
+    -- queryI <- liftIO $ queryPrepared conn (Q.RqPrepare $ Q.Prepare qstr)
+    -- res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryI par)
+    -- case res of
+    --     Right _ -> return ()
+    --     Left (e :: SomeException) -> do
+    --         liftIO $ err lg $ LG.msg ("Error: INSERTing into 'xoken.transactions': " ++ show e)
+    --         throw KeyValueDBInsertException
+    -- when (segments > 1) $ do
+    --     let segmentsData = chunksOf (smb 1) serbs
+    --     mapM_
+    --         (\(seg, i) -> do
+    --              let par =
+    --                      getSimpleQueryParam
+    --                          ( (txHashToHex txhs) <> (T.pack $ show i)
+    --                          , (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
+    --                          , Blob seg
+    --                          , []
+    --                          , fees)
+    --              queryI <- liftIO $ queryPrepared conn (Q.RqPrepare $ Q.Prepare qstr)
+    --              res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryI par)
+    --              case res of
+    --                  Right _ -> return ()
+    --                  Left (e :: SomeException) -> do
+    --                      liftIO $ err lg $ LG.msg ("Error: INSERTing into 'xoken.transactions': " ++ show e)
+    --                      throw KeyValueDBInsertException)
+    --         (zip segmentsData [1 ..])
+    -- --
+    -- trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": persisted in DB"
+    -- -- handle allegory
+    -- eres <- LE.try $ handleIfAllegoryTx tx True
+    -- case eres of
+    --     Right (flg) -> return ()
+    --     Left (e :: SomeException) -> err lg $ LG.msg ("Error: " ++ show e)
+    -- --
+    -- trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": handled Allegory Tx"
+    -- -- signal 'done' event for tx's that were processed out of sequence
     --
     vall <- liftIO $ TSH.lookup (txSynchronizer bp2pEnv) txhs
     case vall of
