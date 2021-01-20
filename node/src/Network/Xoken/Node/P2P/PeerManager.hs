@@ -906,6 +906,7 @@ readNextMessage' peer readLock = do
                             case (mht) of
                                 Just x -> return ()
                                 Nothing -> do
+                                    liftIO $ modifyIORef' (blockFetchWindow bp2pEnv) (0) -- safety border case
                                     err lg $ LG.msg $ ("InvalidBlockSyncStatusMapException - " ++ show hh)
                                     throw InvalidBlockSyncStatusMapException
                             let iz = Just (IngressStreamState ingst (Just $ BlockInfo hh (snd $ fromJust mht)))
