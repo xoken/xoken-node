@@ -429,7 +429,9 @@ runBlockCacheQueue =
                                                                           err lg $
                                                                           LG.msg $
                                                                           "Error: Failed to insert into protocolInfo TSH (key " <>
-                                                                          (show k) <> "): " <> (show e)))
+                                                                          (show k) <>
+                                                                          "): " <>
+                                                                          (show e)))
                                                         (cmp)
                                                     let e = cmp !! 0
                                                     return (Just $ BlockInfo (fst e) (snd $ snd e))
@@ -473,8 +475,9 @@ runBlockCacheQueue =
                                              pi <- liftIO $ TSH.toList v'
                                              debug lg $
                                                  LG.msg $
-                                                 "Number of protocols for block: " <>
-                                                 show (Prelude.length pi) <> " height: " <> show ht
+                                                 "Number of protocols for block: " <> show (Prelude.length pi) <>
+                                                 " height: " <>
+                                                 show ht
                                              pres <-
                                                  liftIO $
                                                  try $ do
@@ -496,7 +499,9 @@ runBlockCacheQueue =
                                                      err lg $
                                                          LG.msg $
                                                          "Error: Failed to insert protocol with blockInfo:" <>
-                                                         (show (bsh, ht)) <> ": " <> (show e)
+                                                         (show (bsh, ht)) <>
+                                                         ": " <>
+                                                         (show e)
                                                      throw MerkleSubTreeDBInsertException
                                          Nothing -> do
                                              debug lg $
@@ -506,8 +511,8 @@ runBlockCacheQueue =
                                  (\(e :: SomeException) ->
                                       err lg $
                                       LG.msg $
-                                      "Error: Failed to insert into graph DB block " <>
-                                      (show (bsh, ht)) <> ": " <> (show e))
+                                      "Error: Failed to insert into graph DB block " <> (show (bsh, ht)) <> ": " <>
+                                      (show e))
                          --
                      )
                     compl
@@ -1003,7 +1008,7 @@ processConfTransaction bis tx bhash blkht txind = do
     --
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": persisted in DB"
     -- handle allegory
-    eres <- LE.try $ handleIfAllegoryTx tx True
+    eres <- LE.try $ handleIfAllegoryTx tx True True
     case eres of
         Right (flg) -> return ()
         Left (e :: SomeException) -> err lg $ LG.msg ("Error: " ++ show e)
@@ -1149,8 +1154,8 @@ processBlock dblk = do
     -- liftIO $ signalQSem (blockFetchBalance bp2pEnv)
     return ()
 
-handleIfAllegoryTx :: (HasXokenNodeEnv env m, MonadIO m) => Tx -> Bool -> m (Bool)
-handleIfAllegoryTx tx revert = do
+handleIfAllegoryTx :: (HasXokenNodeEnv env m, MonadIO m) => Tx -> Bool -> Bool -> m (Bool)
+handleIfAllegoryTx tx revert confirmed = do
     dbe <- getDB
     lg <- getLogger
     trace lg $ LG.msg $ val $ "Checking for Allegory OP_RETURN"
@@ -1170,8 +1175,8 @@ handleIfAllegoryTx tx revert = do
                                     if revert
                                         then do
                                             _ <- resdb dbe revertAllegoryStateTree tx allegory
-                                            resdb dbe updateAllegoryStateTrees tx allegory
-                                        else resdb dbe updateAllegoryStateTrees tx allegory
+                                            resdb dbe (updateAllegoryStateTrees confirmed) tx allegory
+                                        else resdb dbe (updateAllegoryStateTrees confirmed) tx allegory
                                 Left (e :: DeserialiseFailure) -> do
                                     err lg $ LG.msg $ "error deserialising OP_RETURN CBOR data" ++ show e
                                     throw e

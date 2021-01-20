@@ -392,12 +392,14 @@ data RPCResponseBody
           { roName :: [Int]
           , roOutPoint :: OutPoint'
           , roScript :: String
+          , roConfirmed :: Bool
           , roIsProducer :: Bool
           }
     | RespFindNameReseller
           { frName :: [Int]
           , frProtocol :: String
           , frUri :: String
+          , frConfirmed :: Bool
           , frIsProducer :: Bool
           }
     | RespTxOutputSpendStatus
@@ -436,8 +438,10 @@ instance ToJSON RPCResponseBody where
     toJSON (RespAllegoryNameBranch nb) = object ["nameBranch" .= nb]
     toJSON (RespRelayTx rrTx) = object ["txBroadcast" .= rrTx]
     toJSON (RespRelayMultipleTx rrMultipleTx) = object ["txnsBroadcast" .= rrMultipleTx]
-    toJSON (RespOutpointByName n o s i) = object ["forName" .= n, "outPoint" .= o, "script" .= s, "isProducer" .= i]
-    toJSON (RespFindNameReseller n p u ip) = object ["forName" .= n, "protocol" .= p, "uri" .= u, "isProducer" .= ip]
+    toJSON (RespOutpointByName n o s c i) =
+        object ["forName" .= n, "outPoint" .= o, "script" .= s, "isConfirmed" .= c, "isProducer" .= i]
+    toJSON (RespFindNameReseller n p u c ip) =
+        object ["forName" .= n, "protocol" .= p, "uri" .= u, "isConfirmed" .= c, "isProducer" .= ip]
     toJSON (RespTxOutputSpendStatus ss) = object ["spendStatus" .= ss]
     toJSON (RespUser u) = object ["user" .= u]
 
