@@ -229,7 +229,7 @@ xFindNameReseller nameArr isProducer = do
                                     let allegoryHeader = scriptOps os !! 2
                                         allegoryData = scriptOps os !! 3
                                     case (allegoryHeader, allegoryData) of
-                                        (OP_PUSHDATA "Allegory/AllPay" OPCODE, OP_PUSHDATA allegory OPDATA1) -> do
+                                        (OP_PUSHDATA "Allegory/AllPay" OPCODE, OP_PUSHDATA allegory _) -> do
                                             let alg' =
                                                     deserialiseOrFail $ C.fromStrict allegory :: Either DeserialiseFailure Allegory
                                             case alg' of
@@ -272,3 +272,4 @@ xFindNameReseller nameArr isProducer = do
                                         _ -> do
                                             err lg $ LG.msg $ show "Error: Not a valid Allegory/AllPay OP_RETURN output"
                                             throw KeyValueDBLookupException
+
