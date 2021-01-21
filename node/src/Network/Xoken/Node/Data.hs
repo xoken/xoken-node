@@ -241,6 +241,11 @@ data RPCReqParams'
           { gaName :: String
           , gaIsProducer :: Bool
           }
+    | GetPurchasedNames
+          { gacName :: [Int]
+          , gacPageSize :: Maybe Int32
+          , gacCursor :: Maybe Int32
+          }
     | RelayTx
           { rTx :: ByteString
           }
@@ -284,6 +289,7 @@ instance FromJSON RPCReqParams' where
         (GetUTXOsByScriptHashes <$> o .: "scriptHashes" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
         (GetMerkleBranchByTxID <$> o .: "txid") <|>
         (GetAllegoryNameBranch <$> o .: "name" <*> o .: "isProducer") <|>
+        (GetPurchasedNames <$> o .: "name" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
         (RelayTx . B64.decodeLenient . T.encodeUtf8 <$> o .: "rawTx") <|>
         (RelayMultipleTx . (B64.decodeLenient . T.encodeUtf8 <$>) <$> o .: "rawTransactions") <|>
         (AllegoryNameQuery <$> o .: "name" <*> o .: "isProducer") <|>
@@ -382,6 +388,10 @@ data RPCResponseBody
     | RespAllegoryNameBranch
           { nameBranch :: [(OutPoint', [MerkleBranchNode'])]
           }
+    | RespPurchasedNames
+          { names :: [String]
+          , nCursor :: Maybe Int32
+          }
     | RespRelayTx
           { rrTx :: Bool
           }
@@ -436,6 +446,7 @@ instance ToJSON RPCResponseBody where
     toJSON (RespUTXOsByScriptHashes nc ma) = object ["nextCursor" .= nc, "utxos" .= ma]
     toJSON (RespMerkleBranchByTxID mb) = object ["merkleBranch" .= mb]
     toJSON (RespAllegoryNameBranch nb) = object ["nameBranch" .= nb]
+    toJSON (RespPurchasedNames ns nc) = object ["names" .= ns, "nextCursor" .= nc]
     toJSON (RespRelayTx rrTx) = object ["txBroadcast" .= rrTx]
     toJSON (RespRelayMultipleTx rrMultipleTx) = object ["txnsBroadcast" .= rrMultipleTx]
     toJSON (RespOutpointByName n o s c i) =

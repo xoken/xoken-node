@@ -156,6 +156,17 @@ queryAllegoryNameScriptOp name isProducer = do
             then fromList [("namestr", T (name <> pack "|producer"))]
             else fromList [("namestr", T (name <> pack "|owner"))]
 
+-- Fetch all owner nUTXO nodes below a given parent
+queryAllegoryChildren :: Text -> BoltActionT IO [Text]
+queryAllegoryChildren parent = do
+    records <- queryP cypher params
+    names <- traverse (`at` "n.name") records
+    return $ names >>= exact
+  where
+    cypher =
+        "MATCH (n:nutxo {producer:False})-[:INPUT*]->(m:nutxo {name: {namestr}, producer:True}) RETURN n.name ORDER BY ID(n)"
+    params = fromList [("namestr", T parent)]
+
 initAllegoryRoot :: Tx -> BoltActionT IO ()
 initAllegoryRoot tx = do
     let oops = pack $ "fe38e79e4067304d382b3ba8d67970f4f0cd26f988aac6c88bddffb4ec628daf" ++ ":" ++ show 0
