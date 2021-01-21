@@ -2,6 +2,13 @@
 Xoken Nexa Node
 ===============
 
+v1.2.0     2020-12-18
+
+- Query OP_RETURN outputs by protocol hex strings, supports multiple levels for sub-protocols & cursor based pagination
+- An intuitive Analytics API (custom query language resembling Graph-QL) for obtaining insights into OP_RETURN protocol (nested) statistics;
+  provides data analytics over time, blocks, protocols etc. supports counts & aggregation on size, fees, count etc.
+- General improvements & fixes.
+
 
 v1.1.2     2020-11-05
 

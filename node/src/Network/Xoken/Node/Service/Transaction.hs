@@ -491,7 +491,7 @@ xRelayTx rawTx = do
                     let !connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
                     debug lg $ LG.msg $ val $ "transaction verified - broadcasting tx"
                     mapM_ (\(_, peer) -> do sendRequestMessages peer (MTx (fromJust $ fst res))) connPeers
-                    eres <- LE.try $ handleIfAllegoryTx tx True -- MUST be False
+                    eres <- LE.try $ handleIfAllegoryTx tx False False -- MUST be False
                     case eres of
                         Right (flg) -> return True
                         Left (e :: SomeException) -> return False
@@ -500,24 +500,32 @@ xRelayTx rawTx = do
                     return $ False
 
 xGetTxIDByProtocol ::
-       (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> [DT.Text] -> Maybe Int32 -> Maybe Int64 -> m [DT.Text]
+       (HasXokenNodeEnv env m, MonadIO m)
+    => DT.Text
+    -> [DT.Text]
+    -> Maybe Int32
+    -> Maybe Int64
+    -> m [ResultWithCursor DT.Text Int64]
 xGetTxIDByProtocol prop1 props pgSize mbNomTxInd = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
     let conn = xCqlClientState dbe
         net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
-        nominalTxIndex =
+        (str, nominalTxIndex) =
             case mbNomTxInd of
-                (Just n) -> n
-                Nothing -> maxBound
+                (Just n) ->
+                    ( "SELECT txid, nominal_tx_index FROM xoken.script_output_protocol WHERE proto_str=? AND nominal_tx_index>?"
+                    , n)
+                Nothing ->
+                    ( "SELECT txid, nominal_tx_index FROM xoken.script_output_protocol WHERE proto_str=? AND nominal_tx_index<?"
+                    , maxBound)
         protocol = DT.intercalate "." $ prop1 : props
-        str = "SELECT txid FROM xoken.script_output_protocol WHERE proto_str=? AND nominal_tx_index<?"
-        qstr = str :: Q.QueryString Q.R (DT.Text, Int64) (Identity DT.Text)
+        qstr = str :: Q.QueryString Q.R (DT.Text, Int64) (DT.Text, Int64)
         uqstr = getSimpleQueryParam $ (protocol, nominalTxIndex)
-    eResp <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr (uqstr {pageSize = pgSize}))
+    eResp <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr (uqstr {pageSize = maybe (Just 100) Just pgSize}))
     case eResp of
-        Right mb -> return $ runIdentity <$> mb
+        Right mb -> return $ (\(x, y) -> ResultWithCursor x y) <$> mb
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetTxIDByProtocol: " ++ show e
             throw KeyValueDBLookupException

@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -83,6 +84,30 @@ data Relation =
         , alias :: Text
         }
     deriving (Generic, FromJSON, ToJSON)
+
+data Grouped
+    = Hour
+    | Day
+    | Month
+    | Year
+
+instance Show Grouped where
+    show (Hour) = "Hour"
+    show (Day) = "Day"
+    show (Month) = "Month"
+    show (Year) = "Year"
+
+grouped :: Text -> Maybe Grouped
+grouped x =
+    if isInfixOf "day" x
+        then Just Day
+        else if isInfixOf "hour" x
+                 then Just Hour
+                 else if isInfixOf "month" x
+                          then Just Month
+                          else if isInfixOf "year" x
+                                   then Just Year
+                                   else Nothing
 
 aliasNode :: Node -> Text
 aliasNode x = alias (x :: Node)

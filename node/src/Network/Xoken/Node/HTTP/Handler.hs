@@ -51,7 +51,7 @@ import Network.Xoken.Node.Data
     )
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.HTTP.Types
-import Network.Xoken.Node.P2P.Common (addNewUser, generateSessionKey, getSimpleQueryParam, query, write)
+import Network.Xoken.Node.P2P.Common (addNewUser, generateSessionKey, getSimpleQueryParam, indexMaybe, query, write)
 import Network.Xoken.Node.P2P.Types
 import Network.Xoken.Node.Service
 import Snap
@@ -514,9 +514,10 @@ getOutpointByName (AllegoryNameQuery nameArray isProducer) = do
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS (S.pack $ show e)
-        Right (forName, outpoint, script, isProducer) ->
+        Right (forName, outpoint, script, confirmed, isProducer) ->
             writeBS $
-            BSL.toStrict $ encodeResp pretty $ RespOutpointByName forName outpoint (DT.unpack script) isProducer
+            BSL.toStrict $
+            encodeResp pretty $ RespOutpointByName forName outpoint (DT.unpack script) confirmed isProducer
 
 findNameReseller :: RPCReqParams' -> Handler App App ()
 findNameReseller (AllegoryNameQuery nameArray isProducer) = do
@@ -526,8 +527,8 @@ findNameReseller (AllegoryNameQuery nameArray isProducer) = do
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS (S.pack $ show e)
-        Right (forName, protocol, uri, isProducer) ->
-            writeBS $ BSL.toStrict $ encodeResp pretty $ RespFindNameReseller forName protocol uri isProducer
+        Right (forName, protocol, uri, confirmed, isProducer) ->
+            writeBS $ BSL.toStrict $ encodeResp pretty $ RespFindNameReseller forName protocol uri confirmed isProducer
 
 getProducer _ = throwBadRequest
 
@@ -591,13 +592,15 @@ getTxByProtocol = do
     pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     props <- getQueryProps
     res <-
-        LE.try $ xGetTxIDByProtocol (DTE.decodeUtf8 $ fromJust proto) props pgSize (decodeNTI cursor) >>= xGetTxHashes
+        LE.try $
+        xGetTxIDByProtocol (DTE.decodeUtf8 $ fromJust proto) props pgSize (decodeNTI cursor) >>=
+        (\c -> (encodeNTI $ getNextCursor c, ) <$> xGetTxHashes (fromResultWithCursor <$> c))
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetTxProtocol: " ++ show e
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
-        Right txs -> do
+        Right (nt, txs) -> do
             let rawTxs =
                     (\RawTxRecord {..} ->
                          (TxRecord txId size txBlockInfo <$>
@@ -606,13 +609,13 @@ getTxByProtocol = do
                           (pure fees) <*>
                           (pure txMerkleBranch))) <$>
                     txs
-            writeBS $ BSL.toStrict $ encodeResp pretty $ RespTransactionsByProtocol $ catMaybes rawTxs
+            writeBS $ BSL.toStrict $ encodeResp pretty $ RespTransactionsByProtocol nt (catMaybes rawTxs)
   where
     getQueryProps = do
-        prop2 <- (fmap DTE.decodeUtf8) <$> getQueryParam "prop2"
-        prop3 <- (fmap DTE.decodeUtf8) <$> getQueryParam "prop3"
-        prop4 <- (fmap DTE.decodeUtf8) <$> getQueryParam "prop4"
-        prop5 <- (fmap DTE.decodeUtf8) <$> getQueryParam "prop5"
+        prop2 <- (fmap DTE.decodeUtf8) <$> getQueryParam "prop1"
+        prop3 <- (fmap DTE.decodeUtf8) <$> getQueryParam "prop2"
+        prop4 <- (fmap DTE.decodeUtf8) <$> getQueryParam "prop3"
+        prop5 <- (fmap DTE.decodeUtf8) <$> getQueryParam "prop4"
         pure $ catMaybes [prop2, prop3, prop4, prop5]
 
 getTxByProtocols :: Handler App App ()
@@ -622,19 +625,21 @@ getTxByProtocols = do
     pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
     cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
     pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
-    let props = getQueryProps allMap
     let protocols = DTE.decodeUtf8 <$> (fromJust $ Map.lookup "protocol" allMap)
+    let props = getQueryProps allMap
     res <-
         LE.try $
-        traverse (\(proto, prop) -> xGetTxIDByProtocol proto prop pgSize (decodeNTI cursor)) (zip protocols props) >>=
-        (xGetTxHashes . concat)
+        traverse
+            (\(proto, ind) -> xGetTxIDByProtocol proto (fromMaybe [] $ indexMaybe props ind) pgSize (decodeNTI cursor))
+            (zip protocols [0 ..]) >>=
+        ((\c -> (encodeNTI $ getNextCursor c, ) <$> xGetTxHashes (fromResultWithCursor <$> c)) . concat)
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetTxProtocol: " ++ show e
             debug lg $ LG.msg $ "Error: xGetTxProtocol: " ++ show e
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
-        Right txs -> do
+        Right (nt, txs) -> do
             let rawTxs =
                     (\RawTxRecord {..} ->
                          (TxRecord txId size txBlockInfo <$>
@@ -643,14 +648,17 @@ getTxByProtocols = do
                           (pure fees) <*>
                           (pure txMerkleBranch))) <$>
                     txs
-            writeBS $ BSL.toStrict $ encodeResp pretty $ RespTransactionsByProtocols $ catMaybes rawTxs
+            writeBS $ BSL.toStrict $ encodeResp pretty $ RespTransactionsByProtocols nt (catMaybes rawTxs)
   where
     getQueryProps allMap = do
-        let prop2 = DTE.decodeUtf8 <$> (fromMaybe [] $ Map.lookup "prop2" allMap)
-            prop3 = DTE.decodeUtf8 <$> (fromMaybe [] $ Map.lookup "prop3" allMap)
-            prop4 = DTE.decodeUtf8 <$> (fromMaybe [] $ Map.lookup "prop4" allMap)
-            prop5 = DTE.decodeUtf8 <$> (fromMaybe [] $ Map.lookup "prop5" allMap)
-        (\x y z a -> [x, y, z, a]) <$> prop2 <*> prop3 <*> prop4 <*> prop5
+        let prop2 = DTE.decodeUtf8 <$> (fromMaybe [] $ Map.lookup "prop1" allMap)
+            prop3 = DTE.decodeUtf8 <$> (fromMaybe [] $ Map.lookup "prop2" allMap)
+            prop4 = DTE.decodeUtf8 <$> (fromMaybe [] $ Map.lookup "prop3" allMap)
+            prop5 = DTE.decodeUtf8 <$> (fromMaybe [] $ Map.lookup "prop4" allMap)
+        foldr
+            (\(p, i) acc -> (catMaybes [Just p, indexMaybe prop3 i, indexMaybe prop4 i, indexMaybe prop5 i]) : acc)
+            []
+            (zip prop2 [0 ..])
 
 --- |
 -- Helper functions

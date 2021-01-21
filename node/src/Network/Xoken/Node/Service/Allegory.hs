@@ -135,7 +135,7 @@ xGetAllegoryNameBranch name isProducer = do
             err lg $ LG.msg $ "Error: xGetAllegoryNameBranch: " ++ show e
             throw KeyValueDBLookupException
 
-getProducerRoot :: (HasXokenNodeEnv env m, MonadIO m) => [Int] -> m ([Int], OutPoint', DT.Text, Bool)
+getProducerRoot :: (HasXokenNodeEnv env m, MonadIO m) => [Int] -> m ([Int], OutPoint', DT.Text, Bool, Bool)
 getProducerRoot nameArr = do
     dbe <- getDB
     lg <- getLogger
@@ -152,14 +152,16 @@ getProducerRoot nameArr = do
                     throw KeyValueDBLookupException
                 else getProducerRoot $ init nameArr
         Right nb -> do
-            let sp = DT.split (== ':') $ fst (head nb)
-            let txid = DT.unpack $ sp !! 0
-            let index = readMaybe (DT.unpack $ sp !! 1) :: Maybe Int
+            let sp = DT.split (== ':') $ fst3 $ head nb
+                txid = DT.unpack $ sp !! 0
+                index = readMaybe (DT.unpack $ sp !! 1) :: Maybe Int
+                scr = snd3 $ head nb
+                conf = thd3 $ head nb
             case index of
-                Just i -> return (nameArr, OutPoint' txid (fromIntegral i), (snd $ head nb), True)
+                Just i -> return (nameArr, OutPoint' txid (fromIntegral i), scr, conf, True)
                 Nothing -> throw KeyValueDBLookupException
 
-getOwnerRoot :: (HasXokenNodeEnv env m, MonadIO m) => [Int] -> m ([Int], OutPoint', DT.Text, Bool)
+getOwnerRoot :: (HasXokenNodeEnv env m, MonadIO m) => [Int] -> m ([Int], OutPoint', DT.Text, Bool, Bool)
 getOwnerRoot nameArr = do
     dbe <- getDB
     lg <- getLogger
@@ -176,14 +178,16 @@ getOwnerRoot nameArr = do
                     throw KeyValueDBLookupException
                 else getProducerRoot nameArr
         Right nb -> do
-            let sp = DT.split (== ':') $ fst (head nb)
-            let txid = DT.unpack $ sp !! 0
-            let index = readMaybe (DT.unpack $ sp !! 1) :: Maybe Int
+            let sp = DT.split (== ':') $ fst3 (head nb)
+                txid = DT.unpack $ sp !! 0
+                index = readMaybe (DT.unpack $ sp !! 1) :: Maybe Int
+                scr = snd3 $ head nb
+                conf = thd3 $ head nb
             case index of
-                Just i -> return (nameArr, OutPoint' txid (fromIntegral i), (snd $ head nb), False)
+                Just i -> return (nameArr, OutPoint' txid (fromIntegral i), scr, conf, False)
                 Nothing -> throw KeyValueDBLookupException
 
-xGetOutpointByName :: (HasXokenNodeEnv env m, MonadIO m) => [Int] -> Bool -> m ([Int], OutPoint', DT.Text, Bool)
+xGetOutpointByName :: (HasXokenNodeEnv env m, MonadIO m) => [Int] -> Bool -> m ([Int], OutPoint', DT.Text, Bool, Bool)
 xGetOutpointByName nameArr isProducer = do
     op' <-
         if isProducer
@@ -193,7 +197,7 @@ xGetOutpointByName nameArr isProducer = do
         Left (e :: SomeException) -> throw e
         Right op -> return op
 
-xFindNameReseller :: (HasXokenNodeEnv env m, MonadIO m) => [Int] -> Bool -> m ([Int], String, String, Bool)
+xFindNameReseller :: (HasXokenNodeEnv env m, MonadIO m) => [Int] -> Bool -> m ([Int], String, String, Bool, Bool)
 xFindNameReseller nameArr isProducer = do
     lg <- getLogger
     op' <- LE.try $ xGetOutpointByName nameArr isProducer
@@ -201,7 +205,7 @@ xFindNameReseller nameArr isProducer = do
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: Failed to fetch outpoint for Allegory name: " <> (show e)
             throw e
-        Right op@(forName, OutPoint' txid index, scr, isProducer) -> do
+        Right op@(forName, OutPoint' txid index, scr, conf, isProducer) -> do
             tx' <- xGetTxHash (DT.pack txid)
             case tx' of
                 Nothing -> do
@@ -263,7 +267,9 @@ xFindNameReseller nameArr isProducer = do
                                                                 show
                                                                     "Error: No endpoint information in Allegory metadata"
                                                             throw KeyValueDBLookupException
-                                                        Just ep -> return (forName, protocol ep, uri ep, isProducer)
-                                        otherScript -> do
-                                            err lg $ LG.msg $ "Error: Not a valid Allegory/AllPay OP_RETURN output (got '" <> (show otherScript) <> "')"
+                                                        Just ep ->
+                                                            return (forName, protocol ep, uri ep, conf, isProducer)
+                                        _ -> do
+                                            err lg $ LG.msg $ show "Error: Not a valid Allegory/AllPay OP_RETURN output"
                                             throw KeyValueDBLookupException
+
