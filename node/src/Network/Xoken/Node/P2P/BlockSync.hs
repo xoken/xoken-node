@@ -150,7 +150,7 @@ peerBlockSync peer =
         trace lg $ LG.msg $ ("peer block sync : " ++ (show peer))
         !tm <- liftIO $ getCurrentTime
         let tracker = statsTracker peer
-        fw <- liftIO $ readIORef $ ptBlockFetchWindow tracker
+        fw <- liftIO $ readIORef $ blockFetchWindow bp2pEnv
         recvtm <- liftIO $ readIORef $ ptLastTxRecvTime tracker
         sendtm <- liftIO $ readIORef $ ptLastGetDataSent tracker
         let staleTime = fromInteger $ fromIntegral (unresponsivePeerConnTimeoutSecs $ nodeConfig bp2pEnv)
@@ -164,7 +164,7 @@ peerBlockSync peer =
                             Right () -> do
                                 debug lg $ LG.msg $ val "updating state."
                                 liftIO $ writeIORef (ptLastGetDataSent tracker) $ Just tm
-                                liftIO $ modifyIORef' (ptBlockFetchWindow tracker) (\z -> z + 1)
+                                liftIO $ atomicModifyIORef' (blockFetchWindow bp2pEnv) (\z -> (z + 1, ()))
                             Left (e :: SomeException) -> do
                                 err lg $ LG.msg ("[ERROR] peerBlockSync " ++ show e)
                                 ------------
@@ -199,7 +199,7 @@ peerBlockSync peer =
                                     Right () -> do
                                         debug lg $ LG.msg $ val "updating state."
                                         liftIO $ writeIORef (ptLastGetDataSent tracker) $ Just tm
-                                        liftIO $ modifyIORef' (ptBlockFetchWindow tracker) (\z -> z + 1)
+                                        liftIO $ atomicModifyIORef' (blockFetchWindow bp2pEnv) (\z -> (z + 1, ()))
                                     Left (e :: SomeException) -> do
                                         err lg $ LG.msg ("[ERROR] peerBlockSync " ++ show e)
                                         throw e
@@ -522,7 +522,7 @@ runBlockCacheQueue =
         case retn of
             Just bbi -> do
                 latest <- liftIO $ newIORef True
-                sortedPeers <- liftIO $ sortPeers (snd $ unzip connPeers)
+                sortedPeers <- liftIO $ sortPeersRandom (snd $ unzip connPeers)
                 mapM_
                     (\pr -> do
                          ltst <- liftIO $ readIORef latest
@@ -551,6 +551,12 @@ runBlockCacheQueue =
   where
     getHead l = head $ L.sortOn (snd . snd) (l)
     mkBlkInf h = Just $ BlockInfo (fst h) (snd $ snd h)
+
+sortPeersRandom :: [BitcoinPeer] -> IO ([BitcoinPeer])
+sortPeersRandom peers = do
+    mark <- randomRIO (0, (L.length peers - 1))
+    let parts = L.splitAt mark peers
+    return $ snd parts ++ fst parts
 
 sortPeers :: [BitcoinPeer] -> IO ([BitcoinPeer])
 sortPeers peers = do
@@ -1022,7 +1028,7 @@ processConfTransaction bis tx bhash blkht txind = do
         Nothing -> return ()
     debug lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": end of processing signaled " ++ show bhash
 
-getSatsValueFromOutpoint ::
+__getSatsValueFromOutpoint ::
        XCqlClientState
     -> TSH.TSHashTable TxHash EV.Event
     -> Logger
@@ -1031,7 +1037,7 @@ getSatsValueFromOutpoint ::
     -> Int
     -> Int
     -> IO ((Text, Text, Int64))
-getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait = do
+__getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait = do
     let qstr :: Q.QueryString Q.R (Text, Int32, Bool) (Text, Text, Int64)
         qstr =
             "SELECT address, script_hash, value FROM xoken.txid_outputs WHERE txid=? AND output_index=? AND is_recv=?"
@@ -1082,6 +1088,64 @@ getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait = do
                 (show $ txHashToHex $ outPointHash outPoint) ++ "): " ++ show e
             throw e
 
+--
+--
+getSatsValueFromOutpoint ::
+       XCqlClientState
+    -> TSH.TSHashTable TxHash EV.Event
+    -> Logger
+    -> Network
+    -> OutPoint
+    -> Int
+    -> Int
+    -> IO ((Text, Text, Int64))
+getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait = do
+    let qstr :: Q.QueryString Q.R (Text, Int32) (Text, Text, Int64)
+        qstr = "SELECT address, script_hash, value FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
+        par = getSimpleQueryParam (txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint)
+    res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
+    case res of
+        Right results -> do
+            if L.length results == 0
+                then do
+                    debug lg $
+                        LG.msg $
+                        "Tx not found: " ++ (show $ txHashToHex $ outPointHash outPoint) ++ " _waiting_ for event"
+                    valx <- liftIO $ TSH.lookup txSync (outPointHash outPoint)
+                    event <-
+                        case valx of
+                            Just evt -> return evt
+                            Nothing -> EV.new
+                    liftIO $ TSH.insert txSync (outPointHash outPoint) event
+                    tofl <- waitTimeout event (1000000 * (fromIntegral wait))
+                    if tofl == False
+                        then if ((2 * wait) < maxWait)
+                                 then do
+                                     getSatsValueFromOutpoint conn txSync lg net outPoint (2 * wait) maxWait
+                                 else do
+                                     liftIO $ TSH.delete txSync (outPointHash outPoint)
+                                     debug lg $
+                                         LG.msg $
+                                         "TxIDNotFoundException: While querying txid_outputs for (TxID, Index): " ++
+                                         (show $ txHashToHex $ outPointHash outPoint) ++
+                                         ", " ++ show (outPointIndex outPoint) ++ ")"
+                                     throw $
+                                         TxIDNotFoundException
+                                             ( show $ txHashToHex $ outPointHash outPoint
+                                             , Just $ fromIntegral $ outPointIndex outPoint)
+                                             "getSatsValueFromOutpoint"
+                        else do
+                            debug lg $
+                                LG.msg $ "event received _available_: " ++ (show $ txHashToHex $ outPointHash outPoint)
+                            getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait
+                else do
+                    let (addr, scriptHash, val) = head $ results
+                    return $ (addr, scriptHash, val)
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: getSatsValueFromOutpoint: " ++ show e
+            throw e
+
+--
 getScriptHashFromOutpoint ::
        XCqlClientState -> TSH.TSHashTable TxHash EV.Event -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Text)
 getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs = do
