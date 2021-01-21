@@ -477,10 +477,10 @@ goGetResource msg net roles sessKey pretty = do
                         Left (e :: SomeException) -> do
                             debug lg $ LG.msg $ "Allegory error: xFindNameReseller: " ++ show e
                             return $ RPCResponse 400 pretty $ Left $ RPCError INTERNAL_ERROR Nothing
-                        Right (forName, outpoint, script, isProducer) ->
+                        Right (forName, outpoint, script, confirmed, isProducer) ->
                             return $
                             RPCResponse 200 pretty $
-                            Right $ Just $ RespOutpointByName forName outpoint (DT.unpack script) isProducer
+                            Right $ Just $ RespOutpointByName forName outpoint (DT.unpack script) confirmed isProducer
                 _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
         "NAME->RESELLER" -> do
             case methodParams $ rqParams msg of
@@ -490,9 +490,10 @@ goGetResource msg net roles sessKey pretty = do
                         Left (e :: SomeException) -> do
                             debug lg $ LG.msg $ "Allegory error: xFindNameReseller: " ++ show e
                             return $ RPCResponse 400 pretty $ Left $ RPCError INTERNAL_ERROR Nothing
-                        Right (forName, protocol, uri, isProducer) ->
+                        Right (forName, protocol, uri, confirmed, isProducer) ->
                             return $
-                            RPCResponse 200 pretty $ Right $ Just $ RespFindNameReseller forName protocol uri isProducer
+                            RPCResponse 200 pretty $
+                            Right $ Just $ RespFindNameReseller forName protocol uri confirmed isProducer
                 _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
         "OUTPOINT->SPEND_STATUS" -> do
             case methodParams $ rqParams msg of

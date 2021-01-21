@@ -514,9 +514,10 @@ getOutpointByName (AllegoryNameQuery nameArray isProducer) = do
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS (S.pack $ show e)
-        Right (forName, outpoint, script, isProducer) ->
+        Right (forName, outpoint, script, confirmed, isProducer) ->
             writeBS $
-            BSL.toStrict $ encodeResp pretty $ RespOutpointByName forName outpoint (DT.unpack script) isProducer
+            BSL.toStrict $
+            encodeResp pretty $ RespOutpointByName forName outpoint (DT.unpack script) confirmed isProducer
 
 findNameReseller :: RPCReqParams' -> Handler App App ()
 findNameReseller (AllegoryNameQuery nameArray isProducer) = do
@@ -526,8 +527,8 @@ findNameReseller (AllegoryNameQuery nameArray isProducer) = do
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS (S.pack $ show e)
-        Right (forName, protocol, uri, isProducer) ->
-            writeBS $ BSL.toStrict $ encodeResp pretty $ RespFindNameReseller forName protocol uri isProducer
+        Right (forName, protocol, uri, confirmed, isProducer) ->
+            writeBS $ BSL.toStrict $ encodeResp pretty $ RespFindNameReseller forName protocol uri confirmed isProducer
 
 getProducer _ = throwBadRequest
 
