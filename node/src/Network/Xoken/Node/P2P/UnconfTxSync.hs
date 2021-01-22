@@ -187,6 +187,15 @@ runEpochSwitcher =
                     Left (e :: SomeException) -> do
                         err lg $ LG.msg ("Error: deleting stale epoch script_hash_outputs: " ++ show e)
                         throw e
+                let str = "DELETE from xoken.ep_script_hash_unspent_outputs where epoch = ?"
+                    qstr = str :: Q.QueryString Q.W (Identity Bool) ()
+                    p = getSimpleQueryParam $ Identity (not epoch)
+                res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr p)
+                case res of
+                    Right _ -> return ()
+                    Left (e :: SomeException) -> do
+                        err lg $ LG.msg ("Error: deleting stale epoch script_hash_unspent_outputs: " ++ show e)
+                        throw e
                 let str = "DELETE from xoken.ep_txid_outputs where epoch = ?"
                     qstr = str :: Q.QueryString Q.W (Identity Bool) ()
                     p = getSimpleQueryParam $ Identity (not epoch)
