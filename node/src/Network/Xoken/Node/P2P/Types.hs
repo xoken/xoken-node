@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE ConstraintKinds #-}
 
@@ -21,11 +22,13 @@ import Data.IORef
 import Data.Int
 import qualified Data.Map.Strict as M
 import Data.Pool
+import Data.Serialize
 import Data.Text
 import Data.Time.Clock
 import Data.Word
 import Database.Bolt as BT
 import qualified Database.XCQL.Protocol as Q
+import GHC.Generics
 import Network.Socket hiding (send)
 import Network.Xoken.Block
 import Network.Xoken.Constants
@@ -84,7 +87,7 @@ data PeerTracker =
         { ptIngressMsgCount :: !(IORef Int) -- recent msg count for detecting stale peer connections
         , ptLastTxRecvTime :: !(IORef (Maybe UTCTime)) -- last tx recv time
         , ptLastGetDataSent :: !(IORef (Maybe UTCTime)) -- block 'GetData' sent time
-        , ptBlockFetchWindow :: !(IORef Int) -- number of outstanding blocks
+        -- , ptBlockFetchWindow :: !(IORef Int) -- number of outstanding blocks
         -- ptLastPing , Ping :: !(Maybe (UTCTime, Word64)) -- last sent ping time and nonce
         }
 
@@ -93,8 +96,8 @@ getNewTracker = do
     imc <- liftIO $ newIORef 0
     rc <- liftIO $ newIORef Nothing
     st <- liftIO $ newIORef Nothing
-    fw <- liftIO $ newIORef 0
-    return $ PeerTracker imc rc st fw
+    -- fw <- liftIO $ newIORef 0
+    return $ PeerTracker imc rc st
 
 instance Show BitcoinPeer where
     show p = (show $ bpAddress p) ++ " : " ++ (show $ bpConnected p)
@@ -118,6 +121,7 @@ data BlockPInfo =
         , fees :: Int
         , bytes :: Int
         , count :: Int
+        , absoluteHour :: Int
         }
     deriving (Show)
 
@@ -166,3 +170,22 @@ data ServerState =
     ServerState
         { pool :: !(Pool Pipe)
         }
+
+data ProtocolName
+    = OK !B.ByteString
+    | FAIL
+    deriving (Generic)
+
+instance Serialize ProtocolName where
+    get = go =<< (fromIntegral <$> getWord8)
+      where
+        go op
+            | op == 0x00 = return FAIL
+            | op <= 0x4b = do
+                payload <- getByteString (fromIntegral op)
+                return $ OK payload
+            | op == 0x4c = do
+                len <- getWord8
+                payload <- getByteString (fromIntegral len)
+                return $ OK payload
+            | otherwise = return FAIL

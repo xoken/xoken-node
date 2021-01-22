@@ -917,7 +917,7 @@ readNextMessage' peer readLock = do
                                     liftIO $ writeIORef (ptLastTxRecvTime tracker) $ Just tm
                                     if binTxTotalCount ingst == binTxIngested ingst
                                         then do
-                                            liftIO $ modifyIORef' (ptBlockFetchWindow tracker) (\z -> z - 1)
+                                            liftIO $ atomicModifyIORef' (blockFetchWindow bp2pEnv) (\z -> (z - 1, ()))
                                             liftIO $
                                                 TSH.insert
                                                     (blockSyncStatusMap bp2pEnv)
@@ -963,6 +963,7 @@ handleIncomingMessages pr = do
     case res of
         Right (a) -> return ()
         Left (e :: SomeException) -> do
+            liftIO $ atomicModifyIORef' (blockFetchWindow bp2pEnv) (\x -> (0, ())) -- safety border case
             err lg $ msg $ (val "[ERROR] Closing peer connection ") +++ (show e)
             case (bpSocket pr) of
                 Just sock -> liftIO $ Network.Socket.close sock

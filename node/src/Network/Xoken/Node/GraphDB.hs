@@ -79,11 +79,17 @@ toMerkleBranchNode r = do
     return (MerkleBranchNode txid isLeft)
 
 -- | Convert record to Name & ScriptOp
-toNameScriptOp :: Monad m => Record -> m ((Text, Text))
+toNameScriptOp :: Monad m => Record -> m (Text, Text, Bool)
 toNameScriptOp r = do
     outpoint :: Text <- (r `at` "elem.outpoint") >>= exact
     script :: Text <- (r `at` "elem.script") >>= exact
-    return ((outpoint, script))
+    confirmed :: Bool <- (r `at` "elem.confirmed") >>= exact
+    return (outpoint, script, confirmed)
+
+toAllegoryNameBranch :: Monad m => Record -> m Text
+toAllegoryNameBranch r = do
+    outpoint :: Text <- (r `at` "elem.outpoint") >>= exact
+    return outpoint
 
 -- | Filter Null
 filterNull :: Monad m => [Record] -> m [Record]
@@ -123,26 +129,28 @@ queryGraphDBVersion = do
 queryAllegoryNameBranch :: Text -> Bool -> BoltActionT IO [Text]
 queryAllegoryNameBranch name isProducer = do
     records <- queryP cypher params
-    x <- traverse (`at` "outpoint") records
-    return $ x >>= exact
+    nameBranch <- traverse toAllegoryNameBranch records
+    return nameBranch
   where
     cypher =
         " MATCH p=(pointer:namestate {name: {namestr}})-[:REVISION]-()-[:INPUT*]->(start:nutxo) " <>
-        " WHERE NOT (start)-[:INPUT]->() " <> " UNWIND tail(nodes(p)) AS elem " <> " RETURN elem.outpoint as outpoint "
+        " WHERE NOT (start)-[:INPUT]->() " <>
+        " UNWIND tail(nodes(p)) AS elem " <>
+        " RETURN elem.outpoint"
     params =
         if isProducer
             then fromList [("namestr", T (name <> pack "|producer"))]
             else fromList [("namestr", T (name <> pack "|owner"))]
 
 -- Fetch the outpoint & script associated with Allegory name
-queryAllegoryNameScriptOp :: Text -> Bool -> BoltActionT IO [(Text, Text)]
+queryAllegoryNameScriptOp :: Text -> Bool -> BoltActionT IO [(Text, Text, Bool)]
 queryAllegoryNameScriptOp name isProducer = do
     records <- queryP cypher params >>= filterNull
     x <- traverse toNameScriptOp records
     return x
   where
     cypher =
-        " MATCH p=(pointer:namestate {name: {namestr}})-[:REVISION]-(elem:nutxo)  RETURN elem.outpoint , elem.script "
+        " MATCH p=(pointer:namestate {name: {namestr}})-[:REVISION]-(elem:nutxo)  RETURN elem.outpoint , elem.script , elem.confirmed "
     params =
         if isProducer
             then fromList [("namestr", T (name <> pack "|producer"))]
@@ -204,8 +212,8 @@ revertAllegoryStateTree tx allegory = do
             throw e
         Right (records) -> return ()
 
-updateAllegoryStateTrees :: Tx -> Allegory -> BoltActionT IO ()
-updateAllegoryStateTrees tx allegory = do
+updateAllegoryStateTrees :: Bool -> Tx -> Allegory -> BoltActionT IO ()
+updateAllegoryStateTrees confirmed tx allegory = do
     case action allegory of
         OwnerAction oin oout proxy -> do
             let iop = prevOutput $ (txIn tx !! (index $ oin))
@@ -217,13 +225,14 @@ updateAllegoryStateTrees tx allegory = do
                     (if Prelude.null proxy
                          then case oVendorEndpoint oout of
                                   Just e ->
-                                      " CREATE (b:nutxo { outpoint: {out_op}, name:{name}, script: {scr} , vendor:{endpoint} }) "
-                                  Nothing -> " CREATE (b:nutxo { outpoint: {out_op}, name:{name}, script: {scr} }) "
+                                      " CREATE (b:nutxo { outpoint: {out_op}, name:{name}, script: {scr} , vendor:{endpoint}, confirmed:{conf} }) "
+                                  Nothing ->
+                                      " CREATE (b:nutxo { outpoint: {out_op}, name:{name}, script: {scr}, confirmed:{conf}}) "
                          else case oVendorEndpoint oout of
                                   Just e ->
-                                      " CREATE (b:nutxo { outpoint: {out_op}, name:{name}, script: {scr} , proxy:{proxies}, vendor:{endpoint} }) "
+                                      " CREATE (b:nutxo { outpoint: {out_op}, name:{name}, script: {scr} , proxy:{proxies}, vendor:{endpoint}, confirmed:{conf} }) "
                                   Nothing ->
-                                      " CREATE (b:nutxo { outpoint: {out_op}, name:{name}, script: {scr} , proxy:{proxies} }) ") <>
+                                      " CREATE (b:nutxo { outpoint: {out_op}, name:{name}, script: {scr} , proxy:{proxies}, confirmed:{conf} }) ") <>
                     " , (b)-[:INPUT]->(a) , (x)-[:REVISION]->(b)  DELETE r "
             let params =
                     fromList
@@ -233,6 +242,7 @@ updateAllegoryStateTrees tx allegory = do
                         , ("name", T $ pack $ Prelude.map (\x -> chr x) (name allegory))
                         , ("proxies", T $ pack $ BL.unpack $ Data.Aeson.encode proxy)
                         , ("endpoint", T $ pack $ BL.unpack $ Data.Aeson.encode $ oVendorEndpoint oout)
+                        , ("conf", B confirmed)
                         , ("nn_str", T $ pack $ Prelude.map (\x -> chr x) (name allegory) ++ "|owner")
                         ]
             liftIO $ print (cypher)
@@ -253,15 +263,16 @@ updateAllegoryStateTrees tx allegory = do
             let tstr =
                     case pVendorEndpoint pout of
                         Just e ->
-                            "(ppro:nutxo { outpoint: {op_ppro}, script: {ppro_scr} , name:{name}, producer: True , vendor:{endpoint_prod}}) , (ppro)-[:INPUT]->(a) "
+                            "(ppro:nutxo { outpoint: {op_ppro}, script: {ppro_scr} , name:{name}, producer: True , vendor:{endpoint_prod}, confirmed:{conf}}) , (ppro)-[:INPUT]->(a) "
                         Nothing ->
-                            "(ppro:nutxo { outpoint: {op_ppro}, script: {ppro_scr} , name:{name}, producer: True }) , (ppro)-[:INPUT]->(a) "
+                            "(ppro:nutxo { outpoint: {op_ppro}, script: {ppro_scr} , name:{name}, producer: True , confirmed:{conf}}) , (ppro)-[:INPUT]->(a) "
             let cyProStr = tstr
             let poutPro =
                     ( cyProStr
                     , [ ("op_ppro", T $ val)
                       , ("ppro_scr", T $ pack $ C.unpack $ B16.encode pproScr)
                       , ("endpoint_prod", T $ pack $ BL.unpack $ Data.Aeson.encode $ pVendorEndpoint pout)
+                      , ("conf", B confirmed)
                       , ("nn_pr_str", T $ pack $ Prelude.map (\x -> chr x) (name allegory) ++ "|producer")
                       ])
             -- Owner (optional)
@@ -278,14 +289,15 @@ updateAllegoryStateTrees tx allegory = do
                             let tstr =
                                     case oVendorEndpoint poo of
                                         Just e ->
-                                            " (pown:nutxo { outpoint: {op_pown}, script: {pown_scr} , name:{name}, producer: False , vendor:{endpoint_owner} }) ,(pown)-[:INPUT]->(a) "
+                                            " (pown:nutxo { outpoint: {op_pown}, script: {pown_scr} , name:{name}, producer: False , vendor:{endpoint_owner}, confirmed:{conf} }) ,(pown)-[:INPUT]->(a) "
                                         Nothing ->
-                                            " (pown:nutxo { outpoint: {op_pown}, script: {pown_scr} , name:{name}, producer: False }) ,(pown)-[:INPUT]->(a) "
+                                            " (pown:nutxo { outpoint: {op_pown}, script: {pown_scr} , name:{name}, producer: False , confirmed:{conf} }) ,(pown)-[:INPUT]->(a) "
                             let cyOwnStr = (mstr, tstr)
                             let parOwn =
                                     [ ("op_pown", T $ val)
                                     , ("pown_scr", T $ pack $ C.unpack $ B16.encode pownScr)
                                     , ("endpoint_owner", T $ pack $ BL.unpack $ Data.Aeson.encode $ oVendorEndpoint poo)
+                                    , ("conf", B confirmed)
                                     , ("nn_ow_str", T $ pack $ Prelude.map (\x -> chr x) (name allegory) ++ "|owner")
                                     ]
                             Just (cyOwnStr, parOwn)
@@ -301,16 +313,16 @@ updateAllegoryStateTrees tx allegory = do
                                              ( case oVendorEndpoint ow of
                                                    Just ep ->
                                                        ( mstr
-                                                       , "(<j>:nutxo { outpoint: {op_<j>}, script: {pext_<j>_scr} , name:{name_ext_<j>}, producer: False , vendor:{endpoint_<j>}}) ,(<j>)-[:INPUT]->(a) " ++
+                                                       , "(<j>:nutxo { outpoint: {op_<j>}, script: {pext_<j>_scr} , name:{name_ext_<j>}, producer: False , vendor:{endpoint_<j>}, confirmed:{conf}}) ,(<j>)-[:INPUT]->(a) " ++
                                                          cstr)
                                                    Nothing ->
                                                        ( mstr
-                                                       , "(<j>:nutxo { outpoint: {op_<j>}, script: {pext_<j>_scr} , name:{name_ext_<j>}, producer: False }) ,(<j>)-[:INPUT]->(a) " ++
+                                                       , "(<j>:nutxo { outpoint: {op_<j>}, script: {pext_<j>_scr} , name:{name_ext_<j>}, producer: False , confirmed:{conf} }) ,(<j>)-[:INPUT]->(a) " ++
                                                          cstr)
                                              , index $ owner $ ow)
                                          ProducerExtension pr cp ->
                                              ( ( mstr
-                                               , "(<j>:nutxo { outpoint: {op_<j>}, script: {pext_<j>_scr} , name:{name_ext_<j>}, producer: True }) ,(<j>)-[:INPUT]->(a) " ++
+                                               , "(<j>:nutxo { outpoint: {op_<j>}, script: {pext_<j>_scr} , name:{name_ext_<j>}, producer: True , confirmed:{conf}}) ,(<j>)-[:INPUT]->(a) " ++
                                                  cstr)
                                              , index $ producer $ pr)
                              let val = append (txHashToHex $ txHash tx) $ pack (":" ++ show (eop))
@@ -339,6 +351,7 @@ updateAllegoryStateTrees tx allegory = do
                                      , (pack pextv, T $ pack $ C.unpack $ B16.encode pextScr)
                                      , ( pack next
                                        , T $ pack $ Prelude.map (\x -> chr x) (name allegory ++ [codePoint x]))
+                                     , ("conf", B confirmed)
                                      , ( pack mep
                                        , T $
                                          pack $
@@ -547,6 +560,7 @@ deleteMerkleSubTree inodes = do
 -- Insert protocol with properties and block info
 insertProtocolWithBlockInfo :: Text -> [(Text, Text)] -> BlockPInfo -> BoltActionT IO ()
 insertProtocolWithBlockInfo name properties BlockPInfo {..} = do
+    liftIO $ print $ "insertProtocolWithBlockInfo for height: " <> (pack $ show height) <> " query: " <> cypher
     res <- LE.try $ queryP cypher params
     case res of
         Left (e :: SomeException) -> do
@@ -555,12 +569,10 @@ insertProtocolWithBlockInfo name properties BlockPInfo {..} = do
         Right (records) -> return ()
   where
     cypher =
-        " MERGE (a: protocol { name: {name}," <>
-        props <>
-        "  }) " <>
-        " MERGE (b: block { hash: {hash}, height: {height}, timestamp: {timestamp}, day: {day }, month: {month}, year: {year}, hour: {hour} }) WITH a, b" <>
-        " MATCH (a: protocol), (b: block) WHERE a.name = {name} AND b.hash = {hash} MERGE (a)-[r:PRESENT_IN{bytes: {bytes}, fees: {fees}, tx_count: {count}}]->(b)"
-    props = intercalate "," $ Prelude.map (\(a, _) -> a <> ": {" <> a <> "}") properties
+        " MERGE (a: protocol { name: {name}}) ON CREATE SET " <> props <>
+        " MERGE (b: block { hash: {hash}}) ON CREATE SET b.height= {height}, b.timestamp= {timestamp}, b.day= {day }, b.month= {month}, b.year= {year}, b.hour= {hour}, b.absoluteHour= {absoluteHour} " <>
+        " MERGE (a)-[r:PRESENT_IN{bytes: {bytes}, fees: {fees}, tx_count: {count}}]->(b)"
+    props = intercalate "," $ Prelude.map (\(a, _) -> "a." <> a <> "= {" <> a <> "}") properties
     propsV = Prelude.map (\(a, b) -> (a, T b)) properties
     params =
         fromList $
@@ -575,5 +587,6 @@ insertProtocolWithBlockInfo name properties BlockPInfo {..} = do
         , ("fees", I fees)
         , ("count", I count)
         , ("hour", I hour)
+        , ("absoluteHour", I absoluteHour)
         ] <>
         propsV

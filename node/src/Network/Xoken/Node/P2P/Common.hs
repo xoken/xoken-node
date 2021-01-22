@@ -586,6 +586,22 @@ getProps = reverse . go mempty 5 -- name, 4 properties
                      (B.drop (2 * (fromJust lenIntM)) r)
             else acc
 
+getPropsG :: Int -> Get [(Text, Text)]
+getPropsG n = go 1
+  where
+    go ac =
+        if ac <= n
+            then do
+                isEmp <- S.isEmpty
+                if isEmp
+                    then return []
+                    else do
+                        pn <- S.get
+                        case pn of
+                            OK p -> ((:) ("prop" <> (T.pack $ show ac), DTE.decodeUtf8 $ B16.encode p)) <$> go (ac + 1)
+                            _ -> return []
+            else return []
+
 headMaybe :: [a] -> Maybe a
 headMaybe [] = Nothing
 headMaybe (x:xs) = Just x
@@ -595,3 +611,13 @@ indexMaybe xs n
     | n < 0 = Nothing
     | n >= L.length xs = Nothing
     | otherwise = Just $ xs !! n
+
+runInBatch :: (a -> IO b) -> [a] -> Int -> IO [b]
+runInBatch fn inps batch = do
+    go (take batch inps) (drop batch inps)
+  where
+    go cur next = do
+        res <- mapConcurrently fn cur
+        if Prelude.null next
+            then return res
+            else ((++) res) <$> go (take batch next) (drop batch next)
