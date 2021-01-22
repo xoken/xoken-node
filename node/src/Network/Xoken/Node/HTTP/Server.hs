@@ -8,12 +8,14 @@ import Network.Xoken.Node.HTTP.Handler
 import Network.Xoken.Node.HTTP.QueryHandler
 import Network.Xoken.Node.HTTP.Types
 import Snap
+import Snap.Util.CORS
 
 appInit :: XokenNodeEnv -> SnapletInit App App
 appInit env =
     makeSnaplet "v1" "API's" Nothing $ do
         addRoutes apiRoutes
         addRoutes queryRoutes
+        -- wrapSite (applyCORS defaultOptions)
         return $ App env
 
 apiRoutes :: [(B.ByteString, Handler App App ())]
