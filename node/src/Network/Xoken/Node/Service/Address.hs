@@ -192,7 +192,7 @@ xGetOutputsAddress address pgSize mbNomTxInd = do
         uaop = getSimpleQueryParam (ep, DT.pack address, nominalTxIndex)
         ushp = getSimpleQueryParam (ep, maybe "" DT.pack sh, nominalTxIndex)
     ures <-
-        if nominalTxIndex < 1000000000
+        if nominalTxIndex < maxBound
             then LE.try $
                  LA.concurrently
                      (case sh of
@@ -397,7 +397,7 @@ xGetOutputsScriptHash scriptHash pgSize mbNomTxInd = do
         uqstr = ustr :: Q.QueryString Q.R (Bool, DT.Text, Int64) (DT.Text, Int64, (DT.Text, Int32))
         upar = getSimpleQueryParam (ep, DT.pack scriptHash, nominalTxIndex)
     let uf =
-            if nominalTxIndex < 1000000000
+            if nominalTxIndex < maxBound
                 then query conn (Q.RqQuery $ Q.Query uqstr (upar {pageSize = pgSize}))
                 else return []
     fres <- LE.try $ liftIO uf
