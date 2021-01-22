@@ -529,6 +529,18 @@ findNameReseller (AllegoryNameQuery nameArray isProducer) = do
             writeBS (S.pack $ show e)
         Right (forName, protocol, uri, confirmed, isProducer) ->
             writeBS $ BSL.toStrict $ encodeResp pretty $ RespFindNameReseller forName protocol uri confirmed isProducer
+findNameReseller _ = throwBadRequest
+
+getPurchasedNames :: RPCReqParams' -> Handler App App ()
+getPurchasedNames (GetPurchasedNames nameArray pgSize cursor) = do
+    pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    res <- LE.try $ xGetPurchasedNames nameArray pgSize cursor
+    case res of
+        Left (e :: SomeException) -> do
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS (S.pack $ show e)
+        Right (names, nextCursor) -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespPurchasedNames names nextCursor
+getPurchasedNames _ = throwBadRequest
 
 getProducer _ = throwBadRequest
 

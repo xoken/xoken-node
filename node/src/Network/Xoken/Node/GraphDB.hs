@@ -156,13 +156,24 @@ queryAllegoryNameScriptOp name isProducer = do
             then fromList [("namestr", T (name <> pack "|producer"))]
             else fromList [("namestr", T (name <> pack "|owner"))]
 
+-- Fetch all owner nUTXO nodes below a given parent
+queryAllegoryChildren :: Text -> BoltActionT IO [Text]
+queryAllegoryChildren parent = do
+    records <- queryP cypher params
+    names <- traverse (`at` "n.name") records
+    return $ names >>= exact
+  where
+    cypher =
+        "MATCH (n:nutxo {producer:False})-[:INPUT*]->(m:nutxo {name: {namestr}, producer:True}) RETURN n.name ORDER BY ID(n)"
+    params = fromList [("namestr", T parent)]
+
 initAllegoryRoot :: Tx -> BoltActionT IO ()
 initAllegoryRoot tx = do
     let oops = pack $ "fe38e79e4067304d382b3ba8d67970f4f0cd26f988aac6c88bddffb4ec628daf" ++ ":" ++ show 0
     let scr = "76a91447dc5f6dd425347e6aeacd226c3196b385394fb488ac"
     let cypher =
             " MERGE (rr:namestate {name:{dummyroot} })  " <>
-            " MERGE (ns:namestate { name:{nsname}, type: {type} })-[r:REVISION]->(nu:nutxo { outpoint: {out_op}, name:{name}, producer:{isProducer} ,script: {scr} , root:{isInit}}) "
+            " MERGE (ns:namestate { name:{nsname}, type: {type} })-[r:REVISION]->(nu:nutxo { outpoint: {out_op}, name:{name}, producer:{isProducer} ,script: {scr} , root:{isInit}, confirmed: True}) "
     let params =
             fromList
                 [ ("out_op", T $ oops)

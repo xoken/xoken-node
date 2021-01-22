@@ -48,6 +48,7 @@ apiRoutes =
     , ("/v1/allegory/name-branch/:name", method GET (withAuth getOutpointsByName))
     , ("/v1/allegory/name-outpoint", method POST (withAuth $ withReq getOutpointByName))
     , ("/v1/allegory/reseller-uri", method POST (withAuth $ withReq findNameReseller))
+    , ("/v1/allegory/purchased-names", method POST (withAuth $ withReq getPurchasedNames))
     , ("/v1/relaytx", method POST (withAuth $ withReq relayTx))
     , ("/v1/relaymultipletx", method POST (withAuth $ withReq relayMultipleTx))
     , ("/v1/transactions/protocol/:protocol", method GET (withAuth getTxByProtocol))
