@@ -173,7 +173,7 @@ initAllegoryRoot tx = do
     let scr = "76a91447dc5f6dd425347e6aeacd226c3196b385394fb488ac"
     let cypher =
             " MERGE (rr:namestate {name:{dummyroot} })  " <>
-            " MERGE (ns:namestate { name:{nsname}, type: {type} })-[r:REVISION]->(nu:nutxo { outpoint: {out_op}, name:{name}, producer:{isProducer} ,script: {scr} , root:{isInit}}) "
+            " MERGE (ns:namestate { name:{nsname}, type: {type} })-[r:REVISION]->(nu:nutxo { outpoint: {out_op}, name:{name}, producer:{isProducer} ,script: {scr} , root:{isInit}, confirmed: True}) "
     let params =
             fromList
                 [ ("out_op", T $ oops)
