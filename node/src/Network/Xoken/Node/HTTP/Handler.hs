@@ -518,7 +518,7 @@ getOutpointByName (AllegoryNameQuery nameArray isProducer) = do
             writeBS $
             BSL.toStrict $
             encodeResp pretty $ RespOutpointByName forName outpoint (DT.unpack script) confirmed isProducer
-getoutpointByName _ = throwBadRequest
+getOutpointByName _ = throwBadRequest
 
 findNameReseller :: RPCReqParams' -> Handler App App ()
 findNameReseller (AllegoryNameQuery nameArray isProducer) = do
