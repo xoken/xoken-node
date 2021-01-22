@@ -518,6 +518,7 @@ getOutpointByName (AllegoryNameQuery nameArray isProducer) = do
             writeBS $
             BSL.toStrict $
             encodeResp pretty $ RespOutpointByName forName outpoint (DT.unpack script) confirmed isProducer
+getoutpointByName _ = throwBadRequest
 
 findNameReseller :: RPCReqParams' -> Handler App App ()
 findNameReseller (AllegoryNameQuery nameArray isProducer) = do
@@ -542,7 +543,6 @@ getPurchasedNames (GetPurchasedNames nameArray pgSize cursor) = do
         Right (names, nextCursor) -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespPurchasedNames names nextCursor
 getPurchasedNames _ = throwBadRequest
 
-getProducer _ = throwBadRequest
 
 getCurrentUser :: Handler App App ()
 getCurrentUser = do
