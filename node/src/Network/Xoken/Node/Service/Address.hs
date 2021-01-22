@@ -164,6 +164,24 @@ getUnConfTxOutputsData (txid, index) = do
             err lg $ LG.msg $ "Error: getUnConfTxOutputsData: " ++ show e
             throw KeyValueDBLookupException
 
+deleteDuplicateUnconfs ::
+       (ResultWithCursor r a -> ResultWithCursor r a -> Bool)
+    -> [ResultWithCursor r a]
+    -> [ResultWithCursor r a]
+    -> [ResultWithCursor r a]
+deleteDuplicateUnconfs compareBy unconf conf =
+    let possibleDups = L.take (L.length unconf) conf
+     in runDeleteBy unconf possibleDups
+  where
+    runDeleteBy [] uc = uc
+    runDeleteBy (c:cs) uc = runDeleteBy cs (L.deleteBy compareBy c uc)
+
+compareRWCAddressOutputs :: ResultWithCursor AddressOutputs a -> ResultWithCursor AddressOutputs b -> Bool
+compareRWCAddressOutputs rwc1 rwc2 = (aoOutput $ res rwc1) == (aoOutput $ res rwc2)
+
+compareRWCScriptOutputs :: ResultWithCursor ScriptOutputs a -> ResultWithCursor ScriptOutputs b -> Bool
+compareRWCScriptOutputs rwc1 rwc2 = (scOutput $ res rwc1) == (scOutput $ res rwc2)
+
 xGetOutputsAddress ::
        (HasXokenNodeEnv env m, MonadIO m)
     => String
@@ -192,7 +210,7 @@ xGetOutputsAddress address pgSize mbNomTxInd = do
         uaop = getSimpleQueryParam (ep, DT.pack address, nominalTxIndex)
         ushp = getSimpleQueryParam (ep, maybe "" DT.pack sh, nominalTxIndex)
     ures <-
-        if nominalTxIndex < 1000000000
+        if nominalTxIndex < maxBound
             then LE.try $
                  LA.concurrently
                      (case sh of
@@ -255,20 +273,23 @@ xGetOutputsAddress address pgSize mbNomTxInd = do
                 err lg $ LG.msg $ "Error: xGetOutputsAddress':" ++ show e
                 throw KeyValueDBLookupException
     let z = zip (ui ++ i) (ur ++ r)
-    return $
-        ((\((nti, (op_txid, op_txidx)), TxOutputData _ _ _ val bi ips si) ->
-              ResultWithCursor
-                  (AddressOutputs
-                       (address)
-                       (OutPoint' (DT.unpack op_txid) (fromIntegral op_txidx))
-                       bi
-                       si
-                       ((\((oph, opi), ii, (_, ov)) ->
-                             (OutPoint' (DT.unpack oph) (fromIntegral opi), fromIntegral ii, fromIntegral ov)) <$>
-                        ips)
-                       val)
-                  nti) <$>)
-            (maybe z (flip L.take z . fromIntegral) pgSize')
+        unconfLength = L.length ui
+        rwc =
+            ((\((nti, (op_txid, op_txidx)), TxOutputData _ _ _ val bi ips si) ->
+                  ResultWithCursor
+                      (AddressOutputs
+                           (address)
+                           (OutPoint' (DT.unpack op_txid) (fromIntegral op_txidx))
+                           bi
+                           si
+                           ((\((oph, opi), ii, (_, ov)) ->
+                                 (OutPoint' (DT.unpack oph) (fromIntegral opi), fromIntegral ii, fromIntegral ov)) <$>
+                            ips)
+                           val)
+                      nti) <$>)
+                (maybe z (flip L.take z . fromIntegral) pgSize')
+        (unconf, conf) = (L.take unconfLength rwc, L.drop unconfLength rwc)
+    return $ (deleteDuplicateUnconfs compareRWCAddressOutputs unconf conf) ++ conf
 
 xGetUTXOsAddress ::
        (HasXokenNodeEnv env m, MonadIO m)
@@ -357,20 +378,24 @@ xGetUTXOsAddress address pgSize mbFromOutput = do
             Left (e :: SomeException) -> do
                 err lg $ LG.msg $ "Error: xGetUTXOsAddress:" ++ show e
                 throw KeyValueDBLookupException
-    return $
-        ((\((Identity (op_txid, op_txidx)), TxOutputData _ _ _ val bi ips si) ->
-              ResultWithCursor
-                  (AddressOutputs
-                       (address)
-                       (OutPoint' (DT.unpack op_txid) (fromIntegral op_txidx))
-                       bi
-                       si
-                       ((\((oph, opi), ii, (_, ov)) ->
-                             (OutPoint' (DT.unpack oph) (fromIntegral opi), fromIntegral ii, fromIntegral ov)) <$>
-                        ips)
-                       val)
-                  (op_txid, op_txidx)) <$>)
-            (zip (uoi ++ oi) (uop ++ op))
+    let z = zip (uoi ++ oi) (uop ++ op)
+        unconfLength = L.length uoi
+        rwc =
+            ((\((Identity (op_txid, op_txidx)), TxOutputData _ _ _ val bi ips si) ->
+                  ResultWithCursor
+                      (AddressOutputs
+                           (address)
+                           (OutPoint' (DT.unpack op_txid) (fromIntegral op_txidx))
+                           bi
+                           si
+                           ((\((oph, opi), ii, (_, ov)) ->
+                                 (OutPoint' (DT.unpack oph) (fromIntegral opi), fromIntegral ii, fromIntegral ov)) <$>
+                            ips)
+                           val)
+                      (op_txid, op_txidx)) <$>)
+                z
+        (unconf, conf) = (L.take unconfLength rwc, L.drop unconfLength rwc)
+    return $ (deleteDuplicateUnconfs compareRWCAddressOutputs unconf conf) ++ conf
 
 xGetOutputsScriptHash ::
        (HasXokenNodeEnv env m, MonadIO m)
@@ -397,7 +422,7 @@ xGetOutputsScriptHash scriptHash pgSize mbNomTxInd = do
         uqstr = ustr :: Q.QueryString Q.R (Bool, DT.Text, Int64) (DT.Text, Int64, (DT.Text, Int32))
         upar = getSimpleQueryParam (ep, DT.pack scriptHash, nominalTxIndex)
     let uf =
-            if nominalTxIndex < 1000000000
+            if nominalTxIndex < maxBound
                 then query conn (Q.RqQuery $ Q.Query uqstr (upar {pageSize = pgSize}))
                 else return []
     fres <- LE.try $ liftIO uf
@@ -417,20 +442,25 @@ xGetOutputsScriptHash scriptHash pgSize mbNomTxInd = do
             ures <- sequence $ (\(_, _, (txid, index)) -> getUnConfTxOutputsData (txid, index)) <$> uiop
             res <- sequence $ (\(_, _, (txid, index)) -> getTxOutputsData (txid, index)) <$> iop
             let z = zip (uiop ++ iop) (ures ++ res)
-            return $
-                ((\((addr, nti, (op_txid, op_txidx)), TxOutputData _ _ _ val bi ips si) ->
-                      ResultWithCursor
-                          (ScriptOutputs
-                               (DT.unpack addr)
-                               (OutPoint' (DT.unpack op_txid) (fromIntegral op_txidx))
-                               bi
-                               si
-                               ((\((oph, opi), ii, (_, ov)) ->
-                                     (OutPoint' (DT.unpack oph) (fromIntegral opi), fromIntegral ii, fromIntegral ov)) <$>
-                                ips)
-                               val)
-                          nti) <$>)
-                    z
+                unconfLength = L.length uiop
+                rwc =
+                    ((\((addr, nti, (op_txid, op_txidx)), TxOutputData _ _ _ val bi ips si) ->
+                          ResultWithCursor
+                              (ScriptOutputs
+                                   (DT.unpack addr)
+                                   (OutPoint' (DT.unpack op_txid) (fromIntegral op_txidx))
+                                   bi
+                                   si
+                                   ((\((oph, opi), ii, (_, ov)) ->
+                                         ( OutPoint' (DT.unpack oph) (fromIntegral opi)
+                                         , fromIntegral ii
+                                         , fromIntegral ov)) <$>
+                                    ips)
+                                   val)
+                              nti) <$>)
+                        z
+                (unconf, conf) = (L.take unconfLength rwc, L.drop unconfLength rwc)
+            return $ (deleteDuplicateUnconfs compareRWCScriptOutputs unconf conf) ++ conf
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetOutputsScriptHash':" ++ show e
             throw KeyValueDBLookupException
@@ -478,20 +508,24 @@ xGetUTXOsScriptHash scriptHash pgSize mbFromOutput = do
             Left (e :: SomeException) -> do
                 err lg $ LG.msg $ "Error: xGetUTXOsScriptHash':" ++ show e
                 throw KeyValueDBLookupException
-    return $
-        ((\((addr, (op_txid, op_txidx)), TxOutputData _ _ _ val bi ips si) ->
-              ResultWithCursor
-                  (ScriptOutputs
-                       (DT.unpack addr)
-                       (OutPoint' (DT.unpack op_txid) (fromIntegral op_txidx))
-                       bi
-                       si
-                       ((\((oph, opi), ii, (_, ov)) ->
-                             (OutPoint' (DT.unpack oph) (fromIntegral opi), fromIntegral ii, fromIntegral ov)) <$>
-                        ips)
-                       val)
-                  (op_txid, op_txidx)) <$>)
-            (zip (uio ++ io) (uou ++ ou))
+    let z = zip (uio ++ io) (uou ++ ou)
+        unconfLength = L.length uio
+        rwc =
+            ((\((addr, (op_txid, op_txidx)), TxOutputData _ _ _ val bi ips si) ->
+                  ResultWithCursor
+                      (ScriptOutputs
+                           (DT.unpack addr)
+                           (OutPoint' (DT.unpack op_txid) (fromIntegral op_txidx))
+                           bi
+                           si
+                           ((\((oph, opi), ii, (_, ov)) ->
+                                 (OutPoint' (DT.unpack oph) (fromIntegral opi), fromIntegral ii, fromIntegral ov)) <$>
+                            ips)
+                           val)
+                      (op_txid, op_txidx)) <$>)
+                z
+        (unconf, conf) = (L.take unconfLength rwc, L.drop unconfLength rwc)
+    return $ (deleteDuplicateUnconfs compareRWCScriptOutputs unconf conf) ++ conf
 
 runWithManyInputs ::
        (HasXokenNodeEnv env m, MonadIO m, Ord c, Eq r, Integral p, Bounded p)

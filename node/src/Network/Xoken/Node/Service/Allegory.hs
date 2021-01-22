@@ -197,6 +197,34 @@ xGetOutpointByName nameArr isProducer = do
         Left (e :: SomeException) -> throw e
         Right op -> return op
 
+xGetPurchasedNames ::
+       (HasXokenNodeEnv env m, MonadIO m) => [Int] -> Maybe Word16 -> Maybe Word64 -> m ([String], Maybe Word64)
+xGetPurchasedNames producer mbPageSize mbNextCursor = do
+    dbe <- getDB
+    lg <- getLogger
+    let name = DT.pack $ L.map (\x -> chr x) producer
+        pageSize = fromMaybe 20 mbPageSize
+        cursor = fromMaybe 0 mbNextCursor
+    res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryChildren name)
+    case res of
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: While fetching children of producer '" <> (show name) <> "': " <> (show e)
+            throw e
+        Right [] -> return ([], Nothing)
+        Right ns -> do
+            let page = L.take (fromIntegral pageSize) $ L.drop (fromIntegral cursor) $ L.zip [1 ..] (name : ns)
+                nextCursor =
+                    case fst <$> last' page of
+                        Nothing -> Nothing
+                        Just n ->
+                            if n == (length $ name : ns)
+                                then Nothing
+                                else Just $ fromIntegral n
+            return $ (DT.unpack . snd <$> page, nextCursor)
+  where
+    last' [] = Nothing
+    last' li = Just $ L.last li
+
 xFindNameReseller :: (HasXokenNodeEnv env m, MonadIO m) => [Int] -> Bool -> m ([Int], String, String, Bool, Bool)
 xFindNameReseller nameArr isProducer = do
     lg <- getLogger
