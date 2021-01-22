@@ -243,8 +243,8 @@ data RPCReqParams'
           }
     | GetPurchasedNames
           { gacName :: [Int]
-          , gacPageSize :: Maybe Int32
-          , gacCursor :: Maybe Int32
+          , gacPageSize :: Maybe Word16
+          , gacCursor :: Maybe Word64
           }
     | RelayTx
           { rTx :: ByteString
@@ -390,7 +390,7 @@ data RPCResponseBody
           }
     | RespPurchasedNames
           { names :: [String]
-          , nCursor :: Maybe Int32
+          , nCursor :: Maybe Word64
           }
     | RespRelayTx
           { rrTx :: Bool

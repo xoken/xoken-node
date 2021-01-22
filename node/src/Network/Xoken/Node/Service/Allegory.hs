@@ -198,7 +198,7 @@ xGetOutpointByName nameArr isProducer = do
         Right op -> return op
 
 xGetPurchasedNames ::
-       (HasXokenNodeEnv env m, MonadIO m) => [Int] -> Maybe Int32 -> Maybe Int32 -> m ([String], Maybe Int32)
+       (HasXokenNodeEnv env m, MonadIO m) => [Int] -> Maybe Word16 -> Maybe Word64 -> m ([String], Maybe Word64)
 xGetPurchasedNames producer mbPageSize mbNextCursor = do
     dbe <- getDB
     lg <- getLogger
