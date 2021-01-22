@@ -212,8 +212,14 @@ xGetPurchasedNames producer mbPageSize mbNextCursor = do
             throw e
         Right [] -> return ([], Nothing)
         Right ns -> do
-            let page = L.take (fromIntegral pageSize) $ L.drop (fromIntegral cursor) $ L.zip [1 ..] ns
-                nextCursor = fst <$> last' page
+            let page = L.take (fromIntegral pageSize) $ L.drop (fromIntegral cursor) $ L.zip [1 ..] (name : ns)
+                nextCursor =
+                    case fst <$> last' page of
+                        Nothing -> Nothing
+                        Just n ->
+                            if n == (length $ name : ns)
+                                then Nothing
+                                else Just $ fromIntegral n
             return $ (DT.unpack . snd <$> page, nextCursor)
   where
     last' [] = Nothing
