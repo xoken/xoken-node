@@ -475,7 +475,7 @@ goGetResource msg net roles sessKey pretty = do
                     res <- LE.try $ xGetOutpointByName name isProducer
                     case res of
                         Left (e :: SomeException) -> do
-                            debug lg $ LG.msg $ "Allegory error: xFindNameReseller: " ++ show e
+                            debug lg $ LG.msg $ "Allegory error: xGetOutpointByName: " ++ show e
                             return $ RPCResponse 400 pretty $ Left $ RPCError INTERNAL_ERROR Nothing
                         Right (forName, outpoint, script, confirmed, isProducer) ->
                             return $

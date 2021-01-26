@@ -93,6 +93,8 @@ instance ToJSON ProxyProvider
 instance ToJSON Registration
 
 instance ToJSON Endpoint
+
+instance FromJSON Endpoint
 --
 -- instance ToJSON OwnerInput
 --
