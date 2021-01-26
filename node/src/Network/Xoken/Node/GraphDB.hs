@@ -91,6 +91,11 @@ toAllegoryNameBranch r = do
     outpoint :: Text <- (r `at` "elem.outpoint") >>= exact
     return outpoint
 
+toAllegoryVendor :: Monad m => Record -> m Text
+toAllegoryVendor r = do
+    vendor :: Text <- (r `at` "n.vendor") >>= exact
+    return vendor
+
 -- | Filter Null
 filterNull :: Monad m => [Record] -> m [Record]
 filterNull =
@@ -141,6 +146,26 @@ queryAllegoryNameBranch name isProducer = do
         if isProducer
             then fromList [("namestr", T (name <> pack "|producer"))]
             else fromList [("namestr", T (name <> pack "|owner"))]
+
+queryAllegoryVendor :: Text -> Bool -> BoltActionT IO (String, String)
+queryAllegoryVendor name isProducer = do
+    records <- queryP cypher params
+    vendor <- head <$> traverse toAllegoryVendor records
+    case (Data.Aeson.decode $ BL.pack $ Data.Text.unpack vendor) :: Maybe Endpoint of
+        Nothing -> throw GraphDBLookupException
+        Just (Endpoint p u) -> return (p, u)
+  where
+    cypher = "MATCH (m:namestate {name: {namestr}})-[:REVISION]->(n:nutxo) return n.vendor"
+    params =
+        fromList
+            [ ( "namestr"
+              , T $
+                name <>
+                (pack $
+                 if isProducer
+                     then "|producer"
+                     else "|owner"))
+            ]
 
 -- Fetch the outpoint & script associated with Allegory name
 queryAllegoryNameScriptOp :: Text -> Bool -> BoltActionT IO [(Text, Text, Bool)]
@@ -211,7 +236,13 @@ revertAllegoryStateTree tx allegory = do
             fromList
                 [ ("in_op", T $ iops)
                 , ("name", T $ pack $ Prelude.map (\x -> chr x) (name allegory))
-                , ("nn_str", T $ pack $ Prelude.map (\x -> chr x) (name allegory) ++ (if isProd then "|producer" else "|owner"))
+                , ( "nn_str"
+                  , T $
+                    pack $
+                    Prelude.map (\x -> chr x) (name allegory) ++
+                    (if isProd
+                         then "|producer"
+                         else "|owner"))
                 , ("is_prod", B $ isProd)
                 ]
     liftIO $ print (cypher)
