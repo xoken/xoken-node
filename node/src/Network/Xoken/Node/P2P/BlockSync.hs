@@ -150,13 +150,13 @@ peerBlockSync peer =
         trace lg $ LG.msg $ ("peer block sync : " ++ (show peer))
         !tm <- liftIO $ getCurrentTime
         let tracker = statsTracker peer
-        fw <- liftIO $ readIORef $ blockFetchWindow bp2pEnv
+        fw <- liftIO $ readIORef $ ptBlockFetchWindow tracker
         recvtm <- liftIO $ readIORef $ ptLastTxRecvTime tracker
         sendtm <- liftIO $ readIORef $ ptLastGetDataSent tracker
         let staleTime = fromInteger $ fromIntegral (unresponsivePeerConnTimeoutSecs $ nodeConfig bp2pEnv)
         case recvtm of
             Just rt -> do
-                if (fw <= (blocksFetchWindow $ nodeConfig bp2pEnv) && (diffUTCTime tm rt < staleTime))
+                if (fw == 0 && (diffUTCTime tm rt < staleTime))
                     then do
                         msg <- produceGetDataMessage peer
                         res <- LE.try $ sendRequestMessages peer msg
@@ -164,7 +164,7 @@ peerBlockSync peer =
                             Right () -> do
                                 debug lg $ LG.msg $ val "updating state."
                                 liftIO $ writeIORef (ptLastGetDataSent tracker) $ Just tm
-                                liftIO $ atomicModifyIORef' (blockFetchWindow bp2pEnv) (\z -> (z + 1, ()))
+                                liftIO $ atomicModifyIORef' (ptBlockFetchWindow tracker) (\z -> (z + 1, ()))
                             Left (e :: SomeException) -> do
                                 err lg $ LG.msg ("[ERROR] peerBlockSync " ++ show e)
                                 ------------
@@ -191,7 +191,7 @@ peerBlockSync peer =
                                 throw UnresponsivePeerException
                             else return ()
                     Nothing -> do
-                        if (fw <= (blocksFetchWindow $ nodeConfig bp2pEnv))
+                        if (fw == 0)
                             then do
                                 msg <- produceGetDataMessage peer
                                 res <- LE.try $ sendRequestMessages peer msg
@@ -199,7 +199,7 @@ peerBlockSync peer =
                                     Right () -> do
                                         debug lg $ LG.msg $ val "updating state."
                                         liftIO $ writeIORef (ptLastGetDataSent tracker) $ Just tm
-                                        liftIO $ atomicModifyIORef' (blockFetchWindow bp2pEnv) (\z -> (z + 1, ()))
+                                        liftIO $ atomicModifyIORef' (ptBlockFetchWindow tracker) (\z -> (z + 1, ()))
                                     Left (e :: SomeException) -> do
                                         err lg $ LG.msg ("[ERROR] peerBlockSync " ++ show e)
                                         throw e
@@ -429,9 +429,7 @@ runBlockCacheQueue =
                                                                           err lg $
                                                                           LG.msg $
                                                                           "Error: Failed to insert into protocolInfo TSH (key " <>
-                                                                          (show k) <>
-                                                                          "): " <>
-                                                                          (show e)))
+                                                                          (show k) <> "): " <> (show e)))
                                                         (cmp)
                                                     let e = cmp !! 0
                                                     return (Just $ BlockInfo (fst e) (snd $ snd e))
@@ -475,9 +473,8 @@ runBlockCacheQueue =
                                              pi <- liftIO $ TSH.toList v'
                                              debug lg $
                                                  LG.msg $
-                                                 "Number of protocols for block: " <> show (Prelude.length pi) <>
-                                                 " height: " <>
-                                                 show ht
+                                                 "Number of protocols for block: " <>
+                                                 show (Prelude.length pi) <> " height: " <> show ht
                                              pres <-
                                                  liftIO $
                                                  try $ do
@@ -499,9 +496,7 @@ runBlockCacheQueue =
                                                      err lg $
                                                          LG.msg $
                                                          "Error: Failed to insert protocol with blockInfo:" <>
-                                                         (show (bsh, ht)) <>
-                                                         ": " <>
-                                                         (show e)
+                                                         (show (bsh, ht)) <> ": " <> (show e)
                                                      throw MerkleSubTreeDBInsertException
                                          Nothing -> do
                                              debug lg $
@@ -511,8 +506,8 @@ runBlockCacheQueue =
                                  (\(e :: SomeException) ->
                                       err lg $
                                       LG.msg $
-                                      "Error: Failed to insert into graph DB block " <> (show (bsh, ht)) <> ": " <>
-                                      (show e))
+                                      "Error: Failed to insert into graph DB block " <>
+                                      (show (bsh, ht)) <> ": " <> (show e))
                          --
                      )
                     compl
