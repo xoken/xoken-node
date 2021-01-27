@@ -517,7 +517,7 @@ runBlockCacheQueue =
         case retn of
             Just bbi -> do
                 latest <- liftIO $ newIORef True
-                sortedPeers <- liftIO $ sortPeersRandom (snd $ unzip connPeers)
+                sortedPeers <- liftIO $ sortPeers (snd $ unzip connPeers)
                 mapM_
                     (\pr -> do
                          ltst <- liftIO $ readIORef latest
