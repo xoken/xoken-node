@@ -958,8 +958,8 @@ handleIncomingMessages pr = do
              S.repeatM (readNextMessage' pr rlk) & -- read next msgs
              S.mapM (messageHandler pr) & -- handle read msgs
              S.mapM (logMessage pr) & -- log msgs & collect stats
-             S.maxBuffer 2 &
-             S.maxThreads 2)
+             S.maxBuffer (maxBatchProcessingBuffer $ nodeConfig bp2pEnv) &
+             S.maxThreads ((maxBatchProcessingThreads $ nodeConfig bp2pEnv)))
     case res of
         Right (a) -> return ()
         Left (e :: SomeException)

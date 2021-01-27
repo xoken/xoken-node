@@ -62,6 +62,8 @@ data NodeConfig =
         , maxTxProcessingBuffer :: Int
         , maxInsertsProtocol :: Int
         , blocksFetchWindow :: Int
+        , maxBatchProcessingThreads :: Int
+        , maxBatchProcessingBuffer :: Int
         }
     deriving (Show, Generic)
 
