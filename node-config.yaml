@@ -72,4 +72,4 @@ blocksFetchWindow: 4
 
 maxBatchProcessingThreads: 100
 
-maxBatchProcessingBuffer: 3100
+maxBatchProcessingBuffer: 100
