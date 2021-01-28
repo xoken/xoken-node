@@ -225,7 +225,7 @@ xGetOutputsAddress address pgSize mbNomTxInd = do
             Right (sr, ar) -> do
                 let iops =
                         fmap head $
-                        L.groupBy (\(x, _) (y, _) -> x == y) $
+                        L.groupBy (\(_, x) (_, y) -> x == y) $
                         L.sortBy
                             (\(x, _) (y, _) ->
                                  if x < y
@@ -257,7 +257,7 @@ xGetOutputsAddress address pgSize mbNomTxInd = do
             Right (sr, ar) -> do
                 let iops =
                         fmap head $
-                        L.groupBy (\(x, _) (y, _) -> x == y) $
+                        L.groupBy (\(_, x) (_, y) -> x == y) $
                         L.sortBy
                             (\(x, _) (y, _) ->
                                  if x < y

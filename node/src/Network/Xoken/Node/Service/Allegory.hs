@@ -228,76 +228,17 @@ xGetPurchasedNames producer mbPageSize mbNextCursor = do
 xFindNameReseller :: (HasXokenNodeEnv env m, MonadIO m) => [Int] -> Bool -> m ([Int], String, String, Bool, Bool)
 xFindNameReseller nameArr isProducer = do
     lg <- getLogger
+    dbe <- getDB
     op' <- LE.try $ xGetOutpointByName nameArr isProducer
     case op' of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: Failed to fetch outpoint for Allegory name: " <> (show e)
             throw e
-        Right op@(forName, OutPoint' txid index, scr, conf, isProducer) -> do
-            tx' <- xGetTxHash (DT.pack txid)
-            case tx' of
-                Nothing -> do
-                    err lg $
-                        LG.msg $ "Error: Name outpoint not found; transaction " <> (show txid) <> " missing in database"
-                    throw KeyValueDBLookupException
-                Just tx -> do
-                    case txOutputs tx of
-                        Nothing -> do
-                            err lg $ LG.msg $ "Error: Outputs for transaction " <> (show txid) <> " missing"
-                            throw KeyValueDBLookupException
-                        Just ops -> do
-                            case decodeOutputScript $ lockingScript $ head ops of
-                                Left e -> do
-                                    err lg $
-                                        LG.msg $
-                                        "Error: Could not read Allegory metadata, failed to read output script ('" <> e <>
-                                        "')"
-                                    throw KeyValueDBLookupException
-                                Right os -> do
-                                    let allegoryHeader = scriptOps os !! 2
-                                        allegoryData = scriptOps os !! 3
-                                    case (allegoryHeader, allegoryData) of
-                                        (OP_PUSHDATA "Allegory/AllPay" OPCODE, OP_PUSHDATA allegory _) -> do
-                                            let alg' =
-                                                    deserialiseOrFail $ C.fromStrict allegory :: Either DeserialiseFailure Allegory
-                                            case alg' of
-                                                Left df@(DeserialiseFailure b s) -> do
-                                                    err lg $
-                                                        LG.msg $
-                                                        "Error: Failed to deserialise Allegory metadata, at byte offset " <>
-                                                        (show b) <>
-                                                        ", cause: " <>
-                                                        (show s)
-                                                    throw df
-                                                Right alg -> do
-                                                    let eps (ProducerAction _ (ProducerOutput (Index pri) mbe) _ _) key
-                                                            | pri == key = mbe
-                                                        eps (ProducerAction _ _ (Just (OwnerOutput (Index owi) mbe)) _) key
-                                                            | owi == key = mbe
-                                                        eps (OwnerAction _ (OwnerOutput (Index owi) mbe) _) key
-                                                            | owi == key = mbe
-                                                        eps (ProducerAction _ _ _ ext) key =
-                                                            (\l ->
-                                                                 if length l == 0
-                                                                     then Nothing
-                                                                     else head l) $
-                                                            L.filter (Nothing /=) $ exs key <$> ext
-                                                        exs key (OwnerExtension (OwnerOutput (Index oIndex) mbe) _)
-                                                            | oIndex == key = mbe
-                                                        exs key (ProducerExtension (ProducerOutput (Index pIndex) mbe) _)
-                                                            | pIndex == key = mbe
-                                                        exs _ _ = Nothing
-                                                        endPoint = eps (action alg) (fromIntegral index)
-                                                    case endPoint of
-                                                        Nothing -> do
-                                                            err lg $
-                                                                LG.msg $
-                                                                show
-                                                                    "Error: No endpoint information in Allegory metadata"
-                                                            throw KeyValueDBLookupException
-                                                        Just ep ->
-                                                            return (forName, protocol ep, uri ep, conf, isProducer)
-                                        _ -> do
-                                            err lg $ LG.msg $ show "Error: Not a valid Allegory/AllPay OP_RETURN output"
-                                            throw KeyValueDBLookupException
-
+        Right op@(forName, _, _, confirmed, isProducer) -> do
+            let name = DT.pack $ L.map (\x -> chr x) forName
+            res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryVendor name isProducer)
+            case res of
+                Left (e :: SomeException) -> do
+                    err lg $ LG.msg $ "Error: Failed to fetch vendor information for Allegory name: " <> (show e)
+                    throw e
+                Right (protocol, uri) -> return (forName, protocol, uri, confirmed, isProducer)

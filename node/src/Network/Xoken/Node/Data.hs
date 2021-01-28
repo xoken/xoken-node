@@ -241,11 +241,6 @@ data RPCReqParams'
           { gaName :: String
           , gaIsProducer :: Bool
           }
-    | GetPurchasedNames
-          { gacName :: [Int]
-          , gacPageSize :: Maybe Word16
-          , gacCursor :: Maybe Word64
-          }
     | RelayTx
           { rTx :: ByteString
           }
@@ -266,6 +261,11 @@ data RPCReqParams'
     | UpdateUserByUsername
           { uuUsername :: String
           , uuUpdateData :: UpdateUserByUsername'
+          }
+    | GetPurchasedNames
+          { gacName :: [Int]
+          , gacPageSize :: Maybe Word16
+          , gacCursor :: Maybe Word64
           }
     deriving (Generic, Show, Hashable, Eq, Serialise, ToJSON)
 
@@ -289,7 +289,6 @@ instance FromJSON RPCReqParams' where
         (GetUTXOsByScriptHashes <$> o .: "scriptHashes" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
         (GetMerkleBranchByTxID <$> o .: "txid") <|>
         (GetAllegoryNameBranch <$> o .: "name" <*> o .: "isProducer") <|>
-        (GetPurchasedNames <$> o .: "name" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
         (RelayTx . B64.decodeLenient . T.encodeUtf8 <$> o .: "rawTx") <|>
         (RelayMultipleTx . (B64.decodeLenient . T.encodeUtf8 <$>) <$> o .: "rawTransactions") <|>
         (AllegoryNameQuery <$> o .: "name" <*> o .: "isProducer") <|>
@@ -300,6 +299,7 @@ instance FromJSON RPCReqParams' where
         (GetTxOutputSpendStatus <$> o .: "txid" <*> o .: "index") <|>
         (UserByUsername <$> o .: "username") <|>
         (UpdateUserByUsername <$> o .: "username" <*> o .: "updateData") <|>
+        (GetPurchasedNames <$> o .: "prefix" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
         (GetChainHeaders <$> o .:? "startBlockHeight" .!= 1 <*> o .:? "pageSize" .!= 2000)
 
 data RPCResponseBody
