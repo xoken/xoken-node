@@ -385,7 +385,7 @@ resilientRead ::
        (HasLogger m, MonadBaseControl IO m, MonadIO m) => Socket -> BlockIngestState -> m (([Tx], LC.ByteString), Int64)
 resilientRead sock !blin = do
     lg <- getLogger
-    let chunkSize = 200 * 1000 -- 200 KB
+    let chunkSize = 1000 * 1000 -- 1MB
         !delta =
             if binTxPayloadLeft blin > chunkSize
                 then chunkSize - ((LC.length $ binUnspentBytes blin))
@@ -954,7 +954,7 @@ handleIncomingMessages pr = do
         LA.concurrently_
             (peerBlockSync pr) -- issue GetData msgs
             (S.drain $
-             S.aheadly $
+             S.asyncly $
              S.repeatM (readNextMessage' pr rlk) & -- read next msgs
              S.mapM (messageHandler pr) & -- handle read msgs
              S.mapM (logMessage pr) & -- log msgs & collect stats
