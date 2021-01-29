@@ -363,9 +363,15 @@ updateAllegoryStateTrees confirmed tx allegory = do
                                                          cstr)
                                              , index $ owner $ ow)
                                          ProducerExtension pr cp ->
-                                             ( ( mstr
-                                               , "(<j>:nutxo { outpoint: {op_<j>}, script: {pext_<j>_scr} , name:{name_ext_<j>}, producer: True , confirmed:{conf}}) ,(<j>)-[:INPUT]->(a) " ++
-                                                 cstr)
+                                             ( case pVendorEndpoint pr of
+                                                   Just ep ->
+                                                       ( mstr
+                                                       , "(<j>:nutxo { outpoint: {op_<j>}, script: {pext_<j>_scr} , name:{name_ext_<j>}, producer: True , vendor:{endpoint_<j>}, confirmed:{conf}}), (<j>)-[:INPUT]->(a) " ++
+                                                         cstr)
+                                                   Nothing ->
+                                                       ( mstr
+                                                       , "(<j>:nutxo { outpoint: {op_<j>}, script: {pext_<j>_scr} , name:{name_ext_<j>}, producer: True , confirmed:{conf}}) ,(<j>)-[:INPUT]->(a) " ++
+                                                         cstr)
                                              , index $ producer $ pr)
                              let val = append (txHashToHex $ txHash tx) $ pack (":" ++ show (eop))
                              let pextScr = scriptOutput ((txOut tx) !! eop)
