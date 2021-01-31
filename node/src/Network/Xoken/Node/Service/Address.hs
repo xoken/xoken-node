@@ -171,7 +171,7 @@ deleteDuplicateUnconfs ::
     -> [ResultWithCursor r a]
 deleteDuplicateUnconfs compareBy unconf conf =
     let possibleDups = L.take (L.length unconf) conf
-     in runDeleteBy unconf possibleDups
+     in runDeleteBy possibleDups unconf
   where
     runDeleteBy [] uc = uc
     runDeleteBy (c:cs) uc = runDeleteBy cs (L.deleteBy compareBy c uc)
