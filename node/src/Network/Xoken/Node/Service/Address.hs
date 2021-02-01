@@ -210,7 +210,7 @@ xGetOutputsAddress address pgSize mbNomTxInd = do
         uaop = getSimpleQueryParam (ep, DT.pack address, nominalTxIndex)
         ushp = getSimpleQueryParam (ep, maybe "" DT.pack sh, nominalTxIndex)
     ures <-
-        if nominalTxIndex < maxBound
+        if nominalTxIndex <= maxBound
             then LE.try $
                  LA.concurrently
                      (case sh of
