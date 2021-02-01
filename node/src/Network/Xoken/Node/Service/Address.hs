@@ -422,7 +422,7 @@ xGetOutputsScriptHash scriptHash pgSize mbNomTxInd = do
         uqstr = ustr :: Q.QueryString Q.R (Bool, DT.Text, Int64) (DT.Text, Int64, (DT.Text, Int32))
         upar = getSimpleQueryParam (ep, DT.pack scriptHash, nominalTxIndex)
     let uf =
-            if nominalTxIndex < maxBound
+            if nominalTxIndex <= maxBound
                 then query conn (Q.RqQuery $ Q.Query uqstr (upar {pageSize = pgSize}))
                 else return []
     fres <- LE.try $ liftIO uf
