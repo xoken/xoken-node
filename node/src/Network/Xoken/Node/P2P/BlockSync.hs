@@ -999,37 +999,51 @@ processConfTransaction bis tx bhash blkht txind = do
             if segments > 1
                 then (LC.replicate 32 'f') <> (BSL.fromStrict $ DTE.encodeUtf8 $ T.pack $ show $ segments)
                 else serbs
-    let par =
-            getSimpleQueryParam
-                ( txHashToHex txhs
-                , (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
-                , Blob fst
-                , (stripScriptHash <$> inputs)
-                , fees)
-    queryI <- liftIO $ queryPrepared conn (Q.RqPrepare $ Q.Prepare qstr)
-    res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryI par)
+    res <- liftIO $ Q.insertTx (T.unpack $ txHashToHex txhs) 
+                        (T.unpack $ blockHashToHex bhash)
+                        (fromIntegral blkht)
+                        (fromIntegral txind)
+                        fst
+                        (fmap ((\((a,b),c,(d,e)) -> ((T.unpack a,b),c,(T.unpack d,e))) . stripScriptHash) inputs)
+                        fees
+    --let par =
+    --        getSimpleQueryParam
+    --            ( txHashToHex txhs
+    --            , (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
+    --            , Blob fst
+    --            , (stripScriptHash <$> inputs)
+    --            , fees)
+    --queryI <- liftIO $ queryPrepared conn (Q.RqPrepare $ Q.Prepare qstr)
+    --res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryI par)
     case res of
-        Right _ -> return ()
-        Left (e :: SomeException) -> do
-            liftIO $ err lg $ LG.msg ("Error: INSERTing into 'xoken.transactions': " ++ show e)
+        0 -> return ()
+        _ -> do
+            liftIO $ err lg $ LG.msg $ val ("Error: INSERTing into 'xoken.transactions'")
             throw KeyValueDBInsertException
     when (segments > 1) $ do
         let segmentsData = chunksOf (smb 1) serbs
         mapM_
             (\(seg, i) -> do
-                 let par =
-                         getSimpleQueryParam
-                             ( (txHashToHex txhs) <> (T.pack $ show i)
-                             , (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
-                             , Blob seg
-                             , []
-                             , fees)
-                 queryI <- liftIO $ queryPrepared conn (Q.RqPrepare $ Q.Prepare qstr)
-                 res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryI par)
+                 --let par =
+                 --        getSimpleQueryParam
+                 --            ( (txHashToHex txhs) <> (T.pack $ show i)
+                 --            , (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
+                 --            , Blob seg
+                 --            , []
+                 --            , fees)
+                 --queryI <- liftIO $ queryPrepared conn (Q.RqPrepare $ Q.Prepare qstr)
+                 --res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryI par)
+                 res <- liftIO $ Q.insertTx ((T.unpack $ txHashToHex txhs) ++ show i) 
+                                    (T.unpack $ blockHashToHex bhash)
+                                    (fromIntegral blkht)
+                                    (fromIntegral txind)
+                                    seg
+                                    []
+                                    fees
                  case res of
-                     Right _ -> return ()
-                     Left (e :: SomeException) -> do
-                         liftIO $ err lg $ LG.msg ("Error: INSERTing into 'xoken.transactions': " ++ show e)
+                     0 -> return ()
+                     _ -> do
+                         liftIO $ err lg $ LG.msg $ val ("Error: INSERTing into 'xoken.transactions'")
                          throw KeyValueDBInsertException)
             (zip segmentsData [1 ..])
     --
