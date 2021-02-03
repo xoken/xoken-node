@@ -15,7 +15,7 @@ appInit env =
     makeSnaplet "v1" "API's" Nothing $ do
         addRoutes apiRoutes
         addRoutes queryRoutes
-        -- wrapSite (applyCORS defaultOptions)
+        wrapSite (applyCORS defaultOptions)
         return $ App env
 
 apiRoutes :: [(B.ByteString, Handler App App ())]
