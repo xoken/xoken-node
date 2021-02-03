@@ -460,8 +460,11 @@ goGetResource msg net roles sessKey pretty = do
         "RELAY_TX" -> do
             case methodParams $ rqParams msg of
                 Just (RelayTx tx) -> do
-                    ops <- xRelayTx tx
-                    return $ RPCResponse 200 pretty $ Right $ Just $ RespRelayTx ops
+                    res <- LE.try $ xRelayTx tx
+                    case res of
+                        Left (e :: BlockSyncException) ->
+                            return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_REQUEST Nothing
+                        Right r -> return $ RPCResponse 200 pretty $ Right $ Just $ RespRelayTx r
                 _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
         "RELAY_MULTIPLE_TX" -> do
             case methodParams $ rqParams msg of
