@@ -576,4 +576,3 @@ decodeOP (Just c)
             Just index -> Just (DT.pack txid, index)
   where
     (txid, mbIndex) = L.splitAt 64 c
-    
