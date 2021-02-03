@@ -77,6 +77,7 @@ import Data.Time.Clock.POSIX
 import Data.Word
 import qualified Database.Bolt as BT
 import Database.XCQL.Protocol as Q
+import qualified Database.CQL.FFI.Xoken as Q
 import qualified ListT as LT
 import qualified Network.Socket as NS
 import qualified Network.Socket.ByteString as SB (recv)
@@ -643,6 +644,29 @@ deleteScriptHashUnspentOutputs conn sh output = do
             err lg $ LG.msg $ "Error: DELETE'ing from 'script_hash_unspent_outputs': " ++ show e
             throw e
 
+insertTxIdOutputs'
+    :: (Text, Int32)
+    -> Text
+    -> Text
+    -> Bool
+    -> (Text, Int32, Int32)
+    -> [((Text, Int32), Int32, (Text, Int64))]
+    -> Int64
+    -> IO ()
+insertTxIdOutputs' (txid, outputIndex) address scriptHash isRecv (bi0, bi1, bi2) other value = do
+    i <- Q.insertTxIdOutputs
+            (T.unpack txid)
+            outputIndex
+            (T.unpack address)
+            (T.unpack scriptHash)
+            isRecv
+            (T.unpack bi0)
+            bi1
+            bi2
+            (fmap (\((a,b),c,(d,e)) -> ((T.unpack a,b),c,(T.unpack d,e))) other)
+            value
+    return ()
+
 insertTxIdOutputs ::
        (HasLogger m, MonadIO m)
     => XCqlClientState
@@ -927,7 +951,8 @@ processConfTransaction bis tx bhash blkht txind = do
                      case v of
                          Just v' -> liftIO $ TSH.mutate v' (T.intercalate "_" protocol) fn
                          Nothing -> debug lg $ LG.msg $ "No ProtocolInfo Available for: " ++ show bhash
-             insertTxIdOutputs conn output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o)
+             liftIO $ insertTxIdOutputs' output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o)
+             --insertTxIdOutputs conn output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o)
              commitScriptHashOutputs
                  conn --
                  sh -- scriptHash
@@ -953,7 +978,8 @@ processConfTransaction bis tx bhash blkht txind = do
              if a == "" || sh == "" -- likely coinbase txns
                  then return ()
                  else do
-                     insertTxIdOutputs conn prevOutpoint a sh False bi (stripScriptHash <$> spendInfo) 0
+                     liftIO $ insertTxIdOutputs' prevOutpoint a sh False bi (stripScriptHash <$> spendInfo) 0
+                     --insertTxIdOutputs conn prevOutpoint a sh False bi (stripScriptHash <$> spendInfo) 0
                      deleteScriptHashUnspentOutputs conn sh prevOutpoint
                      deleteScriptHashUnspentOutputs conn a prevOutpoint)
         (zip (inAddrs) (map (\x -> (fst3 $ thd3 x, snd3 $ thd3 $ x)) inputs))
