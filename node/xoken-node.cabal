@@ -132,6 +132,7 @@ executable xoken-nexa
     , vformat
     , daemons
     , snap
+    , snap-core
     , lens
     , list-t
     , xcql
