@@ -475,7 +475,7 @@ goGetResource msg net roles sessKey pretty = do
                     res <- LE.try $ xGetOutpointByName name isProducer
                     case res of
                         Left (e :: SomeException) -> do
-                            debug lg $ LG.msg $ "Allegory error: xFindNameReseller: " ++ show e
+                            debug lg $ LG.msg $ "Allegory error: xGetOutpointByName: " ++ show e
                             return $ RPCResponse 400 pretty $ Left $ RPCError INTERNAL_ERROR Nothing
                         Right (forName, outpoint, script, confirmed, isProducer) ->
                             return $
@@ -495,6 +495,17 @@ goGetResource msg net roles sessKey pretty = do
                             RPCResponse 200 pretty $
                             Right $ Just $ RespFindNameReseller forName protocol uri confirmed isProducer
                 _____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
+        "PURCHASED_NAMES" -> do
+            case methodParams $ rqParams msg of
+                Just (GetPurchasedNames nameArray pgSize cursor) -> do
+                    res <- LE.try $ xGetPurchasedNames nameArray pgSize cursor
+                    case res of
+                        Left (e :: SomeException) -> do
+                            debug lg $ LG.msg $ "Allegory error: xGetPurchasedNames: " ++ show e
+                            return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
+                        Right (names, nextCursor) ->
+                            return $ RPCResponse 200 pretty $ Right $ Just $ RespPurchasedNames names nextCursor
+                ____ -> return $ RPCResponse 400 pretty $ Left $ RPCError INVALID_PARAMS Nothing
         "OUTPOINT->SPEND_STATUS" -> do
             case methodParams $ rqParams msg of
                 Just (GetTxOutputSpendStatus txid index) -> do

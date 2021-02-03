@@ -262,6 +262,11 @@ data RPCReqParams'
           { uuUsername :: String
           , uuUpdateData :: UpdateUserByUsername'
           }
+    | GetPurchasedNames
+          { gacName :: [Int]
+          , gacPageSize :: Maybe Word16
+          , gacCursor :: Maybe Word64
+          }
     deriving (Generic, Show, Hashable, Eq, Serialise, ToJSON)
 
 instance FromJSON RPCReqParams' where
@@ -294,6 +299,7 @@ instance FromJSON RPCReqParams' where
         (GetTxOutputSpendStatus <$> o .: "txid" <*> o .: "index") <|>
         (UserByUsername <$> o .: "username") <|>
         (UpdateUserByUsername <$> o .: "username" <*> o .: "updateData") <|>
+        (GetPurchasedNames <$> o .: "prefix" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
         (GetChainHeaders <$> o .:? "startBlockHeight" .!= 1 <*> o .:? "pageSize" .!= 2000)
 
 data RPCResponseBody
@@ -382,6 +388,10 @@ data RPCResponseBody
     | RespAllegoryNameBranch
           { nameBranch :: [(OutPoint', [MerkleBranchNode'])]
           }
+    | RespPurchasedNames
+          { names :: [String]
+          , nCursor :: Maybe Word64
+          }
     | RespRelayTx
           { rrTx :: Bool
           }
@@ -436,6 +446,7 @@ instance ToJSON RPCResponseBody where
     toJSON (RespUTXOsByScriptHashes nc ma) = object ["nextCursor" .= nc, "utxos" .= ma]
     toJSON (RespMerkleBranchByTxID mb) = object ["merkleBranch" .= mb]
     toJSON (RespAllegoryNameBranch nb) = object ["nameBranch" .= nb]
+    toJSON (RespPurchasedNames ns nc) = object ["names" .= ns, "nextCursor" .= nc]
     toJSON (RespRelayTx rrTx) = object ["txBroadcast" .= rrTx]
     toJSON (RespRelayMultipleTx rrMultipleTx) = object ["txnsBroadcast" .= rrMultipleTx]
     toJSON (RespOutpointByName n o s c i) =

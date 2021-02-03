@@ -91,6 +91,11 @@ toAllegoryNameBranch r = do
     outpoint :: Text <- (r `at` "elem.outpoint") >>= exact
     return outpoint
 
+toAllegoryVendor :: Monad m => Record -> m Text
+toAllegoryVendor r = do
+    vendor :: Text <- (r `at` "n.vendor") >>= exact
+    return vendor
+
 -- | Filter Null
 filterNull :: Monad m => [Record] -> m [Record]
 filterNull =
@@ -142,6 +147,26 @@ queryAllegoryNameBranch name isProducer = do
             then fromList [("namestr", T (name <> pack "|producer"))]
             else fromList [("namestr", T (name <> pack "|owner"))]
 
+queryAllegoryVendor :: Text -> Bool -> BoltActionT IO (String, String)
+queryAllegoryVendor name isProducer = do
+    records <- queryP cypher params
+    vendor <- head <$> traverse toAllegoryVendor records
+    case (Data.Aeson.decode $ BL.pack $ Data.Text.unpack vendor) :: Maybe Endpoint of
+        Nothing -> throw GraphDBLookupException
+        Just (Endpoint p u) -> return (p, u)
+  where
+    cypher = "MATCH (m:namestate {name: {namestr}})-[:REVISION]->(n:nutxo) return n.vendor"
+    params =
+        fromList
+            [ ( "namestr"
+              , T $
+                name <>
+                (pack $
+                 if isProducer
+                     then "|producer"
+                     else "|owner"))
+            ]
+
 -- Fetch the outpoint & script associated with Allegory name
 queryAllegoryNameScriptOp :: Text -> Bool -> BoltActionT IO [(Text, Text, Bool)]
 queryAllegoryNameScriptOp name isProducer = do
@@ -156,13 +181,24 @@ queryAllegoryNameScriptOp name isProducer = do
             then fromList [("namestr", T (name <> pack "|producer"))]
             else fromList [("namestr", T (name <> pack "|owner"))]
 
+-- Fetch all owner nUTXO nodes below a given parent
+queryAllegoryChildren :: Text -> BoltActionT IO [Text]
+queryAllegoryChildren parent = do
+    records <- queryP cypher params
+    names <- traverse (`at` "n.name") records
+    return $ names >>= exact
+  where
+    cypher =
+        "MATCH (n:nutxo {producer:False})-[:INPUT*]->(m:nutxo {name: {namestr}, producer:True}) RETURN n.name ORDER BY ID(n)"
+    params = fromList [("namestr", T parent)]
+
 initAllegoryRoot :: Tx -> BoltActionT IO ()
 initAllegoryRoot tx = do
-    let oops = pack $ "2d46d47eb284955ed83329eca13303c2faa2387893b1129b114f73d429f019e9" ++ ":" ++ show 0
-    let scr = "76a91447dc5f6dd425347e6aeacd226c3196b385394fb488ac"
+    let oops = pack $ "08b7b073a20cc53e9183ba1f61c35ba875e3ed9923d69109c23eed622072ce5b" ++ ":" ++ show 0
+    let scr = "76a9144099b49d267db4bba0eaa6ad9f6526b055b72afb88ac"
     let cypher =
             " MERGE (rr:namestate {name:{dummyroot} })  " <>
-            " MERGE (ns:namestate { name:{nsname}, type: {type} })-[r:REVISION]->(nu:nutxo { outpoint: {out_op}, name:{name}, producer:{isProducer} ,script: {scr} , root:{isInit}}) "
+            " MERGE (ns:namestate { name:{nsname}, type: {type} })-[r:REVISION]->(nu:nutxo { outpoint: {out_op}, name:{name}, producer:{isProducer} ,script: {scr} , root:{isInit}, confirmed: True}) "
     let params =
             fromList
                 [ ("out_op", T $ oops)
@@ -200,7 +236,13 @@ revertAllegoryStateTree tx allegory = do
             fromList
                 [ ("in_op", T $ iops)
                 , ("name", T $ pack $ Prelude.map (\x -> chr x) (name allegory))
-                , ("nn_str", T $ pack $ Prelude.map (\x -> chr x) (name allegory) ++ (if isProd then "|producer" else "|owner"))
+                , ( "nn_str"
+                  , T $
+                    pack $
+                    Prelude.map (\x -> chr x) (name allegory) ++
+                    (if isProd
+                         then "|producer"
+                         else "|owner"))
                 , ("is_prod", B $ isProd)
                 ]
     liftIO $ print (cypher)
@@ -321,9 +363,15 @@ updateAllegoryStateTrees confirmed tx allegory = do
                                                          cstr)
                                              , index $ owner $ ow)
                                          ProducerExtension pr cp ->
-                                             ( ( mstr
-                                               , "(<j>:nutxo { outpoint: {op_<j>}, script: {pext_<j>_scr} , name:{name_ext_<j>}, producer: True , confirmed:{conf}}) ,(<j>)-[:INPUT]->(a) " ++
-                                                 cstr)
+                                             ( case pVendorEndpoint pr of
+                                                   Just ep ->
+                                                       ( mstr
+                                                       , "(<j>:nutxo { outpoint: {op_<j>}, script: {pext_<j>_scr} , name:{name_ext_<j>}, producer: True , vendor:{endpoint_<j>}, confirmed:{conf}}), (<j>)-[:INPUT]->(a) " ++
+                                                         cstr)
+                                                   Nothing ->
+                                                       ( mstr
+                                                       , "(<j>:nutxo { outpoint: {op_<j>}, script: {pext_<j>_scr} , name:{name_ext_<j>}, producer: True , confirmed:{conf}}) ,(<j>)-[:INPUT]->(a) " ++
+                                                         cstr)
                                              , index $ producer $ pr)
                              let val = append (txHashToHex $ txHash tx) $ pack (":" ++ show (eop))
                              let pextScr = scriptOutput ((txOut tx) !! eop)

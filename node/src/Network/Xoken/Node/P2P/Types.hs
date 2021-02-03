@@ -87,7 +87,7 @@ data PeerTracker =
         { ptIngressMsgCount :: !(IORef Int) -- recent msg count for detecting stale peer connections
         , ptLastTxRecvTime :: !(IORef (Maybe UTCTime)) -- last tx recv time
         , ptLastGetDataSent :: !(IORef (Maybe UTCTime)) -- block 'GetData' sent time
-        -- , ptBlockFetchWindow :: !(IORef Int) -- number of outstanding blocks
+        , ptBlockFetchWindow :: !(IORef Int) -- number of outstanding blocks
         -- ptLastPing , Ping :: !(Maybe (UTCTime, Word64)) -- last sent ping time and nonce
         }
 
@@ -96,8 +96,8 @@ getNewTracker = do
     imc <- liftIO $ newIORef 0
     rc <- liftIO $ newIORef Nothing
     st <- liftIO $ newIORef Nothing
-    -- fw <- liftIO $ newIORef 0
-    return $ PeerTracker imc rc st
+    fw <- liftIO $ newIORef 0
+    return $ PeerTracker imc rc st fw
 
 instance Show BitcoinPeer where
     show p = (show $ bpAddress p) ++ " : " ++ (show $ bpConnected p)
