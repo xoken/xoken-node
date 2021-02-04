@@ -169,6 +169,8 @@ xGetTxHash hash = do
                             err lg $ LG.msg $ "Error: xGetTxHash: " ++ show e
                             throw KeyValueDBLookupException
                 else do
+                    liftIO $ putStrLn $ "xGetTxHash: got iop: " <> show iop
+                    liftIO $ putStrLn $ "xGetTxHash: got outs: " <> show outs
                     let (txid, (bhash, blkht, txind), psz, sinps, fees) = iop !! 0
                         inps = L.sortBy (\(_, x, _) (_, y, _) -> compare x y) $ Q.fromSet sinps
                     sz <-
@@ -176,6 +178,10 @@ xGetTxHash hash = do
                             then liftIO $ getCompleteTx conn hash (getSegmentCount (fromBlob psz))
                             else pure $ fromBlob psz
                     let tx = fromJust $ Extra.hush $ S.decodeLazy sz
+                    liftIO $
+                        putStrLn $
+                        "xGetTxHash: outputs with locking scripts: " <>
+                        (show $ zipWith mergeTxOutTxOutput (txOut tx) outs)
                     return $
                         Just $
                         RawTxRecord
@@ -340,10 +346,12 @@ getTxOutputsFromTxId txid = do
                             LG.msg $ "Error: getTxOutputsFromTxId: No entry in txid_outputs for txid: " ++ show txid
                         return []
                     else do
+                        liftIO $ putStrLn $ "getTxOutputsFromTxId: Got Tx output: " <> show t
                         let txg =
                                 (L.sortBy (\(_, _, x, _, _, _) (_, _, y, _, _, _) -> compare x y)) <$>
                                 (L.groupBy (\(x, _, _, _, _, _) (y, _, _, _, _, _) -> x == y) t)
-                            txOutData =
+                        liftIO $ putStrLn $ "getTxOutputsFromTxId: Sorted Tx outputs: " <> show txg
+                        let txOutData =
                                 (\inp ->
                                      case inp of
                                          [(idx, bif, recv, oth, val, addr)] ->
@@ -355,6 +363,10 @@ getTxOutputsFromTxId txid = do
                                                  , (bif2, recv2, oth2, val2, addr2)
                                                  , Just (bif1, recv1, oth1, val1, addr1))) <$>
                                 txg
+                        liftIO $ putStrLn $ "getTxOutputsFromTxId: Generated TxOut data: " <> show txOutData
+                        liftIO $
+                            putStrLn $
+                            "getTxOutputsFromTxId: Generated TxOut: " <> (show $ txOutputDataToOutput <$> txOutData)
                         return $ txOutputDataToOutput <$> txOutData
             Left (e :: SomeException) -> do
                 err lg $ LG.msg $ "Error: getTxOutputsFromTxId: " ++ show e
