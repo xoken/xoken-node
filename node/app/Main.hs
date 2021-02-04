@@ -231,6 +231,7 @@ runThreads config nodeConf bp2p conn lg certPaths = do
                                             _ <- LA.wait z
                                             return ())
     liftIO $ destroyAllResources $ pool gdbState
+    liftIO $ Q.cassFree
     liftIO $ putStrLn $ "node recovering from fatal DB connection failure!"
     return ()
 
