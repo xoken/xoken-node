@@ -598,6 +598,11 @@ fetchBestSyncedBlock conn net = do
                                 Nothing -> throw InvalidBlockHashException
                         Nothing -> throw InvalidMetaDataException
 
+commitScriptHashOutputs' :: Text -> (Text, Int32) -> (Text,Int32,Int32) -> IO ()
+commitScriptHashOutputs' sh (oh,oi) (_,bh,ti) = do
+    Q.insertScriptHashOutput (T.unpack sh) (fromIntegral bh * 1000000000 + fromIntegral ti) (T.unpack oh) oi
+    return ()
+
 commitScriptHashOutputs ::
        (HasLogger m, MonadIO m) => XCqlClientState -> Text -> (Text, Int32) -> (Text, Int32, Int32) -> m ()
 commitScriptHashOutputs conn sh output blockInfo = do
@@ -616,6 +621,11 @@ commitScriptHashOutputs conn sh output blockInfo = do
             err lg $ LG.msg $ "Error: INSERTing into 'script_hash_outputs': " ++ show e
             throw KeyValueDBInsertException
 
+commitScriptHashUnspentOutputs' :: Text -> (Text, Int32) -> IO ()
+commitScriptHashUnspentOutputs' sh (oh,oi) = do
+    Q.insertScriptHashUnspentOutput (T.unpack sh) (T.unpack oh) oi
+    return ()
+
 commitScriptHashUnspentOutputs :: (HasLogger m, MonadIO m) => XCqlClientState -> Text -> (Text, Int32) -> m ()
 commitScriptHashUnspentOutputs conn sh output = do
     lg <- getLogger
@@ -629,6 +639,11 @@ commitScriptHashUnspentOutputs conn sh output = do
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: INSERTing into 'script_hash_unspent_outputs': " ++ show e
             throw KeyValueDBInsertException
+
+deleteScriptHashUnspentOutputs' :: Text -> (Text, Int32) -> IO ()
+deleteScriptHashUnspentOutputs' sh (oh,oi) = do
+    Q.deleteScriptHashUnspentOutput (T.unpack sh) (T.unpack oh) oi
+    return ()
 
 deleteScriptHashUnspentOutputs :: (HasLogger m, MonadIO m) => XCqlClientState -> Text -> (Text, Int32) -> m ()
 deleteScriptHashUnspentOutputs conn sh output = do
@@ -945,7 +960,8 @@ processConfTransaction bis tx bhash blkht txind = do
                          prot = tail $ L.inits protocol
                      mapM_
                          (\p ->
-                              commitScriptOutputProtocol conn (T.intercalate "." p) output bi fees (fromIntegral count))
+                              liftIO $ commitScriptOutputProtocol' (T.intercalate "." p) output bi fees (fromIntegral count))
+                              --commitScriptOutputProtocol conn (T.intercalate "." p) output bi fees (fromIntegral count))
                          prot
                      v <- liftIO $ TSH.lookup (protocolInfo bp2pEnv) bhash
                      case v of
@@ -953,18 +969,22 @@ processConfTransaction bis tx bhash blkht txind = do
                          Nothing -> debug lg $ LG.msg $ "No ProtocolInfo Available for: " ++ show bhash
              liftIO $ insertTxIdOutputs' output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o)
              --insertTxIdOutputs conn output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o)
-             commitScriptHashOutputs
-                 conn --
-                 sh -- scriptHash
-                 output
-                 bi
-             commitScriptHashUnspentOutputs conn sh output
+             --commitScriptHashOutputs
+             --    conn --
+             --    sh -- scriptHash
+             --    output
+             --    bi
+             --commitScriptHashUnspentOutputs conn sh output
+             liftIO $ commitScriptHashOutputs' sh output bi
+             liftIO $ commitScriptHashUnspentOutputs' sh output
              case decodeOutputBS $ scriptOutput o of
                  (Right so) ->
                      if isPayPK so
                          then do
-                             commitScriptHashOutputs conn a output bi
-                             commitScriptHashUnspentOutputs conn a output
+                             liftIO $ commitScriptHashOutputs' a output bi
+                             liftIO $ commitScriptHashUnspentOutputs' a output
+                             --commitScriptHashOutputs conn a output bi
+                             --commitScriptHashUnspentOutputs conn a output
                          else return ()
                  (Left e) -> return ())
         outAddrs
@@ -980,8 +1000,10 @@ processConfTransaction bis tx bhash blkht txind = do
                  else do
                      liftIO $ insertTxIdOutputs' prevOutpoint a sh False bi (stripScriptHash <$> spendInfo) 0
                      --insertTxIdOutputs conn prevOutpoint a sh False bi (stripScriptHash <$> spendInfo) 0
-                     deleteScriptHashUnspentOutputs conn sh prevOutpoint
-                     deleteScriptHashUnspentOutputs conn a prevOutpoint)
+                     liftIO $ deleteScriptHashUnspentOutputs' sh prevOutpoint
+                     liftIO $ deleteScriptHashUnspentOutputs' a prevOutpoint)
+                     --deleteScriptHashUnspentOutputs conn sh prevOutpoint
+                     --deleteScriptHashUnspentOutputs conn a prevOutpoint)
         (zip (inAddrs) (map (\x -> (fst3 $ thd3 x, snd3 $ thd3 $ x)) inputs))
     --
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": updated spend info for inputs"
@@ -1290,6 +1312,11 @@ handleIfAllegoryTx tx revert confirmed = do
         case eres of
             Right () -> return True
             Left (SomeException e) -> throw e
+
+commitScriptOutputProtocol' :: Text -> (Text, Int32) -> (Text, Int32, Int32) -> Int64 -> Int32 -> IO ()
+commitScriptOutputProtocol' protocol (txid, oind) (_,bh,tind) fees size = do
+    Q.insertScriptOutputProtocol (T.unpack protocol) (T.unpack txid) oind fees size $ fromIntegral bh * 1000000000 + fromIntegral tind
+    return ()
 
 commitScriptOutputProtocol ::
        (HasLogger m, MonadIO m)
