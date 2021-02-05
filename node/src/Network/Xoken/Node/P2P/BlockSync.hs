@@ -1157,47 +1157,44 @@ getSatsValueFromOutpoint ::
     -> Int
     -> IO ((Text, Text, Int64))
 getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait = do
-    let qstr :: Q.QueryString Q.R (Text, Int32) (Text, Text, Int64)
-        qstr = "SELECT address, script_hash, value FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
-        par = getSimpleQueryParam (txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint)
-    res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
+    --let qstr :: Q.QueryString Q.R (Text, Int32) (Text, Text, Int64)
+    --    qstr = "SELECT address, script_hash, value FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
+    --    par = getSimpleQueryParam (txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint)
+    --res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
+    res <- liftIO $ try $ Q.selectTxIdOutputs (T.unpack $ txHashToHex $ outPointHash outPoint) (fromIntegral $ outPointIndex outPoint)
     case res of
-        Right results -> do
-            if L.length results == 0
-                then do
-                    debug lg $
-                        LG.msg $
-                        "Tx not found: " ++ (show $ txHashToHex $ outPointHash outPoint) ++ " _waiting_ for event"
-                    valx <- liftIO $ TSH.lookup txSync (outPointHash outPoint)
-                    event <-
-                        case valx of
-                            Just evt -> return evt
-                            Nothing -> EV.new
-                    liftIO $ TSH.insert txSync (outPointHash outPoint) event
-                    tofl <- waitTimeout event (1000000 * (fromIntegral wait))
-                    if tofl == False
-                        then if ((2 * wait) < maxWait)
-                                 then do
-                                     getSatsValueFromOutpoint conn txSync lg net outPoint (2 * wait) maxWait
-                                 else do
-                                     liftIO $ TSH.delete txSync (outPointHash outPoint)
-                                     debug lg $
-                                         LG.msg $
-                                         "TxIDNotFoundException: While querying txid_outputs for (TxID, Index): " ++
-                                         (show $ txHashToHex $ outPointHash outPoint) ++
-                                         ", " ++ show (outPointIndex outPoint) ++ ")"
-                                     throw $
-                                         TxIDNotFoundException
-                                             ( show $ txHashToHex $ outPointHash outPoint
-                                             , Just $ fromIntegral $ outPointIndex outPoint)
-                                             "getSatsValueFromOutpoint"
-                        else do
-                            debug lg $
-                                LG.msg $ "event received _available_: " ++ (show $ txHashToHex $ outPointHash outPoint)
-                            getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait
+        Right Nothing -> do
+            debug lg $
+                LG.msg $
+                "Tx not found: " ++ (show $ txHashToHex $ outPointHash outPoint) ++ " _waiting_ for event"
+            valx <- liftIO $ TSH.lookup txSync (outPointHash outPoint)
+            event <-
+                case valx of
+                    Just evt -> return evt
+                    Nothing -> EV.new
+            liftIO $ TSH.insert txSync (outPointHash outPoint) event
+            tofl <- waitTimeout event (1000000 * (fromIntegral wait))
+            if tofl == False
+                then if ((2 * wait) < maxWait)
+                            then do
+                                getSatsValueFromOutpoint conn txSync lg net outPoint (2 * wait) maxWait
+                            else do
+                                liftIO $ TSH.delete txSync (outPointHash outPoint)
+                                debug lg $
+                                    LG.msg $
+                                    "TxIDNotFoundException: While querying txid_outputs for (TxID, Index): " ++
+                                    (show $ txHashToHex $ outPointHash outPoint) ++
+                                    ", " ++ show (outPointIndex outPoint) ++ ")"
+                                throw $
+                                    TxIDNotFoundException
+                                        ( show $ txHashToHex $ outPointHash outPoint
+                                        , Just $ fromIntegral $ outPointIndex outPoint)
+                                        "getSatsValueFromOutpoint"
                 else do
-                    let (addr, scriptHash, val) = head $ results
-                    return $ (addr, scriptHash, val)
+                    debug lg $
+                        LG.msg $ "event received _available_: " ++ (show $ txHashToHex $ outPointHash outPoint)
+                    getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait
+        Right (Just (addr, scriptHash, val)) -> return (T.pack addr, T.pack scriptHash, val)
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: getSatsValueFromOutpoint: " ++ show e
             throw e
