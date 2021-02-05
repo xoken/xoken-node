@@ -429,7 +429,9 @@ runBlockCacheQueue =
                                                                           err lg $
                                                                           LG.msg $
                                                                           "Error: Failed to insert into protocolInfo TSH (key " <>
-                                                                          (show k) <> "): " <> (show e)))
+                                                                          (show k) <>
+                                                                          "): " <>
+                                                                          (show e)))
                                                         (cmp)
                                                     let e = cmp !! 0
                                                     return (Just $ BlockInfo (fst e) (snd $ snd e))
@@ -473,8 +475,9 @@ runBlockCacheQueue =
                                              pi <- liftIO $ TSH.toList v'
                                              debug lg $
                                                  LG.msg $
-                                                 "Number of protocols for block: " <>
-                                                 show (Prelude.length pi) <> " height: " <> show ht
+                                                 "Number of protocols for block: " <> show (Prelude.length pi) <>
+                                                 " height: " <>
+                                                 show ht
                                              pres <-
                                                  liftIO $
                                                  try $ do
@@ -496,7 +499,9 @@ runBlockCacheQueue =
                                                      err lg $
                                                          LG.msg $
                                                          "Error: Failed to insert protocol with blockInfo:" <>
-                                                         (show (bsh, ht)) <> ": " <> (show e)
+                                                         (show (bsh, ht)) <>
+                                                         ": " <>
+                                                         (show e)
                                                      throw MerkleSubTreeDBInsertException
                                          Nothing -> do
                                              debug lg $
@@ -506,8 +511,8 @@ runBlockCacheQueue =
                                  (\(e :: SomeException) ->
                                       err lg $
                                       LG.msg $
-                                      "Error: Failed to insert into graph DB block " <>
-                                      (show (bsh, ht)) <> ": " <> (show e))
+                                      "Error: Failed to insert into graph DB block " <> (show (bsh, ht)) <> ": " <>
+                                      (show e))
                          --
                      )
                     compl
@@ -1095,9 +1100,10 @@ getSatsValueFromOutpoint ::
     -> Int
     -> IO ((Text, Text, Int64))
 getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait = do
-    let qstr :: Q.QueryString Q.R (Text, Int32) (Text, Text, Int64)
-        qstr = "SELECT address, script_hash, value FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
-        par = getSimpleQueryParam (txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint)
+    let qstr :: Q.QueryString Q.R (Text, Int32, Bool) (Text, Text, Int64)
+        qstr =
+            "SELECT address, script_hash, value FROM xoken.txid_outputs WHERE txid=? AND output_index=? AND is_recv=?"
+        par = getSimpleQueryParam (txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint, True)
     res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
     case res of
         Right results -> do
