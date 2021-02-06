@@ -139,9 +139,7 @@ queryAllegoryNameBranch name isProducer = do
   where
     cypher =
         " MATCH p=(pointer:namestate {name: {namestr}})-[:REVISION]-()-[:INPUT*]->(start:nutxo) " <>
-        " WHERE NOT (start)-[:INPUT]->() " <>
-        " UNWIND tail(nodes(p)) AS elem " <>
-        " RETURN elem.outpoint"
+        " WHERE NOT (start)-[:INPUT]->() " <> " UNWIND tail(nodes(p)) AS elem " <> " RETURN elem.outpoint"
     params =
         if isProducer
             then fromList [("namestr", T (name <> pack "|producer"))]
@@ -194,7 +192,7 @@ queryAllegoryChildren parent = do
 
 initAllegoryRoot :: Tx -> BoltActionT IO ()
 initAllegoryRoot tx = do
-    let oops = pack $ "fdfbc995585ce6334be19b00bd73f0dfcce005fc2326cc6a8a185615e4918ca5" ++ ":" ++ show 0
+    let oops = pack $ "f962a2f485a643951008d261bf5378144aae7ed973c34c13d40e3e4c01c886ea" ++ ":" ++ show 0
     let scr = "76a9144099b49d267db4bba0eaa6ad9f6526b055b72afb88ac"
     let cypher =
             " MERGE (rr:namestate {name:{dummyroot} })  " <>
@@ -617,7 +615,8 @@ insertProtocolWithBlockInfo name properties BlockPInfo {..} = do
         Right (records) -> return ()
   where
     cypher =
-        " MERGE (a: protocol { name: {name}}) ON CREATE SET " <> props <>
+        " MERGE (a: protocol { name: {name}}) ON CREATE SET " <>
+        props <>
         " MERGE (b: block { hash: {hash}}) ON CREATE SET b.height= {height}, b.timestamp= {timestamp}, b.day= {day }, b.month= {month}, b.year= {year}, b.hour= {hour}, b.absoluteHour= {absoluteHour} " <>
         " MERGE (a)-[r:PRESENT_IN{bytes: {bytes}, fees: {fees}, tx_count: {count}}]->(b)"
     props = intercalate "," $ Prelude.map (\(a, _) -> "a." <> a <> "= {" <> a <> "}") properties
