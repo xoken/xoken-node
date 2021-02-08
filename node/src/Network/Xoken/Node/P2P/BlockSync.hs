@@ -1088,7 +1088,7 @@ processConfTransaction bis tx bhash blkht txind = do
         Just ev -> liftIO $ EV.signal ev
         Nothing -> return ()
     debug lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": end of processing signaled " ++ show bhash
-
+{-
 __getSatsValueFromOutpoint ::
        XCqlClientState
     -> TSH.TSHashTable TxHash EV.Event
@@ -1148,7 +1148,7 @@ __getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait = do
                 "Error: getSatsValueFromOutpoint (txid: " ++
                 (show $ txHashToHex $ outPointHash outPoint) ++ "): " ++ show e
             throw e
-
+-}
 --
 --
 getSatsValueFromOutpoint ::
@@ -1165,12 +1165,13 @@ getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait = do
     --    qstr = "SELECT address, script_hash, value FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
     --    par = getSimpleQueryParam (txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint)
     --res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
-    res <- liftIO $ try $ Q.selectTxIdOutputs (T.unpack $ txHashToHex $ outPointHash outPoint) (fromIntegral $ outPointIndex outPoint)
+    let !txHex = txHashToHex $ outPointHash outPoint
+    res <- liftIO $ try $ Q.selectTxIdOutputs (T.unpack $ txHex) (fromIntegral $ outPointIndex outPoint)
     case res of
         Right Nothing -> do
             debug lg $
                 LG.msg $
-                "Tx not found: " ++ (show $ txHashToHex $ outPointHash outPoint) ++ " _waiting_ for event"
+                "Tx not found: " ++ (show $ txHex) ++ " _waiting_ for event"
             valx <- liftIO $ TSH.lookup txSync (outPointHash outPoint)
             event <-
                 case valx of
@@ -1187,16 +1188,16 @@ getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait = do
                                 debug lg $
                                     LG.msg $
                                     "TxIDNotFoundException: While querying txid_outputs for (TxID, Index): " ++
-                                    (show $ txHashToHex $ outPointHash outPoint) ++
+                                    (show $ txHex) ++
                                     ", " ++ show (outPointIndex outPoint) ++ ")"
                                 throw $
                                     TxIDNotFoundException
-                                        ( show $ txHashToHex $ outPointHash outPoint
+                                        ( show $ txHex
                                         , Just $ fromIntegral $ outPointIndex outPoint)
                                         "getSatsValueFromOutpoint"
                 else do
                     debug lg $
-                        LG.msg $ "event received _available_: " ++ (show $ txHashToHex $ outPointHash outPoint)
+                        LG.msg $ "event received _available_: " ++ (show $ txHex)
                     getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait
         Right (Just (addr, scriptHash, val)) -> return (T.pack addr, T.pack scriptHash, val)
         Left (e :: SomeException) -> do
@@ -1207,9 +1208,10 @@ getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait = do
 getScriptHashFromOutpoint ::
        XCqlClientState -> TSH.TSHashTable TxHash EV.Event -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Text)
 getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs = do
-    let str = "SELECT tx_serialized from xoken.transactions where tx_id = ?"
+    let !txHex = txHashToHex $ outPointHash outPoint
+        str = "SELECT tx_serialized from xoken.transactions where tx_id = ?"
         qstr = str :: Q.QueryString Q.R (Identity Text) (Identity Blob)
-        p = getSimpleQueryParam $ Identity $ txHashToHex $ outPointHash outPoint
+        p = getSimpleQueryParam $ Identity $ txHex
     res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr p)
     case res of
         Left (e :: SomeException) -> do
@@ -1219,7 +1221,7 @@ getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs = do
             if L.length iop == 0
                 then do
                     debug lg $
-                        LG.msg ("TxID not found: (waiting for event) " ++ (show $ txHashToHex $ outPointHash outPoint))
+                        LG.msg ("TxID not found: (waiting for event) " ++ (show txHex))
                     --
                     -- tmap <- liftIO $ takeMVar (txSync)
                     valx <- liftIO $ TSH.lookup txSync (outPointHash outPoint)
@@ -1235,10 +1237,10 @@ getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs = do
                             -- liftIO $ putMVar (txSync) (M.delete (outPointHash outPoint) tmap)
                         then do
                             liftIO $ TSH.delete txSync (outPointHash outPoint)
-                            debug lg $ LG.msg ("TxIDNotFoundException" ++ (show $ txHashToHex $ outPointHash outPoint))
+                            debug lg $ LG.msg ("TxIDNotFoundException" ++ (show txHex))
                             throw $
                                 TxIDNotFoundException
-                                    ( show $ txHashToHex $ outPointHash outPoint
+                                    ( show $ txHex
                                     , Just $ fromIntegral $ outPointIndex outPoint)
                                     "getScriptHashFromOutpoint"
                         else getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs -- if being signalled, try again to success
@@ -1251,7 +1253,7 @@ getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs = do
                             then liftIO $
                                  getCompleteTx
                                      conn
-                                     (txHashToHex $ outPointHash outPoint)
+                                     txHex
                                      (getSegmentCount (fromBlob txbyt))
                             else pure $ fromBlob txbyt
                     case runGetLazy (getConfirmedTx) ctxbyt of
