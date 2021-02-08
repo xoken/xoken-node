@@ -744,6 +744,7 @@ processConfTransaction bis tx bhash blkht txind = do
     bp2pEnv <- getBitcoinP2P
     lg <- getLogger
     let !txhs = txHash tx
+        !txhex = txHashToHex txhs
     let net = bitcoinNetwork $ nodeConfig bp2pEnv
         conn = xCqlClientState dbe'
     debug lg $ LG.msg $ "processing Tx " ++ show (txhs)
@@ -762,9 +763,10 @@ processConfTransaction bis tx bhash blkht txind = do
                 [0 :: Int32 ..]
     --
     -- lookup into tx outputs value cache if cache-miss, fetch from DB
-    inputs <-
+    !inputs <-
         mapM
             (\(b, j) -> do
+                 let prevHex = txHashToHex $ outPointHash $ prevOutput b
                  tuple <- return Nothing
                     --  liftIO $
                     --  TSH.lookup
@@ -807,9 +809,9 @@ processConfTransaction bis tx bhash blkht txind = do
                                                      err lg $
                                                          LG.msg $
                                                          "Error: [pCT calling gSVFO] WHILE Processing TxID " ++
-                                                         show (txHashToHex txhs) ++
+                                                         show (txhex) ++
                                                          ", getting value for dependent input (TxID,Index): (" ++
-                                                         show (txHashToHex $ outPointHash (prevOutput b)) ++
+                                                         show prevHex ++
                                                          ", " ++ show (outPointIndex $ prevOutput b) ++ ")"
                                                      throw e
                          Nothing -> do
@@ -822,7 +824,7 @@ processConfTransaction bis tx bhash blkht txind = do
                                          LG.msg $
                                          " outputindex: " ++
                                          show
-                                             ( txHashToHex $ outPointHash $ prevOutput b
+                                             ( prevHex
                                              , fromIntegral $ outPointIndex $ prevOutput b)
                                      dbRes <-
                                          liftIO $
@@ -844,13 +846,13 @@ processConfTransaction bis tx bhash blkht txind = do
                                              err lg $
                                                  LG.msg $
                                                  "Error: [pCT calling gSVFO] WHILE Processing TxID " ++
-                                                 show (txHashToHex txhs) ++
+                                                 show (txhex) ++
                                                  ", getting value for dependent input (TxID,Index): (" ++
-                                                 show (txHashToHex $ outPointHash (prevOutput b)) ++
+                                                 show prevHex ++
                                                  ", " ++ show (outPointIndex $ prevOutput b) ++ ")"
                                              throw e
                  return
-                     ((txHashToHex $ outPointHash $ prevOutput b, fromIntegral $ outPointIndex $ prevOutput b), j, val))
+                     ((prevHex, fromIntegral $ outPointIndex $ prevOutput b), j, val))
             inAddrs
     -- calculate Tx fees
     let ipSum = foldl (+) 0 $ (\(_, _, (_, _, val)) -> val) <$> inputs
@@ -873,13 +875,13 @@ processConfTransaction bis tx bhash blkht txind = do
     --
     -- cache compile output values
     -- imp: order is (address, scriptHash, value)
-    let ovs =
-            map
-                (\(a, o, i) ->
-                     ( fromIntegral $ i
-                     , (a, (txHashToHex $ TxHash $ sha256 (scriptOutput o)), fromIntegral $ outValue o)))
-                outAddrs
-    trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": compiled output value(s): " ++ (show ovs)
+    --let ovs =
+    --        map
+    --            (\(a, o, i) ->
+    --                 ( fromIntegral $ i
+    --                 , (a, (txHashToHex $ TxHash $ sha256 (scriptOutput o)), fromIntegral $ outValue o)))
+    --            outAddrs
+    --trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": compiled output value(s): " ++ (show ovs)
     -- liftIO $
     --     TSH.insert
     --         (txOutputValuesCache bp2pEnv)
@@ -887,11 +889,11 @@ processConfTransaction bis tx bhash blkht txind = do
     --         (txHash tx, ovs)
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": added outputvals to cache"
     -- update outputs and scripthash tables
-    mapM_
+    ovs <- mapM
         (\(a, o, i) -> do
-             let sh = txHashToHex $ TxHash $ sha256 (scriptOutput o)
+             let !sh = txHashToHex $ TxHash $ sha256 (scriptOutput o)
              let bi = (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
-             let output = (txHashToHex txhs, i)
+             let output = (txhex, i)
              let bsh = B16.encode $ scriptOutput o
              let (op, rem) = B.splitAt 2 bsh
              let (op_false, op_return, remD) =
@@ -986,15 +988,17 @@ processConfTransaction bis tx bhash blkht txind = do
                              --commitScriptHashOutputs conn a output bi
                              --commitScriptHashUnspentOutputs conn a output
                          else return ()
-                 (Left e) -> return ())
+                 (Left e) -> return ()
+             return (fromIntegral $ i, (a, sh, fromIntegral $ outValue o)))
         outAddrs
     debug lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": committed scripthash,txid_outputs tables"
     mapM_
-        (\((o, i), (a, sh)) -> do
+        (\((o, i), (prevHex ,a, sh)) -> do
              let bi = (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
              let blockHeight = fromIntegral blkht
-             let prevOutpoint = (txHashToHex $ outPointHash $ prevOutput o, fromIntegral $ outPointIndex $ prevOutput o)
-             let spendInfo = (\ov -> ((txHashToHex txhs, fromIntegral $ fst $ ov), i, snd $ ov)) <$> ovs
+             --let prevOutpoint = (txHashToHex $ outPointHash $ prevOutput o, fromIntegral $ outPointIndex $ prevOutput o)
+             let prevOutpoint = (prevHex, fromIntegral $ outPointIndex $ prevOutput o)
+             let spendInfo = (\ov -> ((txhex, fromIntegral $ fst $ ov), i, snd $ ov)) <$> ovs
              if a == "" || sh == "" -- likely coinbase txns
                  then return ()
                  else do
@@ -1004,7 +1008,7 @@ processConfTransaction bis tx bhash blkht txind = do
                      liftIO $ deleteScriptHashUnspentOutputs' a prevOutpoint)
                      --deleteScriptHashUnspentOutputs conn sh prevOutpoint
                      --deleteScriptHashUnspentOutputs conn a prevOutpoint)
-        (zip (inAddrs) (map (\x -> (fst3 $ thd3 x, snd3 $ thd3 $ x)) inputs))
+        (zip (inAddrs) (map (\x -> (fst $ fst3 x,fst3 $ thd3 x, snd3 $ thd3 $ x)) inputs))
     --
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": updated spend info for inputs"
     -- persist tx
@@ -1021,7 +1025,7 @@ processConfTransaction bis tx bhash blkht txind = do
             if segments > 1
                 then (LC.replicate 32 'f') <> (BSL.fromStrict $ DTE.encodeUtf8 $ T.pack $ show $ segments)
                 else serbs
-    res <- liftIO $ Q.insertTx (T.unpack $ txHashToHex txhs) 
+    res <- liftIO $ Q.insertTx (T.unpack $ txhex) 
                         (T.unpack $ blockHashToHex bhash)
                         (fromIntegral blkht)
                         (fromIntegral txind)
@@ -1030,7 +1034,7 @@ processConfTransaction bis tx bhash blkht txind = do
                         fees
     --let par =
     --        getSimpleQueryParam
-    --            ( txHashToHex txhs
+    --            ( txhex
     --            , (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
     --            , Blob fst
     --            , (stripScriptHash <$> inputs)
@@ -1048,14 +1052,14 @@ processConfTransaction bis tx bhash blkht txind = do
             (\(seg, i) -> do
                  --let par =
                  --        getSimpleQueryParam
-                 --            ( (txHashToHex txhs) <> (T.pack $ show i)
+                 --            ( (txhex) <> (T.pack $ show i)
                  --            , (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
                  --            , Blob seg
                  --            , []
                  --            , fees)
                  --queryI <- liftIO $ queryPrepared conn (Q.RqPrepare $ Q.Prepare qstr)
                  --res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryI par)
-                 res <- liftIO $ Q.insertTx ((T.unpack $ txHashToHex txhs) ++ show i) 
+                 res <- liftIO $ Q.insertTx ((T.unpack $ txhex) ++ show i) 
                                     (T.unpack $ blockHashToHex bhash)
                                     (fromIntegral blkht)
                                     (fromIntegral txind)
