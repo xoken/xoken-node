@@ -213,10 +213,9 @@ runThreads config nodeConf bp2p conn lg certPaths = do
             Snap.setSSLCert (head certPaths) &
             Snap.setSSLChainCert False
     async $ Snap.serveSnaplet snapConfig (appInit xknEnv)
-    withResource (pool $ graphDB dbh) (`BT.run` initAllegoryRoot genesisTx) `catchError` \e ->
-        if isInfixOf "ConstraintValidationFailed" (show e)
-            then do
-                putStrLn "Allegory root already initialized"
+    catch (withResource (pool $ graphDB dbh) (`BT.run` initAllegoryRoot genesisTx)) $ \(e :: SomeException) ->
+        if "ConstraintValidationFailed" `isInfixOf` (show e)
+            then putStrLn "Allegory root previously initialised"
             else do
                 putStrLn $ "[ERROR] initAllegoryRoot: " <> show e
                 throw e
