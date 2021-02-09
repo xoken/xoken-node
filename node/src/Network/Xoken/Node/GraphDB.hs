@@ -193,7 +193,7 @@ queryAllegoryChildren parent = do
 
 initAllegoryRoot :: Tx -> BoltActionT IO ()
 initAllegoryRoot tx = do
-    let oops = pack $ "f962a2f485a643951008d261bf5378144aae7ed973c34c13d40e3e4c01c886ea" ++ ":" ++ show 0
+    let oops = pack $ "806217183f174a62987d40b3dcf188ca97c2f29950289c31e4bdd81a50452d2f" ++ ":" ++ show 0
     let scr = "76a9144099b49d267db4bba0eaa6ad9f6526b055b72afb88ac"
     let cypher =
             " MERGE (rr:namestate {name:{dummyroot} })  " <>
