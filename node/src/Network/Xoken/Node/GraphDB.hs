@@ -71,21 +71,19 @@ constructState bcfg = do
     pool <- createPool (BT.connect bcfg) BT.close 32 5000 64
     return (ServerState pool)
 
--- | Convert record to MerkleBranchNode
-toMerkleBranchNode :: Monad m => Record -> m (MerkleBranchNode)
-toMerkleBranchNode r = do
-    txid :: Text <- (r `at` "txid") >>= exact
-    isLeft :: Bool <- (r `at` "isleft") >>= exact
-    return (MerkleBranchNode txid isLeft)
-
+-- -- | Convert record to MerkleBranchNode
+-- toMerkleBranchNode :: Monad m => Record -> m (MerkleBranchNode)
+-- toMerkleBranchNode r = do
+--     txid :: Text <- (r `at` "txid") >>= exactMaybe
+--     isLeft :: Bool <- (r `at` "isleft") >>= exactMaybe
+--     return (MerkleBranchNode txid isLeft)
 -- | Convert record to Name & ScriptOp
-toNameScriptOp :: Monad m => Record -> m (Text, Text, Bool)
-toNameScriptOp r = do
-    outpoint :: Text <- (r `at` "elem.outpoint") >>= exact
-    script :: Text <- (r `at` "elem.script") >>= exact
-    confirmed :: Bool <- (r `at` "elem.confirmed") >>= exact
-    return (outpoint, script, confirmed)
-
+-- toNameScriptOp :: Monad m => Record -> m (Text, Text, Bool)
+-- toNameScriptOp r = do
+--     outpoint :: Text <- (r `at` "elem.outpoint") >>= exact
+--     script :: Text <- (r `at` "elem.script") >>= exact
+--     confirmed :: Bool <- (r `at` "elem.confirmed") >>= exact
+--     return (outpoint, script, confirmed)
 toAllegoryNameBranch :: Monad m => Record -> m Text
 toAllegoryNameBranch r = do
     outpoint :: Text <- (r `at` "elem.outpoint") >>= exact
@@ -107,11 +105,12 @@ filterNull =
                  _ -> pure True)
 
 -- Fetch the Merkle branch/proof
-queryMerkleBranch :: Text -> BoltActionT IO [MerkleBranchNode]
+queryMerkleBranch :: Text -> BoltActionT IO [(Text, Bool)] -- [MerkleBranchNode]
 queryMerkleBranch leaf = do
     records <- queryP cypher params
-    merkleBranch <- traverse toMerkleBranchNode records
-    return merkleBranch
+    forM records $ \record -> ((record `at` "txid"), (record `at` "isleft"))
+    -- merkleBranch <- traverse toMerkleBranchNode records
+    -- return merkleBranch
   where
     cypher =
         "MATCH (me:mnode{ v: {leaf} })-[:SIBLING]->(sib)  RETURN sib.v AS txid, sib.l AS isleft  UNION " <>
@@ -169,8 +168,10 @@ queryAllegoryVendor name isProducer = do
 queryAllegoryNameScriptOp :: Text -> Bool -> BoltActionT IO [(Text, Text, Bool)]
 queryAllegoryNameScriptOp name isProducer = do
     records <- queryP cypher params >>= filterNull
-    x <- traverse toNameScriptOp records
-    return x
+    forM records $ \record ->
+        ((record `at` "elem.outpoint"), (record `at` "elem.script"), (record `at` "elem.confirmed"))
+    -- x <- traverse toNameScriptOp records
+    -- return x
   where
     cypher =
         " MATCH p=(pointer:namestate {name: {namestr}})-[:REVISION]-(elem:nutxo)  RETURN elem.outpoint , elem.script , elem.confirmed "
