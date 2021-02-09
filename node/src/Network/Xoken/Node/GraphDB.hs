@@ -106,7 +106,7 @@ queryMerkleBranch :: Text -> BoltActionT IO [(Text, Bool)] -- [MerkleBranchNode]
 queryMerkleBranch leaf = do
     records <- queryP cypher params
     txids <- forM records $ \record -> record `at` "txid"
-    isLefts <- forM records $ \record -> record `at` "isLeft"
+    isLefts <- forM records $ \record -> record `at` "isleft"
     return $ zip txids isLefts
   where
     cypher =
