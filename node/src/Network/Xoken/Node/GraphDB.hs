@@ -71,36 +71,15 @@ constructState bcfg = do
     pool <- createPool (BT.connect bcfg) BT.close 32 5000 64
     return (ServerState pool)
 
--- -- | Convert record to MerkleBranchNode
--- toMerkleBranchNode :: Monad m => Record -> m (MerkleBranchNode)
--- toMerkleBranchNode r = do
---     txid :: Text <- (r `at` "txid") >>= exactMaybe
---     isLeft :: Bool <- (r `at` "isleft") >>= exactMaybe
---     return (MerkleBranchNode txid isLeft)
--- | Convert record to Name & ScriptOp
--- toNameScriptOp :: Monad m => Record -> m (Text, Text, Bool)
--- toNameScriptOp r = do
---     outpoint :: Text <- (r `at` "elem.outpoint") >>= exact
---     script :: Text <- (r `at` "elem.script") >>= exact
---     confirmed :: Bool <- (r `at` "elem.confirmed") >>= exact
---     return (outpoint, script, confirmed)
---toAllegoryNameBranch :: Monad m => Record -> m Text
---toAllegoryNameBranch r = do
---    outpoint :: Text <- (r `at` "elem.outpoint") >>= exact
---    return outpoint
---toAllegoryVendor :: Monad m => Record -> m Text
---toAllegoryVendor r = do
---    vendor :: Text <- (r `at` "n.vendor") >>= exact
---    return vendor
--- | Filter Null
---filterNull :: Monad m => [Record] -> m [Record]
---filterNull =
---    Control.Monad.filterM
---        (\x -> do
---            d <- x `at` "elem.outpoint"
---            case d of
---                 N _ -> pure False
---                 _ -> pure True)
+filterNull :: [Record] -> BoltActionT IO [Record]
+filterNull =
+    Control.Monad.filterM
+        (\x -> do
+             d <- x `at` "elem.outpoint"
+             case d of
+                 N _ -> pure False
+                 _ -> pure True)
+
 -- Fetch the Merkle branch/proof
 queryMerkleBranch :: Text -> BoltActionT IO [(Text, Bool)] -- [MerkleBranchNode]
 queryMerkleBranch leaf = do
@@ -130,8 +109,6 @@ queryAllegoryNameBranch :: Text -> Bool -> BoltActionT IO [Text]
 queryAllegoryNameBranch name isProducer = do
     records <- queryP cypher params
     forM records $ \record -> record `at` "elem.outpoint"
-    --nameBranch <- traverse toAllegoryNameBranch records
-    --return nameBranch
   where
     cypher =
         " MATCH p=(pointer:namestate {name: {namestr}})-[:REVISION]-()-[:INPUT*]->(start:nutxo) " <>
@@ -147,7 +124,6 @@ queryAllegoryVendor :: Text -> Bool -> BoltActionT IO [Text]
 queryAllegoryVendor name isProducer = do
     records <- queryP cypher params
     forM records $ \record -> (record `at` "n.vendor")
- --   vendor <- head <$> traverse toAllegoryVendor records
   where
     cypher = "MATCH (m:namestate {name: {namestr}})-[:REVISION]->(n:nutxo) return n.vendor"
     params =
@@ -164,13 +140,11 @@ queryAllegoryVendor name isProducer = do
 -- Fetch the outpoint & script associated with Allegory name
 queryAllegoryNameScriptOp :: Text -> Bool -> BoltActionT IO [(Text, Text, Bool)]
 queryAllegoryNameScriptOp name isProducer = do
-    records <- queryP cypher params {->>= filterNull-}
+    records <- queryP cypher params >>= filterNull
     outpoints <- forM records $ \record -> record `at` "elem.outpoint"
     scripts <- forM records $ \record -> record `at` "elem.script"
     confirmeds <- forM records $ \record -> record `at` "elem.confirmed"
     return $ zip3 outpoints scripts confirmeds
-    -- x <- traverse toNameScriptOp records
-    -- return x
   where
     cypher =
         " MATCH p=(pointer:namestate {name: {namestr}})-[:REVISION]-(elem:nutxo)  RETURN elem.outpoint , elem.script , elem.confirmed "
@@ -210,15 +184,6 @@ initAllegoryRoot tx = do
     queryP cypher params
     return ()
 
---    case res of
---        Left (e :: SomeException) -> do
---            if isInfixOf (pack "ConstraintValidationFailed") (pack $ show e)
---                then do
---                    liftIO $ putStrLn "Allegory root previously initialized "
---                else do
---                    liftIO $ putStrLn ("[error] initAllegoryRoot " ++ show e)
---                    throw e
---        Right (records) -> return ()
 revertAllegoryStateTree :: Tx -> Allegory -> BoltActionT IO ()
 revertAllegoryStateTree tx allegory = do
     let (inp, isProd) =
@@ -248,11 +213,6 @@ revertAllegoryStateTree tx allegory = do
     queryP cypher params
     return ()
 
---    case res of
---        Left (e :: SomeException) -> do
---            liftIO $ print ("[ERROR] revertAllegoryStateTree (Owner) " ++ show e)
---            throw e
---        Right (records) -> return ()
 updateAllegoryStateTrees :: Bool -> Tx -> Allegory -> BoltActionT IO ()
 updateAllegoryStateTrees confirmed tx allegory = do
     case action allegory of
@@ -467,25 +427,10 @@ updateAllegoryStateTrees confirmed tx allegory = do
             then Data.Text.pack " TRUE "
             else Data.Text.pack " FALSE "
 
---            case res of
---                Left (e :: SomeException) -> do
---                    liftIO $ print ("[ERROR] updateAllegoryStateTrees (Owner) " ++ show e)
---                    throw e
---                Right (records) -> return ()
---            case res of
---                Left (e :: SomeException) -> do
---                    liftIO $ print ("[ERROR] updateAllegoryStateTrees (Prod) " ++ show e)
---                    throw e
---                Right (records) -> return ()
 insertMerkleSubTree :: [MerkleNode] -> [MerkleNode] -> BoltActionT IO ()
 insertMerkleSubTree leaves inodes = do
     queryP cypher params
     return ()
-            -- liftIO $ print ("[ERROR] insertMerkleSubTree " ++ show e)
-            -- liftIO $ print (show leaves)
-            -- liftIO $ print (show inodes)
-            -- liftIO $ print (show cypher)
-            -- liftIO $ print (show params)
   where
     lefts = Prelude.map (leftChild) inodes
     rights = Prelude.map (rightChild) inodes
@@ -581,18 +526,10 @@ insertMerkleSubTree leaves inodes = do
             then Data.Text.pack " TRUE "
             else Data.Text.pack " FALSE "
 
---    case res of
---        Left (e :: SomeException)
---         -> do
---            throw e
---        Right (records) -> return ()
 deleteMerkleSubTree :: [MerkleNode] -> BoltActionT IO ()
 deleteMerkleSubTree inodes = do
     BT.query cypher
     return ()
-            -- liftIO $ print ("[ERROR] deleteMerkleSubTree " ++ show e)
-            -- liftIO $ print (show inodes)
-            -- liftIO $ print (show cypher)
   where
     nodes = Prelude.map (node) inodes
     matchTemplate = " MATCH (re:mnode)-[:PARENT*0..8]->(:mnode)<-[:PARENT*0..]-(st:mnode) WHERE re.v IN [ "
@@ -603,12 +540,6 @@ deleteMerkleSubTree inodes = do
     cypher = (pack matchTemplate) <> inMatch <> (pack deleteTemplate)
     txtTx i = txHashToHex $ TxHash $ fromJust i
 
---    case res of
---        Left (e :: SomeException)
---         -> do
---            throw e
---        Right (records) -> return ()
--- Insert protocol with properties and block info
 insertProtocolWithBlockInfo :: Text -> [(Text, Text)] -> BlockPInfo -> BoltActionT IO ()
 insertProtocolWithBlockInfo name properties BlockPInfo {..} = do
     liftIO $ print $ "insertProtocolWithBlockInfo for height: " <> (pack $ show height) <> " query: " <> cypher
