@@ -65,10 +65,10 @@ instance ToJSON Value where
     toJSON (M m) = toJSON m
     toJSON _ = undefined -- we do not need Maps and Structures in this example
 
--- |Create pool of connections (16 stripes, 180000 ms timeout, 256 resource per stripe)
+-- |Create pool of connections (8 stripes, 180000 ms timeout, 256 resource per stripe)
 constructState :: BoltCfg -> IO ServerState
 constructState bcfg = do
-    pool <- createPool (BT.connect bcfg) BT.close 16 180000 256
+    pool <- createPool (BT.connect bcfg) BT.close 8 180000 256
     return (ServerState pool)
 
 filterNull :: [Record] -> BoltActionT IO [Record]
