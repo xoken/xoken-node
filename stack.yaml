@@ -10,6 +10,7 @@ extra-deps:
   - ../arivi-core/network
   - ../xoken-core/core
   - ../xcql
+  - ../cql-ffi
   - serialise-0.2.0.0
   - cborg-0.2.0.0
   - timers-updatable-0.2.0.2
@@ -44,3 +45,5 @@ extra-deps:
   - lens-4.19.2
   - git: https://github.com/xoken/snap-server.git
     commit: 20d4a32b9da8c927230016b76185dff223b3907e
+  - c-storable-deriving-0.1.3@sha256:510aa8423d6b3df57a39365569195ddc5bd4b04b0ff58ba1345c1f309ae6f89e,1030
+

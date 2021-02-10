@@ -19,6 +19,11 @@ pipeline {
           git(url: 'https://github.com/xoken/xcql/', branch: 'master')
         }
 
+        sh 'mkdir -p cql-ffi'
+        dir(path: 'cql-ffi') {
+          git(url: 'https://github.com/xoken/cql-ffi/', branch: 'master')
+        }
+
         sh 'mkdir -p xoken-node'
         dir(path: 'xoken-node') {
           git(url: 'https://github.com/xoken/xoken-node/', branch: "${env.BRANCH_NAME}")
@@ -61,6 +66,7 @@ pipeline {
                       sh 'docker exec -w /opt/work/arivi-core $(cat /tmp/ubuntu1804.cid) git pull'
                       sh 'docker exec -w /opt/work/xoken-core $(cat /tmp/ubuntu1804.cid) git pull'
                       sh 'docker exec -w /opt/work/xcql $(cat /tmp/ubuntu1804.cid) git pull'
+                      sh 'docker exec -w /opt/work/cql-ffi $(cat /tmp/ubuntu1804.cid) git pull'
                       sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/ubuntu1804.cid) git fetch '
                       sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/ubuntu1804.cid) git checkout $(basename $(git symbolic-ref HEAD))'
                       sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/ubuntu1804.cid) git pull'
@@ -78,6 +84,7 @@ pipeline {
                       sh 'docker exec -w /opt/work/arivi-core $(cat /tmp/ubuntu2004.cid) git pull'
                       sh 'docker exec -w /opt/work/xoken-core $(cat /tmp/ubuntu2004.cid) git pull'
                       sh 'docker exec -w /opt/work/xcql $(cat /tmp/ubuntu2004.cid) git pull'
+                      sh 'docker exec -w /opt/work/cql-ffi $(cat /tmp/ubuntu2004.cid) git pull'
                       sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/ubuntu2004.cid) git fetch '
                       sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/ubuntu2004.cid) git checkout $(basename $(git symbolic-ref HEAD))'
                       sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/ubuntu2004.cid) git pull'
@@ -95,6 +102,7 @@ pipeline {
                       sh 'docker exec -w /opt/work/arivi-core $(cat /tmp/archlinux.cid) git pull'
                       sh 'docker exec -w /opt/work/xoken-core $(cat /tmp/archlinux.cid) git pull'
                       sh 'docker exec -w /opt/work/xcql $(cat /tmp/archlinux.cid) git pull'
+                      sh 'docker exec -w /opt/work/cql-ffi $(cat /tmp/archlinux.cid) git pull'
                       sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/archlinux.cid) git fetch '
                       sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/archlinux.cid) git checkout $(basename $(git symbolic-ref HEAD))'
                       sh 'docker exec -w /opt/work/xoken-node $(cat /tmp/archlinux.cid) git pull'
