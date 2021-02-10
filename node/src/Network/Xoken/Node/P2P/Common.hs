@@ -106,6 +106,8 @@ data BlockSyncException
     | MerkleTreeInvalidException
     | MerkleQueueNotFoundException
     | BlockAlreadySyncedException
+    | ParentProcessingException String
+    | RelayFailureException
     deriving (Show)
 
 instance Exception BlockSyncException

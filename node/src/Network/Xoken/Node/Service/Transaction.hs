@@ -491,12 +491,28 @@ xRelayTx rawTx = do
                     allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
                     let !connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
                     debug lg $ LG.msg $ val $ "transaction verified - broadcasting tx"
-                    mapM_ (\(_, peer) -> do sendRequestMessages peer (MTx (fromJust $ fst res))) connPeers
-                    processUnconfTransaction tx
-                    eres <- LE.try $ handleIfAllegoryTx tx False False -- MUST be False
-                    case eres of
-                        Right (flg) -> return True
-                        Left (e :: SomeException) -> return False
+                    broadcastResult <-
+                        mapM
+                            (\(_, peer) -> do
+                                 res <- LE.try $ sendRequestMessages peer (MTx (fromJust $ fst res))
+                                 case res of
+                                     Left (e :: SomeException) -> return False
+                                     Right () -> return True)
+                            connPeers
+                    if all (== False) broadcastResult
+                        then throw RelayFailureException
+                        else return ()
+                    ingestRes <- LE.try $ processUnconfTransaction tx
+                    case ingestRes of
+                        Left (e :: SomeException) -> do
+                            err lg $
+                                LG.msg $ "[ERROR] While processing parent(s) of unconfirmed transaction: " <> (show e)
+                            throw $ ParentProcessingException (show e)
+                        Right () -> do
+                            eres <- LE.try $ handleIfAllegoryTx tx False False -- MUST be False
+                            case eres of
+                                Right (flg) -> return True
+                                Left (e :: SomeException) -> return False
                 Nothing -> do
                     err lg $ LG.msg $ val $ "error decoding rawTx (2)"
                     return $ False

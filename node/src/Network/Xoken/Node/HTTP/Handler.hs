@@ -499,9 +499,12 @@ relayTx RelayTx {..} = do
     case res of
         Left (e :: BlockSyncException) -> do
             case e of
-                TxIDNotFoundException (txid, _) _ -> do
+                ParentProcessingException e -> do
                     modifyResponse $ setResponseStatus 400 "Bad Request"
-                    writeBS $ "Rejected relay: invalid parent " <> S.pack txid
+                    writeBS $ "Rejected relay: exception while processing parent(s) of transaction: " <> S.pack e
+                RelayFailureException -> do
+                    modifyResponse $ setResponseStatus 500 "Internal Server Error"
+                    writeBS "Failed to relay transaction to any Nexa peer"
                 _ -> do
                     modifyResponse $ setResponseStatus 500 "Internal Server Error"
                     writeBS "INTERNAL_SERVER_ERROR"
