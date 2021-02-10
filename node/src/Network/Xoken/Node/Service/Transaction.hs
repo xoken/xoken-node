@@ -416,7 +416,7 @@ xGetMerkleBranch txid = do
     res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryMerkleBranch (DT.pack txid))
     case res of
         Right mb -> do
-            return $ Data.List.map (\x -> MerkleBranchNode' (DT.unpack $ _nodeValue x) (_isLeftNode x)) mb
+            return $ Data.List.map (\x -> MerkleBranchNode' (DT.unpack $ fst x) (snd x)) mb
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetMerkleBranch: " ++ show e
             throw KeyValueDBLookupException

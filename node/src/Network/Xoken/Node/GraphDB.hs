@@ -71,33 +71,7 @@ constructState bcfg = do
     pool <- createPool (BT.connect bcfg) BT.close 16 180000 256
     return (ServerState pool)
 
--- | Convert record to MerkleBranchNode
-toMerkleBranchNode :: Monad m => Record -> m (MerkleBranchNode)
-toMerkleBranchNode r = do
-    txid :: Text <- (r `at` "txid") >>= exact
-    isLeft :: Bool <- (r `at` "isleft") >>= exact
-    return (MerkleBranchNode txid isLeft)
-
--- | Convert record to Name & ScriptOp
-toNameScriptOp :: Monad m => Record -> m (Text, Text, Bool)
-toNameScriptOp r = do
-    outpoint :: Text <- (r `at` "elem.outpoint") >>= exact
-    script :: Text <- (r `at` "elem.script") >>= exact
-    confirmed :: Bool <- (r `at` "elem.confirmed") >>= exact
-    return (outpoint, script, confirmed)
-
-toAllegoryNameBranch :: Monad m => Record -> m Text
-toAllegoryNameBranch r = do
-    outpoint :: Text <- (r `at` "elem.outpoint") >>= exact
-    return outpoint
-
-toAllegoryVendor :: Monad m => Record -> m Text
-toAllegoryVendor r = do
-    vendor :: Text <- (r `at` "n.vendor") >>= exact
-    return vendor
-
--- | Filter Null
-filterNull :: Monad m => [Record] -> m [Record]
+filterNull :: [Record] -> BoltActionT IO [Record]
 filterNull =
     Control.Monad.filterM
         (\x -> do
@@ -107,11 +81,12 @@ filterNull =
                  _ -> pure True)
 
 -- Fetch the Merkle branch/proof
-queryMerkleBranch :: Text -> BoltActionT IO [MerkleBranchNode]
+queryMerkleBranch :: Text -> BoltActionT IO [(Text, Bool)] -- [MerkleBranchNode]
 queryMerkleBranch leaf = do
     records <- queryP cypher params
-    merkleBranch <- traverse toMerkleBranchNode records
-    return merkleBranch
+    txids <- forM records $ \record -> record `at` "txid"
+    isLefts <- forM records $ \record -> record `at` "isleft"
+    return $ zip txids isLefts
   where
     cypher =
         "MATCH (me:mnode{ v: {leaf} })-[:SIBLING]->(sib)  RETURN sib.v AS txid, sib.l AS isleft  UNION " <>
@@ -123,8 +98,7 @@ queryMerkleBranch leaf = do
 queryGraphDBVersion :: BoltActionT IO [Text]
 queryGraphDBVersion = do
     records <- queryP cypher params
-    x <- traverse (`at` "version") records
-    return $ x >>= exact
+    forM records $ \record -> record `at` "version"
   where
     cypher =
         "call dbms.components() yield name, versions, edition unwind versions as version return name, version, edition"
@@ -134,8 +108,7 @@ queryGraphDBVersion = do
 queryAllegoryNameBranch :: Text -> Bool -> BoltActionT IO [Text]
 queryAllegoryNameBranch name isProducer = do
     records <- queryP cypher params
-    nameBranch <- traverse toAllegoryNameBranch records
-    return nameBranch
+    forM records $ \record -> record `at` "elem.outpoint"
   where
     cypher =
         " MATCH p=(pointer:namestate {name: {namestr}})-[:REVISION]-()-[:INPUT*]->(start:nutxo) " <>
@@ -147,13 +120,10 @@ queryAllegoryNameBranch name isProducer = do
             then fromList [("namestr", T (name <> pack "|producer"))]
             else fromList [("namestr", T (name <> pack "|owner"))]
 
-queryAllegoryVendor :: Text -> Bool -> BoltActionT IO (String, String)
+queryAllegoryVendor :: Text -> Bool -> BoltActionT IO [Text]
 queryAllegoryVendor name isProducer = do
     records <- queryP cypher params
-    vendor <- head <$> traverse toAllegoryVendor records
-    case (Data.Aeson.decode $ BL.pack $ Data.Text.unpack vendor) :: Maybe Endpoint of
-        Nothing -> throw GraphDBLookupException
-        Just (Endpoint p u) -> return (p, u)
+    forM records $ \record -> (record `at` "n.vendor")
   where
     cypher = "MATCH (m:namestate {name: {namestr}})-[:REVISION]->(n:nutxo) return n.vendor"
     params =
@@ -171,8 +141,10 @@ queryAllegoryVendor name isProducer = do
 queryAllegoryNameScriptOp :: Text -> Bool -> BoltActionT IO [(Text, Text, Bool)]
 queryAllegoryNameScriptOp name isProducer = do
     records <- queryP cypher params >>= filterNull
-    x <- traverse toNameScriptOp records
-    return x
+    outpoints <- forM records $ \record -> record `at` "elem.outpoint"
+    scripts <- forM records $ \record -> record `at` "elem.script"
+    confirmeds <- forM records $ \record -> record `at` "elem.confirmed"
+    return $ zip3 outpoints scripts confirmeds
   where
     cypher =
         " MATCH p=(pointer:namestate {name: {namestr}})-[:REVISION]-(elem:nutxo)  RETURN elem.outpoint , elem.script , elem.confirmed "
@@ -185,8 +157,7 @@ queryAllegoryNameScriptOp name isProducer = do
 queryAllegoryChildren :: Text -> BoltActionT IO [Text]
 queryAllegoryChildren parent = do
     records <- queryP cypher params
-    names <- traverse (`at` "n.name") records
-    return $ names >>= exact
+    forM records $ \record -> record `at` "n.name"
   where
     cypher =
         "MATCH (n:nutxo {producer:False})-[:INPUT*]->(m:nutxo {name: {namestr}, producer:True}) RETURN n.name ORDER BY ID(n)"
@@ -194,7 +165,7 @@ queryAllegoryChildren parent = do
 
 initAllegoryRoot :: Tx -> BoltActionT IO ()
 initAllegoryRoot tx = do
-    let oops = pack $ "08b7b073a20cc53e9183ba1f61c35ba875e3ed9923d69109c23eed622072ce5b" ++ ":" ++ show 0
+    let oops = pack $ "5bfe4d078a70070457fda8c06461205ac932850a686f6599c4542c768897306f" ++ ":" ++ show 0
     let scr = "76a9144099b49d267db4bba0eaa6ad9f6526b055b72afb88ac"
     let cypher =
             " MERGE (rr:namestate {name:{dummyroot} })  " <>
@@ -210,16 +181,8 @@ initAllegoryRoot tx = do
                 , ("isProducer", B True)
                 , ("isInit", B True)
                 ]
-    res <- LE.try $ queryP cypher params
-    case res of
-        Left (e :: SomeException) -> do
-            if isInfixOf (pack "ConstraintValidationFailed") (pack $ show e)
-                then do
-                    liftIO $ putStrLn "Allegory root previously initialized "
-                else do
-                    liftIO $ putStrLn ("[error] initAllegoryRoot " ++ show e)
-                    throw e
-        Right (records) -> return ()
+    queryP cypher params
+    return ()
 
 revertAllegoryStateTree :: Tx -> Allegory -> BoltActionT IO ()
 revertAllegoryStateTree tx allegory = do
@@ -247,12 +210,8 @@ revertAllegoryStateTree tx allegory = do
                 ]
     liftIO $ print (cypher)
     liftIO $ print (params)
-    res <- LE.try $ queryP cypher params
-    case res of
-        Left (e :: SomeException) -> do
-            liftIO $ print ("[ERROR] revertAllegoryStateTree (Owner) " ++ show e)
-            throw e
-        Right (records) -> return ()
+    queryP cypher params
+    return ()
 
 updateAllegoryStateTrees :: Bool -> Tx -> Allegory -> BoltActionT IO ()
 updateAllegoryStateTrees confirmed tx allegory = do
@@ -289,12 +248,8 @@ updateAllegoryStateTrees confirmed tx allegory = do
                         ]
             liftIO $ print (cypher)
             liftIO $ print (params)
-            res <- LE.try $ queryP cypher params
-            case res of
-                Left (e :: SomeException) -> do
-                    liftIO $ print ("[ERROR] updateAllegoryStateTrees (Owner) " ++ show e)
-                    throw e
-                Right (records) -> return ()
+            queryP cypher params
+            return ()
         ProducerAction pin pout oout extn -> do
             let iop = prevOutput $ (txIn tx !! (index $ pin))
             let iops = append (txHashToHex $ outPointHash $ iop) $ pack (":" ++ show (outPointIndex $ iop))
@@ -448,12 +403,8 @@ updateAllegoryStateTrees confirmed tx allegory = do
                     (Prelude.concat $ snd $ unzip extensions)
             liftIO $ print (cypher)
             liftIO $ print (params)
-            res <- LE.try $ queryP cypher params
-            case res of
-                Left (e :: SomeException) -> do
-                    liftIO $ print ("[ERROR] updateAllegoryStateTrees (Prod) " ++ show e)
-                    throw e
-                Right (records) -> return ()
+            queryP cypher params
+            return ()
   where
     numrepl txt =
         Prelude.map
@@ -478,17 +429,8 @@ updateAllegoryStateTrees confirmed tx allegory = do
 
 insertMerkleSubTree :: [MerkleNode] -> [MerkleNode] -> BoltActionT IO ()
 insertMerkleSubTree leaves inodes = do
-    res <- LE.try $ queryP cypher params
-    case res of
-        Left (e :: SomeException)
-            -- liftIO $ print ("[ERROR] insertMerkleSubTree " ++ show e)
-            -- liftIO $ print (show leaves)
-            -- liftIO $ print (show inodes)
-            -- liftIO $ print (show cypher)
-            -- liftIO $ print (show params)
-         -> do
-            throw e
-        Right (records) -> return ()
+    queryP cypher params
+    return ()
   where
     lefts = Prelude.map (leftChild) inodes
     rights = Prelude.map (rightChild) inodes
@@ -586,15 +528,8 @@ insertMerkleSubTree leaves inodes = do
 
 deleteMerkleSubTree :: [MerkleNode] -> BoltActionT IO ()
 deleteMerkleSubTree inodes = do
-    res <- LE.try $ BT.query cypher
-    case res of
-        Left (e :: SomeException)
-            -- liftIO $ print ("[ERROR] deleteMerkleSubTree " ++ show e)
-            -- liftIO $ print (show inodes)
-            -- liftIO $ print (show cypher)
-         -> do
-            throw e
-        Right (records) -> return ()
+    BT.query cypher
+    return ()
   where
     nodes = Prelude.map (node) inodes
     matchTemplate = " MATCH (re:mnode)-[:PARENT*0..8]->(:mnode)<-[:PARENT*0..]-(st:mnode) WHERE re.v IN [ "
@@ -605,16 +540,11 @@ deleteMerkleSubTree inodes = do
     cypher = (pack matchTemplate) <> inMatch <> (pack deleteTemplate)
     txtTx i = txHashToHex $ TxHash $ fromJust i
 
--- Insert protocol with properties and block info
 insertProtocolWithBlockInfo :: Text -> [(Text, Text)] -> BlockPInfo -> BoltActionT IO ()
 insertProtocolWithBlockInfo name properties BlockPInfo {..} = do
     liftIO $ print $ "insertProtocolWithBlockInfo for height: " <> (pack $ show height) <> " query: " <> cypher
-    res <- LE.try $ queryP cypher params
-    case res of
-        Left (e :: SomeException) -> do
-            liftIO $ print ("[ERROR] insertProtocolWithBlockInfo " ++ show e)
-            throw e
-        Right (records) -> return ()
+    queryP cypher params
+    return ()
   where
     cypher =
         " MERGE (a: protocol { name: {name}}) ON CREATE SET " <> props <>

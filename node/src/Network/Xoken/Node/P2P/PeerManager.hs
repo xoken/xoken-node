@@ -448,9 +448,7 @@ merkleTreeBuilder tque blockHash treeHt = do
                     else do
                         liftIO $ modifyIORef' txPage (\x -> x ++ [txh])
                 res <-
-                    LE.try $
-                    liftIO $
-                    EX.retry 3 $ updateMerkleSubTrees dbe hcstate (getTxHash txh) Nothing Nothing treeHt 0 isLast
+                    LE.try $ liftIO $ updateMerkleSubTrees dbe hcstate (getTxHash txh) Nothing Nothing treeHt 0 isLast
                 case res of
                     Right (hcs) -> do
                         liftIO $ writeIORef tv hcs
@@ -459,9 +457,7 @@ merkleTreeBuilder tque blockHash treeHt = do
                      -> do
                         pres <-
                             LE.try $
-                            liftIO $
-                            EX.retry 3 $
-                            updateMerkleSubTrees dbe hcstate (getTxHash txh) Nothing Nothing treeHt 0 isLast
+                            liftIO $ updateMerkleSubTrees dbe hcstate (getTxHash txh) Nothing Nothing treeHt 0 isLast
                         case pres of
                             Left (SomeException e) -> do
                                 err lg $

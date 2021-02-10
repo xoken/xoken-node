@@ -51,7 +51,15 @@ import Network.Xoken.Node.Data
     )
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.HTTP.Types
-import Network.Xoken.Node.P2P.Common (addNewUser, generateSessionKey, getSimpleQueryParam, indexMaybe, query, write)
+import Network.Xoken.Node.P2P.Common
+    ( BlockSyncException(..)
+    , addNewUser
+    , generateSessionKey
+    , getSimpleQueryParam
+    , indexMaybe
+    , query
+    , write
+    )
 import Network.Xoken.Node.P2P.Types
 import Network.Xoken.Node.Service
 import Snap
@@ -489,9 +497,14 @@ relayTx RelayTx {..} = do
     pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     res <- LE.try $ xRelayTx rTx
     case res of
-        Left (e :: SomeException) -> do
-            modifyResponse $ setResponseStatus 500 "Internal Server Error"
-            writeBS "INTERNAL_SERVER_ERROR"
+        Left (e :: BlockSyncException) -> do
+            case e of
+                TxIDNotFoundException (txid, _) _ -> do
+                    modifyResponse $ setResponseStatus 400 "Bad Request"
+                    writeBS $ "Rejected relay: invalid parent " <> S.pack txid
+                _ -> do
+                    modifyResponse $ setResponseStatus 500 "Internal Server Error"
+                    writeBS "INTERNAL_SERVER_ERROR"
         Right ops -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespRelayTx ops
 relayTx _ = throwBadRequest
 
@@ -542,7 +555,6 @@ getPurchasedNames (GetPurchasedNames nameArray pgSize cursor) = do
             writeBS (S.pack $ show e)
         Right (names, nextCursor) -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespPurchasedNames names nextCursor
 getPurchasedNames _ = throwBadRequest
-
 
 getCurrentUser :: Handler App App ()
 getCurrentUser = do

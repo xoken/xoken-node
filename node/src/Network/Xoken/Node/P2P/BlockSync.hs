@@ -430,7 +430,9 @@ runBlockCacheQueue =
                                                                           err lg $
                                                                           LG.msg $
                                                                           "Error: Failed to insert into protocolInfo TSH (key " <>
-                                                                          (show k) <> "): " <> (show e)))
+                                                                          (show k) <>
+                                                                          "): " <>
+                                                                          (show e)))
                                                         (cmp)
                                                     let e = cmp !! 0
                                                     return (Just $ BlockInfo (fst e) (snd $ snd e))
@@ -474,8 +476,9 @@ runBlockCacheQueue =
                                              pi <- liftIO $ TSH.toList v'
                                              debug lg $
                                                  LG.msg $
-                                                 "Number of protocols for block: " <>
-                                                 show (Prelude.length pi) <> " height: " <> show ht
+                                                 "Number of protocols for block: " <> show (Prelude.length pi) <>
+                                                 " height: " <>
+                                                 show ht
                                              pres <-
                                                  liftIO $
                                                  try $ do
@@ -497,7 +500,9 @@ runBlockCacheQueue =
                                                      err lg $
                                                          LG.msg $
                                                          "Error: Failed to insert protocol with blockInfo:" <>
-                                                         (show (bsh, ht)) <> ": " <> (show e)
+                                                         (show (bsh, ht)) <>
+                                                         ": " <>
+                                                         (show e)
                                                      throw MerkleSubTreeDBInsertException
                                          Nothing -> do
                                              debug lg $
@@ -507,8 +512,8 @@ runBlockCacheQueue =
                                  (\(e :: SomeException) ->
                                       err lg $
                                       LG.msg $
-                                      "Error: Failed to insert into graph DB block " <>
-                                      (show (bsh, ht)) <> ": " <> (show e))
+                                      "Error: Failed to insert into graph DB block " <> (show (bsh, ht)) <> ": " <>
+                                      (show e))
                          --
                      )
                     compl
