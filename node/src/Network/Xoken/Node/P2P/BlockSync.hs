@@ -961,7 +961,7 @@ processConfTransaction bis tx bhash blkht txind = do
              let prevOutpoint = (txHashToHex $ outPointHash $ prevOutput o, fromIntegral $ outPointIndex $ prevOutput o)
              let spendInfo = (\ov -> ((txHashToHex txhs, fromIntegral $ fst $ ov), i, snd $ ov)) <$> ovs
              --
-             if blockHeight == 1409074
+             if blockHeight == 1409180
                  then debug lg $
                       LG.msg $
                       "<deleteInputFromUnspent> Tx: " <> (T.unpack . txHashToHex $ txhs) <> ", Input: " <>
