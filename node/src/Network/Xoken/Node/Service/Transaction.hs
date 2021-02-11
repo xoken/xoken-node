@@ -413,7 +413,7 @@ xGetMerkleBranch :: (HasXokenNodeEnv env m, MonadIO m) => String -> m ([MerkleBr
 xGetMerkleBranch txid = do
     dbe <- getDB
     lg <- getLogger
-    res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryMerkleBranch (DT.pack txid))
+    res <- liftIO $ try $ withResource' (pool $ graphDB dbe) (`BT.run` queryMerkleBranch (DT.pack txid))
     case res of
         Right mb -> do
             return $ Data.List.map (\x -> MerkleBranchNode' (DT.unpack $ fst x) (snd x)) mb

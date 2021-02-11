@@ -346,20 +346,14 @@ updateMerkleSubTrees dbe hashComp newhash left right ht ind final = do
                                 LA.race
                                     (liftIO $
                                      try $
-                                     tryWithResource (pool $ graphDB dbe) (`BT.run` insertMerkleSubTree create finMatch))
+                                     withResource' (pool $ graphDB dbe) (`BT.run` insertMerkleSubTree create finMatch))
                                     (liftIO $ threadDelay (30 * 1000000))
                             case ores of
                                 Right () -> do
                                     throw DBInsertTimeOutException
                                 Left res -> do
                                     case res of
-                                        Right rt -> do
-                                            case rt of
-                                                Just r -> do
-                                                    return (state, [])
-                                                Nothing -> do
-                                                    liftIO $ threadDelay (1000000 * 5) -- time to recover
-                                                    throw ResourcePoolFetchException
+                                        Right rt -> return (state, [])
                                         Left (e :: SomeException) -> do
                                             if T.isInfixOf (T.pack "ConstraintValidationFailed") (T.pack $ show e)
                                             -- could be a previously aborted block being reprocessed
@@ -368,7 +362,7 @@ updateMerkleSubTrees dbe hashComp newhash left right ht ind final = do
                                                     pres <-
                                                         liftIO $
                                                         try $
-                                                        tryWithResource
+                                                        withResource'
                                                             (pool $ graphDB dbe)
                                                             (`BT.run` deleteMerkleSubTree (create ++ finMatch))
                                                     case pres of
