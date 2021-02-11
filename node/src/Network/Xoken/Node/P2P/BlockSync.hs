@@ -836,6 +836,15 @@ processConfTransaction bis tx bhash blkht txind = do
     --
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": calculated fees"
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": fetched input(s): " ++ show inputs
+    -- handle allegory
+    eres <-
+        LE.try $
+        liftRetry lg 30 $ do
+            handleIfAllegoryTx tx True True
+            liftIO $ threadDelay (1000000 * 2)
+    case eres of
+        Right (flg) -> return ()
+        Left (e :: SomeException) -> err lg $ LG.msg ("Error: " ++ show e)
     --
     -- cache compile output values
     -- imp: order is (address, scriptHash, value)
@@ -1013,15 +1022,6 @@ processConfTransaction bis tx bhash blkht txind = do
             (zip segmentsData [1 ..])
     --
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": persisted in DB"
-    -- handle allegory
-    eres <-
-        LE.try $
-        liftRetry lg 30 $ do
-            handleIfAllegoryTx tx True True
-            liftIO $ threadDelay (1000000 * 2)
-    case eres of
-        Right (flg) -> return ()
-        Left (e :: SomeException) -> err lg $ LG.msg ("Error: " ++ show e)
     --
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": handled Allegory Tx"
     -- signal 'done' event for tx's that were processed out of sequence

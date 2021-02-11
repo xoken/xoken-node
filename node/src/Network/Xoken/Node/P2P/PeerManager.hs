@@ -954,8 +954,8 @@ handleIncomingMessages pr = do
              S.repeatM (readNextMessage' pr rlk) & -- read next msgs
              S.mapM (messageHandler pr) & -- handle read msgs
              S.mapM (logMessage pr) & -- log msgs & collect stats
-             S.maxBuffer 1 &
-             S.maxThreads 1)
+             S.maxBuffer 2 &
+             S.maxThreads 2)
     case res of
         Right (a) -> return ()
         Left (e :: SomeException)
