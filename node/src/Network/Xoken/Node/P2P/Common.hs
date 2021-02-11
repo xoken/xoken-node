@@ -623,3 +623,12 @@ runInBatch fn inps batch = do
         if Prelude.null next
             then return res
             else ((++) res) <$> go (take batch next) (drop batch next)
+
+withResource' :: Pool a -> (a -> IO b) -> IO b
+withResource' pool f = do
+    (resource, local) <- takeResource pool
+    res <- try $ f resource
+    putResource local resource
+    case res of
+        Right ret -> return ret
+        Left (e :: SomeException) ->  throw e
