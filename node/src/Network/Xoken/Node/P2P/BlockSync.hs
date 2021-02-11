@@ -1014,7 +1014,11 @@ processConfTransaction bis tx bhash blkht txind = do
     --
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": persisted in DB"
     -- handle allegory
-    eres <- LE.try $ handleIfAllegoryTx tx True True
+    eres <-
+        LE.try $
+        liftRetry 30 $ do
+            handleIfAllegoryTx tx True True
+            liftIO $ threadDelay (1000000 * 2)
     case eres of
         Right (flg) -> return ()
         Left (e :: SomeException) -> err lg $ LG.msg ("Error: " ++ show e)
@@ -1027,6 +1031,19 @@ processConfTransaction bis tx bhash blkht txind = do
         Just ev -> liftIO $ EV.signal ev
         Nothing -> return ()
     debug lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": end of processing signaled " ++ show bhash
+
+liftRetry :: (MonadBaseControl IO m) => Int -> m a -> m a
+liftRetry i x
+    | i <= 0 = Prelude.error "retry count must be 1 or more"
+liftRetry 1 x = x
+liftRetry i x = do
+    res <- try_ x
+    case res of
+        Left _ -> liftRetry (i - 1) x
+        Right v -> return v
+
+try_ :: (MonadBaseControl IO m) => m a -> m (Either SomeException a)
+try_ = LE.try
 
 __getSatsValueFromOutpoint ::
        XCqlClientState
