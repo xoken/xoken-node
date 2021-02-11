@@ -1244,6 +1244,10 @@ handleIfAllegoryTx tx revert confirmed = do
     let hexstr = B16.encode (scriptOutput op_return)
     if "006a0f416c6c65676f72792f416c6c506179" `L.isPrefixOf` (C.unpack hexstr)
         then do
+            debug lg $
+                LG.msg $
+                "<allegoryProcessing> Tx: " <> (T.unpack . txHashToHex . txHash $ tx) <> ", inputs: " <>
+                (show $ T.unpack . txHashToHex . outPointHash . prevOutput <$> txIn tx)
             liftIO $ print (hexstr)
             case decodeOutputScript $ scriptOutput op_return of
                 Right (script) -> do
