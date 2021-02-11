@@ -960,6 +960,18 @@ processConfTransaction bis tx bhash blkht txind = do
              let blockHeight = fromIntegral blkht
              let prevOutpoint = (txHashToHex $ outPointHash $ prevOutput o, fromIntegral $ outPointIndex $ prevOutput o)
              let spendInfo = (\ov -> ((txHashToHex txhs, fromIntegral $ fst $ ov), i, snd $ ov)) <$> ovs
+             --
+             if blockHeight == 1409074
+                 then debug lg $
+                      LG.msg $
+                      "<deleteInputFromUnspent> Tx: " <> (T.unpack . txHashToHex $ txhs) <> ", Input: " <>
+                      (show prevOutpoint) <>
+                      ", scriptHash/address: " <>
+                      (T.unpack sh) <>
+                      "/" <>
+                      (T.unpack a)
+                 else return ()
+             --
              if a == "" || sh == "" -- likely coinbase txns
                  then return ()
                  else do
