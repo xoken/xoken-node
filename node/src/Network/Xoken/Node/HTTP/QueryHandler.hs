@@ -28,7 +28,7 @@ import Network.Xoken.Node.Env
 import Network.Xoken.Node.HTTP.Handler
 import Network.Xoken.Node.HTTP.Types
 import Network.Xoken.Node.P2P.BlockSync
-import Network.Xoken.Node.P2P.Common (addNewUser, generateSessionKey, getSimpleQueryParam, query, write)
+import Network.Xoken.Node.P2P.Common (addNewUser, generateSessionKey, getSimpleQueryParam, query, write, withResource')
 import Network.Xoken.Node.P2P.Types hiding (node)
 import Network.Xoken.Node.Service
 import Prelude
@@ -472,15 +472,10 @@ queryHandler qr = do
                          (_on qr)) <>
                     (pack $ skip <> limit)
             dbe <- getDB
-            pres <- liftIO $ try $ tryWithResource (pool $ graphDB dbe) (`BT.run` resp)
+            pres <- liftIO $ try $ withResource' (pool $ graphDB dbe) (`BT.run` resp)
             case pres of
-                Right rtm ->
-                    case rtm of
-                        Just rt ->
-                            writeBS $
-                            BSL.toStrict $
-                            encode $ fmap handleProtocol $ Prelude.foldr handleResponse rt (catMaybes groupeds)
-                        Nothing -> writeBS $ BSL.toStrict $ encode rtm
+                Right rtm -> writeBS $ BSL.toStrict $
+                             encode $ fmap handleProtocol $ Prelude.foldr handleResponse rtm (catMaybes groupeds)
                 Left (e :: SomeException) -> do
                     liftIO $ print $ "Error occurred: " Prelude.++ show e
                     throwBadRequest

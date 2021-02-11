@@ -105,7 +105,7 @@ xGetAllegoryNameBranch :: (HasXokenNodeEnv env m, MonadIO m) => String -> Bool -
 xGetAllegoryNameBranch name isProducer = do
     dbe <- getDB
     lg <- getLogger
-    res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameBranch (DT.pack name) isProducer)
+    res <- liftIO $ try $ withResource' (pool $ graphDB dbe) (`BT.run` queryAllegoryNameBranch (DT.pack name) isProducer)
     case res of
         Right nb -> do
             liftIO $
@@ -118,7 +118,7 @@ xGetAllegoryNameBranch name isProducer = do
                              Just i -> do
                                  rs <-
                                      liftIO $
-                                     try $ withResource (pool $ graphDB dbe) (`BT.run` queryMerkleBranch (DT.pack txid))
+                                     try $ withResource' (pool $ graphDB dbe) (`BT.run` queryMerkleBranch (DT.pack txid))
                                  case rs of
                                      Right mb -> do
                                          let mnodes =
@@ -138,7 +138,7 @@ getProducerRoot nameArr = do
     dbe <- getDB
     lg <- getLogger
     let name = DT.pack $ L.map (\x -> chr x) (nameArr)
-    res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameScriptOp name True)
+    res <- liftIO $ try $ withResource' (pool $ graphDB dbe) (`BT.run` queryAllegoryNameScriptOp name True)
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error fetching Allegory name input: " <> show e
@@ -164,7 +164,7 @@ getOwnerRoot nameArr = do
     dbe <- getDB
     lg <- getLogger
     let name = DT.pack $ L.map (\x -> chr x) (nameArr)
-    res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryNameScriptOp name False)
+    res <- liftIO $ try $ withResource' (pool $ graphDB dbe) (`BT.run` queryAllegoryNameScriptOp name False)
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: While fetching Allegory name input: " <> show e
@@ -203,7 +203,7 @@ xGetPurchasedNames producer mbPageSize mbNextCursor = do
     let name = DT.pack $ L.map (\x -> chr x) producer
         pageSize = fromMaybe 20 mbPageSize
         cursor = fromMaybe 0 mbNextCursor
-    res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryChildren name)
+    res <- liftIO $ try $ withResource' (pool $ graphDB dbe) (`BT.run` queryAllegoryChildren name)
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: While fetching children of producer '" <> (show name) <> "': " <> (show e)
@@ -234,7 +234,7 @@ xFindNameReseller nameArr isProducer = do
             throw e
         Right op@(forName, _, _, confirmed, isProducer) -> do
             let name = DT.pack $ L.map (\x -> chr x) forName
-            res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryAllegoryVendor name isProducer)
+            res <- liftIO $ try $ withResource' (pool $ graphDB dbe) (`BT.run` queryAllegoryVendor name isProducer)
             case res of
                 Left (e :: SomeException) -> do
                     err lg $ LG.msg $ "Error: Failed to fetch vendor information for Allegory name: " <> (show e)

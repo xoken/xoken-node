@@ -485,7 +485,7 @@ runBlockCacheQueue =
                                                      runInBatch
                                                          (\(protocol, (props, blockInf)) -> do
                                                               TSH.delete v' protocol
-                                                              tryWithResource
+                                                              withResource'
                                                                   (pool $ graphDB dbe)
                                                                   (`BT.run` insertProtocolWithBlockInfo
                                                                                 protocol
@@ -1316,7 +1316,7 @@ handleIfAllegoryTx tx revert confirmed = do
             return False
   where
     resdb db fn tx al = do
-        eres <- liftIO $ try $ withResource (pool $ graphDB db) (`BT.run` fn tx al)
+        eres <- liftIO $ try $ withResource' (pool $ graphDB db) (`BT.run` fn tx al)
         case eres of
             Right () -> return True
             Left (SomeException e) -> throw e
