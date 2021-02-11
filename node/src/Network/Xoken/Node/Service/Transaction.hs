@@ -32,7 +32,7 @@ import Control.Concurrent.STM
 import Control.Concurrent.STM.TVar
 import qualified Control.Error.Util as Extra
 import Control.Exception
-import Control.Exception
+import qualified Control.Exception.Extra as EX (retry)
 import qualified Control.Exception.Lifted as LE (try)
 import Control.Monad
 import Control.Monad.Extra
@@ -413,10 +413,10 @@ xGetMerkleBranch :: (HasXokenNodeEnv env m, MonadIO m) => String -> m ([MerkleBr
 xGetMerkleBranch txid = do
     dbe <- getDB
     lg <- getLogger
-    res <- liftIO $ try $ withResource (pool $ graphDB dbe) (`BT.run` queryMerkleBranch (DT.pack txid))
+    res <- liftIO $ try $ withResource' (pool $ graphDB dbe) (`BT.run` queryMerkleBranch (DT.pack txid))
     case res of
         Right mb -> do
-            return $ Data.List.map (\x -> MerkleBranchNode' (DT.unpack $ _nodeValue x) (_isLeftNode x)) mb
+            return $ Data.List.map (\x -> MerkleBranchNode' (DT.unpack $ fst x) (snd x)) mb
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetMerkleBranch: " ++ show e
             throw KeyValueDBLookupException
@@ -491,12 +491,28 @@ xRelayTx rawTx = do
                     allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
                     let !connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
                     debug lg $ LG.msg $ val $ "transaction verified - broadcasting tx"
-                    mapM_ (\(_, peer) -> do sendRequestMessages peer (MTx (fromJust $ fst res))) connPeers
-                    processUnconfTransaction tx
-                    eres <- LE.try $ handleIfAllegoryTx tx False False -- MUST be False
-                    case eres of
-                        Right (flg) -> return True
-                        Left (e :: SomeException) -> return False
+                    ingestRes <- LE.try $ processUnconfTransaction tx
+                    case ingestRes of
+                        Left (e :: SomeException) -> do
+                            err lg $
+                                LG.msg $ "[ERROR] While processing parent(s) of unconfirmed transaction: " <> (show e)
+                            throw $ ParentProcessingException (show e)
+                        Right () -> do
+                            broadcastResult <-
+                                mapM
+                                    (\(_, peer) -> do
+                                         res <- LE.try $ sendRequestMessages peer (MTx (fromJust $ fst res))
+                                         case res of
+                                             Left (e :: SomeException) -> return False
+                                             Right () -> return True)
+                                    connPeers
+                            if all (== False) broadcastResult
+                                then throw RelayFailureException
+                                else return ()
+                            eres <- LE.try $ handleIfAllegoryTx tx False False -- MUST be False
+                            case eres of
+                                Right (flg) -> return True
+                                Left (e :: SomeException) -> return False
                 Nothing -> do
                     err lg $ LG.msg $ val $ "error decoding rawTx (2)"
                     return $ False

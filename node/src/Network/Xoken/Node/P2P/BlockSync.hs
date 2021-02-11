@@ -484,7 +484,7 @@ runBlockCacheQueue =
                                                      runInBatch
                                                          (\(protocol, (props, blockInf)) -> do
                                                               TSH.delete v' protocol
-                                                              tryWithResource
+                                                              withResource'
                                                                   (pool $ graphDB dbe)
                                                                   (`BT.run` insertProtocolWithBlockInfo
                                                                                 protocol
@@ -836,6 +836,11 @@ processConfTransaction bis tx bhash blkht txind = do
     --
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": calculated fees"
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": fetched input(s): " ++ show inputs
+    -- handle allegory
+    eres <- LE.try $ handleIfAllegoryTx tx True True
+    case eres of
+        Right (flg) -> return ()
+        Left (e :: SomeException) -> err lg $ LG.msg ("Error: " ++ show e)
     --
     -- cache compile output values
     -- imp: order is (address, scriptHash, value)
@@ -1013,11 +1018,6 @@ processConfTransaction bis tx bhash blkht txind = do
             (zip segmentsData [1 ..])
     --
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": persisted in DB"
-    -- handle allegory
-    eres <- LE.try $ handleIfAllegoryTx tx True True
-    case eres of
-        Right (flg) -> return ()
-        Left (e :: SomeException) -> err lg $ LG.msg ("Error: " ++ show e)
     --
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": handled Allegory Tx"
     -- signal 'done' event for tx's that were processed out of sequence
@@ -1252,7 +1252,7 @@ handleIfAllegoryTx tx revert confirmed = do
             return False
   where
     resdb db fn tx al = do
-        eres <- liftIO $ try $ withResource (pool $ graphDB db) (`BT.run` fn tx al)
+        eres <- liftIO $ try $ withResource' (pool $ graphDB db) (`BT.run` fn tx al)
         case eres of
             Right () -> return True
             Left (SomeException e) -> throw e

@@ -172,7 +172,7 @@ makeGraphDBResPool :: T.Text -> T.Text -> IO (ServerState)
 makeGraphDBResPool uname pwd = do
     let gdbConfig = def {BT.user = uname, BT.password = pwd}
     gdbState <- constructState gdbConfig
-    a <- withResource (pool gdbState) (`BT.run` queryGraphDBVersion)
+    a <- withResource' (pool gdbState) (`BT.run` queryGraphDBVersion)
     putStrLn $ "Connected to Neo4j database, version " ++ show (a !! 0)
     return gdbState
 
@@ -213,7 +213,12 @@ runThreads config nodeConf bp2p conn lg certPaths = do
             Snap.setSSLCert (head certPaths) &
             Snap.setSSLChainCert False
     async $ Snap.serveSnaplet snapConfig (appInit xknEnv)
-    withResource (pool $ graphDB dbh) (`BT.run` initAllegoryRoot genesisTx)
+    catch (withResource' (pool $ graphDB dbh) (`BT.run` initAllegoryRoot genesisTx)) $ \(e :: SomeException) ->
+        if "ConstraintValidationFailed" `isInfixOf` (show e)
+            then putStrLn "Allegory root previously initialised"
+            else do
+                putStrLn $ "[ERROR] initAllegoryRoot: " <> show e
+                throw e
     -- run main workers
     runAppM
         serviceEnv

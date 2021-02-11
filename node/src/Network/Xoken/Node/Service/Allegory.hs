@@ -122,9 +122,7 @@ xGetAllegoryNameBranch name isProducer = do
                                  case rs of
                                      Right mb -> do
                                          let mnodes =
-                                                 Data.List.map
-                                                     (\y -> MerkleBranchNode' (DT.unpack $ _nodeValue y) (_isLeftNode y))
-                                                     mb
+                                                 Data.List.map (\y -> MerkleBranchNode' (DT.unpack $ fst y) (snd y)) mb
                                          return $ (OutPoint' txid i, mnodes)
                                      Left (e :: SomeException) -> do
                                          err lg $ LG.msg $ "Error: xGetMerkleBranch: " ++ show e
@@ -241,4 +239,8 @@ xFindNameReseller nameArr isProducer = do
                 Left (e :: SomeException) -> do
                     err lg $ LG.msg $ "Error: Failed to fetch vendor information for Allegory name: " <> (show e)
                     throw e
-                Right (protocol, uri) -> return (forName, protocol, uri, confirmed, isProducer)
+                Right vendor -> do
+                    case (A.decode $ C.pack $ DT.unpack $ head vendor) :: Maybe Endpoint of
+                        Nothing -> throw GraphDBLookupException
+                        Just (Endpoint protocol uri) -> do
+                            return (forName, protocol, uri, confirmed, isProducer)
