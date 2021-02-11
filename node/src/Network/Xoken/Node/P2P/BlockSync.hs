@@ -1016,7 +1016,7 @@ processConfTransaction bis tx bhash blkht txind = do
     -- handle allegory
     eres <-
         LE.try $
-        liftRetry 30 $ do
+        liftRetry lg 30 $ do
             handleIfAllegoryTx tx True True
             liftIO $ threadDelay (1000000 * 2)
     case eres of
@@ -1032,14 +1032,16 @@ processConfTransaction bis tx bhash blkht txind = do
         Nothing -> return ()
     debug lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": end of processing signaled " ++ show bhash
 
-liftRetry :: (MonadBaseControl IO m) => Int -> m a -> m a
-liftRetry i x
+liftRetry :: (MonadBaseControl IO m, MonadIO m) => Logger -> Int -> m a -> m a
+liftRetry lg i x
     | i <= 0 = Prelude.error "retry count must be 1 or more"
-liftRetry 1 x = x
-liftRetry i x = do
+liftRetry lg 1 x = x
+liftRetry lg i x = do
     res :: (Either SomeException a) <- LE.try x
     case res of
-        Left _ -> liftRetry (i - 1) x
+        Left e -> do
+            err lg $ LG.msg $ "[ERROR] Failed attempt: " <> (show e) <> ", retrying " <> (show i)
+            liftRetry lg (i - 1) x
         Right v -> return v
 
 __getSatsValueFromOutpoint ::
