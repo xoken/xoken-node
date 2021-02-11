@@ -837,11 +837,7 @@ processConfTransaction bis tx bhash blkht txind = do
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": calculated fees"
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": fetched input(s): " ++ show inputs
     -- handle allegory
-    eres <-
-        LE.try $
-        liftRetry lg 30 $ do
-            handleIfAllegoryTx tx True True
-            liftIO $ threadDelay (1000000 * 2)
+    eres <- LE.try $ handleIfAllegoryTx tx True True
     case eres of
         Right (flg) -> return ()
         Left (e :: SomeException) -> err lg $ LG.msg ("Error: " ++ show e)
@@ -1031,18 +1027,6 @@ processConfTransaction bis tx bhash blkht txind = do
         Just ev -> liftIO $ EV.signal ev
         Nothing -> return ()
     debug lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": end of processing signaled " ++ show bhash
-
-liftRetry :: (MonadBaseControl IO m, MonadIO m) => Logger -> Int -> m a -> m a
-liftRetry lg i x
-    | i <= 0 = Prelude.error "retry count must be 1 or more"
-liftRetry lg 1 x = x
-liftRetry lg i x = do
-    res :: (Either SomeException a) <- LE.try x
-    case res of
-        Left e -> do
-            err lg $ LG.msg $ "[ERROR] Failed attempt: " <> (show e) <> ", retrying " <> (show i)
-            liftRetry lg (i - 1) x
-        Right v -> return v
 
 __getSatsValueFromOutpoint ::
        XCqlClientState
@@ -1244,10 +1228,6 @@ handleIfAllegoryTx tx revert confirmed = do
     let hexstr = B16.encode (scriptOutput op_return)
     if "006a0f416c6c65676f72792f416c6c506179" `L.isPrefixOf` (C.unpack hexstr)
         then do
-            debug lg $
-                LG.msg $
-                "<allegoryProcessing> Tx: " <> (T.unpack . txHashToHex . txHash $ tx) <> ", inputs: " <>
-                (show $ T.unpack . txHashToHex . outPointHash . prevOutput <$> txIn tx)
             liftIO $ print (hexstr)
             case decodeOutputScript $ scriptOutput op_return of
                 Right (script) -> do
