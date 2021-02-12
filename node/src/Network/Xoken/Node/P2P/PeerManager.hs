@@ -944,7 +944,7 @@ handleIncomingMessages pr = do
         LA.concurrently_
             (peerBlockSync pr) -- issue GetData msgs
             (S.drain $
-             S.asyncly $
+             S.serially $
              S.repeatM (readNextMessage' pr rlk) & -- read next msgs
              S.mapM (messageHandler pr) & -- handle read msgs
              S.mapM (logMessage pr) & -- log msgs & collect stats
