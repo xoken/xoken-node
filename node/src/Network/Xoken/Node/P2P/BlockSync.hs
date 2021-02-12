@@ -937,7 +937,6 @@ processConfTransaction bis tx bhash blkht txind = do
                      case v of
                          Just v' -> liftIO $ TSH.mutate v' (T.intercalate "_" protocol) fn
                          Nothing -> debug lg $ LG.msg $ "No ProtocolInfo Available for: " ++ show bhash
-             insertTxIdOutputs conn output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o)
              commitScriptHashOutputs
                  conn --
                  sh -- scriptHash
@@ -951,7 +950,8 @@ processConfTransaction bis tx bhash blkht txind = do
                              commitScriptHashOutputs conn a output bi
                              commitScriptHashUnspentOutputs conn a output
                          else return ()
-                 (Left e) -> return ())
+                 (Left e) -> return ()
+             insertTxIdOutputs conn output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o))
         outAddrs
     debug lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": committed scripthash,txid_outputs tables"
     mapM_
@@ -960,18 +960,6 @@ processConfTransaction bis tx bhash blkht txind = do
              let blockHeight = fromIntegral blkht
              let prevOutpoint = (txHashToHex $ outPointHash $ prevOutput o, fromIntegral $ outPointIndex $ prevOutput o)
              let spendInfo = (\ov -> ((txHashToHex txhs, fromIntegral $ fst $ ov), i, snd $ ov)) <$> ovs
-             --
-             if blockHeight == 1409180
-                 then debug lg $
-                      LG.msg $
-                      "<deleteInputFromUnspent> Tx: " <> (T.unpack . txHashToHex $ txhs) <> ", Input: " <>
-                      (show prevOutpoint) <>
-                      ", scriptHash/address: " <>
-                      (T.unpack sh) <>
-                      "/" <>
-                      (T.unpack a)
-                 else return ()
-             --
              if a == "" || sh == "" -- likely coinbase txns
                  then return ()
                  else do
