@@ -822,7 +822,7 @@ processTxBatch txns iss = do
                          (show $ biBlockHash bf) ++ ", tx-index: " ++ show (binTxIngested bi))
                 else do
                     S.drain $
-                        aheadly $
+                        serially $
                         (do let start = (binTxIngested bi) - (L.length txns)
                                 end = (binTxIngested bi) - 1
                             S.fromList $ zip [start .. end] [0 ..]) &
