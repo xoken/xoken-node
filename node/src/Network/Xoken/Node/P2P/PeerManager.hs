@@ -303,6 +303,7 @@ pushHash (stateMap, res) nhash left right ht ind final =
 
 updateMerkleSubTrees ::
        DatabaseHandles
+    -> Logger
     -> HashCompute
     -> Hash256
     -> Maybe Hash256
@@ -311,7 +312,7 @@ updateMerkleSubTrees ::
     -> Int8
     -> Bool
     -> IO (HashCompute)
-updateMerkleSubTrees dbe hashComp newhash left right ht ind final = do
+updateMerkleSubTrees dbe lg hashComp newhash left right ht ind final = do
     eres <- try $ return $ pushHash hashComp newhash left right ht ind final
     case eres of
         Left MerkleTreeInvalidException -> do
@@ -367,10 +368,16 @@ updateMerkleSubTrees dbe hashComp newhash left right ht ind final = do
                                                             (`BT.run` deleteMerkleSubTree (create ++ finMatch))
                                                     case pres of
                                                         Right rt -> throw MerkleSubTreeAlreadyExistsException -- attempt new insert
-                                                        Left (e :: SomeException) ->
+                                                        Left (e :: SomeException) -> do
+                                                            err lg $
+                                                                LG.msg $
+                                                                "Error: MerkleSubTreeDBInsertException (1): " <> (show e)
                                                             throw MerkleSubTreeDBInsertException
                                                 else do
                                                     liftIO $ threadDelay (1000000 * 5) -- time to recover
+                                                    err lg $
+                                                        LG.msg $
+                                                        "Error: MerkleSubTreeDBInsertException (2): " <> (show e)
                                                     throw MerkleSubTreeDBInsertException
                 else return (state, res)
                     -- else block --
@@ -442,7 +449,7 @@ merkleTreeBuilder tque blockHash treeHt = do
                     else do
                         liftIO $ modifyIORef' txPage (\x -> x ++ [txh])
                 res <-
-                    LE.try $ liftIO $ updateMerkleSubTrees dbe hcstate (getTxHash txh) Nothing Nothing treeHt 0 isLast
+                    LE.try $ liftIO $ updateMerkleSubTrees dbe lg hcstate (getTxHash txh) Nothing Nothing treeHt 0 isLast
                 case res of
                     Right (hcs) -> do
                         liftIO $ writeIORef tv hcs
@@ -451,7 +458,7 @@ merkleTreeBuilder tque blockHash treeHt = do
                      -> do
                         pres <-
                             LE.try $
-                            liftIO $ updateMerkleSubTrees dbe hcstate (getTxHash txh) Nothing Nothing treeHt 0 isLast
+                            liftIO $ updateMerkleSubTrees dbe lg hcstate (getTxHash txh) Nothing Nothing treeHt 0 isLast
                         case pres of
                             Left (SomeException e) -> do
                                 err lg $
