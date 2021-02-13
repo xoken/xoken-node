@@ -90,6 +90,7 @@ import Data.Word (Word32)
 import Data.Word
 import qualified Database.Bolt as BT
 import qualified Database.XCQL.Protocol as Q
+import qualified Database.CQL.FFI.Xoken as Q
 import Network.Simple.TCP
 import Network.Socket
 import Network.Xoken.Node.AriviService
@@ -178,6 +179,7 @@ makeGraphDBResPool uname pwd = do
 
 initXCql :: NC.NodeConfig -> IO (XCqlClientState)
 initXCql nodeConf = do
+    cinit <- Q.cassInit
     let hints = defaultHints {addrFlags = [AI_NUMERICHOST, AI_NUMERICSERV], addrSocketType = Stream}
         startCql :: Q.Request k () ()
         startCql = Q.RqStartup $ Q.Startup Q.Cqlv300 (Q.algorithm Q.noCompression) --(Q.CqlVersion "3.4.4") Q.None
@@ -234,6 +236,7 @@ runThreads config nodeConf bp2p conn lg certPaths = do
                                             _ <- LA.wait z
                                             return ())
     liftIO $ destroyAllResources $ pool gdbState
+    liftIO $ Q.cassFree
     liftIO $ putStrLn $ "node recovering from fatal DB connection failure!"
     return ()
 

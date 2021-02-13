@@ -77,6 +77,7 @@ import Data.Time.Clock.POSIX
 import Data.Word
 import qualified Database.Bolt as BT
 import Database.XCQL.Protocol as Q
+import qualified Database.CQL.FFI.Xoken as Q
 import qualified ListT as LT
 import qualified Network.Socket as NS
 import qualified Network.Socket.ByteString as SB (recv)
@@ -602,6 +603,11 @@ fetchBestSyncedBlock conn net = do
                                 Nothing -> throw InvalidBlockHashException
                         Nothing -> throw InvalidMetaDataException
 
+commitScriptHashOutputs' :: Text -> (Text, Int32) -> (Text,Int32,Int32) -> IO ()
+commitScriptHashOutputs' sh (oh,oi) (_,bh,ti) = do
+    Q.insertScriptHashOutput (T.unpack sh) (fromIntegral bh * 1000000000 + fromIntegral ti) (T.unpack oh) oi
+    return ()
+
 commitScriptHashOutputs ::
        (HasLogger m, MonadIO m) => XCqlClientState -> Text -> (Text, Int32) -> (Text, Int32, Int32) -> m ()
 commitScriptHashOutputs conn sh output blockInfo = do
@@ -620,6 +626,11 @@ commitScriptHashOutputs conn sh output blockInfo = do
             err lg $ LG.msg $ "Error: INSERTing into 'script_hash_outputs': " ++ show e
             throw KeyValueDBInsertException
 
+commitScriptHashUnspentOutputs' :: Text -> (Text, Int32) -> IO ()
+commitScriptHashUnspentOutputs' sh (oh,oi) = do
+    Q.insertScriptHashUnspentOutput (T.unpack sh) (T.unpack oh) oi
+    return ()
+
 commitScriptHashUnspentOutputs :: (HasLogger m, MonadIO m) => XCqlClientState -> Text -> (Text, Int32) -> m ()
 commitScriptHashUnspentOutputs conn sh output = do
     lg <- getLogger
@@ -634,6 +645,11 @@ commitScriptHashUnspentOutputs conn sh output = do
             err lg $ LG.msg $ "Error: INSERTing into 'script_hash_unspent_outputs': " ++ show e
             throw KeyValueDBInsertException
 
+deleteScriptHashUnspentOutputs' :: Text -> (Text, Int32) -> IO ()
+deleteScriptHashUnspentOutputs' sh (oh,oi) = do
+    Q.deleteScriptHashUnspentOutput (T.unpack sh) (T.unpack oh) oi
+    return ()
+
 deleteScriptHashUnspentOutputs :: (HasLogger m, MonadIO m) => XCqlClientState -> Text -> (Text, Int32) -> m ()
 deleteScriptHashUnspentOutputs conn sh output = do
     lg <- getLogger
@@ -647,6 +663,29 @@ deleteScriptHashUnspentOutputs conn sh output = do
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: DELETE'ing from 'script_hash_unspent_outputs': " ++ show e
             throw e
+
+insertTxIdOutputs'
+    :: (Text, Int32)
+    -> Text
+    -> Text
+    -> Bool
+    -> (Text, Int32, Int32)
+    -> [((Text, Int32), Int32, (Text, Int64))]
+    -> Int64
+    -> IO ()
+insertTxIdOutputs' (txid, outputIndex) address scriptHash isRecv (bi0, bi1, bi2) other value = do
+    i <- Q.insertTxIdOutputs
+            (T.unpack txid)
+            outputIndex
+            (T.unpack address)
+            (T.unpack scriptHash)
+            isRecv
+            (T.unpack bi0)
+            bi1
+            bi2
+            (fmap (\((a,b),c,(d,e)) -> ((T.unpack a,b),c,(T.unpack d,e))) other)
+            value
+    return ()
 
 insertTxIdOutputs ::
        (HasLogger m, MonadIO m)
@@ -710,6 +749,7 @@ processConfTransaction bis tx bhash blkht txind = do
     bp2pEnv <- getBitcoinP2P
     lg <- getLogger
     let !txhs = txHash tx
+        !txhex = txHashToHex txhs
     let net = bitcoinNetwork $ nodeConfig bp2pEnv
         conn = xCqlClientState dbe'
     debug lg $ LG.msg $ "processing Tx " ++ show (txhs)
@@ -728,9 +768,10 @@ processConfTransaction bis tx bhash blkht txind = do
                 [0 :: Int32 ..]
     --
     -- lookup into tx outputs value cache if cache-miss, fetch from DB
-    inputs <-
+    !inputs <-
         mapM
             (\(b, j) -> do
+                 let prevHex = txHashToHex $ outPointHash $ prevOutput b
                  tuple <- return Nothing
                     --  liftIO $
                     --  TSH.lookup
@@ -773,9 +814,9 @@ processConfTransaction bis tx bhash blkht txind = do
                                                      err lg $
                                                          LG.msg $
                                                          "Error: [pCT calling gSVFO] WHILE Processing TxID " ++
-                                                         show (txHashToHex txhs) ++
+                                                         show (txhex) ++
                                                          ", getting value for dependent input (TxID,Index): (" ++
-                                                         show (txHashToHex $ outPointHash (prevOutput b)) ++
+                                                         show prevHex ++
                                                          ", " ++ show (outPointIndex $ prevOutput b) ++ ")"
                                                      throw e
                          Nothing -> do
@@ -788,7 +829,7 @@ processConfTransaction bis tx bhash blkht txind = do
                                          LG.msg $
                                          " outputindex: " ++
                                          show
-                                             ( txHashToHex $ outPointHash $ prevOutput b
+                                             ( prevHex
                                              , fromIntegral $ outPointIndex $ prevOutput b)
                                      dbRes <-
                                          liftIO $
@@ -810,13 +851,13 @@ processConfTransaction bis tx bhash blkht txind = do
                                              err lg $
                                                  LG.msg $
                                                  "Error: [pCT calling gSVFO] WHILE Processing TxID " ++
-                                                 show (txHashToHex txhs) ++
+                                                 show (txhex) ++
                                                  ", getting value for dependent input (TxID,Index): (" ++
-                                                 show (txHashToHex $ outPointHash (prevOutput b)) ++
+                                                 show prevHex ++
                                                  ", " ++ show (outPointIndex $ prevOutput b) ++ ")"
                                              throw e
                  return
-                     ((txHashToHex $ outPointHash $ prevOutput b, fromIntegral $ outPointIndex $ prevOutput b), j, val))
+                     ((prevHex, fromIntegral $ outPointIndex $ prevOutput b), j, val))
             inAddrs
     -- calculate Tx fees
     let ipSum = foldl (+) 0 $ (\(_, _, (_, _, val)) -> val) <$> inputs
@@ -844,13 +885,13 @@ processConfTransaction bis tx bhash blkht txind = do
     --
     -- cache compile output values
     -- imp: order is (address, scriptHash, value)
-    let ovs =
-            map
-                (\(a, o, i) ->
-                     ( fromIntegral $ i
-                     , (a, (txHashToHex $ TxHash $ sha256 (scriptOutput o)), fromIntegral $ outValue o)))
-                outAddrs
-    trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": compiled output value(s): " ++ (show ovs)
+    --let ovs =
+    --        map
+    --            (\(a, o, i) ->
+    --                 ( fromIntegral $ i
+    --                 , (a, (txHashToHex $ TxHash $ sha256 (scriptOutput o)), fromIntegral $ outValue o)))
+    --            outAddrs
+    --trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": compiled output value(s): " ++ (show ovs)
     -- liftIO $
     --     TSH.insert
     --         (txOutputValuesCache bp2pEnv)
@@ -858,11 +899,11 @@ processConfTransaction bis tx bhash blkht txind = do
     --         (txHash tx, ovs)
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": added outputvals to cache"
     -- update outputs and scripthash tables
-    mapM_
+    ovs <- mapM
         (\(a, o, i) -> do
-             let sh = txHashToHex $ TxHash $ sha256 (scriptOutput o)
+             let !sh = txHashToHex $ TxHash $ sha256 (scriptOutput o)
              let bi = (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
-             let output = (txHashToHex txhs, i)
+             let output = (txhex, i)
              let bsh = B16.encode $ scriptOutput o
              let (op, rem) = B.splitAt 2 bsh
              let (op_false, op_return, remD) =
@@ -931,42 +972,54 @@ processConfTransaction bis tx bhash blkht txind = do
                          prot = tail $ L.inits protocol
                      mapM_
                          (\p ->
-                              commitScriptOutputProtocol conn (T.intercalate "." p) output bi fees (fromIntegral count))
+                              liftIO $ commitScriptOutputProtocol' (T.intercalate "." p) output bi fees (fromIntegral count))
+                              --commitScriptOutputProtocol conn (T.intercalate "." p) output bi fees (fromIntegral count))
                          prot
                      v <- liftIO $ TSH.lookup (protocolInfo bp2pEnv) bhash
                      case v of
                          Just v' -> liftIO $ TSH.mutate v' (T.intercalate "_" protocol) fn
                          Nothing -> debug lg $ LG.msg $ "No ProtocolInfo Available for: " ++ show bhash
-             commitScriptHashOutputs
-                 conn --
-                 sh -- scriptHash
-                 output
-                 bi
-             commitScriptHashUnspentOutputs conn sh output
+             liftIO $ insertTxIdOutputs' output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o)
+             --insertTxIdOutputs conn output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o)
+             --commitScriptHashOutputs
+             --    conn --
+             --    sh -- scriptHash
+             --    output
+             --    bi
+             --commitScriptHashUnspentOutputs conn sh output
+             liftIO $ commitScriptHashOutputs' sh output bi
+             liftIO $ commitScriptHashUnspentOutputs' sh output
              case decodeOutputBS $ scriptOutput o of
                  (Right so) ->
                      if isPayPK so
                          then do
-                             commitScriptHashOutputs conn a output bi
-                             commitScriptHashUnspentOutputs conn a output
+                             liftIO $ commitScriptHashOutputs' a output bi
+                             liftIO $ commitScriptHashUnspentOutputs' a output
+                             --commitScriptHashOutputs conn a output bi
+                             --commitScriptHashUnspentOutputs conn a output
                          else return ()
                  (Left e) -> return ()
              insertTxIdOutputs conn output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o))
+             return (fromIntegral $ i, (a, sh, fromIntegral $ outValue o)))
         outAddrs
     debug lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": committed scripthash,txid_outputs tables"
     mapM_
-        (\((o, i), (a, sh)) -> do
+        (\((o, i), (prevHex ,a, sh)) -> do
              let bi = (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
              let blockHeight = fromIntegral blkht
-             let prevOutpoint = (txHashToHex $ outPointHash $ prevOutput o, fromIntegral $ outPointIndex $ prevOutput o)
-             let spendInfo = (\ov -> ((txHashToHex txhs, fromIntegral $ fst $ ov), i, snd $ ov)) <$> ovs
+             --let prevOutpoint = (txHashToHex $ outPointHash $ prevOutput o, fromIntegral $ outPointIndex $ prevOutput o)
+             let prevOutpoint = (prevHex, fromIntegral $ outPointIndex $ prevOutput o)
+             let spendInfo = (\ov -> ((txhex, fromIntegral $ fst $ ov), i, snd $ ov)) <$> ovs
              if a == "" || sh == "" -- likely coinbase txns
                  then return ()
                  else do
-                     insertTxIdOutputs conn prevOutpoint a sh False bi (stripScriptHash <$> spendInfo) 0
-                     deleteScriptHashUnspentOutputs conn sh prevOutpoint
-                     deleteScriptHashUnspentOutputs conn a prevOutpoint)
-        (zip (inAddrs) (map (\x -> (fst3 $ thd3 x, snd3 $ thd3 $ x)) inputs))
+                     liftIO $ insertTxIdOutputs' prevOutpoint a sh False bi (stripScriptHash <$> spendInfo) 0
+                     --insertTxIdOutputs conn prevOutpoint a sh False bi (stripScriptHash <$> spendInfo) 0
+                     liftIO $ deleteScriptHashUnspentOutputs' sh prevOutpoint
+                     liftIO $ deleteScriptHashUnspentOutputs' a prevOutpoint)
+                     --deleteScriptHashUnspentOutputs conn sh prevOutpoint
+                     --deleteScriptHashUnspentOutputs conn a prevOutpoint)
+        (zip (inAddrs) (map (\x -> (fst $ fst3 x,fst3 $ thd3 x, snd3 $ thd3 $ x)) inputs))
     --
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": updated spend info for inputs"
     -- persist tx
@@ -983,37 +1036,51 @@ processConfTransaction bis tx bhash blkht txind = do
             if segments > 1
                 then (LC.replicate 32 'f') <> (BSL.fromStrict $ DTE.encodeUtf8 $ T.pack $ show $ segments)
                 else serbs
-    let par =
-            getSimpleQueryParam
-                ( txHashToHex txhs
-                , (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
-                , Blob fst
-                , (stripScriptHash <$> inputs)
-                , fees)
-    queryI <- liftIO $ queryPrepared conn (Q.RqPrepare $ Q.Prepare qstr)
-    res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryI par)
+    res <- liftIO $ Q.insertTx (T.unpack $ txhex) 
+                        (T.unpack $ blockHashToHex bhash)
+                        (fromIntegral blkht)
+                        (fromIntegral txind)
+                        fst
+                        (fmap ((\((a,b),c,(d,e)) -> ((T.unpack a,b),c,(T.unpack d,e))) . stripScriptHash) inputs)
+                        fees
+    --let par =
+    --        getSimpleQueryParam
+    --            ( txhex
+    --            , (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
+    --            , Blob fst
+    --            , (stripScriptHash <$> inputs)
+    --            , fees)
+    --queryI <- liftIO $ queryPrepared conn (Q.RqPrepare $ Q.Prepare qstr)
+    --res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryI par)
     case res of
-        Right _ -> return ()
-        Left (e :: SomeException) -> do
-            liftIO $ err lg $ LG.msg ("Error: INSERTing into 'xoken.transactions': " ++ show e)
+        0 -> return ()
+        _ -> do
+            liftIO $ err lg $ LG.msg $ val ("Error: INSERTing into 'xoken.transactions'")
             throw KeyValueDBInsertException
     when (segments > 1) $ do
         let segmentsData = chunksOf (smb 1) serbs
         mapM_
             (\(seg, i) -> do
-                 let par =
-                         getSimpleQueryParam
-                             ( (txHashToHex txhs) <> (T.pack $ show i)
-                             , (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
-                             , Blob seg
-                             , []
-                             , fees)
-                 queryI <- liftIO $ queryPrepared conn (Q.RqPrepare $ Q.Prepare qstr)
-                 res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryI par)
+                 --let par =
+                 --        getSimpleQueryParam
+                 --            ( (txhex) <> (T.pack $ show i)
+                 --            , (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
+                 --            , Blob seg
+                 --            , []
+                 --            , fees)
+                 --queryI <- liftIO $ queryPrepared conn (Q.RqPrepare $ Q.Prepare qstr)
+                 --res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryI par)
+                 res <- liftIO $ Q.insertTx ((T.unpack $ txhex) ++ show i) 
+                                    (T.unpack $ blockHashToHex bhash)
+                                    (fromIntegral blkht)
+                                    (fromIntegral txind)
+                                    seg
+                                    []
+                                    fees
                  case res of
-                     Right _ -> return ()
-                     Left (e :: SomeException) -> do
-                         liftIO $ err lg $ LG.msg ("Error: INSERTing into 'xoken.transactions': " ++ show e)
+                     0 -> return ()
+                     _ -> do
+                         liftIO $ err lg $ LG.msg $ val ("Error: INSERTing into 'xoken.transactions'")
                          throw KeyValueDBInsertException)
             (zip segmentsData [1 ..])
     --
@@ -1027,7 +1094,7 @@ processConfTransaction bis tx bhash blkht txind = do
         Just ev -> liftIO $ EV.signal ev
         Nothing -> return ()
     debug lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": end of processing signaled " ++ show bhash
-
+{-
 __getSatsValueFromOutpoint ::
        XCqlClientState
     -> TSH.TSHashTable TxHash EV.Event
@@ -1087,7 +1154,7 @@ __getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait = do
                 "Error: getSatsValueFromOutpoint (txid: " ++
                 (show $ txHashToHex $ outPointHash outPoint) ++ "): " ++ show e
             throw e
-
+-}
 --
 --
 getSatsValueFromOutpoint ::
@@ -1100,48 +1167,45 @@ getSatsValueFromOutpoint ::
     -> Int
     -> IO ((Text, Text, Int64))
 getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait = do
-    let qstr :: Q.QueryString Q.R (Text, Int32, Bool) (Text, Text, Int64)
-        qstr =
-            "SELECT address, script_hash, value FROM xoken.txid_outputs WHERE txid=? AND output_index=? AND is_recv=?"
-        par = getSimpleQueryParam (txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint, True)
-    res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
+    --let qstr :: Q.QueryString Q.R (Text, Int32) (Text, Text, Int64)
+    --    qstr = "SELECT address, script_hash, value FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
+    --    par = getSimpleQueryParam (txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint)
+    --res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
+    let !txHex = txHashToHex $ outPointHash outPoint
+    res <- liftIO $ try $ Q.selectTxIdOutputs (T.unpack $ txHex) (fromIntegral $ outPointIndex outPoint)
     case res of
-        Right results -> do
-            if L.length results == 0
-                then do
-                    debug lg $
-                        LG.msg $
-                        "Tx not found: " ++ (show $ txHashToHex $ outPointHash outPoint) ++ " _waiting_ for event"
-                    valx <- liftIO $ TSH.lookup txSync (outPointHash outPoint)
-                    event <-
-                        case valx of
-                            Just evt -> return evt
-                            Nothing -> EV.new
-                    liftIO $ TSH.insert txSync (outPointHash outPoint) event
-                    tofl <- waitTimeout event (1000000 * (fromIntegral wait))
-                    if tofl == False
-                        then if ((2 * wait) < maxWait)
-                                 then do
-                                     getSatsValueFromOutpoint conn txSync lg net outPoint (2 * wait) maxWait
-                                 else do
-                                     liftIO $ TSH.delete txSync (outPointHash outPoint)
-                                     debug lg $
-                                         LG.msg $
-                                         "TxIDNotFoundException: While querying txid_outputs for (TxID, Index): " ++
-                                         (show $ txHashToHex $ outPointHash outPoint) ++
-                                         ", " ++ show (outPointIndex outPoint) ++ ")"
-                                     throw $
-                                         TxIDNotFoundException
-                                             ( show $ txHashToHex $ outPointHash outPoint
-                                             , Just $ fromIntegral $ outPointIndex outPoint)
-                                             "getSatsValueFromOutpoint"
-                        else do
-                            debug lg $
-                                LG.msg $ "event received _available_: " ++ (show $ txHashToHex $ outPointHash outPoint)
-                            getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait
+        Right Nothing -> do
+            debug lg $
+                LG.msg $
+                "Tx not found: " ++ (show $ txHex) ++ " _waiting_ for event"
+            valx <- liftIO $ TSH.lookup txSync (outPointHash outPoint)
+            event <-
+                case valx of
+                    Just evt -> return evt
+                    Nothing -> EV.new
+            liftIO $ TSH.insert txSync (outPointHash outPoint) event
+            tofl <- waitTimeout event (1000000 * (fromIntegral wait))
+            if tofl == False
+                then if ((2 * wait) < maxWait)
+                            then do
+                                getSatsValueFromOutpoint conn txSync lg net outPoint (2 * wait) maxWait
+                            else do
+                                liftIO $ TSH.delete txSync (outPointHash outPoint)
+                                debug lg $
+                                    LG.msg $
+                                    "TxIDNotFoundException: While querying txid_outputs for (TxID, Index): " ++
+                                    (show $ txHex) ++
+                                    ", " ++ show (outPointIndex outPoint) ++ ")"
+                                throw $
+                                    TxIDNotFoundException
+                                        ( show $ txHex
+                                        , Just $ fromIntegral $ outPointIndex outPoint)
+                                        "getSatsValueFromOutpoint"
                 else do
-                    let (addr, scriptHash, val) = head $ results
-                    return $ (addr, scriptHash, val)
+                    debug lg $
+                        LG.msg $ "event received _available_: " ++ (show $ txHex)
+                    getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait
+        Right (Just (addr, scriptHash, val)) -> return (T.pack addr, T.pack scriptHash, val)
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: getSatsValueFromOutpoint: " ++ show e
             throw e
@@ -1150,9 +1214,10 @@ getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait = do
 getScriptHashFromOutpoint ::
        XCqlClientState -> TSH.TSHashTable TxHash EV.Event -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Text)
 getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs = do
-    let str = "SELECT tx_serialized from xoken.transactions where tx_id = ?"
+    let !txHex = txHashToHex $ outPointHash outPoint
+        str = "SELECT tx_serialized from xoken.transactions where tx_id = ?"
         qstr = str :: Q.QueryString Q.R (Identity Text) (Identity Blob)
-        p = getSimpleQueryParam $ Identity $ txHashToHex $ outPointHash outPoint
+        p = getSimpleQueryParam $ Identity $ txHex
     res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr p)
     case res of
         Left (e :: SomeException) -> do
@@ -1162,7 +1227,7 @@ getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs = do
             if L.length iop == 0
                 then do
                     debug lg $
-                        LG.msg ("TxID not found: (waiting for event) " ++ (show $ txHashToHex $ outPointHash outPoint))
+                        LG.msg ("TxID not found: (waiting for event) " ++ (show txHex))
                     --
                     -- tmap <- liftIO $ takeMVar (txSync)
                     valx <- liftIO $ TSH.lookup txSync (outPointHash outPoint)
@@ -1178,10 +1243,10 @@ getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs = do
                             -- liftIO $ putMVar (txSync) (M.delete (outPointHash outPoint) tmap)
                         then do
                             liftIO $ TSH.delete txSync (outPointHash outPoint)
-                            debug lg $ LG.msg ("TxIDNotFoundException" ++ (show $ txHashToHex $ outPointHash outPoint))
+                            debug lg $ LG.msg ("TxIDNotFoundException" ++ (show txHex))
                             throw $
                                 TxIDNotFoundException
-                                    ( show $ txHashToHex $ outPointHash outPoint
+                                    ( show $ txHex
                                     , Just $ fromIntegral $ outPointIndex outPoint)
                                     "getScriptHashFromOutpoint"
                         else getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs -- if being signalled, try again to success
@@ -1194,7 +1259,7 @@ getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs = do
                             then liftIO $
                                  getCompleteTx
                                      conn
-                                     (txHashToHex $ outPointHash outPoint)
+                                     txHex
                                      (getSegmentCount (fromBlob txbyt))
                             else pure $ fromBlob txbyt
                     case runGetLazy (getConfirmedTx) ctxbyt of
@@ -1256,6 +1321,11 @@ handleIfAllegoryTx tx revert confirmed = do
         case eres of
             Right () -> return True
             Left (SomeException e) -> throw e
+
+commitScriptOutputProtocol' :: Text -> (Text, Int32) -> (Text, Int32, Int32) -> Int64 -> Int32 -> IO ()
+commitScriptOutputProtocol' protocol (txid, oind) (_,bh,tind) fees size = do
+    Q.insertScriptOutputProtocol (T.unpack protocol) (T.unpack txid) oind fees size $ fromIntegral bh * 1000000000 + fromIntegral tind
+    return ()
 
 commitScriptOutputProtocol ::
        (HasLogger m, MonadIO m)
