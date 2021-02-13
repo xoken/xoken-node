@@ -367,9 +367,15 @@ updateMerkleSubTrees dbe hashComp newhash left right ht ind final = do
                                                             (`BT.run` deleteMerkleSubTree (create ++ finMatch))
                                                     case pres of
                                                         Right rt -> throw MerkleSubTreeAlreadyExistsException -- attempt new insert
-                                                        Left (e :: SomeException) ->
+                                                        Left (e :: SomeException) -> do
+                                                            err lg $
+                                                                LG.msg $
+                                                                "Error: MerkleSubTreeDBInsertException (1): " <> (show e)
                                                             throw MerkleSubTreeDBInsertException
                                                 else do
+                                                    err lg $
+                                                        LG.msg $
+                                                        "Error: MerkleSubTreeDBInsertException (2): " <> (show e)
                                                     liftIO $ threadDelay (1000000 * 5) -- time to recover
                                                     throw MerkleSubTreeDBInsertException
                 else return (state, res)

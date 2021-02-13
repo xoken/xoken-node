@@ -30,7 +30,7 @@ extra-deps:
   - focus-1
   - tinylog-0.15.0
   - streamly-0.7.0
-  - hasbolt-0.1.4.4
+  - hasbolt-0.1.4.3
   - resource-pool-0.2.3.2
   - hashtables-1.2.3.4
   - yaml-0.11.1.2
