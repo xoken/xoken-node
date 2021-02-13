@@ -475,7 +475,7 @@ queryHandler qr = do
             pres <- liftIO $ try $ withResource' (pool $ graphDB dbe) (`BT.run` resp)
             case pres of
                 Right rtm -> writeBS $ BSL.toStrict $
-                             encode $ fmap handleProtocol $ Prelude.foldr handleResponse rtm (catMaybes groupeds)
+                                encode $ fmap handleProtocol $ Prelude.foldr handleResponse rtm (catMaybes groupeds)
                 Left (e :: SomeException) -> do
                     liftIO $ print $ "Error occurred: " Prelude.++ show e
                     throwBadRequest
