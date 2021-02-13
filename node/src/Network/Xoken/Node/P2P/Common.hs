@@ -628,5 +628,5 @@ withResource' pool f = do
     res <- try $ f resource
     putResource local resource
     case res of
-        Right ret -> print ("withResource' returned") >> return ret
-        Left (e :: SomeException) -> print ("withResource' threw : " ++ show e) >> throw e
+        Right ret -> return ret
+        Left (e :: SomeException) -> throw e
