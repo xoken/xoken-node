@@ -603,10 +603,14 @@ fetchBestSyncedBlock conn net = do
                                 Nothing -> throw InvalidBlockHashException
                         Nothing -> throw InvalidMetaDataException
 
-commitScriptHashOutputs' :: Text -> (Text, Int32) -> (Text,Int32,Int32) -> IO ()
-commitScriptHashOutputs' sh (oh,oi) (_,bh,ti) = do
-    Q.insertScriptHashOutput (T.unpack sh) (fromIntegral bh * 1000000000 + fromIntegral ti) (T.unpack oh) oi
-    return ()
+commitScriptHashOutputs' :: Logger -> Text -> (Text, Int32) -> (Text,Int32,Int32) -> IO ()
+commitScriptHashOutputs' lg sh (oh,oi) (_,bh,ti) = do
+    res <- try $ Q.insertScriptHashOutput (T.unpack sh) (fromIntegral bh * 1000000000 + fromIntegral ti) (T.unpack oh) oi
+    case res of
+        Right _ -> return ()
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: INSERTing into: script_hash_outputs " ++ show e
+            throw KeyValueDBInsertException
 
 commitScriptHashOutputs ::
        (HasLogger m, MonadIO m) => XCqlClientState -> Text -> (Text, Int32) -> (Text, Int32, Int32) -> m ()
@@ -626,10 +630,14 @@ commitScriptHashOutputs conn sh output blockInfo = do
             err lg $ LG.msg $ "Error: INSERTing into 'script_hash_outputs': " ++ show e
             throw KeyValueDBInsertException
 
-commitScriptHashUnspentOutputs' :: Text -> (Text, Int32) -> IO ()
-commitScriptHashUnspentOutputs' sh (oh,oi) = do
-    Q.insertScriptHashUnspentOutput (T.unpack sh) (T.unpack oh) oi
-    return ()
+commitScriptHashUnspentOutputs' :: Logger -> Text -> (Text, Int32) -> IO ()
+commitScriptHashUnspentOutputs' lg sh (oh,oi) = do
+    res <- try $ Q.insertScriptHashUnspentOutput (T.unpack sh) (T.unpack oh) oi
+    case res of
+        Right _ -> return ()
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: INSERTing into: script_hash_unspent_outputs " ++ show e
+            throw KeyValueDBInsertException
 
 commitScriptHashUnspentOutputs :: (HasLogger m, MonadIO m) => XCqlClientState -> Text -> (Text, Int32) -> m ()
 commitScriptHashUnspentOutputs conn sh output = do
@@ -645,10 +653,14 @@ commitScriptHashUnspentOutputs conn sh output = do
             err lg $ LG.msg $ "Error: INSERTing into 'script_hash_unspent_outputs': " ++ show e
             throw KeyValueDBInsertException
 
-deleteScriptHashUnspentOutputs' :: Text -> (Text, Int32) -> IO ()
-deleteScriptHashUnspentOutputs' sh (oh,oi) = do
-    Q.deleteScriptHashUnspentOutput (T.unpack sh) (T.unpack oh) oi
-    return ()
+deleteScriptHashUnspentOutputs' :: Logger -> Text -> (Text, Int32) -> IO ()
+deleteScriptHashUnspentOutputs' lg sh (oh,oi) = do
+    res <- try $ Q.deleteScriptHashUnspentOutput (T.unpack sh) (T.unpack oh) oi
+    case res of
+        Right _ -> return ()
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: DELETE'ing from 'script_hash_unspent_outputs': " ++ show e
+            throw KeyValueDBInsertException
 
 deleteScriptHashUnspentOutputs :: (HasLogger m, MonadIO m) => XCqlClientState -> Text -> (Text, Int32) -> m ()
 deleteScriptHashUnspentOutputs conn sh output = do
@@ -665,7 +677,8 @@ deleteScriptHashUnspentOutputs conn sh output = do
             throw e
 
 insertTxIdOutputs'
-    :: (Text, Int32)
+    :: Logger
+    -> (Text, Int32)
     -> Text
     -> Text
     -> Bool
@@ -673,19 +686,23 @@ insertTxIdOutputs'
     -> [((Text, Int32), Int32, (Text, Int64))]
     -> Int64
     -> IO ()
-insertTxIdOutputs' (txid, outputIndex) address scriptHash isRecv (bi0, bi1, bi2) other value = do
-    i <- Q.insertTxIdOutputs
-            (T.unpack txid)
-            outputIndex
-            (T.unpack address)
-            (T.unpack scriptHash)
-            isRecv
-            (T.unpack bi0)
-            bi1
-            bi2
-            (fmap (\((a,b),c,(d,e)) -> ((T.unpack a,b),c,(T.unpack d,e))) other)
-            value
-    return ()
+insertTxIdOutputs' lg (txid, outputIndex) address scriptHash isRecv (bi0, bi1, bi2) other value = do
+    res <- try $ Q.insertTxIdOutputs
+                    (T.unpack txid)
+                    outputIndex
+                    (T.unpack address)
+                    (T.unpack scriptHash)
+                    isRecv
+                    (T.unpack bi0)
+                    bi1
+                    bi2
+                    (fmap (\((a,b),c,(d,e)) -> ((T.unpack a,b),c,(T.unpack d,e))) other)
+                    value
+    case res of
+        Right _ -> return ()
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: INSERTing into: txid_outputs " ++ show e
+            throw KeyValueDBInsertException
 
 insertTxIdOutputs ::
        (HasLogger m, MonadIO m)
@@ -970,23 +987,23 @@ processConfTransaction bis tx bhash blkht txind = do
                          prot = tail $ L.inits protocol
                      mapM_
                          (\p ->
-                              liftIO $ commitScriptOutputProtocol' (T.intercalate "." p) output bi fees (fromIntegral count))
+                              liftIO $ commitScriptOutputProtocol' lg (T.intercalate "." p) output bi fees (fromIntegral count))
                          prot
                      v <- liftIO $ TSH.lookup (protocolInfo bp2pEnv) bhash
                      case v of
                          Just v' -> liftIO $ TSH.mutate v' (T.intercalate "_" protocol) fn
                          Nothing -> debug lg $ LG.msg $ "No ProtocolInfo Available for: " ++ show bhash
-             liftIO $ commitScriptHashOutputs' sh output bi
-             liftIO $ commitScriptHashUnspentOutputs' sh output
+             liftIO $ commitScriptHashOutputs' lg sh output bi
+             liftIO $ commitScriptHashUnspentOutputs' lg sh output
              case decodeOutputBS $ scriptOutput o of
                  (Right so) ->
                      if isPayPK so
                          then do
-                             liftIO $ commitScriptHashOutputs' a output bi
-                             liftIO $ commitScriptHashUnspentOutputs' a output
+                             liftIO $ commitScriptHashOutputs' lg a output bi
+                             liftIO $ commitScriptHashUnspentOutputs' lg a output
                          else return ()
                  (Left e) -> return ()
-             liftIO $ insertTxIdOutputs' output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o))
+             liftIO $ insertTxIdOutputs' lg output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o))
         outAddrs
     debug lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": committed scripthash,txid_outputs tables"
     mapM_
@@ -998,9 +1015,9 @@ processConfTransaction bis tx bhash blkht txind = do
              if a == "" || sh == "" -- likely coinbase txns
                  then return ()
                  else do
-                     liftIO $ insertTxIdOutputs' prevOutpoint a sh False bi (stripScriptHash <$> spendInfo) 0
-                     liftIO $ deleteScriptHashUnspentOutputs' sh prevOutpoint
-                     liftIO $ deleteScriptHashUnspentOutputs' a prevOutpoint)
+                     liftIO $ insertTxIdOutputs' lg prevOutpoint a sh False bi (stripScriptHash <$> spendInfo) 0
+                     liftIO $ deleteScriptHashUnspentOutputs' lg sh prevOutpoint
+                     liftIO $ deleteScriptHashUnspentOutputs' lg a prevOutpoint)
         (zip (inAddrs) (map (\x -> (fst3 $ thd3 x, snd3 $ thd3 $ x)) inputs))
     --
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": updated spend info for inputs"
@@ -1018,32 +1035,32 @@ processConfTransaction bis tx bhash blkht txind = do
             if segments > 1
                 then (LC.replicate 32 'f') <> (BSL.fromStrict $ DTE.encodeUtf8 $ T.pack $ show $ segments)
                 else serbs
-    res <- liftIO $ Q.insertTx (T.unpack $ txHashToHex txhs) 
-                        (T.unpack $ blockHashToHex bhash)
-                        (fromIntegral blkht)
-                        (fromIntegral txind)
-                        fst
-                        (fmap ((\((a,b),c,(d,e)) -> ((T.unpack a,b),c,(T.unpack d,e))) . stripScriptHash) inputs)
-                        fees
+    res <- liftIO $ try $ Q.insertTx (T.unpack $ txHashToHex txhs) 
+                            (T.unpack $ blockHashToHex bhash)
+                            (fromIntegral blkht)
+                            (fromIntegral txind)
+                            fst
+                            (fmap ((\((a,b),c,(d,e)) -> ((T.unpack a,b),c,(T.unpack d,e))) . stripScriptHash) inputs)
+                            fees
     case res of
-        0 -> return ()
-        _ -> do
-            liftIO $ err lg $ LG.msg $ val "Error: INSERTing into 'xoken.transactions'"
+        Right _ -> return ()
+        Left (e :: SomeException) -> do
+            liftIO $ err lg $ LG.msg $ "Error: INSERTing into 'xoken.transactions': " ++ show e
             throw KeyValueDBInsertException
     when (segments > 1) $ do
         let segmentsData = chunksOf (smb 1) serbs
         mapM_
             (\(seg, i) -> do
-                 res <- liftIO $ Q.insertTx ((T.unpack $ txHashToHex txhs) ++ show i) 
-                                    (T.unpack $ blockHashToHex bhash)
-                                    (fromIntegral blkht)
-                                    (fromIntegral txind)
-                                    seg
-                                    []
-                                    fees
+                 res <- liftIO $ try $ Q.insertTx ((T.unpack $ txHashToHex txhs) ++ show i) 
+                                            (T.unpack $ blockHashToHex bhash)
+                                            (fromIntegral blkht)
+                                            (fromIntegral txind)
+                                            seg
+                                            []
+                                            fees
                  case res of
-                     0-> return ()
-                     _ -> do
+                     Right _ -> return ()
+                     Left (e :: SomeException) -> do
                          liftIO $ err lg $ LG.msg $ val "Error: INSERTing into 'xoken.transactions'"
                          throw KeyValueDBInsertException)
             (zip segmentsData [1 ..])
@@ -1284,10 +1301,14 @@ handleIfAllegoryTx tx revert confirmed = do
             Right () -> return True
             Left (SomeException e) -> throw e
 
-commitScriptOutputProtocol' :: Text -> (Text, Int32) -> (Text, Int32, Int32) -> Int64 -> Int32 -> IO ()
-commitScriptOutputProtocol' protocol (txid, oind) (_,bh,tind) fees size = do
-    Q.insertScriptOutputProtocol (T.unpack protocol) (T.unpack txid) oind fees size $ fromIntegral bh * 1000000000 + fromIntegral tind
-    return ()
+commitScriptOutputProtocol' :: Logger -> Text -> (Text, Int32) -> (Text, Int32, Int32) -> Int64 -> Int32 -> IO ()
+commitScriptOutputProtocol' lg protocol (txid, oind) (_,bh,tind) fees size = do
+    res <- try $ Q.insertScriptOutputProtocol (T.unpack protocol) (T.unpack txid) oind fees size $ fromIntegral bh * 1000000000 + fromIntegral tind
+    case res of
+        Right _ -> return ()
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: INSERTing into 'script_output_protocol: " ++ show e
+            throw KeyValueDBInsertException
 
 commitScriptOutputProtocol ::
        (HasLogger m, MonadIO m)
