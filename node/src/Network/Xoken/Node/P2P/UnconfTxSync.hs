@@ -345,8 +345,8 @@ processUnconfTransaction tx = do
                                              lg
                                              net
                                              (prevOutput b)
-                                             250
-                                             (1000 * (txProcInputDependenciesWait $ nodeConfig bp2pEnv))
+                                             5
+                                             (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
                                      return valFromDB
                          Nothing -> do
                              valFromDB <-
@@ -358,8 +358,8 @@ processUnconfTransaction tx = do
                                      lg
                                      net
                                      (prevOutput b)
-                                     250
-                                     (1000 * (txProcInputDependenciesWait $ nodeConfig bp2pEnv))
+                                     5
+                                     (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
                              return valFromDB
                  return
                      ((txHashToHex $ outPointHash $ prevOutput b, fromIntegral $ outPointIndex $ prevOutput b), j, val))
@@ -479,9 +479,11 @@ getSatsValueFromEpochOutpoint ::
     -> IO ((Text, Text, Int64))
 getSatsValueFromEpochOutpoint conn epoch txSync lg net outPoint wait maxWait = do
     let str =
-            "SELECT address, script_hash, value FROM xoken.ep_txid_outputs WHERE epoch=? AND txid=? AND output_index=?"
-        qstr = str :: Q.QueryString Q.R (Bool, Text, Int32) (Text, Text, Int64)
-        par = getSimpleQueryParam $ (epoch, txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint)
+            "SELECT address, script_hash, value FROM xoken.ep_txid_outputs WHERE epoch=? AND txid=? AND output_index=? AND is_recv=? "
+        qstr = str :: Q.QueryString Q.R (Bool, Text, Int32, Bool) (Text, Text, Int64)
+        par =
+            getSimpleQueryParam $
+            (epoch, txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint, True)
     queryI <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstr))
     res <- liftIO $ try $ query conn (Q.RqExecute (Q.Execute queryI par))
     case res of
@@ -500,9 +502,9 @@ getSatsValueFromEpochOutpoint conn epoch txSync lg net outPoint wait maxWait = d
                     liftIO $ TSH.insert txSync (outPointHash outPoint) event
                     tofl <- waitTimeout event $ fromIntegral (wait * 1000000)
                     if tofl == False
-                        then if wait < maxWait
+                        then if ((2 * wait) < maxWait)
                                  then do
-                                     getSatsValueFromEpochOutpoint conn epoch txSync lg net outPoint maxWait maxWait -- re-attempt
+                                     getSatsValueFromEpochOutpoint conn epoch txSync lg net outPoint (2 * wait) maxWait -- re-attempt
                                  else do
                                      liftIO $ TSH.delete txSync (outPointHash outPoint)
                                      throw $
@@ -537,10 +539,10 @@ sourceSatsValueFromOutpoint conn epoch txSync lg net outPoint waitSecs maxWait =
         LA.race
             (liftIO $ do
                  debug lg $ LG.msg $ "race getSatsValueFromOutpoint <start>: " <> (show outPoint)
-                 getSatsValueFromOutpoint conn txSync lg net outPoint 5 maxWait)
+                 getSatsValueFromOutpoint conn txSync lg net outPoint waitSecs maxWait)
             (liftIO $ do
                  debug lg $ LG.msg $ "race getSatsValueFromEpochOutpoint <start>: " <> (show outPoint)
-                 getSatsValueFromEpochOutpoint conn epoch txSync lg net outPoint 5 waitSecs)
+                 getSatsValueFromEpochOutpoint conn epoch txSync lg net outPoint waitSecs maxWait)
     debug lg $ LG.msg $ "sourceSatsValueFromOutpoint race for " <> (show outPoint) <> " result: " <> (show res)
     return $ either (GB.id) (GB.id) res
 
