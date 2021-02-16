@@ -1239,9 +1239,9 @@ handleIfAllegoryTx tx revert confirmed = do
                                     liftIO $ print (allegory)
                                     if revert
                                         then do
-                                            _ <- resdb dbe revertAllegoryStateTree tx allegory
-                                            resdb dbe (updateAllegoryStateTrees confirmed) tx allegory
-                                        else resdb dbe (updateAllegoryStateTrees confirmed) tx allegory
+                                            _ <- resdb lg dbe revertAllegoryStateTree tx allegory
+                                            resdb lg dbe (updateAllegoryStateTrees confirmed) tx allegory
+                                        else resdb lg dbe (updateAllegoryStateTrees confirmed) tx allegory
                                 Left (e :: DeserialiseFailure) -> do
                                     err lg $ LG.msg $ "error deserialising OP_RETURN CBOR data" ++ show e
                                     throw e
@@ -1251,11 +1251,13 @@ handleIfAllegoryTx tx revert confirmed = do
         else do
             return False
   where
-    resdb db fn tx al = do
+    resdb lg db fn tx al = do
         eres <- liftIO $ try $ withResource' (pool $ graphDB db) (`BT.run` fn tx al)
         case eres of
             Right () -> return True
-            Left (SomeException e) -> throw e
+            Left (SomeException e) -> do
+                err lg $ LG.msg $ "[ERROR] While handling Allegory metadata: failed to update graph (" <> show e <> ")"
+                throw e
 
 commitScriptOutputProtocol ::
        (HasLogger m, MonadIO m)

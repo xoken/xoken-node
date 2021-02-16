@@ -512,7 +512,9 @@ xRelayTx rawTx = do
                             eres <- LE.try $ handleIfAllegoryTx tx False False -- MUST be False
                             case eres of
                                 Right (flg) -> return True
-                                Left (e :: SomeException) -> return False
+                                Left (e :: SomeException) -> do
+                                    err lg $ LG.msg $ "[ERROR] Failed to process Allegory metadata: " <> (show e)
+                                    return False
                 Nothing -> do
                     err lg $ LG.msg $ val $ "error decoding rawTx (2)"
                     return $ False
