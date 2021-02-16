@@ -829,7 +829,7 @@ processTxBatch txns iss = do
                          (show $ biBlockHash bf) ++ ", tx-index: " ++ show (binTxIngested bi))
                 else do
                     S.drain $
-                        serially $
+                        aheadly $
                         (do let start = (binTxIngested bi) - (L.length txns)
                                 end = (binTxIngested bi) - 1
                             S.fromList $ zip [start .. end] [0 ..]) &
@@ -951,12 +951,12 @@ handleIncomingMessages pr = do
         LA.concurrently_
             (peerBlockSync pr) -- issue GetData msgs
             (S.drain $
-             S.serially $
+             S.asyncly $
              S.repeatM (readNextMessage' pr rlk) & -- read next msgs
              S.mapM (messageHandler pr) & -- handle read msgs
              S.mapM (logMessage pr) & -- log msgs & collect stats
-             S.maxBuffer 1 &
-             S.maxThreads 1)
+             S.maxBuffer 2 &
+             S.maxThreads 2)
     case res of
         Right (a) -> return ()
         Left (e :: SomeException)
