@@ -83,7 +83,7 @@ data Registration =
     Registration
         { addressCommitment :: !String
         , utxoCommitment :: !String
-        , signature :: !String
+        , publicKeyAuthEncrypt :: !String
         , expiry :: !Int
         }
     deriving (Show, Generic, Eq, Serialise)
