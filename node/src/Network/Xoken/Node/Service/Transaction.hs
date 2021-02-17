@@ -503,10 +503,11 @@ xRelayTx rawTx = do
                                     (\(_, peer) -> do
                                          res <- LE.try $ sendRequestMessages peer (MTx (fromJust $ fst res))
                                          case res of
-                                             Left (e :: SomeException) -> return False
-                                             Right () -> return True)
+                                             Left (e :: SomeException) -> return (peer, False)
+                                             Right () -> return (peer, True))
                                     connPeers
-                            if all (== False) broadcastResult
+                            debug lg $ LG.msg $ "xRelayTx broadcastResult: " <> (show broadcastResult)
+                            if all (== False) (snd <$> broadcastResult)
                                 then throw RelayFailureException
                                 else return ()
                             eres <- LE.try $ handleIfAllegoryTx tx False False -- MUST be False
