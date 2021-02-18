@@ -83,6 +83,7 @@ data Registration =
     Registration
         { addressCommitment :: !String
         , utxoCommitment :: !String
+        , publicKeySigning :: !String
         , publicKeyAuthEncrypt :: !String
         , expiry :: !Int
         }
