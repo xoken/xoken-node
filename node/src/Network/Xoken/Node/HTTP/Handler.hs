@@ -391,7 +391,7 @@ getUTXOsByAddr = do
     pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     bp2pEnv <- getBitcoinP2P
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
-    res <- LE.try $ xGetUTXOsAddress (fromJust addr) pgSize (decodeOP cursor)
+    res <- LE.try $ xGetUtxosAddress (fromJust addr) pgSize (decodeNTI cursor)
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetUTXOsAddress: " ++ show e
@@ -400,7 +400,7 @@ getUTXOsByAddr = do
         Right ops -> do
             writeBS $
                 BSL.toStrict $
-                encodeResp pretty $ RespUTXOsByAddress (encodeOP $ getNextCursor ops) (fromResultWithCursor <$> ops)
+                encodeResp pretty $ RespUTXOsByAddress (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
 
 getUTXOsByAddrs :: Handler App App ()
 getUTXOsByAddrs = do
@@ -413,7 +413,7 @@ getUTXOsByAddrs = do
             bp2pEnv <- getBitcoinP2P
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
             lg <- getLogger
-            res <- LE.try $ runWithManyInputs xGetUTXOsAddress addrs pgSize (decodeOP cursor)
+            res <- LE.try $ runWithManyInputs xGetUtxosAddress addrs pgSize (decodeNTI cursor)
             case res of
                 Left (e :: SomeException) -> do
                     err lg $ LG.msg $ "Error: xGetUTXOsAddress: " ++ show e
@@ -423,7 +423,7 @@ getUTXOsByAddrs = do
                     writeBS $
                         BSL.toStrict $
                         encodeResp pretty $
-                        RespUTXOsByAddresses (encodeOP $ getNextCursor ops) (fromResultWithCursor <$> ops)
+                        RespUTXOsByAddresses (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
         Nothing -> throwBadRequest
 
 getUTXOsByScriptHash :: Handler App App ()
@@ -435,7 +435,7 @@ getUTXOsByScriptHash = do
     bp2pEnv <- getBitcoinP2P
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
     lg <- getLogger
-    res <- LE.try $ xGetUTXOsScriptHash (fromJust sh) pgSize (decodeOP cursor)
+    res <- LE.try $ xGetUtxosScriptHash (fromJust sh) pgSize (decodeNTI cursor)
     case res of
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
@@ -443,7 +443,7 @@ getUTXOsByScriptHash = do
         Right ops -> do
             writeBS $
                 BSL.toStrict $
-                encodeResp pretty $ RespUTXOsByScriptHash (encodeOP $ getNextCursor ops) (fromResultWithCursor <$> ops)
+                encodeResp pretty $ RespUTXOsByScriptHash (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
 
 getUTXOsByScriptHashes :: Handler App App ()
 getUTXOsByScriptHashes = do
@@ -456,7 +456,7 @@ getUTXOsByScriptHashes = do
             bp2pEnv <- getBitcoinP2P
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
             lg <- getLogger
-            res <- LE.try $ runWithManyInputs xGetUTXOsScriptHash sh pgSize (decodeOP cursor)
+            res <- LE.try $ runWithManyInputs xGetUtxosScriptHash sh pgSize (decodeNTI cursor)
             case res of
                 Left (e :: SomeException) -> do
                     modifyResponse $ setResponseStatus 500 "Internal Server Error"
@@ -465,7 +465,7 @@ getUTXOsByScriptHashes = do
                     writeBS $
                         BSL.toStrict $
                         encodeResp pretty $
-                        RespUTXOsByScriptHashes (encodeOP $ getNextCursor ops) (fromResultWithCursor <$> ops)
+                        RespUTXOsByScriptHashes (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
         Nothing -> throwBadRequest
 
 getMNodesByTxID :: Handler App App ()

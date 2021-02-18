@@ -982,6 +982,36 @@ txOutputDataToOutput (TxOutputData {..}) = TxOutput txind (T.unpack address) spe
 fromResultWithCursor :: ResultWithCursor r c -> r
 fromResultWithCursor = (\(ResultWithCursor res cur) -> res)
 
+addressOutputToResultWithCursor ::
+       String -> ((Int64, (T.Text, Int32)), TxOutputData) -> ResultWithCursor AddressOutputs Int64
+addressOutputToResultWithCursor address ((nominalTxIndex, (opTxId, opIndex)), TxOutputData _ _ _ value blockInfo inputs spendInfo) =
+    ResultWithCursor
+        (AddressOutputs
+             address
+             (OutPoint' (T.unpack opTxId) (fromIntegral opIndex))
+             blockInfo
+             spendInfo
+             ((\((oph, opi), ii, (_, ov)) ->
+                   (OutPoint' (T.unpack oph) (fromIntegral opi), fromIntegral ii, fromIntegral ov)) <$>
+              inputs)
+             value)
+        nominalTxIndex
+
+scriptOutputToResultWithCursor ::
+       ((T.Text, Int64, (T.Text, Int32)), TxOutputData) -> ResultWithCursor ScriptOutputs Int64
+scriptOutputToResultWithCursor ((scriptHash, nominalTxIndex, (opTxId, opIndex)), TxOutputData _ _ _ value blockInfo inputs spendInfo) =
+    ResultWithCursor
+        (ScriptOutputs
+             (T.unpack scriptHash)
+             (OutPoint' (T.unpack opTxId) (fromIntegral opIndex))
+             blockInfo
+             spendInfo
+             ((\((oph, opi), ii, (_, ov)) ->
+                   (OutPoint' (T.unpack oph) (fromIntegral opi), fromIntegral ii, fromIntegral ov)) <$>
+              inputs)
+             value)
+        nominalTxIndex
+
 reverse2 :: String -> String
 reverse2 (x:y:xs) = reverse2 xs ++ [x, y]
 reverse2 x = x

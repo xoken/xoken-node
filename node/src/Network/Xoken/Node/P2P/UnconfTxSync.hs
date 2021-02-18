@@ -187,15 +187,6 @@ runEpochSwitcher =
                     Left (e :: SomeException) -> do
                         err lg $ LG.msg ("Error: deleting stale epoch script_hash_outputs: " ++ show e)
                         throw e
-                let str = "DELETE from xoken.ep_script_hash_unspent_outputs where epoch = ?"
-                    qstr = str :: Q.QueryString Q.W (Identity Bool) ()
-                    p = getSimpleQueryParam $ Identity (not epoch)
-                res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr p)
-                case res of
-                    Right _ -> return ()
-                    Left (e :: SomeException) -> do
-                        err lg $ LG.msg ("Error: deleting stale epoch script_hash_unspent_outputs: " ++ show e)
-                        throw e
                 let str = "DELETE from xoken.ep_txid_outputs where epoch = ?"
                     qstr = str :: Q.QueryString Q.W (Identity Bool) ()
                     p = getSimpleQueryParam $ Identity (not epoch)
@@ -232,34 +223,6 @@ commitEpochScriptHashOutputs conn epoch sh output = do
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: INSERTing into 'ep_script_hash_outputs': " ++ show e
             throw KeyValueDBInsertException
-
-commitEpochScriptHashUnspentOutputs ::
-       (HasLogger m, MonadIO m) => XCqlClientState -> Bool -> Text -> (Text, Int32) -> m ()
-commitEpochScriptHashUnspentOutputs conn epoch sh output = do
-    lg <- getLogger
-    let str = "INSERT INTO xoken.ep_script_hash_unspent_outputs (epoch, script_hash, output) VALUES (?,?,?)"
-        qstr = str :: Q.QueryString Q.W (Bool, Text, (Text, Int32)) ()
-        par = getSimpleQueryParam (epoch, sh, output)
-    res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr par)
-    case res of
-        Right _ -> return ()
-        Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: INSERTing into 'ep_script_hash_unspent_outputs': " ++ show e
-            throw KeyValueDBInsertException
-
-deleteEpochScriptHashUnspentOutputs ::
-       (HasLogger m, MonadIO m) => XCqlClientState -> Bool -> Text -> (Text, Int32) -> m ()
-deleteEpochScriptHashUnspentOutputs conn epoch sh output = do
-    lg <- getLogger
-    let str = "DELETE FROM xoken.ep_script_hash_unspent_outputs WHERE epoch=? AND script_hash=? AND output=?"
-        qstr = str :: Q.QueryString Q.W (Bool, Text, (Text, Int32)) ()
-        par = getSimpleQueryParam (epoch, sh, output)
-    res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr par)
-    case res of
-        Right _ -> return ()
-        Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: DELETE'ing from 'ep_script_hash_unspent_outputs': " ++ show e
-            throw e
 
 insertEpochTxIdOutputs ::
        (HasLogger m, MonadIO m)
@@ -391,16 +354,12 @@ processUnconfTransaction tx = do
                       (stripScriptHash <$> inputs)
                       (fromIntegral $ outValue o))
                  (concurrently_
-                      (concurrently_
-                           (commitEpochScriptHashOutputs conn epoch sh output)
-                           (commitEpochScriptHashUnspentOutputs conn epoch sh output))
+                      (commitEpochScriptHashOutputs conn epoch sh output)
                       (case decodeOutputBS $ scriptOutput o of
                            (Right so) ->
                                if isPayPK so
                                    then do
-                                       concurrently_
-                                           (commitEpochScriptHashOutputs conn epoch a output)
-                                           (commitEpochScriptHashUnspentOutputs conn epoch a output)
+                                       (commitEpochScriptHashOutputs conn epoch a output)
                                    else return ()
                            (Left e) -> return ())))
         outAddrs
@@ -411,12 +370,7 @@ processUnconfTransaction tx = do
              let spendInfo = (\ov -> ((txHashToHex $ txHash tx, fromIntegral $ fst ov), i, snd $ ov)) <$> ovs
              if a == "" || sh == ""
                  then return ()
-                 else do
-                     concurrently_
-                         (insertEpochTxIdOutputs conn epoch prevOutpoint a sh False (stripScriptHash <$> spendInfo) 0)
-                         (concurrently_
-                              (deleteEpochScriptHashUnspentOutputs conn epoch sh prevOutpoint)
-                              (deleteEpochScriptHashUnspentOutputs conn epoch a prevOutpoint)))
+                 else insertEpochTxIdOutputs conn epoch prevOutpoint a sh False (stripScriptHash <$> spendInfo) 0)
         (zip inAddrs (map (\x -> (fst3 $ thd3 x, snd3 $ thd3 x)) inputs))
     --
     let ipSum = foldl (+) 0 $ (\(_, _, (_, _, val)) -> val) <$> inputs

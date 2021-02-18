@@ -620,34 +620,6 @@ commitScriptHashOutputs conn sh output blockInfo = do
             err lg $ LG.msg $ "Error: INSERTing into 'script_hash_outputs': " ++ show e
             throw KeyValueDBInsertException
 
-commitScriptHashUnspentOutputs :: (HasLogger m, MonadIO m) => XCqlClientState -> Text -> (Text, Int32) -> m ()
-commitScriptHashUnspentOutputs conn sh output = do
-    lg <- getLogger
-    let qstr :: Q.QueryString Q.W (Text, (Text, Int32)) ()
-        qstr = "INSERT INTO xoken.script_hash_unspent_outputs (script_hash, output) VALUES (?,?)"
-        par = getSimpleQueryParam (sh, output)
-    queryI <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstr))
-    res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryI par)
-    case res of
-        Right _ -> return ()
-        Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: INSERTing into 'script_hash_unspent_outputs': " ++ show e
-            throw KeyValueDBInsertException
-
-deleteScriptHashUnspentOutputs :: (HasLogger m, MonadIO m) => XCqlClientState -> Text -> (Text, Int32) -> m ()
-deleteScriptHashUnspentOutputs conn sh output = do
-    lg <- getLogger
-    let qstr :: Q.QueryString Q.W (Text, (Text, Int32)) ()
-        qstr = "DELETE FROM xoken.script_hash_unspent_outputs WHERE script_hash=? AND output=?"
-        par = getSimpleQueryParam (sh, output)
-    queryI <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstr))
-    res <- liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryI par))
-    case res of
-        Right _ -> return ()
-        Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: DELETE'ing from 'script_hash_unspent_outputs': " ++ show e
-            throw e
-
 insertTxIdOutputs ::
        (HasLogger m, MonadIO m)
     => XCqlClientState
@@ -942,13 +914,11 @@ processConfTransaction bis tx bhash blkht txind = do
                  sh -- scriptHash
                  output
                  bi
-             commitScriptHashUnspentOutputs conn sh output
              case decodeOutputBS $ scriptOutput o of
                  (Right so) ->
                      if isPayPK so
                          then do
                              commitScriptHashOutputs conn a output bi
-                             commitScriptHashUnspentOutputs conn a output
                          else return ()
                  (Left e) -> return ()
              insertTxIdOutputs conn output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o))
@@ -963,9 +933,7 @@ processConfTransaction bis tx bhash blkht txind = do
              if a == "" || sh == "" -- likely coinbase txns
                  then return ()
                  else do
-                     insertTxIdOutputs conn prevOutpoint a sh False bi (stripScriptHash <$> spendInfo) 0
-                     deleteScriptHashUnspentOutputs conn sh prevOutpoint
-                     deleteScriptHashUnspentOutputs conn a prevOutpoint)
+                     insertTxIdOutputs conn prevOutpoint a sh False bi (stripScriptHash <$> spendInfo) 0)
         (zip (inAddrs) (map (\x -> (fst3 $ thd3 x, snd3 $ thd3 $ x)) inputs))
     --
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": updated spend info for inputs"
