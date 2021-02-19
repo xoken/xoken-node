@@ -89,6 +89,8 @@ import Network.Xoken.Crypto.Hash
 import Network.Xoken.Network.Common
 import Network.Xoken.Network.Message
 import Network.Xoken.Node.Data as DA
+import Network.Xoken.Node.Data.Allegory
+import qualified Network.Xoken.Node.Data.Allegory as AL (Index(..))
 import qualified Network.Xoken.Node.Data.ThreadSafeHashTable as TSH
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.GraphDB
@@ -1205,11 +1207,19 @@ handleIfAllegoryTx tx revert confirmed = do
                             case (deserialiseOrFail $ BSL.fromStrict payload) of
                                 Right (allegory) -> do
                                     liftIO $ print (allegory)
-                                    if revert
-                                        then do
-                                            _ <- resdb lg dbe revertAllegoryStateTree tx allegory
-                                            resdb lg dbe (updateAllegoryStateTrees confirmed) tx allegory
-                                        else resdb lg dbe (updateAllegoryStateTrees confirmed) tx allegory
+                                    checkNodes <- LE.try $ nodesExist (txHash tx) allegory confirmed
+                                    let nodesAlreadyExist =
+                                            case checkNodes of
+                                                Left (e :: SomeException) -> throw e
+                                                Right res -> res
+                                    if nodesAlreadyExist
+                                        then return True
+                                        else do
+                                            if revert
+                                                then do
+                                                    _ <- resdb lg dbe revertAllegoryStateTree tx allegory
+                                                    resdb lg dbe (updateAllegoryStateTrees confirmed) tx allegory
+                                                else resdb lg dbe (updateAllegoryStateTrees confirmed) tx allegory
                                 Left (e :: DeserialiseFailure) -> do
                                     err lg $ LG.msg $ "error deserialising OP_RETURN CBOR data" ++ show e
                                     throw e
@@ -1226,6 +1236,35 @@ handleIfAllegoryTx tx revert confirmed = do
             Left (SomeException e) -> do
                 err lg $ LG.msg $ "[ERROR] While handling Allegory metadata: failed to update graph (" <> show e <> ")"
                 throw e
+
+nodesExist :: (HasXokenNodeEnv env m, MonadIO m) => TxHash -> Allegory -> Bool -> m Bool
+nodesExist txId allegory confirmed = do
+    lg <- getLogger
+    gdb <- graphDB <$> getDB
+    let txHash = T.unpack $ txHashToHex txId
+        outputIndices = getOutputIndices allegory
+        outpoints = (\index -> txHash ++ ":" ++ (show index)) <$> outputIndices
+    opsExist <- liftIO $ sequence $ nodeExists lg gdb confirmed <$> T.pack <$> outpoints
+    return $ L.all (== True) opsExist
+  where
+    nodeExists lg gdb oc op = do
+        res <-
+            catch (withResource' (pool gdb) (`BT.run` nUtxoNodeByOutpoint op oc)) $ \(e :: SomeException) -> do
+                err lg $ LG.msg $ C.pack $ "[ERROR] nodesExist: While running Neo4j query: " <> show e
+                throw e
+        return . not . L.null $ res
+    getOutputIndices al =
+        AL.index <$>
+        case action al of
+            OwnerAction _ oo _ -> [owner oo]
+            ProducerAction _ po poo es ->
+                (producer po) :
+                (maybe mempty (\o -> [owner o]) poo) ++
+                ((\e ->
+                      case e of
+                          OwnerExtension oeo _ -> owner oeo
+                          ProducerExtension peo _ -> producer peo) <$>
+                 es)
 
 commitScriptOutputProtocol ::
        (HasLogger m, MonadIO m)

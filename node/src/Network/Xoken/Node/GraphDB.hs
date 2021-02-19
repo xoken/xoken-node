@@ -153,6 +153,20 @@ queryAllegoryNameScriptOp name isProducer = do
             then fromList [("namestr", T (name <> pack "|producer"))]
             else fromList [("namestr", T (name <> pack "|owner"))]
 
+-- Return confirmed nUTXO node with supplied outpoint
+nUtxoNodeByOutpoint :: Text -> Bool -> BoltActionT IO [Text]
+nUtxoNodeByOutpoint outpoint confirmedOnly = do
+    records <- queryP cypher params
+    forM records $ \record -> record `at` "name"
+  where
+    cypher =
+        "MATCH (n:nutxo{outpoint:{op}" <>
+        (if confirmedOnly
+             then ", confirmed:true"
+             else mempty) <>
+        "}) RETURN n.name AS name"
+    params = fromList [("op", T outpoint)]
+
 -- Fetch all owner nUTXO nodes below a given parent
 queryAllegoryChildren :: Text -> BoltActionT IO [Text]
 queryAllegoryChildren parent = do
