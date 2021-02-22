@@ -1195,7 +1195,8 @@ handleIfAllegoryTx tx revert confirmed = do
     lg <- getLogger
     trace lg $ LG.msg $ val $ "Checking for Allegory OP_RETURN"
     let op_return = head (txOut tx)
-    let hexstr = B16.encode (scriptOutput op_return)
+        hexstr = B16.encode (scriptOutput op_return)
+        txid = T.unpack . txHashToHex . txHash $ tx
     if "006a0f416c6c65676f72792f416c6c506179" `L.isPrefixOf` (C.unpack hexstr)
         then do
             liftIO $ print (hexstr)
@@ -1208,12 +1209,24 @@ handleIfAllegoryTx tx revert confirmed = do
                                 Right (allegory) -> do
                                     liftIO $ print (allegory)
                                     checkNodes <- LE.try $ nodesExist (txHash tx) allegory confirmed
-                                    let nodesAlreadyExist =
-                                            case checkNodes of
-                                                Left (e :: SomeException) -> throw e
-                                                Right res -> res
+                                    nodesAlreadyExist <-
+                                        case checkNodes of
+                                            Left (e :: SomeException) -> do
+                                                err lg $
+                                                    LG.msg $
+                                                    C.pack $
+                                                    "[ERROR] Failed to check if nUTXO nodes exist for outputs of transaction " <>
+                                                    txid
+                                                throw e
+                                            Right res -> return res
                                     if nodesAlreadyExist
-                                        then return True
+                                        then do
+                                            debug lg $
+                                                LG.msg $
+                                                C.pack $
+                                                "handleIfAllegoryTx: nUTXO nodes already exist for outputs of transaction " <>
+                                                txid
+                                            return True
                                         else do
                                             if revert
                                                 then do
