@@ -67,7 +67,7 @@ data Registration =
     AllPayRegistration
         { service :: !String
         , mode :: !String
-        , identityPubKey :: !String
+        , identityPublicKey :: !String
         , publicKeyAuthEncrypt :: !String
         , publicKeySigning :: !String
         }
