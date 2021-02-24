@@ -32,6 +32,7 @@ import Control.Monad.STM
 import Control.Monad.State.Strict
 import qualified Data.Aeson as A (decode, encode)
 import qualified Data.ByteString as B
+import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Char8 as C
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Lazy.Char8 as LC
@@ -256,6 +257,33 @@ insertEpochTxIdOutputs conn epoch (txid, outputIndex) address scriptHash isRecv 
             err lg $ LG.msg $ "Error: INSERTing into ep_txid_outputs: " ++ show e
             throw KeyValueDBInsertException
 
+commitUnconfirmedScriptOutputProtocol ::
+       (HasBitcoinP2P m, HasLogger m, MonadIO m)
+    => XCqlClientState
+    -> Bool
+    -> Text
+    -> (Text, Int32)
+    -> Int64
+    -> Int32
+    -> m ()
+commitUnconfirmedScriptOutputProtocol conn epoch protocol (txid, output_index) fees size = do
+    lg <- getLogger
+    bp2pEnv <- getBitcoinP2P
+    bt <- liftIO $ readTVarIO (epochTimestamp bp2pEnv)
+    tm <- liftIO getCurrentTime
+    let nominalTxIndex = (9000000 * 1000000000) + ((floor $ utcTimeToPOSIXSeconds tm) - bt)
+        qstrAddrOuts :: Q.QueryString Q.W (Bool, Text, Text, Int64, Int32, Int32, Int64) ()
+        qstrAddrOuts =
+            "INSERT INTO xoken.ep_script_output_protocol (epoch, proto_str, txid, fees, size, output_index, nominal_tx_index) VALUES (?,?,?,?,?,?,?)"
+        parAddrOuts = getSimpleQueryParam (epoch, protocol, txid, fees, size, output_index, nominalTxIndex)
+    queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstrAddrOuts))
+    resAddrOuts <- liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryId parAddrOuts))
+    case resAddrOuts of
+        Right _ -> return ()
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: INSERTing into 'script_output_protocol: " ++ show e
+            throw KeyValueDBInsertException
+
 processUnconfTransaction :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Tx -> m ()
 processUnconfTransaction tx = do
     dbe' <- getDB
@@ -333,6 +361,13 @@ processUnconfTransaction tx = do
                      ( fromIntegral $ i
                      , (a, (txHashToHex $ TxHash $ sha256 (scriptOutput o)), fromIntegral $ outValue o)))
                 outAddrs
+    --
+    let ipSum = foldl (+) 0 $ (\(_, _, (_, _, val)) -> val) <$> inputs
+        opSum = foldl (+) 0 $ (\(_, o, _) -> fromIntegral $ outValue o) <$> outAddrs
+        fees = ipSum - opSum
+        serbs = runPutLazy $ putLazyByteString $ S.encodeLazy tx
+        count = BSL.length serbs
+    --
     -- liftIO $
     --     TSH.insert
     --         (txOutputValuesCache bp2pEnv)
@@ -343,6 +378,32 @@ processUnconfTransaction tx = do
         (\(a, o, i) -> do
              let sh = txHashToHex $ TxHash $ sha256 (scriptOutput o)
              let output = (txHashToHex $ txHash tx, i)
+             let bsh = B16.encode $ scriptOutput o
+             let (op, rem) = B.splitAt 2 bsh
+             let (op_false, op_return, remD) =
+                     if op == "6a"
+                         then ("00", op, rem)
+                         else (\(a, b) -> (op, a, b)) $ B.splitAt 2 rem
+             when (op_false == "00" && op_return == "6a") $ do
+                 props <-
+                     case runGet (getPropsG 3) (fst $ B16.decode remD) of
+                         Right p -> return p
+                         Left str -> do
+                             liftIO $ err lg $ LG.msg ("Error: Getting protocol name " ++ show str)
+                             return []
+                 when (isJust (headMaybe props)) $ do
+                     let protocol = snd <$> props
+                         prot = tail $ L.inits protocol
+                     mapM_
+                         (\p ->
+                              commitUnconfirmedScriptOutputProtocol
+                                  conn
+                                  epoch
+                                  (T.intercalate "." p)
+                                  output
+                                  fees
+                                  (fromIntegral count))
+                         prot
              concurrently_
                  (insertEpochTxIdOutputs
                       conn
@@ -372,11 +433,6 @@ processUnconfTransaction tx = do
                  then return ()
                  else insertEpochTxIdOutputs conn epoch prevOutpoint a sh False (stripScriptHash <$> spendInfo) 0)
         (zip inAddrs (map (\x -> (fst3 $ thd3 x, snd3 $ thd3 x)) inputs))
-    --
-    let ipSum = foldl (+) 0 $ (\(_, _, (_, _, val)) -> val) <$> inputs
-        opSum = foldl (+) 0 $ (\(_, o, _) -> fromIntegral $ outValue o) <$> outAddrs
-        fees = ipSum - opSum
-    --
     let str = "INSERT INTO xoken.ep_transactions (epoch, tx_id, tx_serialized, inputs, fees) values (?, ?, ?, ?, ?)"
         qstr = str :: Q.QueryString Q.W (Bool, Text, Blob, [((Text, Int32), Int32, (Text, Int64))], Int64) ()
         serbs = runPutLazy $ putLazyByteString $ S.encodeLazy tx

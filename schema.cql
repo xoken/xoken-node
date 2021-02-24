@@ -112,3 +112,14 @@ CREATE TABLE xoken.script_output_protocol (
     nominal_tx_index bigint,
     PRIMARY KEY (proto_str, nominal_tx_index)
 ) WITH CLUSTERING ORDER BY (nominal_tx_index ASC);
+
+CREATE TABLE xoken.ep_script_output_protocol (
+    epoch boolean,
+    proto_str text,
+    txid text,
+    fees bigint,
+    size int,
+    output_index int,
+    nominal_tx_index bigint,
+    PRIMARY KEY (epoch, proto_str, nominal_tx_index)
+) WITH CLUSTERING ORDER BY (proto_str ASC, nominal_tx_index DESC);
