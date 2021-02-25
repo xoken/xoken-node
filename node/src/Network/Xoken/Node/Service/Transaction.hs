@@ -520,6 +520,19 @@ xRelayTx rawTx = do
                     err lg $ LG.msg $ val $ "error decoding rawTx (2)"
                     return $ False
 
+deleteDuplicates ::
+       (ResultWithCursor r a -> ResultWithCursor r a -> Bool)
+    -> [ResultWithCursor r a]
+    -> [ResultWithCursor r a]
+    -> [ResultWithCursor r a]
+deleteDuplicates compareBy unconf conf = runDeleteBy conf unconf
+  where
+    runDeleteBy [] uc = uc
+    runDeleteBy (c:cs) uc = runDeleteBy cs (L.deleteBy compareBy c uc)
+
+compareRWCText :: ResultWithCursor DT.Text a -> ResultWithCursor DT.Text b -> Bool
+compareRWCText rwc1 rwc2 = res rwc1 == res rwc2
+
 xGetTxIDByProtocol ::
        (HasXokenNodeEnv env m, MonadIO m)
     => DT.Text
@@ -531,16 +544,40 @@ xGetTxIDByProtocol prop1 props pgSize mbNomTxInd = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
+    epoch <- liftIO $ readTVarIO (epochType bp2pEnv)
+    res <-
+        LE.try $
+        LA.concurrently
+            (getUnconfTxIDByProtocol epoch prop1 props pgSize mbNomTxInd)
+            (getTxIDByProtocol prop1 props pgSize mbNomTxInd)
+    case res of
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ BC.pack $ "[ERROR] xGetTxIDByProtocol: Fetching confirmed/unconfirmed TxIDs: " <> show e
+            throw KeyValueDBLookupException
+        Right (unconf, conf) ->
+            return $
+            L.take (fromMaybe maxBound (fromIntegral <$> pgSize)) $
+            (deleteDuplicates compareRWCText unconf conf) ++ conf
+
+getTxIDByProtocol ::
+       (HasXokenNodeEnv env m, MonadIO m)
+    => DT.Text
+    -> [DT.Text]
+    -> Maybe Int32
+    -> Maybe Int64
+    -> m [ResultWithCursor DT.Text Int64]
+getTxIDByProtocol prop1 props pgSize mbNomTxInd = do
+    dbe <- getDB
+    lg <- getLogger
+    bp2pEnv <- getBitcoinP2P
     let conn = xCqlClientState dbe
         net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
-        (str, nominalTxIndex) =
+        nominalTxIndex =
             case mbNomTxInd of
-                (Just n) ->
-                    ( "SELECT txid, nominal_tx_index FROM xoken.script_output_protocol WHERE proto_str=? AND nominal_tx_index>?"
-                    , n)
-                Nothing ->
-                    ( "SELECT txid, nominal_tx_index FROM xoken.script_output_protocol WHERE proto_str=? AND nominal_tx_index<?"
-                    , maxBound)
+                Just n -> n
+                Nothing -> maxBound
+        str =
+            "SELECT txid, nominal_tx_index FROM xoken.script_output_protocol WHERE proto_str=? AND nominal_tx_index<? ORDER BY nominal_tx_index DESC"
         protocol = DT.intercalate "." $ prop1 : props
         qstr = str :: Q.QueryString Q.R (DT.Text, Int64) (DT.Text, Int64)
         uqstr = getSimpleQueryParam $ (protocol, nominalTxIndex)
@@ -548,5 +585,35 @@ xGetTxIDByProtocol prop1 props pgSize mbNomTxInd = do
     case eResp of
         Right mb -> return $ (\(x, y) -> ResultWithCursor x y) <$> mb
         Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: xGetTxIDByProtocol: " ++ show e
+            err lg $ LG.msg $ "Error: getTxIDByProtocol: " ++ show e
+            throw KeyValueDBLookupException
+
+getUnconfTxIDByProtocol ::
+       (HasXokenNodeEnv env m, MonadIO m)
+    => Bool
+    -> DT.Text
+    -> [DT.Text]
+    -> Maybe Int32
+    -> Maybe Int64
+    -> m [ResultWithCursor DT.Text Int64]
+getUnconfTxIDByProtocol epoch prop1 props pgSize mbNomTxInd = do
+    dbe <- getDB
+    lg <- getLogger
+    bp2pEnv <- getBitcoinP2P
+    let conn = xCqlClientState dbe
+        net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
+        nominalTxIndex =
+            case mbNomTxInd of
+                Just n -> n
+                Nothing -> maxBound
+        str =
+            "SELECT txid, nominal_tx_index FROM xoken.ep_script_output_protocol WHERE epoch=? AND proto_str=? AND nominal_tx_index<?"
+        protocol = DT.intercalate "." $ prop1 : props
+        qstr = str :: Q.QueryString Q.R (Bool, DT.Text, Int64) (DT.Text, Int64)
+        uqstr = getSimpleQueryParam $ (epoch, protocol, nominalTxIndex)
+    eResp <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr (uqstr {pageSize = maybe (Just 100) Just pgSize}))
+    case eResp of
+        Right mb -> return $ (\(x, y) -> ResultWithCursor x y) <$> mb
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: getUnconfTxIDByProtocol: " ++ show e
             throw KeyValueDBLookupException

@@ -281,7 +281,7 @@ commitUnconfirmedScriptOutputProtocol conn epoch protocol (txid, output_index) f
     case resAddrOuts of
         Right _ -> return ()
         Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: INSERTing into 'script_output_protocol: " ++ show e
+            err lg $ LG.msg $ "Error: INSERTing into 'ep_script_output_protocol: " ++ show e
             throw KeyValueDBInsertException
 
 processUnconfTransaction :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Tx -> m ()
