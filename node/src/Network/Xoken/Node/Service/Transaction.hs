@@ -237,7 +237,7 @@ xGetTxHashes hashes = do
             Left (e :: SomeException) -> do
                 err lg $ LG.msg $ "Error: xGetTxHashes: " ++ show e
                 throw KeyValueDBLookupException
-    let iop = nubBy (\(txid, _, _, _, _) (txid2, _, _, _, _) -> txid == txid2) (cres ++ cures)
+    let iop = nubBy (\(txid, _, _, _, _) (txid2, _, _, _, _) -> txid == txid2) (cures ++ cres)
     txRecs <-
         traverse
             (\(txid, bi, psz, sinps, fees) -> do
