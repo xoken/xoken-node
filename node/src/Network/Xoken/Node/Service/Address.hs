@@ -228,7 +228,9 @@ xGetUtxosAddress address pgSize mbNominalTxIndex = do
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ BC.pack $ "[ERROR] xGetUtxosAddress: Fetching confirmed/unconfirmed outputs: " <> show e
             throw KeyValueDBLookupException
-        Right (unconf, conf) ->
+        Right (unconf, conf) -> do
+            debug lg $ LG.msg $ BC.pack $ "<xGetUtxosAddress> got unconfirmed UTXOs: " <> show (snd . fst <$> unconf)
+            debug lg $ LG.msg $ BC.pack $ "<xGetUtxosAddress> got confirmed UTXOs: " <> show (snd . fst <$> conf)
             let (unconfRwc, confRwc) =
                     ( addressOutputToResultWithCursor address <$> unconf
                     , addressOutputToResultWithCursor address <$> conf)
@@ -378,6 +380,11 @@ getConfirmedUtxosByAddress address pgSize nominalTxIndex = do
                     let nextPgSize = (fromJust pgSize) - (fromIntegral $ L.length utxos)
                         nextCursor = fst $ fst $ last utxos
                     nextPage <- getConfirmedUtxosByAddress address (Just nextPgSize) (Just nextCursor)
+                    debug lg $
+                        LG.msg $
+                        BC.pack $
+                        "<getConfirmedUtxosByAddress> (pageSize=" <> (show pgSize) <> ") got UTXOs: " <>
+                        show (snd . fst <$> utxos ++ nextPage)
                     return $ utxos ++ nextPage
                 else return utxos
 
@@ -404,6 +411,11 @@ getUnconfirmedUtxosByAddress epoch address pgSize nominalTxIndex = do
                     let nextPgSize = (fromJust pgSize) - (fromIntegral $ L.length utxos)
                         nextCursor = fst $ fst $ last utxos
                     nextPage <- getUnconfirmedUtxosByAddress epoch address (Just nextPgSize) (Just nextCursor)
+                    debug lg $
+                        LG.msg $
+                        BC.pack $
+                        "<getUnconfirmedUtxosByAddress> (pageSize=" <> (show pgSize) <> ") got UTXOs: " <>
+                        show (snd . fst <$> utxos ++ nextPage)
                     return $ utxos ++ nextPage
                 else return utxos
 

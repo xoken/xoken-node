@@ -321,8 +321,7 @@ runBlockCacheQueue =
         fullySynced <- liftIO $ readTVarIO $ indexUnconfirmedTx bp2pEnv
         -- check any retries
         retn1 <-
-            do debug lg $ LG.msg $ val "Checking for retries"
-               let unsent = L.filter (\x -> (fst $ snd x) == RequestQueued) syt
+            do let unsent = L.filter (\x -> (fst $ snd x) == RequestQueued) syt
                let sent =
                        L.filter
                            (\x ->
