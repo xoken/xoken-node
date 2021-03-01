@@ -237,7 +237,7 @@ xGetTxHashes hashes = do
             Left (e :: SomeException) -> do
                 err lg $ LG.msg $ "Error: xGetTxHashes: " ++ show e
                 throw KeyValueDBLookupException
-    let iop = nubBy (\(txid, _, _, _, _) (txid2, _, _, _, _) -> txid == txid2) (cures ++ cres)
+    let iop = (runDeleteBy cres cures) ++ cres
     txRecs <-
         traverse
             (\(txid, bi, psz, sinps, fees) -> do
@@ -276,6 +276,9 @@ xGetTxHashes hashes = do
                          return Nothing)
             iop
     return $ fromMaybe [] (sequence txRecs)
+  where
+    runDeleteBy [] uc = uc
+    runDeleteBy (c:cs) uc = runDeleteBy cs (L.deleteBy (\(txid, _, _, _, _) (txid2, _, _, _, _) -> txid == txid2) c uc)
 
 getTxOutputsFromTxId :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => DT.Text -> m [TxOutput]
 getTxOutputsFromTxId txid = do
