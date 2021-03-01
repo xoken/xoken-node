@@ -119,7 +119,7 @@ setupSeedPeerConnection =
         bp2pEnv <- getBitcoinP2P
         lg <- getLogger
         let net = bitcoinNetwork $ nodeConfig bp2pEnv
-            seeds = getSeeds net
+            seeds = (staticPeerList $ nodeConfig bp2pEnv) ++ getSeeds net
             hints = defaultHints {addrSocketType = Stream}
             port = getDefaultPort net
         debug lg $ msg $ show seeds
