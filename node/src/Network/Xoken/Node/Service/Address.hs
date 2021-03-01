@@ -366,27 +366,25 @@ getConfirmedUtxosByAddress ::
     -> m [((Int64, (DT.Text, Int32)), TxOutputData)]
 getConfirmedUtxosByAddress address pgSize nominalTxIndex = do
     lg <- getLogger
-    res <-
-        LE.try $
-        L.filter (\(_, outputData) -> isNothing $ spendInfo outputData) <$>
-        getConfirmedOutputsByAddress address pgSize nominalTxIndex
+    res <- LE.try $ getConfirmedOutputsByAddress address pgSize nominalTxIndex
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ BC.pack $ "[ERROR] getConfirmedUtxosByAddress: Fetching outputs: " <> show e
             throw KeyValueDBLookupException
-        Right utxos -> do
-            if (L.length utxos < fromMaybe (L.length utxos) (fromIntegral <$> pgSize)) && (not . L.null $ utxos)
-                then do
-                    let nextPgSize = (fromJust pgSize) - (fromIntegral $ L.length utxos)
-                        nextCursor = fst $ fst $ last utxos
-                    nextPage <- getConfirmedUtxosByAddress address (Just nextPgSize) (Just nextCursor)
-                    debug lg $
-                        LG.msg $
-                        BC.pack $
-                        "<getConfirmedUtxosByAddress> (pageSize=" <> (show pgSize) <> ") got UTXOs: " <>
-                        show (snd . fst <$> utxos ++ nextPage)
-                    return $ utxos ++ nextPage
-                else return utxos
+        Right outputs ->
+            let utxos = L.filter (\(_, outputData) -> isNothing $ spendInfo outputData) outputs
+             in if (L.length utxos < fromMaybe (L.length utxos) (fromIntegral <$> pgSize)) && (not . L.null $ outputs)
+                    then do
+                        let nextPgSize = (fromJust pgSize) - (fromIntegral $ L.length utxos)
+                            nextCursor = fst $ fst $ last outputs
+                        nextPage <- getConfirmedUtxosByAddress address (Just nextPgSize) (Just nextCursor)
+                        debug lg $
+                            LG.msg $
+                            BC.pack $
+                            "<getConfirmedUtxosByAddress> (pageSize=" <> (show pgSize) <> ") got UTXOs: " <>
+                            show (snd . fst <$> utxos ++ nextPage)
+                        return $ utxos ++ nextPage
+                    else return utxos
 
 getUnconfirmedUtxosByAddress ::
        (HasXokenNodeEnv env m, MonadIO m)
@@ -397,27 +395,25 @@ getUnconfirmedUtxosByAddress ::
     -> m [((Int64, (DT.Text, Int32)), TxOutputData)]
 getUnconfirmedUtxosByAddress epoch address pgSize nominalTxIndex = do
     lg <- getLogger
-    res <-
-        LE.try $
-        L.filter (\(_, outputData) -> isNothing $ spendInfo outputData) <$>
-        getUnconfirmedOutputsByAddress epoch address pgSize nominalTxIndex
+    res <- LE.try $ getUnconfirmedOutputsByAddress epoch address pgSize nominalTxIndex
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ BC.pack $ "[ERROR] getUnconfirmedUtxosByAddress: Fetching outputs: " <> show e
             throw KeyValueDBLookupException
-        Right utxos -> do
-            if (L.length utxos < fromMaybe (L.length utxos) (fromIntegral <$> pgSize)) && (not . L.null $ utxos)
-                then do
-                    let nextPgSize = (fromJust pgSize) - (fromIntegral $ L.length utxos)
-                        nextCursor = fst $ fst $ last utxos
-                    nextPage <- getUnconfirmedUtxosByAddress epoch address (Just nextPgSize) (Just nextCursor)
-                    debug lg $
-                        LG.msg $
-                        BC.pack $
-                        "<getUnconfirmedUtxosByAddress> (pageSize=" <> (show pgSize) <> ") got UTXOs: " <>
-                        show (snd . fst <$> utxos ++ nextPage)
-                    return $ utxos ++ nextPage
-                else return utxos
+        Right outputs ->
+            let utxos = L.filter (\(_, outputData) -> isNothing $ spendInfo outputData) outputs
+             in if (L.length utxos < fromMaybe (L.length utxos) (fromIntegral <$> pgSize)) && (not . L.null $ outputs)
+                    then do
+                        let nextPgSize = (fromJust pgSize) - (fromIntegral $ L.length utxos)
+                            nextCursor = fst $ fst $ last outputs
+                        nextPage <- getUnconfirmedUtxosByAddress epoch address (Just nextPgSize) (Just nextCursor)
+                        debug lg $
+                            LG.msg $
+                            BC.pack $
+                            "<getUnconfirmedUtxosByAddress> (pageSize=" <> (show pgSize) <> ") got UTXOs: " <>
+                            show (snd . fst <$> utxos ++ nextPage)
+                        return $ utxos ++ nextPage
+                    else return utxos
 
 xGetOutputsScriptHash ::
        (HasXokenNodeEnv env m, MonadIO m)
@@ -553,22 +549,20 @@ getConfirmedUtxosByScriptHash ::
     -> m [((DT.Text, Int64, (DT.Text, Int32)), TxOutputData)]
 getConfirmedUtxosByScriptHash scriptHash pgSize nominalTxIndex = do
     lg <- getLogger
-    res <-
-        LE.try $
-        L.filter (\(_, outputData) -> isNothing $ spendInfo outputData) <$>
-        getConfirmedOutputsByScriptHash scriptHash pgSize nominalTxIndex
+    res <- LE.try $ getConfirmedOutputsByScriptHash scriptHash pgSize nominalTxIndex
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ BC.pack $ "[ERROR] getConfirmedUtxosByScriptHash: Fetching outputs: " <> show e
             throw KeyValueDBLookupException
-        Right utxos -> do
-            if (L.length utxos < fromMaybe (L.length utxos) (fromIntegral <$> pgSize)) && (not . L.null $ utxos)
-                then do
-                    let nextPgSize = (fromJust pgSize) - (fromIntegral $ L.length utxos)
-                        nextCursor = snd3 $ fst $ last utxos
-                    nextPage <- getConfirmedUtxosByScriptHash scriptHash (Just nextPgSize) (Just nextCursor)
-                    return $ utxos ++ nextPage
-                else return utxos
+        Right outputs ->
+            let utxos = L.filter (\(_, outputData) -> isNothing $ spendInfo outputData) outputs
+             in if (L.length utxos < fromMaybe (L.length utxos) (fromIntegral <$> pgSize)) && (not . L.null $ outputs)
+                    then do
+                        let nextPgSize = (fromJust pgSize) - (fromIntegral $ L.length utxos)
+                            nextCursor = snd3 $ fst $ last outputs
+                        nextPage <- getConfirmedUtxosByScriptHash scriptHash (Just nextPgSize) (Just nextCursor)
+                        return $ utxos ++ nextPage
+                    else return utxos
 
 getUnconfirmedUtxosByScriptHash ::
        (HasXokenNodeEnv env m, MonadIO m)
@@ -579,22 +573,20 @@ getUnconfirmedUtxosByScriptHash ::
     -> m [((DT.Text, Int64, (DT.Text, Int32)), TxOutputData)]
 getUnconfirmedUtxosByScriptHash epoch scriptHash pgSize nominalTxIndex = do
     lg <- getLogger
-    res <-
-        LE.try $
-        L.filter (\(_, outputData) -> isNothing $ spendInfo outputData) <$>
-        getUnconfirmedOutputsByScriptHash epoch scriptHash pgSize nominalTxIndex
+    res <- LE.try $ getUnconfirmedOutputsByScriptHash epoch scriptHash pgSize nominalTxIndex
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ BC.pack $ "[ERROR] getUnconfirmedUtxosByScriptHash: Fetching outputs: " <> show e
             throw KeyValueDBLookupException
-        Right utxos -> do
-            if (L.length utxos < fromMaybe (L.length utxos) (fromIntegral <$> pgSize)) && (not . L.null $ utxos)
-                then do
-                    let nextPgSize = (fromJust pgSize) - (fromIntegral $ L.length utxos)
-                        nextCursor = snd3 $ fst $ last utxos
-                    nextPage <- getUnconfirmedUtxosByScriptHash epoch scriptHash (Just nextPgSize) (Just nextCursor)
-                    return $ utxos ++ nextPage
-                else return utxos
+        Right outputs ->
+            let utxos = L.filter (\(_, outputData) -> isNothing $ spendInfo outputData) outputs
+             in if (L.length utxos < fromMaybe (L.length utxos) (fromIntegral <$> pgSize)) && (not . L.null $ outputs)
+                    then do
+                        let nextPgSize = (fromJust pgSize) - (fromIntegral $ L.length utxos)
+                            nextCursor = snd3 $ fst $ last outputs
+                        nextPage <- getUnconfirmedUtxosByScriptHash epoch scriptHash (Just nextPgSize) (Just nextCursor)
+                        return $ utxos ++ nextPage
+                    else return utxos
 
 runWithManyInputs ::
        (HasXokenNodeEnv env m, MonadIO m, Ord c, Eq r, Integral p, Bounded p)
