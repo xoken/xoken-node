@@ -159,46 +159,36 @@ runEpochSwitcher =
         dbe' <- getDB
         tm <- liftIO $ getCurrentTime
         let conn = xCqlClientState $ dbe'
-            hour = todHour $ timeToTimeOfDay $ utctDayTime tm
-            minute = todMin $ timeToTimeOfDay $ utctDayTime tm
-            epoch =
-                case hour `mod` 2 of
-                    0 -> True
-                    1 -> False
-        liftIO $ atomically $ writeTVar (epochType bp2pEnv) epoch
-        when (epoch && minute == 0) $ do
-            liftIO $ atomically $ writeTVar (epochTimestamp bp2pEnv) (floor $ utcTimeToPOSIXSeconds tm)
-        if minute == 0
-            then do
-                let str = "DELETE from xoken.ep_transactions where epoch = ?"
-                    qstr = str :: Q.QueryString Q.W (Identity Bool) ()
-                    p = getSimpleQueryParam $ Identity (not epoch)
-                res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr p)
-                case res of
-                    Right _ -> return ()
-                    Left (e :: SomeException) -> do
-                        err lg $ LG.msg ("Error: deleting stale epoch Txs: " ++ show e)
-                        throw e
-                let str = "DELETE from xoken.ep_script_hash_outputs where epoch = ?"
-                    qstr = str :: Q.QueryString Q.W (Identity Bool) ()
-                    p = getSimpleQueryParam $ Identity (not epoch)
-                res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr p)
-                case res of
-                    Right _ -> return ()
-                    Left (e :: SomeException) -> do
-                        err lg $ LG.msg ("Error: deleting stale epoch script_hash_outputs: " ++ show e)
-                        throw e
-                let str = "DELETE from xoken.ep_txid_outputs where epoch = ?"
-                    qstr = str :: Q.QueryString Q.W (Identity Bool) ()
-                    p = getSimpleQueryParam $ Identity (not epoch)
-                res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr p)
-                case res of
-                    Right _ -> return ()
-                    Left (e :: SomeException) -> do
-                        err lg $ LG.msg ("Error: deleting stale epoch txid_outputs: " ++ show e)
-                        throw e
-                liftIO $ threadDelay (1000000 * 60 * 60)
-            else liftIO $ threadDelay (1000000 * 60 * (60 - minute))
+        epoch <- liftIO $ readTVarIO (epochType bp2pEnv)
+        liftIO $ atomically $ writeTVar (epochType bp2pEnv) (not epoch)
+        let str = "DELETE from xoken.ep_transactions where epoch = ?"
+            qstr = str :: Q.QueryString Q.W (Identity Bool) ()
+            p = getSimpleQueryParam $ Identity (not epoch)
+        res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr p)
+        case res of
+            Right _ -> return ()
+            Left (e :: SomeException) -> do
+                err lg $ LG.msg ("Error: deleting stale epoch Txs: " ++ show e)
+                throw e
+        let str = "DELETE from xoken.ep_script_hash_outputs where epoch = ?"
+            qstr = str :: Q.QueryString Q.W (Identity Bool) ()
+            p = getSimpleQueryParam $ Identity (not epoch)
+        res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr p)
+        case res of
+            Right _ -> return ()
+            Left (e :: SomeException) -> do
+                err lg $ LG.msg ("Error: deleting stale epoch script_hash_outputs: " ++ show e)
+                throw e
+        let str = "DELETE from xoken.ep_txid_outputs where epoch = ?"
+            qstr = str :: Q.QueryString Q.W (Identity Bool) ()
+            p = getSimpleQueryParam $ Identity (not epoch)
+        res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr p)
+        case res of
+            Right _ -> return ()
+            Left (e :: SomeException) -> do
+                err lg $ LG.msg ("Error: deleting stale epoch txid_outputs: " ++ show e)
+                throw e
+        liftIO $ threadDelay (1000000 * 60 * 60)
         return ()
 
 commitEpochScriptHashOutputs ::
@@ -211,9 +201,8 @@ commitEpochScriptHashOutputs ::
 commitEpochScriptHashOutputs conn epoch sh output = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    bt <- liftIO $ readTVarIO (epochTimestamp bp2pEnv)
     tm <- liftIO getCurrentTime
-    let nominalTxIndex = (9000000 * 1000000000) + ((floor $ utcTimeToPOSIXSeconds tm) - bt)
+    let nominalTxIndex = (9000000 * 1000000000) + (floor $ utcTimeToPOSIXSeconds tm)
     let strAddrOuts =
             "INSERT INTO xoken.ep_script_hash_outputs (epoch, script_hash, nominal_tx_index, output) VALUES (?,?,?,?)"
         qstrAddrOuts = strAddrOuts :: Q.QueryString Q.W (Bool, Text, Int64, (Text, Int32)) ()
@@ -269,9 +258,8 @@ commitUnconfirmedScriptOutputProtocol ::
 commitUnconfirmedScriptOutputProtocol conn epoch protocol (txid, output_index) fees size = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    bt <- liftIO $ readTVarIO (epochTimestamp bp2pEnv)
     tm <- liftIO getCurrentTime
-    let nominalTxIndex = (9000000 * 1000000000) + ((floor $ utcTimeToPOSIXSeconds tm) - bt)
+    let nominalTxIndex = (9000000 * 1000000000) + (floor $ utcTimeToPOSIXSeconds tm)
         qstrAddrOuts :: Q.QueryString Q.W (Bool, Text, Text, Int64, Int32, Int32, Int64) ()
         qstrAddrOuts =
             "INSERT INTO xoken.ep_script_output_protocol (epoch, proto_str, txid, fees, size, output_index, nominal_tx_index) VALUES (?,?,?,?,?,?,?)"
