@@ -9,22 +9,7 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE BangPatterns #-}
 
-module Network.Xoken.Node.P2P.BlockSync
-    ( processBlock
-    , processConfTransaction
-    , peerBlockSync
-    , checkBlocksFullySynced
-    , runPeerSync
-    , runBlockCacheQueue
-    , getSatsValueFromOutpoint
-    , markBestSyncedBlock
-    , fetchBestSyncedBlock
-    , sendRequestMessages
-    , handleIfAllegoryTx
-    , commitTxPage
-    , getScriptHashFromOutpoint
-    , diffGregorianDurationClip
-    ) where
+module Network.Xoken.Node.P2P.BlockSync where
 
 import Codec.Serialise
 import Control.Concurrent (threadDelay)

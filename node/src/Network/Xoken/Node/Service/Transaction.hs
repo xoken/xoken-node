@@ -114,15 +114,15 @@ xGetTxHash hash = do
                                                         , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
                                                         , Int64)
         ustr =
-            "SELECT epoch, tx_id, tx_serialized, inputs, fees from xoken.ep_transactions where epoch = ? AND tx_id = ?"
+            "SELECT epoch, tx_id, tx_serialized, inputs, fees from xoken.transactions where epoch = ? AND tx_id = ?"
         uqstr =
-            ustr :: Q.QueryString Q.R (Bool, DT.Text) ( Bool
-                                                      , DT.Text
-                                                      , Blob
-                                                      , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
-                                                      , Int64)
+            ustr :: Q.QueryString Q.R (Identity DT.Text) ( Bool
+                                                         , DT.Text
+                                                         , Blob
+                                                         , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
+                                                         , Int64)
         p = getSimpleQueryParam $ Identity $ hash
-        up = getSimpleQueryParam $ (ep, hash)
+        up = getSimpleQueryParam $ (Identity hash)
     res <-
         LE.try $
         LA.concurrently
@@ -203,7 +203,7 @@ xGetTxHashes hashes = do
     let conn = xCqlClientState dbe
         net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
         str = "SELECT tx_id, block_info, tx_serialized, inputs, fees from xoken.transactions where tx_id in ?"
-        ustr = "SELECT tx_id, tx_serialized, inputs, fees from xoken.ep_transactions where epoch = ? AND tx_id = ?"
+        ustr = "SELECT tx_id, tx_serialized, inputs, fees from xoken.transactions where tx_id = ?"
         qstr =
             str :: Q.QueryString Q.R (Identity [DT.Text]) ( DT.Text
                                                           , (DT.Text, Int32, Int32)
@@ -211,12 +211,12 @@ xGetTxHashes hashes = do
                                                           , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
                                                           , Int64)
         uqstr =
-            ustr :: Q.QueryString Q.R (Bool, DT.Text) ( DT.Text
-                                                      , Blob
-                                                      , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
-                                                      , Int64)
+            ustr :: Q.QueryString Q.R (Identity DT.Text) ( DT.Text
+                                                , Blob
+                                                , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
+                                                , Int64)
         p = getSimpleQueryParam $ Identity $ hashes
-        up a = getSimpleQueryParam $ (ep, a)
+        up a = getSimpleQueryParam $ (Identity a)
     res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr p)
     ures <- liftIO $ LE.try $ mapConcurrently (\a -> query conn (Q.RqQuery $ Q.Query uqstr (up a))) hashes
     cres <-
@@ -296,14 +296,14 @@ getTxOutputsFromTxId txid = do
                                                           , Int64
                                                           , DT.Text)
         par = getSimpleQueryParam (Identity txid)
-        utoStr = "SELECT output_index,is_recv,other,value,address FROM xoken.ep_txid_outputs WHERE epoch = ? AND txid=?"
+        utoStr = "SELECT output_index,is_recv,other,value,address FROM xoken.txid_outputs WHERE txid=?"
         utoQStr =
-            utoStr :: Q.QueryString Q.R ((Bool, DT.Text)) ( Int32
-                                                          , Bool
-                                                          , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
-                                                          , Int64
-                                                          , DT.Text)
-        upar = getSimpleQueryParam (ep, txid)
+            utoStr :: Q.QueryString Q.R (Identity DT.Text) ( Int32
+                                                           , Bool
+                                                           , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
+                                                           , Int64
+                                                           , DT.Text)
+        upar = getSimpleQueryParam (Identity txid)
     ures <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query utoQStr upar)
     res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query toQStr par)
     uout <-
@@ -610,10 +610,10 @@ getUnconfTxIDByProtocol epoch prop1 props pgSize mbNomTxInd = do
                 Just n -> n
                 Nothing -> maxBound
         str =
-            "SELECT txid, nominal_tx_index FROM xoken.ep_script_output_protocol WHERE epoch=? AND proto_str=? AND nominal_tx_index<?"
+            "SELECT txid, nominal_tx_index FROM xoken.script_output_protocol WHERE proto_str=? AND nominal_tx_index<?"
         protocol = DT.intercalate "." $ prop1 : props
-        qstr = str :: Q.QueryString Q.R (Bool, DT.Text, Int64) (DT.Text, Int64)
-        uqstr = getSimpleQueryParam $ (epoch, protocol, nominalTxIndex)
+        qstr = str :: Q.QueryString Q.R (DT.Text, Int64) (DT.Text, Int64)
+        uqstr = getSimpleQueryParam $ (protocol, nominalTxIndex)
     eResp <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr (uqstr {pageSize = maybe (Just 100) Just pgSize}))
     case eResp of
         Right mb -> return $ (\(x, y) -> ResultWithCursor x y) <$> mb

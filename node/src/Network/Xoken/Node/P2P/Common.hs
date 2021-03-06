@@ -555,8 +555,9 @@ getCompleteTx conn hash segments =
     getTx conn ("SELECT tx_serialized from xoken.transactions where tx_id = ?") hash segments
 
 getCompleteUnConfTx :: XCqlClientState -> T.Text -> Int -> IO (BSL.ByteString)
-getCompleteUnConfTx conn hash segments =
-    getTx conn ("SELECT tx_serialized from xoken.ep_transactions where tx_id = ?") hash segments
+getCompleteUnConfTx = getCompleteTx
+--getCompleteUnConfTx conn hash segments =
+--    getTx conn ("SELECT tx_serialized from xoken.ep_transactions where tx_id = ?") hash segments
 
 getTx :: XCqlClientState -> Q.QueryString Q.R (Identity Text) (Identity Blob) -> T.Text -> Int -> IO (BSL.ByteString)
 getTx conn qstr hash segments = do

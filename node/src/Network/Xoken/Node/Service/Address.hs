@@ -137,13 +137,13 @@ getUnConfTxOutputsData (txid, index) = do
     ep <- liftIO $ readTVarIO (epochType bp2pEnv)
     let conn = xCqlClientState dbe
         toStr =
-            "SELECT is_recv,other,value,address FROM xoken.ep_txid_outputs WHERE epoch = ? AND txid=? AND output_index=?"
+            "SELECT is_recv,other,value,address FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
         toQStr =
-            toStr :: Q.QueryString Q.R (Bool, DT.Text, Int32) ( Bool
-                                                              , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
-                                                              , Int64
-                                                              , DT.Text)
-        top = getSimpleQueryParam (ep, txid, index)
+            toStr :: Q.QueryString Q.R (DT.Text, Int32) ( Bool
+                                                        , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
+                                                        , Int64
+                                                        , DT.Text)
+        top = getSimpleQueryParam (txid, index)
     toRes <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query toQStr top)
     case toRes of
         Right es -> do
@@ -313,11 +313,11 @@ getUnconfirmedOutputsByAddress epoch address pgSize mbNominalTxIndex = do
                 Just n -> n
                 Nothing -> maxBound
         unconfOutputsByAddressQuery =
-            "SELECT nominal_tx_index, output FROM xoken.ep_script_hash_outputs WHERE epoch=? AND script_hash=? AND nominal_tx_index<?"
-        queryString = unconfOutputsByAddressQuery :: Q.QueryString Q.R (Bool, DT.Text, Int64) (Int64, (DT.Text, Int32))
+            "SELECT nominal_tx_index, output FROM xoken.script_hash_outputs WHERE script_hash=? AND nominal_tx_index<?"
+        queryString = unconfOutputsByAddressQuery :: Q.QueryString Q.R (DT.Text, Int64) (Int64, (DT.Text, Int32))
         scriptHash = convertToScriptHash net address
-        addressQueryParams = getSimpleQueryParam (epoch, DT.pack address, nominalTxIndex)
-        scriptHashQueryParams = getSimpleQueryParam (epoch, maybe "" DT.pack scriptHash, nominalTxIndex)
+        addressQueryParams = getSimpleQueryParam (DT.pack address, nominalTxIndex)
+        scriptHashQueryParams = getSimpleQueryParam (maybe "" DT.pack scriptHash, nominalTxIndex)
     res <-
         if isNothing pgSize || pgSize > Just 0
             then LE.try $
@@ -509,12 +509,12 @@ getUnconfirmedOutputsByScriptHash epoch scriptHash pgSize mbNominalTxIndex = do
                 Just n -> n
                 Nothing -> maxBound
         unconfOutputsByScriptHashQuery =
-            "SELECT script_hash, nominal_tx_index, output FROM xoken.ep_script_hash_outputs WHERE epoch=? AND script_hash=? AND nominal_tx_index<?"
+            "SELECT script_hash, nominal_tx_index, output FROM xoken.script_hash_outputs WHERE script_hash=? AND nominal_tx_index<?"
         queryString =
-            unconfOutputsByScriptHashQuery :: Q.QueryString Q.R (Bool, DT.Text, Int64) ( DT.Text
+            unconfOutputsByScriptHashQuery :: Q.QueryString Q.R (DT.Text, Int64) ( DT.Text
                                                                                        , Int64
                                                                                        , (DT.Text, Int32))
-        params = getSimpleQueryParam (epoch, DT.pack scriptHash, nominalTxIndex)
+        params = getSimpleQueryParam (DT.pack scriptHash, nominalTxIndex)
     res <-
         if isNothing pgSize || pgSize > Just 0
             then LE.try $ liftIO $ query conn (Q.RqQuery $ Q.Query queryString (params {pageSize = pgSize}))
