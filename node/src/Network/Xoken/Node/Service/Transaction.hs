@@ -161,41 +161,26 @@ xGetTxHashes hashes = do
     let conn = xCqlClientState dbe
         net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
         str = "SELECT tx_id, block_info, tx_serialized, inputs, fees from xoken.transactions where tx_id in ?"
-        ustr = "SELECT tx_id, tx_serialized, inputs, fees from xoken.transactions where tx_id = ?"
         qstr =
             str :: Q.QueryString Q.R (Identity [DT.Text]) ( DT.Text
                                                           , (DT.Text, Int32, Int32)
                                                           , Blob
                                                           , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
                                                           , Int64)
-        uqstr =
-            ustr :: Q.QueryString Q.R (Identity DT.Text) ( DT.Text
-                                                , Blob
-                                                , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
-                                                , Int64)
         p = getSimpleQueryParam $ Identity $ hashes
-        up a = getSimpleQueryParam $ (Identity a)
     res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr p)
-    ures <- liftIO $ LE.try $ mapConcurrently (\a -> query conn (Q.RqQuery $ Q.Query uqstr (up a))) hashes
-    cres <-
+    iop <-
         case res of
             Right iop ->
                 pure $
                 L.map
-                    (\(txid, (bhash, blkht, txind), psz, sinps, fees) ->
-                         (txid, Just (bhash, blkht, txind), psz, Q.fromSet sinps, fees))
+                    (\(txid, (bhash, blkht, txind), psz, sinps, fees) -> case (bhash, blkht, txind) of
+                                                                                ("",-1,-1) -> (txid, Nothing, psz, Q.fromSet sinps, fees)
+                                                                                _ -> (txid, Just (bhash, blkht, txind), psz, Q.fromSet sinps, fees))
                     iop
             Left (e :: SomeException) -> do
                 err lg $ LG.msg $ "Error: xGetTxHashes: " ++ show e
                 throw KeyValueDBLookupException
-    cures <-
-        case ures of
-            Right iop -> do
-                pure $ L.map (\(txid, psz, sinps, fees) -> (txid, Nothing, psz, Q.fromSet sinps, fees)) (L.concat iop)
-            Left (e :: SomeException) -> do
-                err lg $ LG.msg $ "Error: xGetTxHashes: " ++ show e
-                throw KeyValueDBLookupException
-    let iop = (runDeleteBy cres cures) ++ cres
     txRecs <-
         traverse
             (\(txid, bi, psz, sinps, fees) -> do
