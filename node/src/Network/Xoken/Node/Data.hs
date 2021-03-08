@@ -653,9 +653,9 @@ instance ToJSON RawTxRecord where
         object
             [ "txId" .= tId
             , "size" .= sz
-            , "txIndex" .= (binfTxIndex <$> tBI)
-            , "blockHash" .= (binfBlockHash <$> tBI)
-            , "blockHeight" .= (binfBlockHeight <$> tBI)
+            , "txIndex" .= (_getNullForDef (-1) $ binfTxIndex <$> tBI)
+            , "blockHash" .= (_getNullForDef "" $ binfBlockHash <$> tBI)
+            , "blockHeight" .= (_getNullForDef (-1) $ binfBlockHeight <$> tBI)
             , "txSerialized" .= (T.decodeUtf8 . BL.toStrict . B64L.encode $ tS)
             , "txOutputs" .= txo
             , "txInputs" .= txi
@@ -679,9 +679,9 @@ instance ToJSON TxRecord where
         object
             [ "txId" .= tId
             , "size" .= sz
-            , "txIndex" .= (binfTxIndex <$> tBI)
-            , "blockHash" .= (binfBlockHash <$> tBI)
-            , "blockHeight" .= (binfBlockHeight <$> tBI)
+            , "txIndex" .= (_getNullForDef (-1) $ binfTxIndex <$> tBI)
+            , "blockHash" .= (_getNullForDef "" $ binfBlockHash <$> tBI)
+            , "blockHeight" .= (_getNullForDef (-1) $ binfBlockHeight <$> tBI)
             , "tx" .= tx'
             , "fees" .= fee
             , "merkleBranch" .= mrkl
@@ -762,9 +762,9 @@ instance ToJSON AddressOutputs where
             [ "address" .= addr
             , "outputTxHash" .= (opTxHash out)
             , "outputIndex" .= (opIndex out)
-            , "txIndex" .= (binfTxIndex <$> bi)
-            , "blockHash" .= (binfBlockHash <$> bi)
-            , "blockHeight" .= (binfBlockHeight <$> bi)
+            , "txIndex" .= (_getNullForDef (-1) $ binfTxIndex <$> bi)
+            , "blockHash" .= (_getNullForDef "" $ binfBlockHash <$> bi)
+            , "blockHeight" .= (_getNullForDef (-1) $ binfBlockHeight <$> bi)
             , "spendInfo" .= ios
             , "prevOutpoint" .= po
             , "value" .= val
@@ -787,9 +787,9 @@ instance ToJSON ScriptOutputs where
             [ "scriptHash" .= dh
             , "outputTxHash" .= (opTxHash out)
             , "outputIndex" .= (opIndex out)
-            , "txIndex" .= (binfTxIndex <$> bi)
-            , "blockHash" .= (binfBlockHash <$> bi)
-            , "blockHeight" .= (binfBlockHeight <$> bi)
+            , "txIndex" .= (_getNullForDef (-1) $ binfTxIndex <$> bi)
+            , "blockHash" .= (_getNullForDef "" $ binfBlockHash <$> bi)
+            , "blockHeight" .= (_getNullForDef (-1) $ binfBlockHeight <$> bi)
             , "spendInfo" .= ios
             , "prevOutpoint" .= po
             , "value" .= val
@@ -1022,3 +1022,7 @@ maxBoundOutput = (T.pack "ffffffffffffffffffffffffffffffffffffffffffffffffffffff
 encodeResp :: ToJSON a => Bool -> a -> C.ByteString
 encodeResp True = AP.encodePretty
 encodeResp False = A.encode
+
+_getNullForDef :: Eq a => a -> Maybe a -> Maybe a
+_getNullForDef _ Nothing = Nothing
+_getNullForDef v (Just x) = if v == x then Nothing else Just x
