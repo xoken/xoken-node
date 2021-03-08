@@ -593,9 +593,13 @@ commitScriptHashOutputs ::
        (HasLogger m, MonadIO m) => XCqlClientState -> Text -> (Text, Int32) -> (Text, Int32, Int32) -> m ()
 commitScriptHashOutputs conn sh output blockInfo = do
     lg <- getLogger
+    tm <- liftIO getCurrentTime
     let blkHeight = fromIntegral $ snd3 blockInfo
         txIndex = fromIntegral $ thd3 blockInfo
-        nominalTxIndex = blkHeight * 1000000000 + txIndex
+        nominalTxIndex =
+            case blockInfo of
+                ("", -1, -1) -> (9000000 * 1000000000) + (floor $ utcTimeToPOSIXSeconds tm)
+                _ -> blkHeight * 1000000000 + txIndex
         qstrAddrOuts :: Q.QueryString Q.W (Text, Int64, (Text, Int32)) ()
         qstrAddrOuts = "INSERT INTO xoken.script_hash_outputs (script_hash, nominal_tx_index, output) VALUES (?,?,?)"
         parAddrOuts = getSimpleQueryParam (sh, nominalTxIndex, output)
@@ -1275,9 +1279,13 @@ commitScriptOutputProtocol ::
     -> m ()
 commitScriptOutputProtocol conn protocol (txid, output_index) blockInfo fees size = do
     lg <- getLogger
+    tm <- liftIO getCurrentTime
     let blkHeight = fromIntegral $ snd3 blockInfo
         txIndex = fromIntegral $ thd3 blockInfo
-        nominalTxIndex = blkHeight * 1000000000 + txIndex
+        nominalTxIndex =
+            case blockInfo of
+                ("", -1, -1) -> (9000000 * 1000000000) + (floor $ utcTimeToPOSIXSeconds tm)
+                _ -> blkHeight * 1000000000 + txIndex
         qstrAddrOuts :: Q.QueryString Q.W (Text, Text, Int64, Int32, Int32, Int64) ()
         qstrAddrOuts =
             "INSERT INTO xoken.script_output_protocol (proto_str, txid, fees, size, output_index, nominal_tx_index) VALUES (?,?,?,?,?,?)"
