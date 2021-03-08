@@ -271,7 +271,7 @@ processHeaders hdrs = do
                                                              LG.val
                                                                  ("Does not match best-block, potential block re-org...")
                                                          let reOrgDiff = zip [(matchBHt + 1) ..] (headersList hdrs) -- potential re-org
-                                                         bestSynced <- NXB.fetchBestSyncedBlock conn net
+                                                         bestSynced <- NXB.fetchBestSyncedBlock
                                                          if snd bestSynced >= matchBHt
                                                              then do
                                                                  debug lg $
@@ -412,11 +412,12 @@ updateChainWork indexed conn = do
                             then do
                                 if L.null lagIndexed -- both lag and lagIndexed are null
                                     then return (chainWork, height)
-                                    else do -- only lag is null
+                                            -- only lag is null
+                                    else do
                                         let updatedBlock = fst $ last lagIndexed
                                             updatedChainwork = T.pack $ show $ indexedCW + (read . T.unpack $ chainWork)
                                         return (updatedChainwork, updatedBlock)
-                            else do -- lag is not null
+                            else do
                                 lagCW <- calculateChainWork lag conn
                                 let updatedChainwork = T.pack $ show $ lagCW + indexedCW + (read . T.unpack $ chainWork)
                                     updatedBlock =

@@ -361,7 +361,7 @@ runBlockCacheQueue =
                 Nothing -> do
                     if sysz < (blocksFetchWindow $ nodeConfig bp2pEnv)
                         then do
-                            (hash, ht) <- fetchBestSyncedBlock conn net
+                            (hash, ht) <- fetchBestSyncedBlock
                             let fetchMore = (blocksFetchWindow $ nodeConfig bp2pEnv) - sysz
                             let cacheInd = [1 .. fetchMore] -- getBatchSize net (fromIntegral $ L.length connPeers) ht
                             let !bks = map (\x -> ht + (fromIntegral x)) cacheInd
@@ -558,12 +558,13 @@ sortPeers peers = do
             peers
     return $ snd $ unzip $ L.sortBy (\(a, _) (b, _) -> compare a b) (zip ts peers)
 
-fetchBestSyncedBlock ::
-       (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => XCqlClientState -> Network -> m ((BlockHash, Int32))
-fetchBestSyncedBlock conn net = do
+fetchBestSyncedBlock :: (HasXokenNodeEnv env m, MonadIO m) => m (BlockHash, Int32)
+fetchBestSyncedBlock = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
+    conn <- xCqlClientState <$> getDB
     binfo <- liftIO $ atomically $ readTVar (bestSyncedBlock bp2pEnv)
+    let net = bitcoinNetwork . nodeConfig $ bp2pEnv
     case binfo of
         Just bi -> return $ (biBlockHash bi, fromIntegral $ biBlockHeight bi)
         Nothing -> do
@@ -589,20 +590,39 @@ fetchBestSyncedBlock conn net = do
                                 Nothing -> throw InvalidBlockHashException
                         Nothing -> throw InvalidMetaDataException
 
+deleteUnconfirmedScriptHashOutputs :: (HasXokenNodeEnv env m, MonadIO m) => Text -> (Text, Int32) -> m ()
+deleteUnconfirmedScriptHashOutputs sh output = do
+    lg <- getLogger
+    conn <- xCqlClientState <$> getDB
+    (_, bestBlockHeight) <- fetchBestSyncedBlock
+    let nominalTxIndex = fromIntegral $ bestBlockHeight + 1
+        queryString :: Q.QueryString Q.W (Text, Int64, (Text, Int32)) ()
+        queryString = "DELETE FROM xoken.script_hash_outputs WHERE script_hash=? AND nominal_tx_index=? AND output=?"
+        queryParams = getSimpleQueryParam (sh, nominalTxIndex, output)
+    prepQuery <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare queryString))
+    res <- liftIO $ try $ write conn (Q.RqExecute (Q.Execute prepQuery queryParams))
+    case res of
+        Right _ -> return ()
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: DELETEing from 'script_hash_outputs': " ++ show e
+            throw KeyValueDBInsertException
+
 commitScriptHashOutputs ::
-       (HasLogger m, MonadIO m) => XCqlClientState -> Text -> (Text, Int32) -> (Text, Int32, Int32) -> m ()
+       (HasXokenNodeEnv env m, MonadIO m) => XCqlClientState -> Text -> (Text, Int32) -> (Text, Int32, Int32) -> m ()
 commitScriptHashOutputs conn sh output blockInfo = do
     lg <- getLogger
     tm <- liftIO getCurrentTime
+    (_, bestBlockHeight) <- fetchBestSyncedBlock
     let blkHeight = fromIntegral $ snd3 blockInfo
         txIndex = fromIntegral $ thd3 blockInfo
         nominalTxIndex =
             case blockInfo of
-                ("", -1, -1) -> (9000000 * 1000000000) + (floor $ utcTimeToPOSIXSeconds tm)
+                ("", -1, -1) -> fromIntegral $ bestBlockHeight + 1
                 _ -> blkHeight * 1000000000 + txIndex
         qstrAddrOuts :: Q.QueryString Q.W (Text, Int64, (Text, Int32)) ()
         qstrAddrOuts = "INSERT INTO xoken.script_hash_outputs (script_hash, nominal_tx_index, output) VALUES (?,?,?)"
         parAddrOuts = getSimpleQueryParam (sh, nominalTxIndex, output)
+    unless (blockInfo == ("", -1, -1)) $ deleteUnconfirmedScriptHashOutputs sh output
     queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstrAddrOuts))
     resAddrOuts <- liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryId parAddrOuts))
     case resAddrOuts of
