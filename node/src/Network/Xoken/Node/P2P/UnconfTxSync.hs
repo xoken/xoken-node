@@ -152,7 +152,8 @@ sendTxGetData pr txHash = do
         Nothing -> err lg $ LG.msg $ val "Error sending, no connections available"
 
 runEpochSwitcher :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
-runEpochSwitcher =
+runEpochSwitcher = return ()
+{-
     forever $ do
         lg <- getLogger
         bp2pEnv <- getBitcoinP2P
@@ -190,6 +191,7 @@ runEpochSwitcher =
                 throw e
         liftIO $ threadDelay (1000000 * 60 * 60)
         return ()
+-}
 
 commitEpochScriptHashOutputs ::
        (HasLogger m, HasBitcoinP2P m, MonadIO m)
