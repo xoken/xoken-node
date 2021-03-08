@@ -174,9 +174,7 @@ xGetTxHashes hashes = do
             Right iop ->
                 pure $
                 L.map
-                    (\(txid, (bhash, blkht, txind), psz, sinps, fees) -> case (bhash, blkht, txind) of
-                                                                                ("",-1,-1) -> (txid, Nothing, psz, Q.fromSet sinps, fees)
-                                                                                _ -> (txid, Just (bhash, blkht, txind), psz, Q.fromSet sinps, fees))
+                    (\(txid, bi, psz, sinps, fees) -> (txid, getBlockInfo bi, psz, Q.fromSet sinps, fees))
                     iop
             Left (e :: SomeException) -> do
                 err lg $ LG.msg $ "Error: xGetTxHashes: " ++ show e
@@ -190,7 +188,7 @@ xGetTxHashes hashes = do
                          then liftIO $ getCompleteTx conn txid (getSegmentCount (fromBlob psz))
                          else pure $ fromBlob psz
                  let tx = fromJust $ Extra.hush $ S.decodeLazy sz
-                 let mrklF =
+                     mrklF =
                          case bi of
                              Just b -> Just <$> (xGetMerkleBranch $ DT.unpack txid)
                              Nothing -> pure Nothing
@@ -206,7 +204,7 @@ xGetTxHashes hashes = do
                              ((\(bhash, blkht, txind) ->
                                    BlockInfo' (DT.unpack bhash) (fromIntegral blkht) (fromIntegral txind)) <$>
                               bi)
-                             (sz)
+                             sz
                              (zipWith mergeTxOutTxOutput (txOut tx) <$> outs)
                              (zipWith mergeTxInTxInput (txIn tx) $
                               (\((outTxId, outTxIndex), inpTxIndex, (addr, value)) ->

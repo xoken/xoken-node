@@ -633,3 +633,9 @@ withResource' pool f = do
     case res of
         Right ret -> return ret
         Left (e :: SomeException) ->  throw e
+
+getBlockInfo :: (T.Text, Int32, Int32) -> Maybe (T.Text, Int32, Int32)
+getBlockInfo (_,_,-1) = Nothing
+getBlockInfo (_,-1,_) = Nothing
+getBlockInfo ("",_,_) = Nothing
+getBlockInfo b = Just b
