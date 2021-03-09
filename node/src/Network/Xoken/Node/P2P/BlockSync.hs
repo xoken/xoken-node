@@ -1288,8 +1288,25 @@ nodesExist txId allegory confirmed = do
                           ProducerExtension peo _ -> producer peo) <$>
                  es)
 
+deleteUnconfirmedScriptOutputProtocol :: (HasXokenNodeEnv env m, MonadIO m) => Text -> m ()
+deleteUnconfirmedScriptOutputProtocol protocol = do
+    lg <- getLogger
+    conn <- xCqlClientState <$> getDB
+    (_, bestBlockHeight) <- fetchBestSyncedBlock
+    let nominalTxIndex = fromIntegral $ bestBlockHeight + 1
+        queryString :: Q.QueryString Q.W (Text, Int64) ()
+        queryString = "DELETE FROM xoken.script_output_protocol WHERE proto_str=? AND nominal_tx_index=?"
+        queryParams = getSimpleQueryParam (protocol, nominalTxIndex)
+    prepQuery <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare queryString))
+    res <- liftIO $ try $ write conn (Q.RqExecute (Q.Execute prepQuery queryParams))
+    case res of
+        Right _ -> return ()
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: DELETEing from 'script_output_protocol': " ++ show e
+            throw KeyValueDBInsertException
+
 commitScriptOutputProtocol ::
-       (HasLogger m, MonadIO m)
+       (HasXokenNodeEnv env m, MonadIO m)
     => XCqlClientState
     -> Text
     -> (Text, Int32)
@@ -1300,11 +1317,12 @@ commitScriptOutputProtocol ::
 commitScriptOutputProtocol conn protocol (txid, output_index) blockInfo fees size = do
     lg <- getLogger
     tm <- liftIO getCurrentTime
+    (_, bestBlockHeight) <- fetchBestSyncedBlock
     let blkHeight = fromIntegral $ snd3 blockInfo
         txIndex = fromIntegral $ thd3 blockInfo
         nominalTxIndex =
             case blockInfo of
-                ("", -1, -1) -> (9000000 * 1000000000) + (floor $ utcTimeToPOSIXSeconds tm)
+                ("", -1, -1) -> fromIntegral $ bestBlockHeight + 1
                 _ -> blkHeight * 1000000000 + txIndex
         qstrAddrOuts :: Q.QueryString Q.W (Text, Text, Int64, Int32, Int32, Int64) ()
         qstrAddrOuts =
@@ -1312,6 +1330,7 @@ commitScriptOutputProtocol conn protocol (txid, output_index) blockInfo fees siz
         parAddrOuts = getSimpleQueryParam (protocol, txid, fees, size, output_index, nominalTxIndex)
     queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstrAddrOuts))
     resAddrOuts <- liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryId parAddrOuts))
+    unless (blockInfo == ("", -1, -1)) $ deleteUnconfirmedScriptOutputProtocol protocol
     case resAddrOuts of
         Right _ -> return ()
         Left (e :: SomeException) -> do
