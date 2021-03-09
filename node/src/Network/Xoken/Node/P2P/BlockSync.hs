@@ -595,7 +595,7 @@ deleteUnconfirmedScriptHashOutputs sh output = do
     lg <- getLogger
     conn <- xCqlClientState <$> getDB
     (_, bestBlockHeight) <- fetchBestSyncedBlock
-    let nominalTxIndex = fromIntegral $ bestBlockHeight + 1
+    let nominalTxIndex = fromIntegral $ bestBlockHeight + 9000000000000001
         queryString :: Q.QueryString Q.W (Text, Int64, (Text, Int32)) ()
         queryString = "DELETE FROM xoken.script_hash_outputs WHERE script_hash=? AND nominal_tx_index=? AND output=?"
         queryParams = getSimpleQueryParam (sh, nominalTxIndex, output)
@@ -617,7 +617,7 @@ commitScriptHashOutputs conn sh output blockInfo = do
         txIndex = fromIntegral $ thd3 blockInfo
         nominalTxIndex =
             case blockInfo of
-                ("", -1, -1) -> fromIntegral $ bestBlockHeight + 1
+                ("", -1, -1) -> fromIntegral $ bestBlockHeight + 9000000000000001
                 _ -> blkHeight * 1000000000 + txIndex
         qstrAddrOuts :: Q.QueryString Q.W (Text, Int64, (Text, Int32)) ()
         qstrAddrOuts = "INSERT INTO xoken.script_hash_outputs (script_hash, nominal_tx_index, output) VALUES (?,?,?)"
@@ -1293,7 +1293,7 @@ deleteUnconfirmedScriptOutputProtocol protocol = do
     lg <- getLogger
     conn <- xCqlClientState <$> getDB
     (_, bestBlockHeight) <- fetchBestSyncedBlock
-    let nominalTxIndex = fromIntegral $ bestBlockHeight + 1
+    let nominalTxIndex = fromIntegral $ bestBlockHeight + 9000000000000001
         queryString :: Q.QueryString Q.W (Text, Int64) ()
         queryString = "DELETE FROM xoken.script_output_protocol WHERE proto_str=? AND nominal_tx_index=?"
         queryParams = getSimpleQueryParam (protocol, nominalTxIndex)
@@ -1322,7 +1322,7 @@ commitScriptOutputProtocol conn protocol (txid, output_index) blockInfo fees siz
         txIndex = fromIntegral $ thd3 blockInfo
         nominalTxIndex =
             case blockInfo of
-                ("", -1, -1) -> fromIntegral $ bestBlockHeight + 1
+                ("", -1, -1) -> fromIntegral $ bestBlockHeight + 9000000000000001
                 _ -> blkHeight * 1000000000 + txIndex
         qstrAddrOuts :: Q.QueryString Q.W (Text, Text, Int64, Int32, Int32, Int64) ()
         qstrAddrOuts =
