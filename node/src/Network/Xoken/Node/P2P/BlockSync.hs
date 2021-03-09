@@ -595,7 +595,7 @@ deleteUnconfirmedScriptHashOutputs sh output = do
     lg <- getLogger
     conn <- xCqlClientState <$> getDB
     (_, bestBlockHeight) <- fetchBestSyncedBlock
-    let nominalTxIndex = fromIntegral $ bestBlockHeight + 9000000000000001
+    let nominalTxIndex = (fromIntegral bestBlockHeight) + (fromIntegral 9000000000000001)
         queryString :: Q.QueryString Q.W (Text, Int64, (Text, Int32)) ()
         queryString = "DELETE FROM xoken.script_hash_outputs WHERE script_hash=? AND nominal_tx_index=? AND output=?"
         queryParams = getSimpleQueryParam (sh, nominalTxIndex, output)
@@ -617,7 +617,7 @@ commitScriptHashOutputs conn sh output blockInfo = do
         txIndex = fromIntegral $ thd3 blockInfo
         nominalTxIndex =
             case blockInfo of
-                ("", -1, -1) -> fromIntegral $ bestBlockHeight + 9000000000000001
+                ("", -1, -1) -> (fromIntegral bestBlockHeight) + (fromIntegral 9000000000000001)
                 _ -> blkHeight * 1000000000 + txIndex
         qstrAddrOuts :: Q.QueryString Q.W (Text, Int64, (Text, Int32)) ()
         qstrAddrOuts = "INSERT INTO xoken.script_hash_outputs (script_hash, nominal_tx_index, output) VALUES (?,?,?)"
@@ -1252,11 +1252,16 @@ handleIfAllegoryTx tx revert confirmed = do
             return False
   where
     resdb lg db fn tx al = do
+        let txid = T.unpack . txHashToHex . txHash $ tx
         eres <- liftIO $ try $ withResource' (pool $ graphDB db) (`BT.run` fn tx al)
         case eres of
             Right () -> return True
             Left (SomeException e) -> do
-                err lg $ LG.msg $ "[ERROR] While handling Allegory metadata: failed to update graph (" <> show e <> ")"
+                err lg $
+                    LG.msg $
+                    "[ERROR] While handling Allegory metadata for txid " <> txid <> " : failed to update graph (" <>
+                    show e <>
+                    ")"
                 throw e
 
 nodesExist :: (HasXokenNodeEnv env m, MonadIO m) => TxHash -> Allegory -> Bool -> m Bool
@@ -1293,7 +1298,7 @@ deleteUnconfirmedScriptOutputProtocol protocol = do
     lg <- getLogger
     conn <- xCqlClientState <$> getDB
     (_, bestBlockHeight) <- fetchBestSyncedBlock
-    let nominalTxIndex = fromIntegral $ bestBlockHeight + 9000000000000001
+    let nominalTxIndex = (fromIntegral bestBlockHeight) + (fromIntegral 9000000000000001)
         queryString :: Q.QueryString Q.W (Text, Int64) ()
         queryString = "DELETE FROM xoken.script_output_protocol WHERE proto_str=? AND nominal_tx_index=?"
         queryParams = getSimpleQueryParam (protocol, nominalTxIndex)
@@ -1322,7 +1327,7 @@ commitScriptOutputProtocol conn protocol (txid, output_index) blockInfo fees siz
         txIndex = fromIntegral $ thd3 blockInfo
         nominalTxIndex =
             case blockInfo of
-                ("", -1, -1) -> fromIntegral $ bestBlockHeight + 9000000000000001
+                ("", -1, -1) -> (fromIntegral bestBlockHeight) + (fromIntegral 9000000000000001)
                 _ -> blkHeight * 1000000000 + txIndex
         qstrAddrOuts :: Q.QueryString Q.W (Text, Text, Int64, Int32, Int32, Int64) ()
         qstrAddrOuts =
