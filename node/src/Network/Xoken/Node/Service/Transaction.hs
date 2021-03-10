@@ -131,9 +131,12 @@ xGetTxHash hash = do
                             then liftIO $ getCompleteTx conn hash (getSegmentCount (fromBlob psz))
                             else pure $ fromBlob psz
                     let tx = fromJust $ Extra.hush $ S.decodeLazy sz
-                        (bi,mrkl') = case (bhash,blkht,txind) of
-                                            ("",-1,-1) -> (Nothing,Nothing)
-                                            _ -> (Just $ BlockInfo' (DT.unpack bhash) (fromIntegral blkht) (fromIntegral txind), Just mrkl)
+                        (bi, mrkl') =
+                            case (bhash, blkht, txind) of
+                                ("", -1, -1) -> (Nothing, Nothing)
+                                _ ->
+                                    ( Just $ BlockInfo' (DT.unpack bhash) (fromIntegral blkht) (fromIntegral txind)
+                                    , Just mrkl)
                     return $
                         Just $
                         RawTxRecord
@@ -172,10 +175,7 @@ xGetTxHashes hashes = do
     iop <-
         case res of
             Right iop ->
-                pure $
-                L.map
-                    (\(txid, bi, psz, sinps, fees) -> (txid, getBlockInfo bi, psz, Q.fromSet sinps, fees))
-                    iop
+                pure $ L.map (\(txid, bi, psz, sinps, fees) -> (txid, getBlockInfo bi, psz, Q.fromSet sinps, fees)) iop
             Left (e :: SomeException) -> do
                 err lg $ LG.msg $ "Error: xGetTxHashes: " ++ show e
                 throw KeyValueDBLookupException
@@ -334,6 +334,23 @@ xRelayMultipleTx = f []
     f r [] = return r
     f r (t:ts) = xRelayTx t >>= \r' -> f (r' : r) ts
 
+checkOutpointSpendStatus :: (HasXokenNodeEnv env m, MonadIO m) => OutPoint -> m Bool
+checkOutpointSpendStatus outpoint = do
+    dbe <- getDB
+    lg <- getLogger
+    bp2pEnv <- getBitcoinP2P
+    let (txid, outputIndex) = (txHashToHex $ outPointHash outpoint, fromIntegral $ outPointIndex outpoint)
+        conn = xCqlClientState dbe
+        queryStr :: Q.QueryString Q.R (DT.Text, Int32, Bool) (Identity Bool)
+        queryStr = "SELECT is_recv FROM xoken.txid_outputs WHERE txid=? AND output_index=? AND is_recv=?"
+        queryPar = getSimpleQueryParam (txid, outputIndex, False)
+    res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query queryStr queryPar)
+    case res of
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ BC.pack $ "[ERROR] Querying database while checking spend status: " <> (show e)
+            throw KeyValueDBLookupException
+        Right res -> return $ not . L.null $ res
+
 xRelayTx :: (HasXokenNodeEnv env m, MonadIO m) => BC.ByteString -> m (Bool)
 xRelayTx rawTx = do
     dbe <- getDB
@@ -393,10 +410,18 @@ xRelayTx rawTx = do
                                                                  err lg $ LG.msg $ "error decoding rawTx :" ++ show e
                                                                  return Nothing)
                             (txIn tx)
-                    -- if verifyStdTx net tx $ catMaybes tr
-                    --     then do
                     allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
                     let !connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
+                    spentInputs <-
+                        (\l -> fst <$> (L.filter (\x -> snd x == True) $ zip [0 ..] l)) <$>
+                        mapM
+                            (\outpoint -> do
+                                 res <- LE.try $ checkOutpointSpendStatus outpoint
+                                 case res of
+                                     Left (e :: SomeException) -> throw e
+                                     Right s -> return s)
+                            (prevOutput <$> txIn tx)
+                    unless (L.null spentInputs) $ throw $ DoubleSpendException spentInputs
                     debug lg $ LG.msg $ val $ "transaction verified - broadcasting tx"
                     ingestRes <- LE.try $ processUnconfTransaction tx
                     case ingestRes of
@@ -513,8 +538,7 @@ getUnconfTxIDByProtocol epoch prop1 props pgSize mbNomTxInd = do
             case mbNomTxInd of
                 Just n -> n
                 Nothing -> maxBound
-        str =
-            "SELECT txid, nominal_tx_index FROM xoken.script_output_protocol WHERE proto_str=? AND nominal_tx_index<?"
+        str = "SELECT txid, nominal_tx_index FROM xoken.script_output_protocol WHERE proto_str=? AND nominal_tx_index<?"
         protocol = DT.intercalate "." $ prop1 : props
         qstr = str :: Q.QueryString Q.R (DT.Text, Int64) (DT.Text, Int64)
         uqstr = getSimpleQueryParam $ (protocol, nominalTxIndex)

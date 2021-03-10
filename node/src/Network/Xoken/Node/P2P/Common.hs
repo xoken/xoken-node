@@ -108,6 +108,7 @@ data BlockSyncException
     | BlockAlreadySyncedException
     | ParentProcessingException String
     | RelayFailureException
+    | DoubleSpendException [Int]
     deriving (Show)
 
 instance Exception BlockSyncException
@@ -556,9 +557,9 @@ getCompleteTx conn hash segments =
 
 getCompleteUnConfTx :: XCqlClientState -> T.Text -> Int -> IO (BSL.ByteString)
 getCompleteUnConfTx = getCompleteTx
+
 --getCompleteUnConfTx conn hash segments =
 --    getTx conn ("SELECT tx_serialized from xoken.ep_transactions where tx_id = ?") hash segments
-
 getTx :: XCqlClientState -> Q.QueryString Q.R (Identity Text) (Identity Blob) -> T.Text -> Int -> IO (BSL.ByteString)
 getTx conn qstr hash segments = do
     queryI <- queryPrepared conn (Q.RqPrepare $ Q.Prepare qstr)
@@ -632,10 +633,10 @@ withResource' pool f = do
     putResource local resource
     case res of
         Right ret -> return ret
-        Left (e :: SomeException) ->  throw e
+        Left (e :: SomeException) -> throw e
 
 getBlockInfo :: (T.Text, Int32, Int32) -> Maybe (T.Text, Int32, Int32)
-getBlockInfo (_,_,-1) = Nothing
-getBlockInfo (_,-1,_) = Nothing
-getBlockInfo ("",_,_) = Nothing
+getBlockInfo (_, _, -1) = Nothing
+getBlockInfo (_, -1, _) = Nothing
+getBlockInfo ("", _, _) = Nothing
 getBlockInfo b = Just b

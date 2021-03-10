@@ -505,6 +505,9 @@ relayTx RelayTx {..} = do
                 RelayFailureException -> do
                     modifyResponse $ setResponseStatus 500 "Internal Server Error"
                     writeBS "Failed to relay transaction to any Nexa peer"
+                DoubleSpendException ins -> do
+                    modifyResponse $ setResponseStatus 400 "Bad Request"
+                    writeBS $ BC.pack $ "Invalid inputs, double spending at indices: " <> (show ins)
                 _ -> do
                     modifyResponse $ setResponseStatus 500 "Internal Server Error"
                     writeBS "INTERNAL_SERVER_ERROR"
