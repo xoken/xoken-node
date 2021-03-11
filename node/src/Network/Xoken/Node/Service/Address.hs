@@ -97,6 +97,9 @@ import Text.Read
 import Xoken
 import qualified Xoken.NodeConfig as NC
 
+maxNTI :: Int64
+maxNTI = 9000000 * 1000000000
+
 getTxOutputsData :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => (DT.Text, Int32) -> m TxOutputData
 getTxOutputsData (txid, index) = do
     dbe <- getDB
@@ -136,8 +139,7 @@ getUnConfTxOutputsData (txid, index) = do
     bp2pEnv <- getBitcoinP2P
     ep <- liftIO $ readTVarIO (epochType bp2pEnv)
     let conn = xCqlClientState dbe
-        toStr =
-            "SELECT is_recv,other,value,address FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
+        toStr = "SELECT is_recv,other,value,address FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
         toQStr =
             toStr :: Q.QueryString Q.R (DT.Text, Int32) ( Bool
                                                         , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
@@ -251,7 +253,7 @@ getConfirmedOutputsByAddress address pgSize mbNominalTxIndex = do
         nominalTxIndex =
             case mbNominalTxIndex of
                 Just n -> n
-                Nothing -> maxBound
+                Nothing -> maxNTI
         confOutputsByAddressQuery =
             "SELECT nominal_tx_index, output FROM xoken.script_hash_outputs WHERE script_hash=? AND nominal_tx_index<?"
         queryString = confOutputsByAddressQuery :: Q.QueryString Q.R (DT.Text, Int64) (Int64, (DT.Text, Int32))
@@ -311,7 +313,7 @@ getUnconfirmedOutputsByAddress epoch address pgSize mbNominalTxIndex = do
         nominalTxIndex =
             case mbNominalTxIndex of
                 Just n -> n
-                Nothing -> maxBound
+                Nothing -> maxNTI
         unconfOutputsByAddressQuery =
             "SELECT nominal_tx_index, output FROM xoken.script_hash_outputs WHERE script_hash=? AND nominal_tx_index<?"
         queryString = unconfOutputsByAddressQuery :: Q.QueryString Q.R (DT.Text, Int64) (Int64, (DT.Text, Int32))
@@ -472,7 +474,7 @@ getConfirmedOutputsByScriptHash scriptHash pgSize mbNominalTxIndex = do
         nominalTxIndex =
             case mbNominalTxIndex of
                 Just n -> n
-                Nothing -> maxBound
+                Nothing -> maxNTI
         confOutputsByScriptHashQuery =
             "SELECT script_hash, nominal_tx_index, output FROM xoken.script_hash_outputs WHERE script_hash=? AND nominal_tx_index<?"
         queryString =
@@ -507,13 +509,11 @@ getUnconfirmedOutputsByScriptHash epoch scriptHash pgSize mbNominalTxIndex = do
         nominalTxIndex =
             case mbNominalTxIndex of
                 Just n -> n
-                Nothing -> maxBound
+                Nothing -> maxNTI
         unconfOutputsByScriptHashQuery =
             "SELECT script_hash, nominal_tx_index, output FROM xoken.script_hash_outputs WHERE script_hash=? AND nominal_tx_index<?"
         queryString =
-            unconfOutputsByScriptHashQuery :: Q.QueryString Q.R (DT.Text, Int64) ( DT.Text
-                                                                                       , Int64
-                                                                                       , (DT.Text, Int32))
+            unconfOutputsByScriptHashQuery :: Q.QueryString Q.R (DT.Text, Int64) (DT.Text, Int64, (DT.Text, Int32))
         params = getSimpleQueryParam (DT.pack scriptHash, nominalTxIndex)
     res <-
         if isNothing pgSize || pgSize > Just 0

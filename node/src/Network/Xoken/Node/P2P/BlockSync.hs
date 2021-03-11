@@ -14,7 +14,7 @@ module Network.Xoken.Node.P2P.BlockSync where
 import Codec.Serialise
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (AsyncCancelled, mapConcurrently, mapConcurrently_, race_)
-import Control.Concurrent.Async.Lifted as LA (async, concurrently_, race)
+import Control.Concurrent.Async.Lifted as LA (async, concurrently, concurrently_, race)
 import Control.Concurrent.Event as EV
 import Control.Concurrent.MVar
 import Control.Concurrent.QSem
@@ -590,39 +590,21 @@ fetchBestSyncedBlock = do
                                 Nothing -> throw InvalidBlockHashException
                         Nothing -> throw InvalidMetaDataException
 
-deleteUnconfirmedScriptHashOutputs :: (HasXokenNodeEnv env m, MonadIO m) => Text -> (Text, Int32) -> m ()
-deleteUnconfirmedScriptHashOutputs sh output = do
-    lg <- getLogger
-    conn <- xCqlClientState <$> getDB
-    (_, bestBlockHeight) <- fetchBestSyncedBlock
-    let nominalTxIndex = (fromIntegral bestBlockHeight) + (fromIntegral 9000000000000001)
-        queryString :: Q.QueryString Q.W (Text, Int64, (Text, Int32)) ()
-        queryString = "DELETE FROM xoken.script_hash_outputs WHERE script_hash=? AND nominal_tx_index=? AND output=?"
-        queryParams = getSimpleQueryParam (sh, nominalTxIndex, output)
-    prepQuery <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare queryString))
-    res <- liftIO $ try $ write conn (Q.RqExecute (Q.Execute prepQuery queryParams))
-    case res of
-        Right _ -> return ()
-        Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: DELETEing from 'script_hash_outputs': " ++ show e
-            throw KeyValueDBInsertException
-
 commitScriptHashOutputs ::
        (HasXokenNodeEnv env m, MonadIO m) => XCqlClientState -> Text -> (Text, Int32) -> (Text, Int32, Int32) -> m ()
 commitScriptHashOutputs conn sh output blockInfo = do
     lg <- getLogger
     tm <- liftIO getCurrentTime
-    (_, bestBlockHeight) <- fetchBestSyncedBlock
+    blocksSynced <- checkBlocksFullySynced conn
     let blkHeight = fromIntegral $ snd3 blockInfo
         txIndex = fromIntegral $ thd3 blockInfo
         nominalTxIndex =
-            case blockInfo of
-                ("", -1, -1) -> (fromIntegral bestBlockHeight) + (fromIntegral 9000000000000001)
-                _ -> blkHeight * 1000000000 + txIndex
+            if blocksSynced
+                then (8000000 * 1000000000) + (floor $ utcTimeToPOSIXSeconds tm)
+                else blkHeight * 1000000000 + txIndex
         qstrAddrOuts :: Q.QueryString Q.W (Text, Int64, (Text, Int32)) ()
         qstrAddrOuts = "INSERT INTO xoken.script_hash_outputs (script_hash, nominal_tx_index, output) VALUES (?,?,?)"
         parAddrOuts = getSimpleQueryParam (sh, nominalTxIndex, output)
-    unless (blockInfo == ("", -1, -1)) $ deleteUnconfirmedScriptHashOutputs sh output
     queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstrAddrOuts))
     resAddrOuts <- liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryId parAddrOuts))
     case resAddrOuts of
@@ -920,19 +902,29 @@ processConfTransaction bis tx bhash blkht txind = do
                      case v of
                          Just v' -> liftIO $ TSH.mutate v' (T.intercalate "_" protocol) fn
                          Nothing -> debug lg $ LG.msg $ "No ProtocolInfo Available for: " ++ show bhash
-             commitScriptHashOutputs
-                 conn --
-                 sh -- scriptHash
-                 output
-                 bi
-             case decodeOutputBS $ scriptOutput o of
-                 (Right so) ->
-                     if isPayPK so
-                         then do
-                             commitScriptHashOutputs conn a output bi
-                         else return ()
-                 (Left e) -> return ()
-             insertTxIdOutputs conn output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o))
+             case bi of
+                 ("", -1, -1) -> do
+                     outputsExist <- checkOutputDataExists output
+                     unless outputsExist $ do
+                         commitScriptHashOutputs conn sh output bi
+                         case decodeOutputBS $ scriptOutput o of
+                             (Right so) ->
+                                 if isPayPK so
+                                     then do
+                                         commitScriptHashOutputs conn a output bi
+                                     else return ()
+                             (Left e) -> return ()
+                         insertTxIdOutputs
+                             conn
+                             output
+                             a
+                             sh
+                             True
+                             bi
+                             (stripScriptHash <$> inputs)
+                             (fromIntegral $ outValue o)
+                 _ -> do
+                     updateBlockInfo output bi)
         outAddrs
     debug lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": committed scripthash,txid_outputs tables"
     mapM_
@@ -1293,23 +1285,6 @@ nodesExist txId allegory confirmed = do
                           ProducerExtension peo _ -> producer peo) <$>
                  es)
 
-deleteUnconfirmedScriptOutputProtocol :: (HasXokenNodeEnv env m, MonadIO m) => Text -> m ()
-deleteUnconfirmedScriptOutputProtocol protocol = do
-    lg <- getLogger
-    conn <- xCqlClientState <$> getDB
-    (_, bestBlockHeight) <- fetchBestSyncedBlock
-    let nominalTxIndex = (fromIntegral bestBlockHeight) + (fromIntegral 9000000000000001)
-        queryString :: Q.QueryString Q.W (Text, Int64) ()
-        queryString = "DELETE FROM xoken.script_output_protocol WHERE proto_str=? AND nominal_tx_index=?"
-        queryParams = getSimpleQueryParam (protocol, nominalTxIndex)
-    prepQuery <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare queryString))
-    res <- liftIO $ try $ write conn (Q.RqExecute (Q.Execute prepQuery queryParams))
-    case res of
-        Right _ -> return ()
-        Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: DELETEing from 'script_output_protocol': " ++ show e
-            throw KeyValueDBInsertException
-
 commitScriptOutputProtocol ::
        (HasXokenNodeEnv env m, MonadIO m)
     => XCqlClientState
@@ -1322,20 +1297,19 @@ commitScriptOutputProtocol ::
 commitScriptOutputProtocol conn protocol (txid, output_index) blockInfo fees size = do
     lg <- getLogger
     tm <- liftIO getCurrentTime
-    (_, bestBlockHeight) <- fetchBestSyncedBlock
+    blocksSynced <- checkBlocksFullySynced conn
     let blkHeight = fromIntegral $ snd3 blockInfo
         txIndex = fromIntegral $ thd3 blockInfo
         nominalTxIndex =
-            case blockInfo of
-                ("", -1, -1) -> (fromIntegral bestBlockHeight) + (fromIntegral 9000000000000001)
-                _ -> blkHeight * 1000000000 + txIndex
+            if blocksSynced
+                then (8000000 * 1000000000) + (floor $ utcTimeToPOSIXSeconds tm)
+                else blkHeight * 1000000000 + txIndex
         qstrAddrOuts :: Q.QueryString Q.W (Text, Text, Int64, Int32, Int32, Int64) ()
         qstrAddrOuts =
             "INSERT INTO xoken.script_output_protocol (proto_str, txid, fees, size, output_index, nominal_tx_index) VALUES (?,?,?,?,?,?)"
         parAddrOuts = getSimpleQueryParam (protocol, txid, fees, size, output_index, nominalTxIndex)
     queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstrAddrOuts))
     resAddrOuts <- liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryId parAddrOuts))
-    unless (blockInfo == ("", -1, -1)) $ deleteUnconfirmedScriptOutputProtocol protocol
     case resAddrOuts of
         Right _ -> return ()
         Left (e :: SomeException) -> do
@@ -1359,3 +1333,55 @@ diffGregorianDurationClip day2 day1 =
                          else ymdiff + 1
         dayAllowed = addGregorianMonthsClip ymAllowed day1
      in (ymAllowed, diffDays day2 dayAllowed)
+
+checkOutputDataExists :: (HasXokenNodeEnv env m, MonadIO m) => (Text, Int32) -> m Bool
+checkOutputDataExists (txid, outputIndex) = do
+    dbe <- getDB
+    lg <- getLogger
+    bp2pEnv <- getBitcoinP2P
+    let conn = xCqlClientState dbe
+        queryStr :: Q.QueryString Q.R (T.Text, Int32, Bool) (Identity Bool)
+        queryStr = "SELECT is_recv FROM xoken.txid_outputs WHERE txid=? AND output_index=? AND is_recv=?"
+        queryPar = getSimpleQueryParam (txid, outputIndex, True)
+    res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query queryStr queryPar)
+    case res of
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ C.pack $ "[ERROR] Querying database while checking if output exists: " <> (show e)
+            throw KeyValueDBLookupException
+        Right res -> return $ not . L.null $ res
+
+updateBlockInfo :: (HasXokenNodeEnv env m, MonadIO m) => (Text, Int32) -> (Text, Int32, Int32) -> m ()
+updateBlockInfo (txid, outputIndex) blockInfo = do
+    dbe <- getDB
+    lg <- getLogger
+    bp2pEnv <- getBitcoinP2P
+    let conn = xCqlClientState dbe
+        queryStr :: Q.QueryString Q.W ((Text, Int32, Int32), Text, Int32, Bool) ()
+        queryStr = "UPDATE xoken.txid_outputs SET block_info=? WHERE txid=? AND output_index=? AND is_recv=?"
+        queryPar0 = getSimpleQueryParam (blockInfo, txid, outputIndex, False)
+        queryPar1 = getSimpleQueryParam (blockInfo, txid, outputIndex, True)
+    queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare queryStr))
+    (res0, res1) <-
+        LA.concurrently
+            (liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryId queryPar0)))
+            (liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryId queryPar1)))
+    case (res0, res1) of
+        (Left (e :: SomeException), _) -> do
+            err lg $
+                LG.msg $
+                C.pack $
+                "[ERROR] While updating spendInfo for confirmed Tx output " <> (T.unpack txid) <> ":" <>
+                (show outputIndex) <>
+                ": " <>
+                (show e)
+            throw e
+        (_, Left (e :: SomeException)) -> do
+            err lg $
+                LG.msg $
+                C.pack $
+                "[ERROR] While updating spendInfo for confirmed Tx output " <> (T.unpack txid) <> ":" <>
+                (show outputIndex) <>
+                ": " <>
+                (show e)
+            throw e
+        _ -> return ()
