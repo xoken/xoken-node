@@ -902,9 +902,9 @@ processConfTransaction bis tx bhash blkht txind = do
                      case v of
                          Just v' -> liftIO $ TSH.mutate v' (T.intercalate "_" protocol) fn
                          Nothing -> debug lg $ LG.msg $ "No ProtocolInfo Available for: " ++ show bhash
+             outputsExist <- checkOutputDataExists output
              case bi of
                  ("", -1, -1) -> do
-                     outputsExist <- checkOutputDataExists output
                      unless outputsExist $ do
                          commitScriptHashOutputs conn sh output bi
                          case decodeOutputBS $ scriptOutput o of
@@ -924,7 +924,19 @@ processConfTransaction bis tx bhash blkht txind = do
                              (stripScriptHash <$> inputs)
                              (fromIntegral $ outValue o)
                  _ -> do
-                     updateBlockInfo output True bi)
+                     if outputsExist
+                         then updateBlockInfo output True bi
+                         else do
+                             commitScriptHashOutputs conn sh output bi
+                             insertTxIdOutputs
+                                 conn
+                                 output
+                                 a
+                                 sh
+                                 True
+                                 bi
+                                 (stripScriptHash <$> inputs)
+                                 (fromIntegral $ outValue o))
         outAddrs
     debug lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": committed scripthash,txid_outputs tables"
     mapM_
@@ -936,10 +948,23 @@ processConfTransaction bis tx bhash blkht txind = do
              if a == "" || sh == "" -- likely coinbase txns
                  then return ()
                  else do
+                     outputsExist <- checkOutputDataExists prevOutpoint
                      case bi of
                          ("", -1, -1) ->
+                             unless outputsExist $
                              insertTxIdOutputs conn prevOutpoint a sh False bi (stripScriptHash <$> spendInfo) 0
-                         _ -> updateBlockInfo prevOutpoint False bi)
+                         _ ->
+                             if outputsExist
+                                 then updateBlockInfo prevOutpoint False bi
+                                 else insertTxIdOutputs
+                                          conn
+                                          prevOutpoint
+                                          a
+                                          sh
+                                          False
+                                          bi
+                                          (stripScriptHash <$> spendInfo)
+                                          0)
         (zip (inAddrs) (map (\x -> (fst3 $ thd3 x, snd3 $ thd3 $ x)) inputs))
     --
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": updated spend info for inputs"
