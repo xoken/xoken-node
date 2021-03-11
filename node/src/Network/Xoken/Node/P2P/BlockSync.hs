@@ -924,7 +924,7 @@ processConfTransaction bis tx bhash blkht txind = do
                              (stripScriptHash <$> inputs)
                              (fromIntegral $ outValue o)
                  _ -> do
-                     updateBlockInfo output bi)
+                     updateBlockInfo output True bi)
         outAddrs
     debug lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": committed scripthash,txid_outputs tables"
     mapM_
@@ -936,7 +936,10 @@ processConfTransaction bis tx bhash blkht txind = do
              if a == "" || sh == "" -- likely coinbase txns
                  then return ()
                  else do
-                     insertTxIdOutputs conn prevOutpoint a sh False bi (stripScriptHash <$> spendInfo) 0)
+                     case bi of
+                         ("", -1, -1) ->
+                             insertTxIdOutputs conn prevOutpoint a sh False bi (stripScriptHash <$> spendInfo) 0
+                         _ -> updateBlockInfo prevOutpoint False bi)
         (zip (inAddrs) (map (\x -> (fst3 $ thd3 x, snd3 $ thd3 $ x)) inputs))
     --
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": updated spend info for inputs"
@@ -1350,32 +1353,19 @@ checkOutputDataExists (txid, outputIndex) = do
             throw KeyValueDBLookupException
         Right res -> return $ not . L.null $ res
 
-updateBlockInfo :: (HasXokenNodeEnv env m, MonadIO m) => (Text, Int32) -> (Text, Int32, Int32) -> m ()
-updateBlockInfo (txid, outputIndex) blockInfo = do
+updateBlockInfo :: (HasXokenNodeEnv env m, MonadIO m) => (Text, Int32) -> Bool -> (Text, Int32, Int32) -> m ()
+updateBlockInfo (txid, outputIndex) isRecv blockInfo = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
     let conn = xCqlClientState dbe
         queryStr :: Q.QueryString Q.W ((Text, Int32, Int32), Text, Int32, Bool) ()
         queryStr = "UPDATE xoken.txid_outputs SET block_info=? WHERE txid=? AND output_index=? AND is_recv=?"
-        queryPar0 = getSimpleQueryParam (blockInfo, txid, outputIndex, False)
-        queryPar1 = getSimpleQueryParam (blockInfo, txid, outputIndex, True)
+        queryPar = getSimpleQueryParam (blockInfo, txid, outputIndex, isRecv)
     queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare queryStr))
-    (res0, res1) <-
-        LA.concurrently
-            (liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryId queryPar0)))
-            (liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryId queryPar1)))
-    case (res0, res1) of
-        (Left (e :: SomeException), _) -> do
-            err lg $
-                LG.msg $
-                C.pack $
-                "[ERROR] While updating spendInfo for confirmed Tx output " <> (T.unpack txid) <> ":" <>
-                (show outputIndex) <>
-                ": " <>
-                (show e)
-            throw e
-        (_, Left (e :: SomeException)) -> do
+    res <- liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryId queryPar))
+    case res of
+        Left (e :: SomeException) -> do
             err lg $
                 LG.msg $
                 C.pack $
