@@ -124,12 +124,12 @@ getTxOutputsData (txid, index) = do
                     throw KeyValueDBLookupException
                 else do
                     let txg = L.sortBy (\(_, x, _, _, _) (_, y, _, _, _) -> compare x y) es
-                    debug lg $ LG.msg $ BC.pack $ "getTxOutputsData " <> (show $ (txid, index)) <>  ": Tx output data pair: got: " <> (show txg)
+                    debug lg $ LG.msg $ BC.pack $ "getTxOutputsData " <> (show $ (txid, index)) <> ": Tx output data pair: got: " <> (show txg)
                     let outputData =
                             case txg of
                                 [x] -> genTxOutputData (txid, index, x, Nothing)
                                 [x, y] -> genTxOutputData (txid, index, y, Just x)
-                    debug lg $ LG.msg $ BC.pack $ "getTxOutputsData: Tx output data: generated: " <> (show txg)
+                    debug lg $ LG.msg $ BC.pack $ "getTxOutputsData " <> (show $ (txid, index)) <> ": Tx output data generated: " <> (show outputData)
                     return outputData
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: getTxOutputsData: " ++ show e
