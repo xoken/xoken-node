@@ -153,6 +153,7 @@ sendTxGetData pr txHash = do
 
 runEpochSwitcher :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
 runEpochSwitcher = return ()
+
 {-
 runEpochSwitcher =
     forever $ do
@@ -193,7 +194,6 @@ runEpochSwitcher =
         liftIO $ threadDelay (1000000 * 60 * 60)
         return ()
 -}
-
 commitEpochScriptHashOutputs ::
        (HasLogger m, HasBitcoinP2P m, MonadIO m)
     => XCqlClientState
@@ -391,29 +391,31 @@ processUnconfTransaction tx = do
                                   conn
                                   (T.intercalate "." p)
                                   output
-                                  ("",-1,-1)
+                                  ("", -1, -1)
                                   fees
                                   (fromIntegral count))
                          prot
-             concurrently_
-                 (insertTxIdOutputs
-                      conn
-                      output
-                      a
-                      sh
-                      True
-                      ("",-1,-1)
-                      (stripScriptHash <$> inputs)
-                      (fromIntegral $ outValue o))
-                 (concurrently_
-                      (commitScriptHashOutputs conn sh output ("",-1,-1))
-                      (case decodeOutputBS $ scriptOutput o of
-                           (Right so) ->
-                               if isPayPK so
-                                   then do
-                                       (commitScriptHashOutputs conn a output ("",-1,-1))
-                                   else return ()
-                           (Left e) -> return ())))
+             outputsExist <- checkOutputDataExists output
+             unless outputsExist $ do
+                 concurrently_
+                     (insertTxIdOutputs
+                          conn
+                          output
+                          a
+                          sh
+                          True
+                          ("", -1, -1)
+                          (stripScriptHash <$> inputs)
+                          (fromIntegral $ outValue o))
+                     (concurrently_
+                          (commitScriptHashOutputs conn sh output ("", -1, -1))
+                          (case decodeOutputBS $ scriptOutput o of
+                               (Right so) ->
+                                   if isPayPK so
+                                       then do
+                                           (commitScriptHashOutputs conn a output ("", -1, -1))
+                                       else return ()
+                               (Left e) -> return ())))
         outAddrs
     mapM_
         (\((o, i), (a, sh)) -> do
@@ -422,10 +424,11 @@ processUnconfTransaction tx = do
              let spendInfo = (\ov -> ((txHashToHex $ txHash tx, fromIntegral $ fst ov), i, snd $ ov)) <$> ovs
              if a == "" || sh == ""
                  then return ()
-                 else insertTxIdOutputs conn prevOutpoint a sh False ("",-1,-1) (stripScriptHash <$> spendInfo) 0)
+                 else insertTxIdOutputs conn prevOutpoint a sh False ("", -1, -1) (stripScriptHash <$> spendInfo) 0)
         (zip inAddrs (map (\x -> (fst3 $ thd3 x, snd3 $ thd3 x)) inputs))
     let str = "INSERT INTO xoken.transactions (tx_id, block_info, tx_serialized, inputs, fees) values (?, ?, ?, ?, ?)"
-        qstr = str :: Q.QueryString Q.W (Text, (Text, Int32, Int32), Blob, [((Text, Int32), Int32, (Text, Int64))], Int64) ()
+        qstr =
+            str :: Q.QueryString Q.W (Text, (Text, Int32, Int32), Blob, [((Text, Int32), Int32, (Text, Int64))], Int64) ()
         serbs = runPutLazy $ putLazyByteString $ S.encodeLazy tx
         count = BSL.length serbs
         smb a = a * 16 * 1000 * 1000
@@ -439,7 +442,7 @@ processUnconfTransaction tx = do
             if segments > 1
                 then (LC.replicate 32 'f') <> (BSL.fromStrict $ DTE.encodeUtf8 $ T.pack $ show $ segments)
                 else serbs
-    let par = getSimpleQueryParam (txHashToHex $ txHash tx, ("",-1,-1), Blob fst, (stripScriptHash <$> inputs), fees)
+    let par = getSimpleQueryParam (txHashToHex $ txHash tx, ("", -1, -1), Blob fst, (stripScriptHash <$> inputs), fees)
     queryI <- liftIO $ queryPrepared conn (Q.RqPrepare $ Q.Prepare qstr)
     res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryI par)
     case res of
@@ -452,7 +455,8 @@ processUnconfTransaction tx = do
         mapM_
             (\(seg, i) -> do
                  let par =
-                         getSimpleQueryParam ((txHashToHex $ txHash tx) <> (T.pack $ show i), ("",-1,-1), Blob seg, [], fees)
+                         getSimpleQueryParam
+                             ((txHashToHex $ txHash tx) <> (T.pack $ show i), ("", -1, -1), Blob seg, [], fees)
                  queryI <- liftIO $ queryPrepared conn (Q.RqPrepare $ Q.Prepare qstr)
                  res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryI par)
                  case res of
@@ -536,11 +540,12 @@ sourceSatsValueFromOutpoint ::
     -> Int
     -> IO ((Text, Text, Int64))
 sourceSatsValueFromOutpoint conn epoch txSync lg net outPoint waitSecs maxWait = do
-    res <-
+    res
         --LA.race
-            (liftIO $ do
-                 debug lg $ LG.msg $ "race getSatsValueFromOutpoint <start>: " <> (show outPoint)
-                 getSatsValueFromOutpoint conn txSync lg net outPoint waitSecs maxWait)
+         <-
+        (liftIO $ do
+             debug lg $ LG.msg $ "race getSatsValueFromOutpoint <start>: " <> (show outPoint)
+             getSatsValueFromOutpoint conn txSync lg net outPoint waitSecs maxWait)
         --    (liftIO $ do
         --         debug lg $ LG.msg $ "race getSatsValueFromEpochOutpoint <start>: " <> (show outPoint)
         --         getSatsValueFromEpochOutpoint conn epoch txSync lg net outPoint waitSecs maxWait)
