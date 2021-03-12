@@ -124,10 +124,13 @@ getTxOutputsData (txid, index) = do
                     throw KeyValueDBLookupException
                 else do
                     let txg = L.sortBy (\(_, x, _, _, _) (_, y, _, _, _) -> compare x y) es
-                    return $
-                        case txg of
-                            [x] -> genTxOutputData (txid, index, x, Nothing)
-                            [x, y] -> genTxOutputData (txid, index, y, Just x)
+                    debug lg $ LG.msg $ BC.pack $ "getTxOutputsData: Tx output data pair: got: " <> (show txg)
+                    let outputData =
+                            case txg of
+                                [x] -> genTxOutputData (txid, index, x, Nothing)
+                                [x, y] -> genTxOutputData (txid, index, y, Just x)
+                    debug lg $ LG.msg $ BC.pack $ "getTxOutputsData: Tx output data: generated: " <> (show txg)
+                    return outputData
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: getTxOutputsData: " ++ show e
             throw KeyValueDBLookupException
@@ -230,7 +233,9 @@ xGetUtxosAddress address pgSize mbNominalTxIndex = do
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ BC.pack $ "[ERROR] xGetUtxosAddress: Fetching confirmed/unconfirmed outputs: " <> show e
             throw KeyValueDBLookupException
-        Right (unconf, conf) ->
+        Right (unconf, conf) -> do
+            debug lg $ LG.msg $ BC.pack $ "xGetUtxosAddress: Got confirmed utxos: " <> (show conf)
+            debug lg $ LG.msg $ BC.pack $ "xGetUtxosAddress: Got unconfirmed utxos: " <> (show unconf)
             let (unconfRwc, confRwc) =
                     ( addressOutputToResultWithCursor address <$> unconf
                     , addressOutputToResultWithCursor address <$> conf)
