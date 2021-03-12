@@ -200,7 +200,7 @@ xGetOutputsAddress address pgSize mbNominalTxIndex = do
     res <-
         LE.try $
         LA.concurrently
-            (getUnconfirmedOutputsByAddress epoch address pgSize mbNominalTxIndex)
+            (return [])
             (getConfirmedOutputsByAddress address pgSize mbNominalTxIndex)
     case res of
         Left (e :: SomeException) -> do
@@ -227,7 +227,7 @@ xGetUtxosAddress address pgSize mbNominalTxIndex = do
     res <-
         LE.try $
         LA.concurrently
-            (getUnconfirmedUtxosByAddress epoch address pgSize mbNominalTxIndex)
+            (return [])
             (getConfirmedUtxosByAddress address pgSize mbNominalTxIndex)
     case res of
         Left (e :: SomeException) -> do
@@ -423,7 +423,7 @@ xGetOutputsScriptHash scriptHash pgSize mbNominalTxIndex = do
     res <-
         LE.try $
         LA.concurrently
-            (getUnconfirmedOutputsByScriptHash epoch scriptHash pgSize mbNominalTxIndex)
+            (return [])
             (getConfirmedOutputsByScriptHash scriptHash pgSize mbNominalTxIndex)
     case res of
         Left (e :: SomeException) -> do
@@ -450,7 +450,7 @@ xGetUtxosScriptHash scriptHash pgSize mbNominalTxIndex = do
     res <-
         LE.try $
         LA.concurrently
-            (getUnconfirmedUtxosByScriptHash epoch scriptHash pgSize mbNominalTxIndex)
+            (return [])
             (getConfirmedUtxosByScriptHash scriptHash pgSize mbNominalTxIndex)
     case res of
         Left (e :: SomeException) -> do
