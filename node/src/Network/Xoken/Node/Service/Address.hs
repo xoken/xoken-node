@@ -124,12 +124,19 @@ getTxOutputsData (txid, index) = do
                     throw KeyValueDBLookupException
                 else do
                     let txg = L.sortBy (\(_, x, _, _, _) (_, y, _, _, _) -> compare x y) es
-                    debug lg $ LG.msg $ BC.pack $ "getTxOutputsData " <> (show $ (txid, index)) <> ": Tx output data pair: got: " <> (show txg)
+                    debug lg $
+                        LG.msg $
+                        BC.pack $
+                        "getTxOutputsData " <> (show $ (txid, index)) <> ": Tx output data pair: got: " <> (show txg)
                     let outputData =
                             case txg of
                                 [x] -> genTxOutputData (txid, index, x, Nothing)
                                 [x, y] -> genTxOutputData (txid, index, y, Just x)
-                    debug lg $ LG.msg $ BC.pack $ "getTxOutputsData " <> (show $ (txid, index)) <> ": Tx output data generated: " <> (show outputData)
+                    debug lg $
+                        LG.msg $
+                        BC.pack $
+                        "getTxOutputsData " <> (show $ (txid, index)) <> ": Tx output data generated: " <>
+                        (show outputData)
                     return outputData
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: getTxOutputsData: " ++ show e
@@ -192,16 +199,13 @@ xGetOutputsAddress ::
     => String
     -> Maybe Int32
     -> Maybe Int64
+    -> Bool
     -> m ([ResultWithCursor AddressOutputs Int64])
-xGetOutputsAddress address pgSize mbNominalTxIndex = do
+xGetOutputsAddress address pgSize mbNominalTxIndex isAsc = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
     epoch <- liftIO $ readTVarIO (epochType bp2pEnv)
-    res <-
-        LE.try $
-        LA.concurrently
-            (return [])
-            (getConfirmedOutputsByAddress address pgSize mbNominalTxIndex)
+    res <- LE.try $ LA.concurrently (return []) (getConfirmedOutputsByAddress address pgSize mbNominalTxIndex isAsc)
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ BC.pack $ "[ERROR] xGetOutputsAddress: Fetching confirmed/unconfirmed outputs: " <> show e
@@ -219,16 +223,13 @@ xGetUtxosAddress ::
     => String
     -> Maybe Int32
     -> Maybe Int64
+    -> Bool
     -> m ([ResultWithCursor AddressOutputs Int64])
-xGetUtxosAddress address pgSize mbNominalTxIndex = do
+xGetUtxosAddress address pgSize mbNominalTxIndex isAsc = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
     epoch <- liftIO $ readTVarIO (epochType bp2pEnv)
-    res <-
-        LE.try $
-        LA.concurrently
-            (return [])
-            (getConfirmedUtxosByAddress address pgSize mbNominalTxIndex)
+    res <- LE.try $ LA.concurrently (return []) (getConfirmedUtxosByAddress address pgSize mbNominalTxIndex isAsc)
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ BC.pack $ "[ERROR] xGetUtxosAddress: Fetching confirmed/unconfirmed outputs: " <> show e
@@ -248,8 +249,9 @@ getConfirmedOutputsByAddress ::
     => String
     -> Maybe Int32
     -> Maybe Int64
+    -> Bool
     -> m [((Int64, (DT.Text, Int32)), TxOutputData)]
-getConfirmedOutputsByAddress address pgSize mbNominalTxIndex = do
+getConfirmedOutputsByAddress address pgSize mbNominalTxIndex isAsc = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
@@ -258,10 +260,17 @@ getConfirmedOutputsByAddress address pgSize mbNominalTxIndex = do
         nominalTxIndex =
             case mbNominalTxIndex of
                 Just n -> n
-                Nothing -> maxNTI
+                Nothing ->
+                    if isAsc
+                        then 0
+                        else maxNTI
         confOutputsByAddressQuery =
-            "SELECT nominal_tx_index, output FROM xoken.script_hash_outputs WHERE script_hash=? AND nominal_tx_index<?"
-        queryString = confOutputsByAddressQuery :: Q.QueryString Q.R (DT.Text, Int64) (Int64, (DT.Text, Int32))
+            "SELECT nominal_tx_index, output FROM xoken.script_hash_outputs WHERE script_hash=?" <>
+            (if isAsc
+                 then " AND nominal_tx_index>? ORDER BY nominal_tx_index ASC"
+                 else " AND nominal_tx_index<?")
+        queryString =
+            fromString confOutputsByAddressQuery :: Q.QueryString Q.R (DT.Text, Int64) (Int64, (DT.Text, Int32))
         scriptHash = convertToScriptHash net address
         addressQueryParams = getSimpleQueryParam (DT.pack address, nominalTxIndex)
         scriptHashQueryParams = getSimpleQueryParam (maybe "" DT.pack scriptHash, nominalTxIndex)
@@ -292,8 +301,12 @@ getConfirmedOutputsByAddress address pgSize mbNominalTxIndex = do
                         L.sortBy
                             (\(nti1, _) (nti2, _) ->
                                  if nti1 < nti2
-                                     then GT
-                                     else LT)
+                                     then (if isAsc
+                                               then LT
+                                               else GT)
+                                     else (if isAsc
+                                               then GT
+                                               else LT))
                             (scriptHashResults ++ addressResults)
                     outpoints =
                         case pgSize of
@@ -368,10 +381,11 @@ getConfirmedUtxosByAddress ::
     => String
     -> Maybe Int32
     -> Maybe Int64
+    -> Bool
     -> m [((Int64, (DT.Text, Int32)), TxOutputData)]
-getConfirmedUtxosByAddress address pgSize nominalTxIndex = do
+getConfirmedUtxosByAddress address pgSize nominalTxIndex isAsc = do
     lg <- getLogger
-    res <- LE.try $ getConfirmedOutputsByAddress address pgSize nominalTxIndex
+    res <- LE.try $ getConfirmedOutputsByAddress address pgSize nominalTxIndex isAsc
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ BC.pack $ "[ERROR] getConfirmedUtxosByAddress: Fetching outputs: " <> show e
@@ -382,7 +396,7 @@ getConfirmedUtxosByAddress address pgSize nominalTxIndex = do
                     then do
                         let nextPgSize = (fromJust pgSize) - (fromIntegral $ L.length utxos)
                             nextCursor = fst $ fst $ last outputs
-                        nextPage <- getConfirmedUtxosByAddress address (Just nextPgSize) (Just nextCursor)
+                        nextPage <- getConfirmedUtxosByAddress address (Just nextPgSize) (Just nextCursor) isAsc
                         return $ utxos ++ nextPage
                     else return utxos
 
@@ -415,16 +429,14 @@ xGetOutputsScriptHash ::
     => String
     -> Maybe Int32
     -> Maybe Int64
+    -> Bool
     -> m ([ResultWithCursor ScriptOutputs Int64])
-xGetOutputsScriptHash scriptHash pgSize mbNominalTxIndex = do
+xGetOutputsScriptHash scriptHash pgSize mbNominalTxIndex isAsc = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
     epoch <- liftIO $ readTVarIO (epochType bp2pEnv)
     res <-
-        LE.try $
-        LA.concurrently
-            (return [])
-            (getConfirmedOutputsByScriptHash scriptHash pgSize mbNominalTxIndex)
+        LE.try $ LA.concurrently (return []) (getConfirmedOutputsByScriptHash scriptHash pgSize mbNominalTxIndex isAsc)
     case res of
         Left (e :: SomeException) -> do
             err lg $
@@ -442,16 +454,13 @@ xGetUtxosScriptHash ::
     => String
     -> Maybe Int32
     -> Maybe Int64
+    -> Bool
     -> m ([ResultWithCursor ScriptOutputs Int64])
-xGetUtxosScriptHash scriptHash pgSize mbNominalTxIndex = do
+xGetUtxosScriptHash scriptHash pgSize mbNominalTxIndex isAsc = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
     epoch <- liftIO $ readTVarIO (epochType bp2pEnv)
-    res <-
-        LE.try $
-        LA.concurrently
-            (return [])
-            (getConfirmedUtxosByScriptHash scriptHash pgSize mbNominalTxIndex)
+    res <- LE.try $ LA.concurrently (return []) (getConfirmedUtxosByScriptHash scriptHash pgSize mbNominalTxIndex isAsc)
     case res of
         Left (e :: SomeException) -> do
             err lg $
@@ -469,8 +478,9 @@ getConfirmedOutputsByScriptHash ::
     => String
     -> Maybe Int32
     -> Maybe Int64
+    -> Bool
     -> m [((DT.Text, Int64, (DT.Text, Int32)), TxOutputData)]
-getConfirmedOutputsByScriptHash scriptHash pgSize mbNominalTxIndex = do
+getConfirmedOutputsByScriptHash scriptHash pgSize mbNominalTxIndex isAsc = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
@@ -479,11 +489,19 @@ getConfirmedOutputsByScriptHash scriptHash pgSize mbNominalTxIndex = do
         nominalTxIndex =
             case mbNominalTxIndex of
                 Just n -> n
-                Nothing -> maxNTI
+                Nothing ->
+                    if isAsc
+                        then 0
+                        else maxNTI
         confOutputsByScriptHashQuery =
-            "SELECT script_hash, nominal_tx_index, output FROM xoken.script_hash_outputs WHERE script_hash=? AND nominal_tx_index<?"
+            "SELECT script_hash, nominal_tx_index, output FROM xoken.script_hash_outputs WHERE script_hash=?" ++
+            (if isAsc
+                 then " AND nominal_tx_index>? ORDER BY nominal_tx_index ASC"
+                 else " AND nominal_tx_index<?")
         queryString =
-            confOutputsByScriptHashQuery :: Q.QueryString Q.R (DT.Text, Int64) (DT.Text, Int64, (DT.Text, Int32))
+            fromString confOutputsByScriptHashQuery :: Q.QueryString Q.R (DT.Text, Int64) ( DT.Text
+                                                                                          , Int64
+                                                                                          , (DT.Text, Int32))
         params = getSimpleQueryParam (DT.pack scriptHash, nominalTxIndex)
     res <-
         if isNothing pgSize || pgSize > Just 0
@@ -539,10 +557,11 @@ getConfirmedUtxosByScriptHash ::
     => String
     -> Maybe Int32
     -> Maybe Int64
+    -> Bool
     -> m [((DT.Text, Int64, (DT.Text, Int32)), TxOutputData)]
-getConfirmedUtxosByScriptHash scriptHash pgSize nominalTxIndex = do
+getConfirmedUtxosByScriptHash scriptHash pgSize nominalTxIndex isAsc = do
     lg <- getLogger
-    res <- LE.try $ getConfirmedOutputsByScriptHash scriptHash pgSize nominalTxIndex
+    res <- LE.try $ getConfirmedOutputsByScriptHash scriptHash pgSize nominalTxIndex isAsc
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ BC.pack $ "[ERROR] getConfirmedUtxosByScriptHash: Fetching outputs: " <> show e
@@ -553,7 +572,7 @@ getConfirmedUtxosByScriptHash scriptHash pgSize nominalTxIndex = do
                     then do
                         let nextPgSize = (fromJust pgSize) - (fromIntegral $ L.length utxos)
                             nextCursor = snd3 $ fst $ last outputs
-                        nextPage <- getConfirmedUtxosByScriptHash scriptHash (Just nextPgSize) (Just nextCursor)
+                        nextPage <- getConfirmedUtxosByScriptHash scriptHash (Just nextPgSize) (Just nextCursor) isAsc
                         return $ utxos ++ nextPage
                     else return utxos
 
@@ -583,18 +602,19 @@ getUnconfirmedUtxosByScriptHash epoch scriptHash pgSize nominalTxIndex = do
 
 runWithManyInputs ::
        (HasXokenNodeEnv env m, MonadIO m, Ord c, Eq r, Integral p, Bounded p)
-    => (i -> Maybe p -> Maybe c -> m ([ResultWithCursor r c]))
+    => (i -> Maybe p -> Maybe c -> Bool -> m ([ResultWithCursor r c]))
     -> [i]
     -> Maybe p
     -> Maybe c
+    -> Bool
     -> m ([ResultWithCursor r c])
-runWithManyInputs fx inputs mbPgSize cursor = do
+runWithManyInputs fx inputs mbPgSize cursor isAsc = do
     let pgSize =
             fromIntegral $
             case mbPgSize of
                 Just ps -> ps
                 Nothing -> maxBound
-    li <- LA.mapConcurrently (\input -> fx input mbPgSize cursor) inputs
+    li <- LA.mapConcurrently (\input -> fx input mbPgSize cursor isAsc) inputs
     return $ (L.take pgSize . sort . concat $ li)
 
 convertToScriptHash :: Network -> String -> Maybe String
