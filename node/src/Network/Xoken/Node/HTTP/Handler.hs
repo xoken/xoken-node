@@ -301,10 +301,11 @@ getOutputsByAddr = do
     pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
     cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
     pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    isAsc <- (maybe False (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "ascending")
     bp2pEnv <- getBitcoinP2P
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
     lg <- getLogger
-    res <- LE.try $ xGetOutputsAddress (fromJust addr) pgSize (decodeNTI cursor)
+    res <- LE.try $ xGetOutputsAddress (fromJust addr) pgSize (decodeNTI cursor) isAsc
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetOutputsAddress: " ++ show e
@@ -323,10 +324,11 @@ getOutputsByAddrs = do
             pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
             cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
             pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+            isAsc <- (maybe False (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "ascending")
             bp2pEnv <- getBitcoinP2P
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
             lg <- getLogger
-            res <- LE.try $ runWithManyInputs xGetOutputsAddress addrs pgSize (decodeNTI cursor)
+            res <- LE.try $ runWithManyInputs xGetOutputsAddress addrs pgSize (decodeNTI cursor) isAsc
             case res of
                 Left (e :: SomeException) -> do
                     err lg $ LG.msg $ "Error: xGetOutputsAddresses: " ++ show e
@@ -345,10 +347,11 @@ getOutputsByScriptHash = do
     pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
     cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
     pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    isAsc <- (maybe False (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "ascending")
     bp2pEnv <- getBitcoinP2P
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
     lg <- getLogger
-    res <- LE.try $ xGetOutputsScriptHash (fromJust sh) pgSize (decodeNTI cursor)
+    res <- LE.try $ xGetOutputsScriptHash (fromJust sh) pgSize (decodeNTI cursor) isAsc
     case res of
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
@@ -367,10 +370,11 @@ getOutputsByScriptHashes = do
             pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
             cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
             pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+            isAsc <- (maybe False (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "ascending")
             bp2pEnv <- getBitcoinP2P
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
             lg <- getLogger
-            res <- LE.try $ runWithManyInputs xGetOutputsScriptHash sh pgSize (decodeNTI cursor)
+            res <- LE.try $ runWithManyInputs xGetOutputsScriptHash sh pgSize (decodeNTI cursor) isAsc
             case res of
                 Left (e :: SomeException) -> do
                     modifyResponse $ setResponseStatus 500 "Internal Server Error"
@@ -389,9 +393,10 @@ getUTXOsByAddr = do
     pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
     cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
     pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    isAsc <- (maybe False (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "ascending")
     bp2pEnv <- getBitcoinP2P
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
-    res <- LE.try $ xGetUtxosAddress (fromJust addr) pgSize (decodeNTI cursor)
+    res <- LE.try $ xGetUtxosAddress (fromJust addr) pgSize (decodeNTI cursor) isAsc
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetUTXOsAddress: " ++ show e
@@ -410,10 +415,11 @@ getUTXOsByAddrs = do
             pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
             cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
             pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+            isAsc <- (maybe False (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "ascending")
             bp2pEnv <- getBitcoinP2P
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
             lg <- getLogger
-            res <- LE.try $ runWithManyInputs xGetUtxosAddress addrs pgSize (decodeNTI cursor)
+            res <- LE.try $ runWithManyInputs xGetUtxosAddress addrs pgSize (decodeNTI cursor) isAsc
             case res of
                 Left (e :: SomeException) -> do
                     err lg $ LG.msg $ "Error: xGetUTXOsAddress: " ++ show e
@@ -432,10 +438,11 @@ getUTXOsByScriptHash = do
     pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
     cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
     pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    isAsc <- (maybe False (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "ascending")
     bp2pEnv <- getBitcoinP2P
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
     lg <- getLogger
-    res <- LE.try $ xGetUtxosScriptHash (fromJust sh) pgSize (decodeNTI cursor)
+    res <- LE.try $ xGetUtxosScriptHash (fromJust sh) pgSize (decodeNTI cursor) isAsc
     case res of
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
@@ -453,10 +460,11 @@ getUTXOsByScriptHashes = do
             pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
             cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
             pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+            isAsc <- (maybe False (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "ascending")
             bp2pEnv <- getBitcoinP2P
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
             lg <- getLogger
-            res <- LE.try $ runWithManyInputs xGetUtxosScriptHash sh pgSize (decodeNTI cursor)
+            res <- LE.try $ runWithManyInputs xGetUtxosScriptHash sh pgSize (decodeNTI cursor) isAsc
             case res of
                 Left (e :: SomeException) -> do
                     modifyResponse $ setResponseStatus 500 "Internal Server Error"
@@ -505,6 +513,9 @@ relayTx RelayTx {..} = do
                 RelayFailureException -> do
                     modifyResponse $ setResponseStatus 500 "Internal Server Error"
                     writeBS "Failed to relay transaction to any Nexa peer"
+                DoubleSpendException ins -> do
+                    modifyResponse $ setResponseStatus 400 "Bad Request"
+                    writeBS $ BC.pack $ "Invalid inputs, double spending at indices: " <> (show ins)
                 _ -> do
                     modifyResponse $ setResponseStatus 500 "Internal Server Error"
                     writeBS "INTERNAL_SERVER_ERROR"

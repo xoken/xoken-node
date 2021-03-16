@@ -9,27 +9,12 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE BangPatterns #-}
 
-module Network.Xoken.Node.P2P.BlockSync
-    ( processBlock
-    , processConfTransaction
-    , peerBlockSync
-    , checkBlocksFullySynced
-    , runPeerSync
-    , runBlockCacheQueue
-    , getSatsValueFromOutpoint
-    , markBestSyncedBlock
-    , fetchBestSyncedBlock
-    , sendRequestMessages
-    , handleIfAllegoryTx
-    , commitTxPage
-    , getScriptHashFromOutpoint
-    , diffGregorianDurationClip
-    ) where
+module Network.Xoken.Node.P2P.BlockSync where
 
 import Codec.Serialise
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (AsyncCancelled, mapConcurrently, mapConcurrently_, race_)
-import Control.Concurrent.Async.Lifted as LA (async, concurrently_, race)
+import Control.Concurrent.Async.Lifted as LA (async, concurrently, concurrently_, race)
 import Control.Concurrent.Event as EV
 import Control.Concurrent.MVar
 import Control.Concurrent.QSem
@@ -376,7 +361,7 @@ runBlockCacheQueue =
                 Nothing -> do
                     if sysz < (blocksFetchWindow $ nodeConfig bp2pEnv)
                         then do
-                            (hash, ht) <- fetchBestSyncedBlock conn net
+                            (hash, ht) <- fetchBestSyncedBlock
                             let fetchMore = (blocksFetchWindow $ nodeConfig bp2pEnv) - sysz
                             let cacheInd = [1 .. fetchMore] -- getBatchSize net (fromIntegral $ L.length connPeers) ht
                             let !bks = map (\x -> ht + (fromIntegral x)) cacheInd
@@ -573,45 +558,16 @@ sortPeers peers = do
             peers
     return $ snd $ unzip $ L.sortBy (\(a, _) (b, _) -> compare a b) (zip ts peers)
 
-fetchBestSyncedBlock ::
-       (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => XCqlClientState -> Network -> m ((BlockHash, Int32))
-fetchBestSyncedBlock conn net = do
-    lg <- getLogger
-    bp2pEnv <- getBitcoinP2P
-    binfo <- liftIO $ atomically $ readTVar (bestSyncedBlock bp2pEnv)
-    case binfo of
-        Just bi -> return $ (biBlockHash bi, fromIntegral $ biBlockHeight bi)
-        Nothing -> do
-            let qstr ::
-                       Q.QueryString Q.R (Identity Text) (Identity (Maybe Bool, Maybe Int32, Maybe Int64, Maybe T.Text))
-                qstr = "SELECT value from xoken.misc_store where key = ?"
-                p = getSimpleQueryParam $ Identity "best-synced"
-            iop <- liftIO $ query conn (Q.RqQuery $ Q.Query qstr p)
-            if L.length iop == 0
-                then do
-                    debug lg $ LG.msg $ val "Best-synced-block is genesis."
-                    return ((headerHash $ getGenesisHeader net), 0)
-                else do
-                    let record = runIdentity $ iop !! 0
-                    --debug lg $ LG.msg $ "Best-synced-block from DB: " ++ (show record)
-                    case getTextVal record of
-                        Just tx -> do
-                            case (hexToBlockHash $ tx) of
-                                Just x -> do
-                                    case getIntVal record of
-                                        Just y -> return (x, y)
-                                        Nothing -> throw InvalidMetaDataException
-                                Nothing -> throw InvalidBlockHashException
-                        Nothing -> throw InvalidMetaDataException
-
 commitScriptHashOutputs ::
-       (HasLogger m, MonadIO m) => XCqlClientState -> Text -> (Text, Int32) -> (Text, Int32, Int32) -> m ()
+       (HasXokenNodeEnv env m, MonadIO m) => XCqlClientState -> Text -> (Text, Int32) -> (Text, Int32, Int32) -> m ()
 commitScriptHashOutputs conn sh output blockInfo = do
     lg <- getLogger
+    tm <- liftIO getCurrentTime
+    blocksSynced <- checkBlocksFullySynced conn
     let blkHeight = fromIntegral $ snd3 blockInfo
         txIndex = fromIntegral $ thd3 blockInfo
-        nominalTxIndex = blkHeight * 1000000000 + txIndex
-        qstrAddrOuts :: Q.QueryString Q.W (Text, Int64, (Text, Int32)) ()
+    nominalTxIndex <- generateNominalTxIndex $ Just (blkHeight, txIndex)
+    let qstrAddrOuts :: Q.QueryString Q.W (Text, Int64, (Text, Int32)) ()
         qstrAddrOuts = "INSERT INTO xoken.script_hash_outputs (script_hash, nominal_tx_index, output) VALUES (?,?,?)"
         parAddrOuts = getSimpleQueryParam (sh, nominalTxIndex, output)
     queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstrAddrOuts))
@@ -911,19 +867,12 @@ processConfTransaction bis tx bhash blkht txind = do
                      case v of
                          Just v' -> liftIO $ TSH.mutate v' (T.intercalate "_" protocol) fn
                          Nothing -> debug lg $ LG.msg $ "No ProtocolInfo Available for: " ++ show bhash
-             commitScriptHashOutputs
-                 conn --
-                 sh -- scriptHash
-                 output
-                 bi
-             case decodeOutputBS $ scriptOutput o of
-                 (Right so) ->
-                     if isPayPK so
-                         then do
-                             commitScriptHashOutputs conn a output bi
-                         else return ()
-                 (Left e) -> return ()
-             insertTxIdOutputs conn output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o))
+             outputsExist <- checkOutputDataExists output
+             if outputsExist
+                 then updateBlockInfo output True bi
+                 else do
+                     commitScriptHashOutputs conn sh output bi
+                     insertTxIdOutputs conn output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o))
         outAddrs
     debug lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": committed scripthash,txid_outputs tables"
     mapM_
@@ -1243,11 +1192,16 @@ handleIfAllegoryTx tx revert confirmed = do
             return False
   where
     resdb lg db fn tx al = do
+        let txid = T.unpack . txHashToHex . txHash $ tx
         eres <- liftIO $ try $ withResource' (pool $ graphDB db) (`BT.run` fn tx al)
         case eres of
             Right () -> return True
             Left (SomeException e) -> do
-                err lg $ LG.msg $ "[ERROR] While handling Allegory metadata: failed to update graph (" <> show e <> ")"
+                err lg $
+                    LG.msg $
+                    "[ERROR] While handling Allegory metadata for txid " <> txid <> " : failed to update graph (" <>
+                    show e <>
+                    ")"
                 throw e
 
 nodesExist :: (HasXokenNodeEnv env m, MonadIO m) => TxHash -> Allegory -> Bool -> m Bool
@@ -1280,7 +1234,7 @@ nodesExist txId allegory confirmed = do
                  es)
 
 commitScriptOutputProtocol ::
-       (HasLogger m, MonadIO m)
+       (HasXokenNodeEnv env m, MonadIO m)
     => XCqlClientState
     -> Text
     -> (Text, Int32)
@@ -1290,10 +1244,12 @@ commitScriptOutputProtocol ::
     -> m ()
 commitScriptOutputProtocol conn protocol (txid, output_index) blockInfo fees size = do
     lg <- getLogger
+    tm <- liftIO getCurrentTime
+    blocksSynced <- checkBlocksFullySynced conn
     let blkHeight = fromIntegral $ snd3 blockInfo
         txIndex = fromIntegral $ thd3 blockInfo
-        nominalTxIndex = blkHeight * 1000000000 + txIndex
-        qstrAddrOuts :: Q.QueryString Q.W (Text, Text, Int64, Int32, Int32, Int64) ()
+    nominalTxIndex <- generateNominalTxIndex $ Just (blkHeight, txIndex)
+    let qstrAddrOuts :: Q.QueryString Q.W (Text, Text, Int64, Int32, Int32, Int64) ()
         qstrAddrOuts =
             "INSERT INTO xoken.script_output_protocol (proto_str, txid, fees, size, output_index, nominal_tx_index) VALUES (?,?,?,?,?,?)"
         parAddrOuts = getSimpleQueryParam (protocol, txid, fees, size, output_index, nominalTxIndex)
@@ -1322,3 +1278,42 @@ diffGregorianDurationClip day2 day1 =
                          else ymdiff + 1
         dayAllowed = addGregorianMonthsClip ymAllowed day1
      in (ymAllowed, diffDays day2 dayAllowed)
+
+checkOutputDataExists :: (HasXokenNodeEnv env m, MonadIO m) => (Text, Int32) -> m Bool
+checkOutputDataExists (txid, outputIndex) = do
+    dbe <- getDB
+    lg <- getLogger
+    bp2pEnv <- getBitcoinP2P
+    let conn = xCqlClientState dbe
+        queryStr :: Q.QueryString Q.R (T.Text, Int32, Bool) (Identity Bool)
+        queryStr = "SELECT is_recv FROM xoken.txid_outputs WHERE txid=? AND output_index=? AND is_recv=?"
+        queryPar = getSimpleQueryParam (txid, outputIndex, True)
+    res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query queryStr queryPar)
+    case res of
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ C.pack $ "[ERROR] Querying database while checking if output exists: " <> (show e)
+            throw KeyValueDBLookupException
+        Right res -> return $ not . L.null $ res
+
+updateBlockInfo :: (HasXokenNodeEnv env m, MonadIO m) => (Text, Int32) -> Bool -> (Text, Int32, Int32) -> m ()
+updateBlockInfo (txid, outputIndex) isRecv blockInfo = do
+    dbe <- getDB
+    lg <- getLogger
+    bp2pEnv <- getBitcoinP2P
+    let conn = xCqlClientState dbe
+        queryStr :: Q.QueryString Q.W ((Text, Int32, Int32), Text, Int32, Bool) ()
+        queryStr = "UPDATE xoken.txid_outputs SET block_info=? WHERE txid=? AND output_index=? AND is_recv=?"
+        queryPar = getSimpleQueryParam (blockInfo, txid, outputIndex, isRecv)
+    queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare queryStr))
+    res <- liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryId queryPar))
+    case res of
+        Left (e :: SomeException) -> do
+            err lg $
+                LG.msg $
+                C.pack $
+                "[ERROR] While updating spendInfo for confirmed Tx output " <> (T.unpack txid) <> ":" <>
+                (show outputIndex) <>
+                ": " <>
+                (show e)
+            throw e
+        _ -> return ()

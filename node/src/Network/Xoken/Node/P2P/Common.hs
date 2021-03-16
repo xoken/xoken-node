@@ -75,6 +75,7 @@ import qualified Streamly.Prelude as S
 import System.Logger as LG
 import System.Random
 import Text.Format
+import qualified Xoken.NodeConfig as NC
 
 data BlockSyncException
     = BlocksNotChainedException
@@ -108,6 +109,7 @@ data BlockSyncException
     | BlockAlreadySyncedException
     | ParentProcessingException String
     | RelayFailureException
+    | DoubleSpendException [Int]
     deriving (Show)
 
 instance Exception BlockSyncException
@@ -555,9 +557,10 @@ getCompleteTx conn hash segments =
     getTx conn ("SELECT tx_serialized from xoken.transactions where tx_id = ?") hash segments
 
 getCompleteUnConfTx :: XCqlClientState -> T.Text -> Int -> IO (BSL.ByteString)
-getCompleteUnConfTx conn hash segments =
-    getTx conn ("SELECT tx_serialized from xoken.ep_transactions where tx_id = ?") hash segments
+getCompleteUnConfTx = getCompleteTx
 
+--getCompleteUnConfTx conn hash segments =
+--    getTx conn ("SELECT tx_serialized from xoken.ep_transactions where tx_id = ?") hash segments
 getTx :: XCqlClientState -> Q.QueryString Q.R (Identity Text) (Identity Blob) -> T.Text -> Int -> IO (BSL.ByteString)
 getTx conn qstr hash segments = do
     queryI <- queryPrepared conn (Q.RqPrepare $ Q.Prepare qstr)
@@ -631,4 +634,50 @@ withResource' pool f = do
     putResource local resource
     case res of
         Right ret -> return ret
-        Left (e :: SomeException) ->  throw e
+        Left (e :: SomeException) -> throw e
+
+getBlockInfo :: (T.Text, Int32, Int32) -> Maybe (T.Text, Int32, Int32)
+getBlockInfo (_, _, -1) = Nothing
+getBlockInfo (_, -1, _) = Nothing
+getBlockInfo ("", _, _) = Nothing
+getBlockInfo b = Just b
+
+fetchBestSyncedBlock :: (HasXokenNodeEnv env m, MonadIO m) => m (BlockHash, Int32)
+fetchBestSyncedBlock = do
+    lg <- getLogger
+    bp2pEnv <- getBitcoinP2P
+    conn <- xCqlClientState <$> getDB
+    binfo <- liftIO $ atomically $ readTVar (bestSyncedBlock bp2pEnv)
+    let net = NC.bitcoinNetwork . nodeConfig $ bp2pEnv
+    case binfo of
+        Just bi -> return $ (biBlockHash bi, fromIntegral $ biBlockHeight bi)
+        Nothing -> do
+            let qstr ::
+                       Q.QueryString Q.R (Identity Text) (Identity (Maybe Bool, Maybe Int32, Maybe Int64, Maybe T.Text))
+                qstr = "SELECT value from xoken.misc_store where key = ?"
+                p = getSimpleQueryParam $ Identity "best-synced"
+            iop <- liftIO $ query conn (Q.RqQuery $ Q.Query qstr p)
+            if L.length iop == 0
+                then do
+                    debug lg $ LG.msg $ val "Best-synced-block is genesis."
+                    return ((headerHash $ getGenesisHeader net), 0)
+                else do
+                    let record = runIdentity $ iop !! 0
+                    --debug lg $ LG.msg $ "Best-synced-block from DB: " ++ (show record)
+                    case getTextVal record of
+                        Just tx -> do
+                            case (hexToBlockHash $ tx) of
+                                Just x -> do
+                                    case getIntVal record of
+                                        Just y -> return (x, y)
+                                        Nothing -> throw InvalidMetaDataException
+                                Nothing -> throw InvalidBlockHashException
+                        Nothing -> throw InvalidMetaDataException
+
+generateNominalTxIndex :: (HasXokenNodeEnv env m, MonadIO m) => Maybe (Int32, Int32) -> m Int64
+generateNominalTxIndex Nothing = do
+    tm <- liftIO getCurrentTime
+    (_, bestSyncedBlockHeight) <- fetchBestSyncedBlock
+    return $ fromIntegral (1000000000 * (bestSyncedBlockHeight + 1)) + ((floor $ utcTimeToPOSIXSeconds tm) - 1600000000)
+generateNominalTxIndex (Just (blockHeight, txIndex)) =
+    return $ fromIntegral $ (1000000000 * blockHeight) + 500000000 + txIndex

@@ -198,41 +198,49 @@ data RPCReqParams'
           { gaAddrOutputs :: String
           , gaPageSize :: Maybe Int32
           , gaCursor :: Maybe String
+          , gaAscending :: Bool
           }
     | GetOutputsByAddresses
           { gasAddrOutputs :: [String]
           , gasPageSize :: Maybe Int32
           , gasCursor :: Maybe String
+          , gasAscending :: Bool
           }
     | GetOutputsByScriptHash
           { gaScriptHashOutputs :: String
           , gaScriptHashPageSize :: Maybe Int32
           , gaScriptHashCursor :: Maybe String
+          , gaScriptHashAscending :: Bool
           }
     | GetOutputsByScriptHashes
           { gasScriptHashOutputs :: [String]
           , gasScriptHashPageSize :: Maybe Int32
           , gasScriptHashCursor :: Maybe String
+          , gasScriptHashAscending :: Bool
           }
     | GetUTXOsByAddress
           { guaAddrOutputs :: String
           , guaPageSize :: Maybe Int32
           , guaCursor :: Maybe String
+          , guaAscending :: Bool
           }
     | GetUTXOsByScriptHash
           { guScriptHashOutputs :: String
           , guScriptHashPageSize :: Maybe Int32
           , guScriptHashCursor :: Maybe String
+          , guScriptHashAscending :: Bool
           }
     | GetUTXOsByAddresses
           { guasAddrOutputs :: [String]
           , guasPageSize :: Maybe Int32
           , guasCursor :: Maybe String
+          , guasAscending :: Bool
           }
     | GetUTXOsByScriptHashes
           { gusScriptHashOutputs :: [String]
           , gusScriptHashPageSize :: Maybe Int32
           , gusScriptHashCursor :: Maybe String
+          , gusAscending :: Bool
           }
     | GetMerkleBranchByTxID
           { gmbMerkleBranch :: String
@@ -279,14 +287,20 @@ instance FromJSON RPCReqParams' where
         (GetTransactionsByTxIDs <$> o .: "txids") <|>
         (GetRawTransactionByTxID <$> o .: "txid") <|>
         (GetRawTransactionsByTxIDs <$> o .: "txids") <|>
-        (GetOutputsByAddress <$> o .: "address" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
-        (GetOutputsByAddresses <$> o .: "addresses" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
-        (GetOutputsByScriptHash <$> o .: "scriptHash" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
-        (GetOutputsByScriptHashes <$> o .: "scriptHashes" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
-        (GetUTXOsByAddress <$> o .: "address" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
-        (GetUTXOsByAddresses <$> o .: "addresses" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
-        (GetUTXOsByScriptHash <$> o .: "scriptHash" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
-        (GetUTXOsByScriptHashes <$> o .: "scriptHashes" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
+        (GetOutputsByAddress <$> o .: "address" <*> o .:? "pageSize" <*> o .:? "cursor" <*> o .:? "ascending" .!= False) <|>
+        (GetOutputsByAddresses <$> o .: "addresses" <*> o .:? "pageSize" <*> o .:? "cursor" <*>
+         o .:? "ascending" .!= False) <|>
+        (GetOutputsByScriptHash <$> o .: "scriptHash" <*> o .:? "pageSize" <*> o .:? "cursor" <*>
+         o .:? "ascending" .!= False) <|>
+        (GetOutputsByScriptHashes <$> o .: "scriptHashes" <*> o .:? "pageSize" <*> o .:? "cursor" <*>
+         o .:? "ascending" .!= False) <|>
+        (GetUTXOsByAddress <$> o .: "address" <*> o .:? "pageSize" <*> o .:? "cursor" <*> o .:? "ascending" .!= False) <|>
+        (GetUTXOsByAddresses <$> o .: "addresses" <*> o .:? "pageSize" <*> o .:? "cursor" <*>
+         o .:? "ascending" .!= False) <|>
+        (GetUTXOsByScriptHash <$> o .: "scriptHash" <*> o .:? "pageSize" <*> o .:? "cursor" <*>
+         o .:? "ascending" .!= False) <|>
+        (GetUTXOsByScriptHashes <$> o .: "scriptHashes" <*> o .:? "pageSize" <*> o .:? "cursor" <*>
+         o .:? "ascending" .!= False) <|>
         (GetMerkleBranchByTxID <$> o .: "txid") <|>
         (GetAllegoryNameBranch <$> o .: "name" <*> o .: "isProducer") <|>
         (RelayTx . B64.decodeLenient . T.encodeUtf8 <$> o .: "rawTx") <|>
@@ -653,9 +667,9 @@ instance ToJSON RawTxRecord where
         object
             [ "txId" .= tId
             , "size" .= sz
-            , "txIndex" .= (binfTxIndex <$> tBI)
-            , "blockHash" .= (binfBlockHash <$> tBI)
-            , "blockHeight" .= (binfBlockHeight <$> tBI)
+            , "txIndex" .= (_getNullForDef (-1) $ binfTxIndex <$> tBI)
+            , "blockHash" .= (_getNullForDef "" $ binfBlockHash <$> tBI)
+            , "blockHeight" .= (_getNullForDef (-1) $ binfBlockHeight <$> tBI)
             , "txSerialized" .= (T.decodeUtf8 . BL.toStrict . B64L.encode $ tS)
             , "txOutputs" .= txo
             , "txInputs" .= txi
@@ -679,9 +693,9 @@ instance ToJSON TxRecord where
         object
             [ "txId" .= tId
             , "size" .= sz
-            , "txIndex" .= (binfTxIndex <$> tBI)
-            , "blockHash" .= (binfBlockHash <$> tBI)
-            , "blockHeight" .= (binfBlockHeight <$> tBI)
+            , "txIndex" .= (_getNullForDef (-1) $ binfTxIndex <$> tBI)
+            , "blockHash" .= (_getNullForDef "" $ binfBlockHash <$> tBI)
+            , "blockHeight" .= (_getNullForDef (-1) $ binfBlockHeight <$> tBI)
             , "tx" .= tx'
             , "fees" .= fee
             , "merkleBranch" .= mrkl
@@ -762,9 +776,9 @@ instance ToJSON AddressOutputs where
             [ "address" .= addr
             , "outputTxHash" .= (opTxHash out)
             , "outputIndex" .= (opIndex out)
-            , "txIndex" .= (binfTxIndex <$> bi)
-            , "blockHash" .= (binfBlockHash <$> bi)
-            , "blockHeight" .= (binfBlockHeight <$> bi)
+            , "txIndex" .= (_getNullForDef (-1) $ binfTxIndex <$> bi)
+            , "blockHash" .= (_getNullForDef "" $ binfBlockHash <$> bi)
+            , "blockHeight" .= (_getNullForDef (-1) $ binfBlockHeight <$> bi)
             , "spendInfo" .= ios
             , "prevOutpoint" .= po
             , "value" .= val
@@ -787,9 +801,9 @@ instance ToJSON ScriptOutputs where
             [ "scriptHash" .= dh
             , "outputTxHash" .= (opTxHash out)
             , "outputIndex" .= (opIndex out)
-            , "txIndex" .= (binfTxIndex <$> bi)
-            , "blockHash" .= (binfBlockHash <$> bi)
-            , "blockHeight" .= (binfBlockHeight <$> bi)
+            , "txIndex" .= (_getNullForDef (-1) $ binfTxIndex <$> bi)
+            , "blockHash" .= (_getNullForDef "" $ binfBlockHash <$> bi)
+            , "blockHeight" .= (_getNullForDef (-1) $ binfBlockHeight <$> bi)
             , "spendInfo" .= ios
             , "prevOutpoint" .= po
             , "value" .= val
@@ -1022,3 +1036,10 @@ maxBoundOutput = (T.pack "ffffffffffffffffffffffffffffffffffffffffffffffffffffff
 encodeResp :: ToJSON a => Bool -> a -> C.ByteString
 encodeResp True = AP.encodePretty
 encodeResp False = A.encode
+
+_getNullForDef :: Eq a => a -> Maybe a -> Maybe a
+_getNullForDef _ Nothing = Nothing
+_getNullForDef v (Just x) =
+    if v == x
+        then Nothing
+        else Just x
