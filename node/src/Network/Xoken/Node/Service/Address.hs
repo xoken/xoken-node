@@ -315,14 +315,7 @@ getConfirmedUtxosByAddress ::
     -> m [((Int64, (DT.Text, Int32)), TxOutputData)]
 getConfirmedUtxosByAddress address pgSize nominalTxIndex isAsc = do
     lg <- getLogger
-    let pgSize' =
-            case pgSize of
-                Nothing -> Nothing
-                Just p ->
-                    if p > 100
-                        then Nothing
-                        else Just $ 2 * p
-    res <- LE.try $ getConfirmedOutputsByAddress address pgSize' nominalTxIndex isAsc
+    res <- LE.try $ getConfirmedOutputsByAddress address pgSize nominalTxIndex isAsc
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ BC.pack $ "[ERROR] getConfirmedUtxosByAddress: Fetching outputs: " <> show e
@@ -331,18 +324,18 @@ getConfirmedUtxosByAddress address pgSize nominalTxIndex isAsc = do
             debug lg $
                 LG.msg $
                 BC.pack $
-                "gcuba: Call to gcoba pgSize: " <> (show pgSize') <> " nti: " <> (show nominalTxIndex) <> ", outs: " <>
+                "gcuba: Call to gcoba pgSize: " <> (show pgSize) <> " nti: " <> (show nominalTxIndex) <> ", outs: " <>
                 (show outputs)
             let utxos = L.filter (\(_, outputData) -> isNothing $ spendInfo outputData) outputs
             debug lg $
                 LG.msg $
                 BC.pack $
-                "gcuba: Call to gcoba pgSize: " <> (show pgSize') <> " nti: " <> (show nominalTxIndex) <> ", filtered: " <>
+                "gcuba: Call to gcoba pgSize: " <> (show pgSize) <> " nti: " <> (show nominalTxIndex) <> ", filtered: " <>
                 (show utxos)
             if (L.length utxos < fromMaybe (L.length utxos) (fromIntegral <$> pgSize)) &&
-               (not . L.null $ outputs) && (not . isNothing $ pgSize')
+               (not . L.null $ outputs) && (not . isNothing $ pgSize)
                 then do
-                    let nextPgSize = (fromJust pgSize') - (fromIntegral $ L.length utxos)
+                    let nextPgSize = 2 * ((fromJust pgSize) - (fromIntegral $ L.length utxos))
                         nextCursor = fst $ fst $ last outputs
                     nextPage <- getConfirmedUtxosByAddress address (Just nextPgSize) (Just nextCursor) isAsc
                     return $ utxos ++ nextPage
