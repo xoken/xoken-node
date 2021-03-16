@@ -678,5 +678,8 @@ generateNominalTxIndex :: (HasXokenNodeEnv env m, MonadIO m) => (Int32, Int32) -
 generateNominalTxIndex (-1, -1) = do
     tm <- liftIO getCurrentTime
     (_, bestSyncedBlockHeight) <- fetchBestSyncedBlock
-    return $ fromIntegral (1000000000 * (bestSyncedBlockHeight + 1)) + ((floor $ utcTimeToPOSIXSeconds tm) - 1600000000)
-generateNominalTxIndex (blockHeight, txIndex) = return $ fromIntegral $ (1000000000 * blockHeight) + 500000000 + txIndex
+    return $
+        (1000000000 * ((fromIntegral bestSyncedBlockHeight :: Int64) + 1)) +
+        ((fromIntegral . floor $ utcTimeToPOSIXSeconds tm :: Int64) - 1600000000)
+generateNominalTxIndex (blockHeight, txIndex) =
+    return $ (1000000000 * (fromIntegral blockHeight :: Int64)) + 500000000 + (fromIntegral txIndex :: Int64)
