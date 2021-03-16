@@ -327,16 +327,26 @@ getConfirmedUtxosByAddress address pgSize nominalTxIndex isAsc = do
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ BC.pack $ "[ERROR] getConfirmedUtxosByAddress: Fetching outputs: " <> show e
             throw KeyValueDBLookupException
-        Right outputs ->
+        Right outputs -> do
+            debug lg $
+                LG.msg $
+                BC.pack $
+                "gcuba: Call to gcoba pgSize: " <> (show pgSize') <> " nti: " <> (show nominalTxIndex) <> ", outs: " <>
+                (show outputs)
             let utxos = L.filter (\(_, outputData) -> isNothing $ spendInfo outputData) outputs
-             in if (L.length utxos < fromMaybe (L.length utxos) (fromIntegral <$> pgSize)) &&
-                   (not . L.null $ outputs) && (not . isNothing $ pgSize')
-                    then do
-                        let nextPgSize = (fromJust pgSize') - (fromIntegral $ L.length utxos)
-                            nextCursor = fst $ fst $ last outputs
-                        nextPage <- getConfirmedUtxosByAddress address (Just nextPgSize) (Just nextCursor) isAsc
-                        return $ utxos ++ nextPage
-                    else return utxos
+            debug lg $
+                LG.msg $
+                BC.pack $
+                "gcuba: Call to gcoba pgSize: " <> (show pgSize') <> " nti: " <> (show nominalTxIndex) <> ", filtered: " <>
+                (show utxos)
+            if (L.length utxos < fromMaybe (L.length utxos) (fromIntegral <$> pgSize)) &&
+               (not . L.null $ outputs) && (not . isNothing $ pgSize')
+                then do
+                    let nextPgSize = (fromJust pgSize') - (fromIntegral $ L.length utxos)
+                        nextCursor = fst $ fst $ last outputs
+                    nextPage <- getConfirmedUtxosByAddress address (Just nextPgSize) (Just nextCursor) isAsc
+                    return $ utxos ++ nextPage
+                else return utxos
 
 xGetOutputsScriptHash ::
        (HasXokenNodeEnv env m, MonadIO m)
