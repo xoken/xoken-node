@@ -558,38 +558,6 @@ sortPeers peers = do
             peers
     return $ snd $ unzip $ L.sortBy (\(a, _) (b, _) -> compare a b) (zip ts peers)
 
-fetchBestSyncedBlock :: (HasXokenNodeEnv env m, MonadIO m) => m (BlockHash, Int32)
-fetchBestSyncedBlock = do
-    lg <- getLogger
-    bp2pEnv <- getBitcoinP2P
-    conn <- xCqlClientState <$> getDB
-    binfo <- liftIO $ atomically $ readTVar (bestSyncedBlock bp2pEnv)
-    let net = bitcoinNetwork . nodeConfig $ bp2pEnv
-    case binfo of
-        Just bi -> return $ (biBlockHash bi, fromIntegral $ biBlockHeight bi)
-        Nothing -> do
-            let qstr ::
-                       Q.QueryString Q.R (Identity Text) (Identity (Maybe Bool, Maybe Int32, Maybe Int64, Maybe T.Text))
-                qstr = "SELECT value from xoken.misc_store where key = ?"
-                p = getSimpleQueryParam $ Identity "best-synced"
-            iop <- liftIO $ query conn (Q.RqQuery $ Q.Query qstr p)
-            if L.length iop == 0
-                then do
-                    debug lg $ LG.msg $ val "Best-synced-block is genesis."
-                    return ((headerHash $ getGenesisHeader net), 0)
-                else do
-                    let record = runIdentity $ iop !! 0
-                    --debug lg $ LG.msg $ "Best-synced-block from DB: " ++ (show record)
-                    case getTextVal record of
-                        Just tx -> do
-                            case (hexToBlockHash $ tx) of
-                                Just x -> do
-                                    case getIntVal record of
-                                        Just y -> return (x, y)
-                                        Nothing -> throw InvalidMetaDataException
-                                Nothing -> throw InvalidBlockHashException
-                        Nothing -> throw InvalidMetaDataException
-
 commitScriptHashOutputs ::
        (HasXokenNodeEnv env m, MonadIO m) => XCqlClientState -> Text -> (Text, Int32) -> (Text, Int32, Int32) -> m ()
 commitScriptHashOutputs conn sh output blockInfo = do
@@ -598,11 +566,8 @@ commitScriptHashOutputs conn sh output blockInfo = do
     blocksSynced <- checkBlocksFullySynced conn
     let blkHeight = fromIntegral $ snd3 blockInfo
         txIndex = fromIntegral $ thd3 blockInfo
-        nominalTxIndex =
-            if blocksSynced
-                then (8000000 * 1000000000) + (floor $ utcTimeToPOSIXSeconds tm)
-                else blkHeight * 1000000000 + txIndex
-        qstrAddrOuts :: Q.QueryString Q.W (Text, Int64, (Text, Int32)) ()
+    nominalTxIndex <- generateNominalTxIndex $ Just (blkHeight, txIndex)
+    let qstrAddrOuts :: Q.QueryString Q.W (Text, Int64, (Text, Int32)) ()
         qstrAddrOuts = "INSERT INTO xoken.script_hash_outputs (script_hash, nominal_tx_index, output) VALUES (?,?,?)"
         parAddrOuts = getSimpleQueryParam (sh, nominalTxIndex, output)
     queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstrAddrOuts))
@@ -1283,11 +1248,8 @@ commitScriptOutputProtocol conn protocol (txid, output_index) blockInfo fees siz
     blocksSynced <- checkBlocksFullySynced conn
     let blkHeight = fromIntegral $ snd3 blockInfo
         txIndex = fromIntegral $ thd3 blockInfo
-        nominalTxIndex =
-            if blocksSynced
-                then (8000000 * 1000000000) + (floor $ utcTimeToPOSIXSeconds tm)
-                else blkHeight * 1000000000 + txIndex
-        qstrAddrOuts :: Q.QueryString Q.W (Text, Text, Int64, Int32, Int32, Int64) ()
+    nominalTxIndex <- generateNominalTxIndex $ Just (blkHeight, txIndex)
+    let qstrAddrOuts :: Q.QueryString Q.W (Text, Text, Int64, Int32, Int32, Int64) ()
         qstrAddrOuts =
             "INSERT INTO xoken.script_output_protocol (proto_str, txid, fees, size, output_index, nominal_tx_index) VALUES (?,?,?,?,?,?)"
         parAddrOuts = getSimpleQueryParam (protocol, txid, fees, size, output_index, nominalTxIndex)
