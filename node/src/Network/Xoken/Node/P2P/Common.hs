@@ -674,10 +674,9 @@ fetchBestSyncedBlock = do
                                 Nothing -> throw InvalidBlockHashException
                         Nothing -> throw InvalidMetaDataException
 
-generateNominalTxIndex :: (HasXokenNodeEnv env m, MonadIO m) => Maybe (Int32, Int32) -> m Int64
-generateNominalTxIndex Nothing = do
+generateNominalTxIndex :: (HasXokenNodeEnv env m, MonadIO m) => (Int32, Int32) -> m Int64
+generateNominalTxIndex (-1, -1) = do
     tm <- liftIO getCurrentTime
     (_, bestSyncedBlockHeight) <- fetchBestSyncedBlock
     return $ fromIntegral (1000000000 * (bestSyncedBlockHeight + 1)) + ((floor $ utcTimeToPOSIXSeconds tm) - 1600000000)
-generateNominalTxIndex (Just (blockHeight, txIndex)) =
-    return $ fromIntegral $ (1000000000 * blockHeight) + 500000000 + txIndex
+generateNominalTxIndex (blockHeight, txIndex) = return $ fromIntegral $ (1000000000 * blockHeight) + 500000000 + txIndex
