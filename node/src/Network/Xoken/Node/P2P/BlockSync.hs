@@ -612,6 +612,49 @@ insertTxIdOutputs conn (txid, outputIndex) address scriptHash isRecv blockInfo o
             throw KeyValueDBInsertException
     return ()
 
+deleteTxIdOutputs :: (HasLogger m, MonadIO m) => XCqlClientState -> (Text, Int32) -> m ()
+deleteTxIdOutputs conn (txid, outputIndex) = do
+    lg <- getLogger
+    let qstr :: Q.QueryString Q.W (Text, Int32) ()
+        qstr = "DELETE FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
+        par = getSimpleQueryParam (txid, outputIndex)
+    queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstr))
+    res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryId par)
+    case res of
+        Right _ -> return ()
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: DELETEing: txid_outputs " ++ show e
+            throw KeyValueDBInsertException
+    return ()
+
+getSHOEntriesInStaleRange :: (HasLogger m, MonadIO m) => XCqlClientState -> Text -> m [(Text, Int32)]
+getSHOEntriesInStaleRange conn scriptHash = do
+    lg <- getLogger
+    let queryStr :: Q.QueryString Q.R (Text, Int64, Int64) (Identity (Text, Int32))
+        queryStr =
+            "SELECT output FROM xoken.script_hash_outputs WHERE script_hash=? AND nominal_tx_index>? AND nominal_tx_index<?"
+        queryPar = getSimpleQueryParam (scriptHash, 8000000000000000, 9999999999999999)
+    res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query queryStr queryPar)
+    case res of
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ C.pack $ "[ERROR] Failed to get SHO entries within range: " <> (show e)
+            throw e
+        Right idOutputs -> return $ (\(Identity op) -> op) <$> idOutputs
+
+deleteSHOEntriesInStaleRange :: (HasLogger m, MonadIO m) => XCqlClientState -> Text -> m ()
+deleteSHOEntriesInStaleRange conn scriptHash = do
+    lg <- getLogger
+    let queryStr :: Q.QueryString Q.W (Text, Int64, Int64) ()
+        queryStr =
+            "DELETE FROM xoken.script_hash_outputs WHERE script_hash=? AND nominal_tx_index>? AND nominal_tx_index<?"
+        queryPar = getSimpleQueryParam (scriptHash, 8000000000000000, 9999999999999999)
+    res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query queryStr queryPar)
+    case res of
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ C.pack $ "[ERROR] Failed to delete SHO entries within range: " <> (show e)
+            throw e
+        Right _ -> return ()
+
 commitTxPage ::
        (HasBitcoinP2P m, HasLogger m, HasDatabaseHandles m, MonadBaseControl IO m, MonadIO m)
     => [TxHash]
@@ -859,20 +902,14 @@ processConfTransaction bis tx bhash blkht txind = do
                                  Just (p, bi) -> (Just (props, upf bi), ())
                                  Nothing -> (Just (props, curBi), ())
                          prot = tail $ L.inits protocol
-                     mapM_
-                         (\p ->
-                              commitScriptOutputProtocol conn (T.intercalate "." p) output bi fees (fromIntegral count))
-                         prot
                      v <- liftIO $ TSH.lookup (protocolInfo bp2pEnv) bhash
                      case v of
                          Just v' -> liftIO $ TSH.mutate v' (T.intercalate "_" protocol) fn
                          Nothing -> debug lg $ LG.msg $ "No ProtocolInfo Available for: " ++ show bhash
-             outputsExist <- checkOutputDataExists output
-             if outputsExist
-                 then updateBlockInfo output True bi
-                 else do
-                     commitScriptHashOutputs conn sh output bi
-                     insertTxIdOutputs conn output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o))
+             outputs <- getSHOEntriesInStaleRange conn sh
+             unless (L.null outputs) $ do
+                 deleteSHOEntriesInStaleRange conn sh
+                 deleteTxIdOutputs conn output)
         outAddrs
     debug lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": committed scripthash,txid_outputs tables"
     mapM_
@@ -881,60 +918,11 @@ processConfTransaction bis tx bhash blkht txind = do
              let blockHeight = fromIntegral blkht
              let prevOutpoint = (txHashToHex $ outPointHash $ prevOutput o, fromIntegral $ outPointIndex $ prevOutput o)
              let spendInfo = (\ov -> ((txHashToHex txhs, fromIntegral $ fst $ ov), i, snd $ ov)) <$> ovs
-             if a == "" || sh == "" -- likely coinbase txns
-                 then return ()
-                 else do
-                     insertTxIdOutputs conn prevOutpoint a sh False bi (stripScriptHash <$> spendInfo) 0)
+             return ())
         (zip (inAddrs) (map (\x -> (fst3 $ thd3 x, snd3 $ thd3 $ x)) inputs))
     --
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": updated spend info for inputs"
     -- persist tx
-    let qstr :: Q.QueryString Q.W (Text, (Text, Int32, Int32), Blob, [((Text, Int32), Int32, (Text, Int64))], Int64) ()
-        qstr = "insert INTO xoken.transactions (tx_id, block_info, tx_serialized , inputs, fees) values (?, ?, ?, ?, ?)"
-        smb a = a * 16 * 1000 * 1000
-        segments =
-            let (d, m) = divMod count (smb 1)
-             in d +
-                (if m == 0
-                     then 0
-                     else 1)
-        fst =
-            if segments > 1
-                then (LC.replicate 32 'f') <> (BSL.fromStrict $ DTE.encodeUtf8 $ T.pack $ show $ segments)
-                else serbs
-    let par =
-            getSimpleQueryParam
-                ( txHashToHex txhs
-                , (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
-                , Blob fst
-                , (stripScriptHash <$> inputs)
-                , fees)
-    queryI <- liftIO $ queryPrepared conn (Q.RqPrepare $ Q.Prepare qstr)
-    res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryI par)
-    case res of
-        Right _ -> return ()
-        Left (e :: SomeException) -> do
-            liftIO $ err lg $ LG.msg ("Error: INSERTing into 'xoken.transactions': " ++ show e)
-            throw KeyValueDBInsertException
-    when (segments > 1) $ do
-        let segmentsData = chunksOf (smb 1) serbs
-        mapM_
-            (\(seg, i) -> do
-                 let par =
-                         getSimpleQueryParam
-                             ( (txHashToHex txhs) <> (T.pack $ show i)
-                             , (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
-                             , Blob seg
-                             , []
-                             , fees)
-                 queryI <- liftIO $ queryPrepared conn (Q.RqPrepare $ Q.Prepare qstr)
-                 res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryI par)
-                 case res of
-                     Right _ -> return ()
-                     Left (e :: SomeException) -> do
-                         liftIO $ err lg $ LG.msg ("Error: INSERTing into 'xoken.transactions': " ++ show e)
-                         throw KeyValueDBInsertException)
-            (zip segmentsData [1 ..])
     --
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": persisted in DB"
     --
