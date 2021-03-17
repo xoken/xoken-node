@@ -701,98 +701,8 @@ processConfTransaction bis tx bhash blkht txind = do
                 [0 :: Int32 ..]
     --
     -- lookup into tx outputs value cache if cache-miss, fetch from DB
-    inputs <-
-        mapM
-            (\(b, j) -> do
-                 tuple <- return Nothing
-                    --  liftIO $
-                    --  TSH.lookup
-                    --      (txOutputValuesCache bp2pEnv)
-                    --      (getTxShortHash (outPointHash $ prevOutput b) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
-                 val <-
-                     case tuple of
-                         Just (ftxh, indexvals) ->
-                             if ftxh == (outPointHash $ prevOutput b)
-                                 then do
-                                     trace lg $ LG.msg $ C.pack $ "txOutputValuesCache: cache-hit"
-                                     let rr =
-                                             head $
-                                             filter
-                                                 (\x -> fst x == (fromIntegral $ outPointIndex $ prevOutput b))
-                                                 indexvals
-                                     return $ snd $ rr
-                                 else do
-                                     if (outPointHash nullOutPoint) == (outPointHash $ prevOutput b)
-                                         then return
-                                                  ( ""
-                                                  , ""
-                                                  , fromIntegral $ computeSubsidy net $ (fromIntegral blkht :: Word32))
-                                         else do
-                                             debug lg $ LG.msg $ C.pack $ "txOutputValuesCache: cache-miss (1)"
-                                             dbRes <-
-                                                 liftIO $
-                                                 LE.try $
-                                                 getSatsValueFromOutpoint
-                                                     conn
-                                                     (txSynchronizer bp2pEnv)
-                                                     lg
-                                                     net
-                                                     (prevOutput b)
-                                                     (5)
-                                                     (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
-                                             case dbRes of
-                                                 Right v -> return $ v
-                                                 Left (e :: SomeException) -> do
-                                                     err lg $
-                                                         LG.msg $
-                                                         "Error: [pCT calling gSVFO] WHILE Processing TxID " ++
-                                                         show (txHashToHex txhs) ++
-                                                         ", getting value for dependent input (TxID,Index): (" ++
-                                                         show (txHashToHex $ outPointHash (prevOutput b)) ++
-                                                         ", " ++ show (outPointIndex $ prevOutput b) ++ ")"
-                                                     throw e
-                         Nothing -> do
-                             if (outPointHash nullOutPoint) == (outPointHash $ prevOutput b)
-                                 then return
-                                          ("", "", fromIntegral $ computeSubsidy net $ (fromIntegral blkht :: Word32))
-                                 else do
-                                     debug lg $ LG.msg $ C.pack $ "txOutputValuesCache: cache-miss (2)"
-                                     debug lg $
-                                         LG.msg $
-                                         " outputindex: " ++
-                                         show
-                                             ( txHashToHex $ outPointHash $ prevOutput b
-                                             , fromIntegral $ outPointIndex $ prevOutput b)
-                                     dbRes <-
-                                         liftIO $
-                                         LE.try $
-                                         getSatsValueFromOutpoint
-                                             conn
-                                             (txSynchronizer bp2pEnv)
-                                             lg
-                                             net
-                                             (prevOutput b)
-                                             (5)
-                                             (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
-                                     case dbRes of
-                                         Right v -> do
-                                             debug lg $
-                                                 LG.msg $ " value returned from getStatsValueFromOutpoint: " ++ show v
-                                             return $ v
-                                         Left (e :: SomeException) -> do
-                                             err lg $
-                                                 LG.msg $
-                                                 "Error: [pCT calling gSVFO] WHILE Processing TxID " ++
-                                                 show (txHashToHex txhs) ++
-                                                 ", getting value for dependent input (TxID,Index): (" ++
-                                                 show (txHashToHex $ outPointHash (prevOutput b)) ++
-                                                 ", " ++ show (outPointIndex $ prevOutput b) ++ ")"
-                                             throw e
-                 return
-                     ((txHashToHex $ outPointHash $ prevOutput b, fromIntegral $ outPointIndex $ prevOutput b), j, val))
-            inAddrs
     -- calculate Tx fees
-    let ipSum = foldl (+) 0 $ (\(_, _, (_, _, val)) -> val) <$> inputs
+    let ipSum = 0
         opSum = foldl (+) 0 $ (\(_, o, _) -> fromIntegral $ outValue o) <$> outAddrs
         fees =
             if txind == 0 -- coinbase tx
@@ -800,15 +710,8 @@ processConfTransaction bis tx bhash blkht txind = do
                 else ipSum - opSum
         serbs = runPutLazy $ putLazyByteString $ S.encodeLazy tx
         count = BSL.length serbs
-    debug lg $
-        LG.msg $
-        "processing Tx " ++
-        show txhs ++
-        ": calculated fees: " ++
-        show fees ++ " tx_index: " ++ show txind ++ " inputs: " ++ show inputs ++ " : outputs " ++ show outAddrs
     --
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": calculated fees"
-    trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": fetched input(s): " ++ show inputs
     -- handle allegory
     eres <- LE.try $ handleIfAllegoryTx tx True True
     case eres of
@@ -912,14 +815,6 @@ processConfTransaction bis tx bhash blkht txind = do
                  deleteTxIdOutputs conn output)
         outAddrs
     debug lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": committed scripthash,txid_outputs tables"
-    mapM_
-        (\((o, i), (a, sh)) -> do
-             let bi = (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
-             let blockHeight = fromIntegral blkht
-             let prevOutpoint = (txHashToHex $ outPointHash $ prevOutput o, fromIntegral $ outPointIndex $ prevOutput o)
-             let spendInfo = (\ov -> ((txHashToHex txhs, fromIntegral $ fst $ ov), i, snd $ ov)) <$> ovs
-             return ())
-        (zip (inAddrs) (map (\x -> (fst3 $ thd3 x, snd3 $ thd3 $ x)) inputs))
     --
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": updated spend info for inputs"
     -- persist tx
@@ -1231,6 +1126,34 @@ commitScriptOutputProtocol ::
     -> Int32
     -> m ()
 commitScriptOutputProtocol conn protocol (txid, output_index) blockInfo fees size = do
+    lg <- getLogger
+    tm <- liftIO getCurrentTime
+    blocksSynced <- checkBlocksFullySynced conn
+    let blkHeight = fromIntegral $ snd3 blockInfo
+        txIndex = fromIntegral $ thd3 blockInfo
+    nominalTxIndex <- generateNominalTxIndex (blkHeight, txIndex) output_index
+    let qstrAddrOuts :: Q.QueryString Q.W (Text, Text, Int64, Int32, Int32, Int64) ()
+        qstrAddrOuts =
+            "INSERT INTO xoken.script_output_protocol (proto_str, txid, fees, size, output_index, nominal_tx_index) VALUES (?,?,?,?,?,?)"
+        parAddrOuts = getSimpleQueryParam (protocol, txid, fees, size, output_index, nominalTxIndex)
+    queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstrAddrOuts))
+    resAddrOuts <- liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryId parAddrOuts))
+    case resAddrOuts of
+        Right _ -> return ()
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: INSERTing into 'script_output_protocol: " ++ show e
+            throw KeyValueDBInsertException
+
+deleteScriptOutputProtocol ::
+       (HasXokenNodeEnv env m, MonadIO m)
+    => XCqlClientState
+    -> Text
+    -> (Text, Int32)
+    -> (Text, Int32, Int32)
+    -> Int64
+    -> Int32
+    -> m ()
+deleteScriptOutputProtocol conn protocol (txid, output_index) blockInfo fees size = do
     lg <- getLogger
     tm <- liftIO getCurrentTime
     blocksSynced <- checkBlocksFullySynced conn
