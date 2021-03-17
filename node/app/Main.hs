@@ -336,23 +336,6 @@ defaultAdminUser conn = do
             putStrLn $ "  Password : " ++ (aurPassword $ fromJust usr)
             putStrLn $ "******************************************************************* "
 
-cleanupBadNTIEntries :: XCqlClientState -> IO ()
-cleanupBadNTIEntries conn = do
-    let queryStr =
-            "SELECT output FROM xoken.script_hash_outputs WHERE nominal_tx_index>? AND nominal_tx_index<? ALLOW FILTERING" :: Q.QueryString Q.R ( Int64
-                                                                                                                                                , Int64) (Identity ( T.Text
-                                                                                                                                                                   , Int32))
-        queryPar = getSimpleQueryParam (8000000000000000, 9999999999999999)
-    res <- try $ query conn (Q.RqQuery $ Q.Query queryStr queryPar)
-    case res of
-        Left (e :: SomeException) -> do
-            putStrLn $ "Error: Querying xoken.script_hash_outputs while clearing bad NTI entries: " <> (show e)
-            throw e
-        Right res' -> do
-            let outputs = (\(Identity op) -> op) <$> res'
-            putStrLn $ "Got " <> (show $ length outputs) <> " bad NTI entries, first entry: " <> (show $ head outputs)
-            return ()
-
 defBitcoinP2P :: NodeConfig -> Int64 -> IO (BitcoinP2P)
 defBitcoinP2P nodeCnf ept = do
     g <- newTVarIO M.empty
@@ -385,7 +368,6 @@ initNexa = do
     cnf <- Config.readConfig "arivi-config.yaml"
     nodeCnf <- NC.readConfig "node-config.yaml"
     !conn <- initXCql nodeCnf
-    cleanupBadNTIEntries conn
     defaultAdminUser conn
     tm <- getCurrentTime
     bp2p <- defBitcoinP2P nodeCnf (floor $ utcTimeToPOSIXSeconds tm)
