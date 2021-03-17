@@ -648,7 +648,8 @@ deleteSHOEntriesInStaleRange conn scriptHash = do
         queryStr =
             "DELETE FROM xoken.script_hash_outputs WHERE script_hash=? AND nominal_tx_index>? AND nominal_tx_index<?"
         queryPar = getSimpleQueryParam (scriptHash, 8000000000000000, 9999999999999999)
-    res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query queryStr queryPar)
+    queryPrep <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare queryStr))
+    res <- liftIO $ try $ query conn (Q.RqExecute $ Q.Execute queryPrep queryPar)
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ C.pack $ "[ERROR] Failed to delete SHO entries within range: " <> (show e)
