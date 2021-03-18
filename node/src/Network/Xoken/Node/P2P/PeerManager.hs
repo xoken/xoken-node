@@ -371,7 +371,8 @@ updateMerkleSubTrees dbe lg hashComp newhash left right ht ind final = do
                                                         Left (e :: SomeException) -> do
                                                             err lg $
                                                                 LG.msg $
-                                                                "Error: MerkleSubTreeDBInsertException (1): " <> (show e)
+                                                                "Error: MerkleSubTreeDBInsertException (1): " <>
+                                                                (show e)
                                                             throw MerkleSubTreeDBInsertException
                                                 else do
                                                     liftIO $ threadDelay (1000000 * 5) -- time to recover
@@ -449,7 +450,8 @@ merkleTreeBuilder tque blockHash treeHt = do
                     else do
                         liftIO $ modifyIORef' txPage (\x -> x ++ [txh])
                 res <-
-                    LE.try $ liftIO $ updateMerkleSubTrees dbe lg hcstate (getTxHash txh) Nothing Nothing treeHt 0 isLast
+                    LE.try $
+                    liftIO $ updateMerkleSubTrees dbe lg hcstate (getTxHash txh) Nothing Nothing treeHt 0 isLast
                 case res of
                     Right (hcs) -> do
                         liftIO $ writeIORef tv hcs
@@ -578,20 +580,22 @@ readNextMessage net sock ingss = do
                                 valx <- liftIO $ TSH.lookup (merkleQueueMap p2pEnv) (biBlockHash $ bf)
                                 case valx of
                                     Just q -> return q
-                                    Nothing -> throw MerkleQueueNotFoundException
+                                    Nothing -> do
+                                        qq <- liftIO $ atomically $ newTQueue
+                                        return qq
                     Nothing -> throw MessageParsingException
             let isLastBatch = ((binTxTotalCount blin) == ((L.length txns) + binTxIngested blin))
             let txct = L.length txns
-            liftIO $
-                atomically $
-                mapM_
-                    (\(tx, ct) -> do
-                         let isLast =
-                                 if isLastBatch
-                                     then txct == ct
-                                     else False
-                         writeTQueue qe ((txHash tx), isLast))
-                    (zip txns [1 ..])
+            -- liftIO $
+            --     atomically $
+            --     mapM_
+            --         (\(tx, ct) -> do
+            --              let isLast =
+            --                      if isLastBatch
+            --                          then txct == ct
+            --                          else False
+            --              writeTQueue qe ((txHash tx), isLast))
+            --         (zip txns [1 ..])
             let bio =
                     BlockIngestState
                         { binUnspentBytes = unused
