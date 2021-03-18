@@ -716,10 +716,6 @@ processConfTransaction bis tx bhash blkht txind = do
     --
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": calculated fees"
     -- handle allegory
-    eres <- LE.try $ handleIfAllegoryTx tx True True
-    case eres of
-        Right (flg) -> return ()
-        Left (e :: SomeException) -> err lg $ LG.msg ("Error: " ++ show e)
     --
     -- cache compile output values
     -- imp: order is (address, scriptHash, value)

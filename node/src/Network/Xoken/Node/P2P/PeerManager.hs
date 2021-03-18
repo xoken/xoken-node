@@ -567,10 +567,6 @@ readNextMessage net sock ingss = do
                                             return ()
                                 qq <- liftIO $ atomically $ newTQueue
                                         -- wait for TMT threads alloc
-                                liftIO $ MS.wait (maxTMTBuilderThreadLock p2pEnv)
-                                liftIO $ TSH.insert (merkleQueueMap p2pEnv) (biBlockHash $ bf) qq
-                                LA.async $
-                                    merkleTreeBuilder qq (biBlockHash $ bf) (computeTreeHeight $ binTxTotalCount blin)
                                 updateBlocks
                                     (biBlockHash bf)
                                     (biBlockHeight bf)
