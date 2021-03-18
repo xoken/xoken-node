@@ -654,8 +654,8 @@ deleteSHOEntriesInStaleRange conn scriptHash = do
     res <- liftIO $ try $ query conn (Q.RqExecute $ Q.Execute queryPrep queryPar)
     case res of
         Left (e :: SomeException) -> do
-            err lg $ LG.msg $ C.pack $ "[ERROR] Failed to delete SHO entries within range: " <> (show e)
-            throw e
+            err lg $ LG.msg $ C.pack $ "[ERROR?] " <> (show e)
+            return ()
         Right _ -> return ()
 
 commitTxPage ::
