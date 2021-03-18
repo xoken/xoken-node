@@ -416,9 +416,7 @@ runBlockCacheQueue =
                                                                           err lg $
                                                                           LG.msg $
                                                                           "Error: Failed to insert into protocolInfo TSH (key " <>
-                                                                          (show k) <>
-                                                                          "): " <>
-                                                                          (show e)))
+                                                                          (show k) <> "): " <> (show e)))
                                                         (cmp)
                                                     let e = cmp !! 0
                                                     return (Just $ BlockInfo (fst e) (snd $ snd e))
@@ -453,53 +451,53 @@ runBlockCacheQueue =
                          liftIO $ TSH.delete (blockSyncStatusMap bp2pEnv) bsh
                          liftIO $ TSH.delete (blockTxProcessingLeftMap bp2pEnv) bsh
                          --
-                         LA.async $
-                             liftIO $
-                             catch
-                                 (do v <- liftIO $ TSH.lookup (protocolInfo bp2pEnv) bsh
-                                     case v of
-                                         Just v' -> do
-                                             pi <- liftIO $ TSH.toList v'
-                                             debug lg $
-                                                 LG.msg $
-                                                 "Number of protocols for block: " <> show (Prelude.length pi) <>
-                                                 " height: " <>
-                                                 show ht
-                                             pres <-
-                                                 liftIO $
-                                                 try $ do
-                                                     runInBatch
-                                                         (\(protocol, (props, blockInf)) -> do
-                                                              TSH.delete v' protocol
-                                                              withResource'
-                                                                  (pool $ graphDB dbe)
-                                                                  (`BT.run` insertProtocolWithBlockInfo
-                                                                                protocol
-                                                                                props
-                                                                                blockInf))
-                                                         pi
-                                                         (maxInsertsProtocol $ nodeConfig bp2pEnv)
-                                                     TSH.delete (protocolInfo bp2pEnv) bsh
-                                             case pres of
-                                                 Right rt -> return ()
-                                                 Left (e :: SomeException) -> do
-                                                     err lg $
-                                                         LG.msg $
-                                                         "Error: Failed to insert protocol with blockInfo:" <>
-                                                         (show (bsh, ht)) <>
-                                                         ": " <>
-                                                         (show e)
-                                                     throw MerkleSubTreeDBInsertException
-                                         Nothing -> do
-                                             debug lg $
-                                                 LG.msg $ "Debug: No Information available for block hash " ++ show bsh
-                                             return ()
-                                     return ())
-                                 (\(e :: SomeException) ->
-                                      err lg $
-                                      LG.msg $
-                                      "Error: Failed to insert into graph DB block " <> (show (bsh, ht)) <> ": " <>
-                                      (show e))
+                        --  LA.async $
+                        --      liftIO $
+                        --      catch
+                        --          (do v <- liftIO $ TSH.lookup (protocolInfo bp2pEnv) bsh
+                        --              case v of
+                        --                  Just v' -> do
+                        --                      pi <- liftIO $ TSH.toList v'
+                        --                      debug lg $
+                        --                          LG.msg $
+                        --                          "Number of protocols for block: " <> show (Prelude.length pi) <>
+                        --                          " height: " <>
+                        --                          show ht
+                        --                      pres <-
+                        --                          liftIO $
+                        --                          try $ do
+                        --                              runInBatch
+                        --                                  (\(protocol, (props, blockInf)) -> do
+                        --                                       TSH.delete v' protocol
+                        --                                       withResource'
+                        --                                           (pool $ graphDB dbe)
+                        --                                           (`BT.run` insertProtocolWithBlockInfo
+                        --                                                         protocol
+                        --                                                         props
+                        --                                                         blockInf))
+                        --                                  pi
+                        --                                  (maxInsertsProtocol $ nodeConfig bp2pEnv)
+                        --                              TSH.delete (protocolInfo bp2pEnv) bsh
+                        --                      case pres of
+                        --                          Right rt -> return ()
+                        --                          Left (e :: SomeException) -> do
+                        --                              err lg $
+                        --                                  LG.msg $
+                        --                                  "Error: Failed to insert protocol with blockInfo:" <>
+                        --                                  (show (bsh, ht)) <>
+                        --                                  ": " <>
+                        --                                  (show e)
+                        --                              throw MerkleSubTreeDBInsertException
+                        --                  Nothing -> do
+                        --                      debug lg $
+                        --                          LG.msg $ "Debug: No Information available for block hash " ++ show bsh
+                        --                      return ()
+                        --              return ())
+                        --          (\(e :: SomeException) ->
+                        --               err lg $
+                        --               LG.msg $
+                        --               "Error: Failed to insert into graph DB block " <> (show (bsh, ht)) <> ": " <>
+                        --               (show e))
                          --
                      )
                     compl
@@ -823,10 +821,10 @@ processConfTransaction bis tx bhash blkht txind = do
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": handled Allegory Tx"
     -- signal 'done' event for tx's that were processed out of sequence
     --
-    vall <- liftIO $ TSH.lookup (txSynchronizer bp2pEnv) txhs
-    case vall of
-        Just ev -> liftIO $ EV.signal ev
-        Nothing -> return ()
+    -- vall <- liftIO $ TSH.lookup (txSynchronizer bp2pEnv) txhs
+    -- case vall of
+    --     Just ev -> liftIO $ EV.signal ev
+    --     Nothing -> return ()
     debug lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": end of processing signaled " ++ show bhash
 
 __getSatsValueFromOutpoint ::
@@ -1081,9 +1079,8 @@ handleIfAllegoryTx tx revert confirmed = do
             Left (SomeException e) -> do
                 err lg $
                     LG.msg $
-                    "[ERROR] While handling Allegory metadata for txid " <> txid <> " : failed to update graph (" <>
-                    show e <>
-                    ")"
+                    "[ERROR] While handling Allegory metadata for txid " <>
+                    txid <> " : failed to update graph (" <> show e <> ")"
                 throw e
 
 nodesExist :: (HasXokenNodeEnv env m, MonadIO m) => TxHash -> Allegory -> Bool -> m Bool
@@ -1221,9 +1218,7 @@ updateBlockInfo (txid, outputIndex) isRecv blockInfo = do
             err lg $
                 LG.msg $
                 C.pack $
-                "[ERROR] While updating spendInfo for confirmed Tx output " <> (T.unpack txid) <> ":" <>
-                (show outputIndex) <>
-                ": " <>
-                (show e)
+                "[ERROR] While updating spendInfo for confirmed Tx output " <>
+                (T.unpack txid) <> ":" <> (show outputIndex) <> ": " <> (show e)
             throw e
         _ -> return ()
