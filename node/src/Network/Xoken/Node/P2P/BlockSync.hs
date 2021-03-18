@@ -639,7 +639,9 @@ getSHOEntriesInStaleRange conn scriptHash = do
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ C.pack $ "[ERROR] Failed to get SHO entries within range: " <> (show e)
             throw e
-        Right idOutputs -> return $ (\(Identity op) -> op) <$> idOutputs
+        Right idOutputs -> do
+            debug lg $ LG.msg $ "Stale SHO Entries: " <> (show idOutputs)
+            return $ (\(Identity op) -> op) <$> idOutputs
 
 deleteSHOEntriesInStaleRange :: (HasLogger m, MonadIO m) => XCqlClientState -> Text -> m ()
 deleteSHOEntriesInStaleRange conn scriptHash = do
