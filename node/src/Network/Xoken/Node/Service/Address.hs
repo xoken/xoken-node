@@ -258,7 +258,7 @@ getConfirmedOutputsByAddress address pgSize mbNominalTxIndex isAsc = do
         confOutputsByAddressQuery =
             "SELECT nominal_tx_index, output FROM xoken.script_hash_outputs WHERE script_hash=?" <>
             (if isAsc
-                 then " AND nominal_tx_index>? AND nominal_tx_index<9000000000000000 ORDER BY nominal_tx_index ASC"
+                 then " AND nominal_tx_index>? ORDER BY nominal_tx_index ASC"
                  else " AND nominal_tx_index<?")
         queryString =
             fromString confOutputsByAddressQuery :: Q.QueryString Q.R (DT.Text, Int64) (Int64, (DT.Text, Int32))
@@ -406,7 +406,7 @@ getConfirmedOutputsByScriptHash scriptHash pgSize mbNominalTxIndex isAsc = do
         confOutputsByScriptHashQuery =
             "SELECT script_hash, nominal_tx_index, output FROM xoken.script_hash_outputs WHERE script_hash=?" ++
             (if isAsc
-                 then " AND nominal_tx_index>? AND nominal_tx_index<9000000000000000 ORDER BY nominal_tx_index ASC"
+                 then " AND nominal_tx_index>? ORDER BY nominal_tx_index ASC"
                  else " AND nominal_tx_index<?")
         queryString =
             fromString confOutputsByScriptHashQuery :: Q.QueryString Q.R (DT.Text, Int64) ( DT.Text
