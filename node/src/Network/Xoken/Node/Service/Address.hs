@@ -98,7 +98,7 @@ import Xoken
 import qualified Xoken.NodeConfig as NC
 
 maxNTI :: Int64
-maxNTI = 9000000 * 1000000000
+maxNTI = maxBound 
 
 getTxOutputsData :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => (DT.Text, Int32) -> m TxOutputData
 getTxOutputsData (txid, index) = do
