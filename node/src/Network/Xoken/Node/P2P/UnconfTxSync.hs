@@ -328,6 +328,7 @@ processUnconfTransaction tx = do
                                              (prevOutput b)
                                              5
                                              (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
+                                             False
                                      return valFromDB
                          Nothing -> do
                              valFromDB <-
@@ -340,6 +341,7 @@ processUnconfTransaction tx = do
                                      (prevOutput b)
                                      5
                                      (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
+                                     False
                              return valFromDB
                  return
                      ((txHashToHex $ outPointHash $ prevOutput b, fromIntegral $ outPointIndex $ prevOutput b), j, val))

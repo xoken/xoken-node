@@ -697,6 +697,7 @@ processConfTransaction bis tx bhash blkht txind = do
                                                      (prevOutput b)
                                                      (5)
                                                      (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
+                                                     True
                                              case dbRes of
                                                  Right v -> return $ v
                                                  Left (e :: SomeException) -> do
@@ -731,6 +732,7 @@ processConfTransaction bis tx bhash blkht txind = do
                                              (prevOutput b)
                                              (5)
                                              (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
+                                             True
                                      case dbRes of
                                          Right v -> do
                                              debug lg $
@@ -957,16 +959,17 @@ getSatsValueFromOutpoint ::
     -> OutPoint
     -> Int
     -> Int
+    -> Bool
     -> IO ((Text, Text, Int64))
-getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait = do
-    let qstr :: Q.QueryString Q.R (Text, Int32, Bool) (Text, Text, Int64)
+getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait confirmedOnly = do
+    let qstr :: Q.QueryString Q.R (Text, Int32, Bool) (Text, Text, Int64, (Text, Int32, Int32))
         qstr =
-            "SELECT address, script_hash, value FROM xoken.txid_outputs WHERE txid=? AND output_index=? AND is_recv=?"
+            "SELECT address, script_hash, value, block_info FROM xoken.txid_outputs WHERE txid=? AND output_index=? AND is_recv=?"
         par = getSimpleQueryParam (txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint, True)
     res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
     case res of
         Right results -> do
-            if L.length results == 0
+            if (L.length results == 0) || (((\(_, _, _, bi) -> bi) $ head $ results) == ("", -1, -1) && confirmedOnly)
                 then do
                     debug lg $
                         LG.msg $
@@ -981,7 +984,15 @@ getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait = do
                     if tofl == False
                         then if ((2 * wait) < maxWait)
                                  then do
-                                     getSatsValueFromOutpoint conn txSync lg net outPoint (2 * wait) maxWait
+                                     getSatsValueFromOutpoint
+                                         conn
+                                         txSync
+                                         lg
+                                         net
+                                         outPoint
+                                         (2 * wait)
+                                         maxWait
+                                         confirmedOnly
                                  else do
                                      liftIO $ TSH.delete txSync (outPointHash outPoint)
                                      debug lg $
@@ -997,9 +1008,9 @@ getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait = do
                         else do
                             debug lg $
                                 LG.msg $ "event received _available_: " ++ (show $ txHashToHex $ outPointHash outPoint)
-                            getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait
+                            getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait confirmedOnly
                 else do
-                    let (addr, scriptHash, val) = head $ results
+                    let (addr, scriptHash, val, blockInfo) = head $ results
                     return $ (addr, scriptHash, val)
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: getSatsValueFromOutpoint: " ++ show e
