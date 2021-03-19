@@ -320,9 +320,8 @@ processUnconfTransaction tx = do
                                  else do
                                      valFromDB <-
                                          liftIO $
-                                         sourceSatsValueFromOutpoint
+                                         getSatsValueFromOutpoint
                                              conn
-                                             epoch
                                              (txSynchronizer bp2pEnv)
                                              lg
                                              net
@@ -333,9 +332,8 @@ processUnconfTransaction tx = do
                          Nothing -> do
                              valFromDB <-
                                  liftIO $
-                                 sourceSatsValueFromOutpoint
+                                 getSatsValueFromOutpoint
                                      conn
-                                     epoch
                                      (txSynchronizer bp2pEnv)
                                      lg
                                      net
@@ -471,86 +469,6 @@ processUnconfTransaction tx = do
         Just ev -> liftIO $ EV.signal ev
         Nothing -> return ()
     --
-
-getSatsValueFromEpochOutpoint ::
-       XCqlClientState
-    -> Bool
-    -> (TSH.TSHashTable TxHash EV.Event)
-    -> Logger
-    -> Network
-    -> OutPoint
-    -> Int
-    -> Int
-    -> IO ((Text, Text, Int64))
-getSatsValueFromEpochOutpoint conn epoch txSync lg net outPoint wait maxWait = do
-    let str =
-            "SELECT address, script_hash, value FROM xoken.ep_txid_outputs WHERE epoch=? AND txid=? AND output_index=? AND is_recv=? "
-        qstr = str :: Q.QueryString Q.R (Bool, Text, Int32, Bool) (Text, Text, Int64)
-        par =
-            getSimpleQueryParam $
-            (epoch, txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint, True)
-    queryI <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstr))
-    res <- liftIO $ try $ query conn (Q.RqExecute (Q.Execute queryI par))
-    case res of
-        Right results -> do
-            if L.length results == 0
-                then do
-                    debug lg $
-                        LG.msg $
-                        "[Unconfirmed] Tx not found: " ++
-                        (show $ txHashToHex $ outPointHash outPoint) ++ " _waiting_ for event"
-                    valx <- liftIO $ TSH.lookup txSync (outPointHash outPoint)
-                    event <-
-                        case valx of
-                            Just evt -> return evt
-                            Nothing -> EV.new
-                    liftIO $ TSH.insert txSync (outPointHash outPoint) event
-                    tofl <- waitTimeout event $ fromIntegral (wait * 1000000)
-                    if tofl == False
-                        then if ((2 * wait) < maxWait)
-                                 then do
-                                     getSatsValueFromEpochOutpoint conn epoch txSync lg net outPoint (2 * wait) maxWait -- re-attempt
-                                 else do
-                                     liftIO $ TSH.delete txSync (outPointHash outPoint)
-                                     throw $
-                                         TxIDNotFoundException
-                                             ( show $ txHashToHex $ outPointHash outPoint
-                                             , Just $ fromIntegral $ outPointIndex outPoint)
-                                             "getSatsValueFromEpochOutpoint"
-                        else do
-                            debug lg $
-                                LG.msg $
-                                "Event received _available_ [Unconfirmed] tx: " ++
-                                (show $ txHashToHex $ outPointHash outPoint)
-                            getSatsValueFromEpochOutpoint conn epoch txSync lg net outPoint maxWait maxWait
-                else do
-                    return $ head results
-        Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: getSatsValueFromEpochOutpoint: " ++ show e
-            throw e
-
-sourceSatsValueFromOutpoint ::
-       XCqlClientState
-    -> Bool
-    -> (TSH.TSHashTable TxHash EV.Event)
-    -> Logger
-    -> Network
-    -> OutPoint
-    -> Int
-    -> Int
-    -> IO ((Text, Text, Int64))
-sourceSatsValueFromOutpoint conn epoch txSync lg net outPoint waitSecs maxWait = do
-    res
-        --LA.race
-         <-
-        (liftIO $ do
-             debug lg $ LG.msg $ "race getSatsValueFromOutpoint <start>: " <> (show outPoint)
-             getSatsValueFromOutpoint conn txSync lg net outPoint waitSecs maxWait)
-        --    (liftIO $ do
-        --         debug lg $ LG.msg $ "race getSatsValueFromEpochOutpoint <start>: " <> (show outPoint)
-        --         getSatsValueFromEpochOutpoint conn epoch txSync lg net outPoint waitSecs maxWait)
-    debug lg $ LG.msg $ "sourceSatsValueFromOutpoint race for " <> (show outPoint) <> " result: " <> (show res)
-    return $ res
 
 convertToScriptHash :: Network -> String -> Maybe String
 convertToScriptHash net s = do
