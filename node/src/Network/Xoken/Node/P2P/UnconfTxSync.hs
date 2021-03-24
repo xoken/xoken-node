@@ -375,27 +375,28 @@ processUnconfTransaction tx = do
                      if op == "6a"
                          then ("00", op, rem)
                          else (\(a, b) -> (op, a, b)) $ B.splitAt 2 rem
-             when (op_false == "00" && op_return == "6a") $ do
-                 props <-
-                     case runGet (getPropsG 3) (fst $ B16.decode remD) of
-                         Right p -> return p
-                         Left str -> do
-                             liftIO $ err lg $ LG.msg ("Error: Getting protocol name " ++ show str)
-                             return []
-                 when (isJust (headMaybe props)) $ do
-                     let protocol = snd <$> props
-                         prot = tail $ L.inits protocol
-                     mapM_
-                         (\p ->
-                              commitScriptOutputProtocol
-                                  conn
-                                  (T.intercalate "." p)
-                                  output
-                                  ("", -1, -1)
-                                  fees
-                                  (fromIntegral count))
-                         prot
              outputsExist <- checkOutputDataExists output
+             unless outputsExist $
+                 when (op_false == "00" && op_return == "6a") $ do
+                     props <-
+                         case runGet (getPropsG 3) (fst $ B16.decode remD) of
+                             Right p -> return p
+                             Left str -> do
+                                 liftIO $ err lg $ LG.msg ("Error: Getting protocol name " ++ show str)
+                                 return []
+                     when (isJust (headMaybe props)) $ do
+                         let protocol = snd <$> props
+                             prot = tail $ L.inits protocol
+                         mapM_
+                             (\p ->
+                                  commitScriptOutputProtocol
+                                      conn
+                                      (T.intercalate "." p)
+                                      output
+                                      ("", -1, -1)
+                                      fees
+                                      (fromIntegral count))
+                             prot
              unless outputsExist $ do
                  concurrently_
                      (insertTxIdOutputs
