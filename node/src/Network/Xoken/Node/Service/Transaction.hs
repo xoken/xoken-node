@@ -175,7 +175,17 @@ xGetTxHashes hashes = do
     iop <-
         case res of
             Right iop ->
-                pure $ L.map (\(txid, bi, psz, sinps, fees) -> (txid, getBlockInfo bi, psz, Q.fromSet sinps, fees)) iop
+                let recs =
+                        (\(txid, bi, psz, sinps, fees) -> (txid, (txid, getBlockInfo bi, psz, Q.fromSet sinps, fees))) <$>
+                        iop
+                 in pure $ snd <$> recordSorter hashes recs
+                where recordSorter txids res = catMaybes $ sorter txids res
+                      sorter [] res = []
+                      sorter (txid:txids) res = (finder txid res) : (sorter txids res)
+                      finder txid [] = Nothing
+                      finder txid ((txid', rec):res)
+                          | txid == txid' = Just (txid, rec)
+                          | otherwise = finder txid res
             Left (e :: SomeException) -> do
                 err lg $ LG.msg $ "Error: xGetTxHashes: " ++ show e
                 throw KeyValueDBLookupException
