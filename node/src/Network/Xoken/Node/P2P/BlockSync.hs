@@ -966,7 +966,7 @@ getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait confirmedOnly 
     res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
     case res of
         Right results -> do
-            if (L.length results == 0) -- || (((\(_, _, _, bi) -> bi) $ head $ results) == ("", -1, -1) && confirmedOnly)
+            if (L.length results == 0) || (((\(_, _, _, bi) -> bi) $ head $ results) == ("", -1, -1) && confirmedOnly)
                 then do
                     debug lg $
                         LG.msg $
