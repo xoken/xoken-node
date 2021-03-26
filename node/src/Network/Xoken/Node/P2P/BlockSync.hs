@@ -642,7 +642,7 @@ processConfTransaction bis tx bhash blkht txind = do
     let !txhs = txHash tx
     let net = bitcoinNetwork $ nodeConfig bp2pEnv
         conn = xCqlClientState dbe'
-    debug lg $ LG.msg $ "processing Tx " ++ show (txhs)
+    debug lg $ LG.msg $ "Processing confirmed transaction <begin> :" ++ show txhs
     let !inAddrs = zip (txIn tx) [0 :: Int32 ..]
     let !outAddrs =
             zip3
@@ -658,7 +658,7 @@ processConfTransaction bis tx bhash blkht txind = do
                 [0 :: Int32 ..]
     --
     -- lookup into tx outputs value cache if cache-miss, fetch from DB
-    inputs <-
+    !inputs <-
         mapM
             (\(b, j) -> do
                  tuple <- return Nothing
@@ -751,15 +751,16 @@ processConfTransaction bis tx bhash blkht txind = do
                      ((txHashToHex $ outPointHash $ prevOutput b, fromIntegral $ outPointIndex $ prevOutput b), j, val))
             inAddrs
     -- calculate Tx fees
-    let ipSum = foldl (+) 0 $ (\(_, _, (_, _, val)) -> val) <$> inputs
-        opSum = foldl (+) 0 $ (\(_, o, _) -> fromIntegral $ outValue o) <$> outAddrs
-        fees =
+    let !ipSum = foldl (+) 0 $ (\(_, _, (_, _, val)) -> val) <$> inputs
+        !opSum = foldl (+) 0 $ (\(_, o, _) -> fromIntegral $ outValue o) <$> outAddrs
+        !fees =
             if txind == 0 -- coinbase tx
                 then 0
                 else ipSum - opSum
         serbs = runPutLazy $ putLazyByteString $ S.encodeLazy tx
         count = BSL.length serbs
     --
+    debug lg $ LG.msg $ "Processing confirmed transaction <fetched inputs> :" ++ show txhs
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": calculated fees"
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": fetched input(s): " ++ show inputs
     -- handle allegory
@@ -948,7 +949,7 @@ processConfTransaction bis tx bhash blkht txind = do
     case vall of
         Just ev -> liftIO $ EV.signal ev
         Nothing -> return ()
-    debug lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": end of processing signaled " ++ show bhash
+    debug lg $ LG.msg $ "Processing confirmed transaction <end> :" ++ show txhs
 
 --
 --
