@@ -992,7 +992,7 @@ getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait confirmedOnly 
                                          lg
                                          net
                                          outPoint
-                                         (1.1 * wait)
+                                         (1 + wait)
                                          maxWait
                                          confirmedOnly
                                  else do
