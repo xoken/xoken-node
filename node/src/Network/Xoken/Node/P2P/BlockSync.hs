@@ -416,9 +416,7 @@ runBlockCacheQueue =
                                                                           err lg $
                                                                           LG.msg $
                                                                           "Error: Failed to insert into protocolInfo TSH (key " <>
-                                                                          (show k) <>
-                                                                          "): " <>
-                                                                          (show e)))
+                                                                          (show k) <> "): " <> (show e)))
                                                         (cmp)
                                                     let e = cmp !! 0
                                                     return (Just $ BlockInfo (fst e) (snd $ snd e))
@@ -462,9 +460,8 @@ runBlockCacheQueue =
                                              pi <- liftIO $ TSH.toList v'
                                              debug lg $
                                                  LG.msg $
-                                                 "Number of protocols for block: " <> show (Prelude.length pi) <>
-                                                 " height: " <>
-                                                 show ht
+                                                 "Number of protocols for block: " <>
+                                                 show (Prelude.length pi) <> " height: " <> show ht
                                              pres <-
                                                  liftIO $
                                                  try $ do
@@ -486,9 +483,7 @@ runBlockCacheQueue =
                                                      err lg $
                                                          LG.msg $
                                                          "Error: Failed to insert protocol with blockInfo:" <>
-                                                         (show (bsh, ht)) <>
-                                                         ": " <>
-                                                         (show e)
+                                                         (show (bsh, ht)) <> ": " <> (show e)
                                                      throw MerkleSubTreeDBInsertException
                                          Nothing -> do
                                              debug lg $
@@ -498,8 +493,8 @@ runBlockCacheQueue =
                                  (\(e :: SomeException) ->
                                       err lg $
                                       LG.msg $
-                                      "Error: Failed to insert into graph DB block " <> (show (bsh, ht)) <> ": " <>
-                                      (show e))
+                                      "Error: Failed to insert into graph DB block " <>
+                                      (show (bsh, ht)) <> ": " <> (show e))
                          --
                      )
                     compl
@@ -997,7 +992,7 @@ getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait confirmedOnly 
                                          lg
                                          net
                                          outPoint
-                                         (2 * wait)
+                                         (1.1 * wait)
                                          maxWait
                                          confirmedOnly
                                  else do
@@ -1157,9 +1152,8 @@ handleIfAllegoryTx tx revert confirmed = do
             Left (SomeException e) -> do
                 err lg $
                     LG.msg $
-                    "[ERROR] While handling Allegory metadata for txid " <> txid <> " : failed to update graph (" <>
-                    show e <>
-                    ")"
+                    "[ERROR] While handling Allegory metadata for txid " <>
+                    txid <> " : failed to update graph (" <> show e <> ")"
                 throw e
 
 nodesExist :: (HasXokenNodeEnv env m, MonadIO m) => TxHash -> Allegory -> Bool -> m Bool
@@ -1269,9 +1263,7 @@ updateBlockInfo (txid, outputIndex) isRecv blockInfo = do
             err lg $
                 LG.msg $
                 C.pack $
-                "[ERROR] While updating spendInfo for confirmed Tx output " <> (T.unpack txid) <> ":" <>
-                (show outputIndex) <>
-                ": " <>
-                (show e)
+                "[ERROR] While updating spendInfo for confirmed Tx output " <>
+                (T.unpack txid) <> ":" <> (show outputIndex) <> ": " <> (show e)
             throw e
         _ -> return ()
