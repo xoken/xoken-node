@@ -53,6 +53,7 @@ import qualified Data.ByteString.Short as BSS
 import qualified Data.ByteString.UTF8 as BSU (toString)
 import Data.Char
 import Data.Default
+import qualified Data.Either as DE
 import qualified Data.HashTable.IO as H
 import Data.Hashable
 import Data.IORef
@@ -380,6 +381,7 @@ xRelayTx rawTx = do
             case fst res of
                 Just tx -> do
                     let outpoints = L.map (\x -> prevOutput x) (txIn tx)
+                        txId = DT.unpack . txHashToHex . txHash $ tx
                     tr <-
                         mapM
                             (\x -> do
@@ -445,11 +447,11 @@ xRelayTx rawTx = do
                                     (\(_, peer) -> do
                                          res <- LE.try $ sendRequestMessages peer (MTx (fromJust $ fst res))
                                          case res of
-                                             Left (e :: SomeException) -> return (peer, False)
-                                             Right () -> return (peer, True))
+                                             Left (e :: SomeException) -> return (peer, Left (show e))
+                                             Right () -> return (peer, Right ()))
                                     connPeers
-                            debug lg $ LG.msg $ "xRelayTx broadcastResult: " <> (show broadcastResult)
-                            if all (== False) (snd <$> broadcastResult)
+                            debug lg $ LG.msg $ "Broadcast result for " <> txId <> ": " <> (show broadcastResult)
+                            if all (DE.isLeft) (snd <$> broadcastResult)
                                 then throw RelayFailureException
                                 else return ()
                             eres <- LE.try $ handleIfAllegoryTx tx False False -- MUST be False
