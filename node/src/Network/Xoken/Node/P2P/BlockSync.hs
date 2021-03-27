@@ -986,7 +986,7 @@ getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait confirmedOnly 
                         ", results: " ++
                         (show $ L.length results) ++
                         ", blockInfo: " ++
-                        (show $ (\(_, _, _, bi) -> bi) $ head $ results) ++ ", confirmed: " ++ (show confirmedOnly)
+                        (show $ (\(_, _, _, bi) -> bi) <$> results) ++ ", confirmed: " ++ (show confirmedOnly)
                     debug lg $
                         LG.msg $
                         "Tx not found: " ++ (show $ txHashToHex $ outPointHash outPoint) ++ " _waiting_ for event"
