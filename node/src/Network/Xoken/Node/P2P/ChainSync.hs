@@ -112,24 +112,22 @@ sendRequestMessages msg = do
                         x
                             | x >= 19 -> take 4 pds -- 2^19 = blk ht 524288
                             | x < 19 -> take 1 pds
-            res <-
-                liftIO $
-                try $
-                mapM_
-                    (\z -> do
-                         let pr = snd $ connPeers !! z
-                         case (bpSocket pr) of
-                             Just q -> do
-                                 let em = runPut . putMessage net $ msg
-                                 liftIO $ sendEncMessage (bpWriteMsgLock pr) q (BSL.fromStrict em)
-                                 debug lg $ LG.msg ("sending out GetHeaders: " ++ show (bpAddress pr))
-                             Nothing -> debug lg $ LG.msg $ val "Error sending, no connections available")
-                    indices
-            case res of
-                Right () -> return ()
-                Left (e :: SomeException) -> do
-                    err lg $ LG.msg ("Error, sending out data: " ++ show e)
-                    throw e
+            mapM_
+                (\z -> do
+                     let pr = snd $ connPeers !! z
+                     case (bpSocket pr) of
+                         Just q -> do
+                             let em = runPut . putMessage net $ msg
+                             res <- liftIO $ try $ sendEncMessage (bpWriteMsgLock pr) q (BSL.fromStrict em)
+                             case res of
+                                 Right () -> debug lg $ LG.msg ("sending out GetHeaders: " ++ show (bpAddress pr))
+                                 Left (e :: SomeException) -> do
+                                     err lg $ LG.msg ("Error CS, sending out data: " ++ show e)
+                                     liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
+                                     liftIO $ Network.Socket.close q
+                                     throw e
+                         Nothing -> debug lg $ LG.msg $ val "Error sending, no connections available")
+                indices
         ___ -> undefined
 
 msgOrder :: Message -> Message -> Ordering

@@ -64,6 +64,7 @@ import qualified Database.Bolt as BT
 import Database.XCQL.Protocol as Q
 import qualified ListT as LT
 import qualified Network.Socket as NS
+import Network.Socket
 import qualified Network.Socket.ByteString as SB (recv)
 import qualified Network.Socket.ByteString.Lazy as LB (recv, sendAll)
 import Network.Xoken.Address
@@ -124,7 +125,9 @@ sendRequestMessages pr msg = do
                     case fromException e of
                         Just (t :: AsyncCancelled) -> throw e
                         otherwise -> do
-                            debug lg $ LG.msg $ "Error, sending out data: " ++ show e
+                            err lg $ LG.msg ("Error BS, sending out data: " ++ show e)
+                            liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
+                            liftIO $ Network.Socket.close s
                             throw e
             debug lg $ LG.msg $ "sending out GetData: " ++ show (bpAddress pr)
         Nothing -> err lg $ LG.msg $ val "Error sending, no connections available"
@@ -416,9 +419,7 @@ runBlockCacheQueue =
                                                                           err lg $
                                                                           LG.msg $
                                                                           "Error: Failed to insert into protocolInfo TSH (key " <>
-                                                                          (show k) <>
-                                                                          "): " <>
-                                                                          (show e)))
+                                                                          (show k) <> "): " <> (show e)))
                                                         (cmp)
                                                     let e = cmp !! 0
                                                     return (Just $ BlockInfo (fst e) (snd $ snd e))
@@ -462,9 +463,8 @@ runBlockCacheQueue =
                                              pi <- liftIO $ TSH.toList v'
                                              debug lg $
                                                  LG.msg $
-                                                 "Number of protocols for block: " <> show (Prelude.length pi) <>
-                                                 " height: " <>
-                                                 show ht
+                                                 "Number of protocols for block: " <>
+                                                 show (Prelude.length pi) <> " height: " <> show ht
                                              pres <-
                                                  liftIO $
                                                  try $ do
@@ -486,9 +486,7 @@ runBlockCacheQueue =
                                                      err lg $
                                                          LG.msg $
                                                          "Error: Failed to insert protocol with blockInfo:" <>
-                                                         (show (bsh, ht)) <>
-                                                         ": " <>
-                                                         (show e)
+                                                         (show (bsh, ht)) <> ": " <> (show e)
                                                      throw MerkleSubTreeDBInsertException
                                          Nothing -> do
                                              debug lg $
@@ -498,8 +496,8 @@ runBlockCacheQueue =
                                  (\(e :: SomeException) ->
                                       err lg $
                                       LG.msg $
-                                      "Error: Failed to insert into graph DB block " <> (show (bsh, ht)) <> ": " <>
-                                      (show e))
+                                      "Error: Failed to insert into graph DB block " <>
+                                      (show (bsh, ht)) <> ": " <> (show e))
                          --
                      )
                     compl
@@ -1166,9 +1164,8 @@ handleIfAllegoryTx tx revert confirmed = do
             Left (SomeException e) -> do
                 err lg $
                     LG.msg $
-                    "[ERROR] While handling Allegory metadata for txid " <> txid <> " : failed to update graph (" <>
-                    show e <>
-                    ")"
+                    "[ERROR] While handling Allegory metadata for txid " <>
+                    txid <> " : failed to update graph (" <> show e <> ")"
                 throw e
 
 nodesExist :: (HasXokenNodeEnv env m, MonadIO m) => TxHash -> Allegory -> Bool -> m Bool
@@ -1278,9 +1275,7 @@ updateBlockInfo (txid, outputIndex) isRecv blockInfo = do
             err lg $
                 LG.msg $
                 C.pack $
-                "[ERROR] While updating spendInfo for confirmed Tx output " <> (T.unpack txid) <> ":" <>
-                (show outputIndex) <>
-                ": " <>
-                (show e)
+                "[ERROR] While updating spendInfo for confirmed Tx output " <>
+                (T.unpack txid) <> ":" <> (show outputIndex) <> ": " <> (show e)
             throw e
         _ -> return ()
