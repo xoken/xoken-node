@@ -989,7 +989,7 @@ getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait confirmedOnly 
                ((\r ->
                      case r of
                          [] -> False
-                         (_, _, _, bi):_ -> bi == Just ("", -1, -1) || isNothing bi)
+                         (_, _, _, bi):_ -> isNothing bi)
                     results &&
                 confirmedOnly)
                 then do
