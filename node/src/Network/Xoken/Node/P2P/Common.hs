@@ -638,9 +638,7 @@ withResource' pool f = do
 
 getBlockInfo :: Maybe (T.Text, Int32, Int32) -> Maybe (T.Text, Int32, Int32)
 getBlockInfo Nothing = Nothing
-getBlockInfo (Just (_, _, -1)) = Nothing
-getBlockInfo (Just (_, -1, _)) = Nothing
-getBlockInfo (Just ("", _, _)) = Nothing
+getBlockInfo (Just ("", -1, -1)) = Nothing
 getBlockInfo (Just b) = Just b
 
 fetchBestSyncedBlock :: (HasXokenNodeEnv env m, MonadIO m) => m (BlockHash, Int32)

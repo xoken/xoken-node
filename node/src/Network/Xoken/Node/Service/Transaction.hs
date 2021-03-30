@@ -176,11 +176,14 @@ xGetTxHashes hashes = do
     res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr p)
     iop <-
         case res of
-            Right iop ->
+            Right iop -> do
+                debug lg $ LG.msg $ "xGetTxHashes got blockInfo: " ++ (show $ (\(_, bi, _, _, _) -> bi) <$> iop)
                 let recs =
                         (\(txid, bi, psz, sinps, fees) -> (txid, (txid, getBlockInfo bi, psz, Q.fromSet sinps, fees))) <$>
                         iop
-                 in pure $ snd <$> recordSorter hashes recs
+                debug lg $
+                    LG.msg $ "xGetTxHashes got blockInfo (rec): " ++ (show $ (\(_, bi, _, _, _) -> bi) <$> snd <$> recs)
+                pure $ snd <$> recordSorter hashes recs
                 where recordSorter txids res = catMaybes $ sorter txids res
                       sorter [] res = []
                       sorter (txid:txids) res = (finder txid res) : (sorter txids res)
@@ -194,6 +197,7 @@ xGetTxHashes hashes = do
     txRecs <-
         traverse
             (\(txid, bi, psz, sinps, fees) -> do
+                 debug lg $ LG.msg $ "xGetTxHashes got blockInfo (traversal): " ++ (show bi)
                  let inps = L.sortBy (\(_, x, _) (_, y, _) -> compare x y) sinps
                  sz <-
                      if isSegmented (fromBlob psz)
