@@ -50,6 +50,7 @@ import Data.Maybe
 import Data.Pool
 import Data.Serialize
 import Data.Serialize as S
+import Data.String
 import Data.String.Conversions
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -419,7 +420,9 @@ runBlockCacheQueue =
                                                                           err lg $
                                                                           LG.msg $
                                                                           "Error: Failed to insert into protocolInfo TSH (key " <>
-                                                                          (show k) <> "): " <> (show e)))
+                                                                          (show k) <>
+                                                                          "): " <>
+                                                                          (show e)))
                                                         (cmp)
                                                     let e = cmp !! 0
                                                     return (Just $ BlockInfo (fst e) (snd $ snd e))
@@ -463,8 +466,9 @@ runBlockCacheQueue =
                                              pi <- liftIO $ TSH.toList v'
                                              debug lg $
                                                  LG.msg $
-                                                 "Number of protocols for block: " <>
-                                                 show (Prelude.length pi) <> " height: " <> show ht
+                                                 "Number of protocols for block: " <> show (Prelude.length pi) <>
+                                                 " height: " <>
+                                                 show ht
                                              pres <-
                                                  liftIO $
                                                  try $ do
@@ -486,7 +490,9 @@ runBlockCacheQueue =
                                                      err lg $
                                                          LG.msg $
                                                          "Error: Failed to insert protocol with blockInfo:" <>
-                                                         (show (bsh, ht)) <> ": " <> (show e)
+                                                         (show (bsh, ht)) <>
+                                                         ": " <>
+                                                         (show e)
                                                      throw MerkleSubTreeDBInsertException
                                          Nothing -> do
                                              debug lg $
@@ -496,8 +502,8 @@ runBlockCacheQueue =
                                  (\(e :: SomeException) ->
                                       err lg $
                                       LG.msg $
-                                      "Error: Failed to insert into graph DB block " <>
-                                      (show (bsh, ht)) <> ": " <> (show e))
+                                      "Error: Failed to insert into graph DB block " <> (show (bsh, ht)) <> ": " <>
+                                      (show e))
                          --
                      )
                     compl
@@ -557,14 +563,17 @@ sortPeers peers = do
     return $ snd $ unzip $ L.sortBy (\(a, _) (b, _) -> compare a b) (zip ts peers)
 
 commitScriptHashOutputs ::
-       (HasXokenNodeEnv env m, MonadIO m) => XCqlClientState -> Text -> (Text, Int32) -> (Text, Int32, Int32) -> m ()
+       (HasXokenNodeEnv env m, MonadIO m)
+    => XCqlClientState
+    -> Text
+    -> (Text, Int32)
+    -> Maybe (Text, Int32, Int32)
+    -> m ()
 commitScriptHashOutputs conn sh output blockInfo = do
     lg <- getLogger
     tm <- liftIO getCurrentTime
     blocksSynced <- checkBlocksFullySynced conn
-    let blkHeight = fromIntegral $ snd3 blockInfo
-        txIndex = fromIntegral $ thd3 blockInfo
-    nominalTxIndex <- generateNominalTxIndex (blkHeight, txIndex) (snd output)
+    nominalTxIndex <- generateNominalTxIndex blockInfo (snd output)
     let qstrAddrOuts :: Q.QueryString Q.W (Text, Int64, (Text, Int32)) ()
         qstrAddrOuts = "INSERT INTO xoken.script_hash_outputs (script_hash, nominal_tx_index, output) VALUES (?,?,?)"
         parAddrOuts = getSimpleQueryParam (sh, nominalTxIndex, output)
@@ -577,38 +586,47 @@ commitScriptHashOutputs conn sh output blockInfo = do
             throw KeyValueDBInsertException
 
 insertTxIdOutputs ::
-       (HasLogger m, MonadIO m)
-    => XCqlClientState
-    -> (Text, Int32)
+       (HasXokenNodeEnv env m, MonadIO m)
+    => (Text, Int32)
     -> Text
     -> Text
     -> Bool
-    -> (Text, Int32, Int32)
+    -> Maybe (Text, Int32, Int32)
     -> [((Text, Int32), Int32, (Text, Int64))]
     -> Int64
     -> m ()
-insertTxIdOutputs conn (txid, outputIndex) address scriptHash isRecv blockInfo other value = do
+insertTxIdOutputs (txid, outputIndex) address scriptHash isRecv blockInfo other value = do
+    dbe <- getDB
     lg <- getLogger
-    let qstr ::
+    bp2pEnv <- getBitcoinP2P
+    let conn = xCqlClientState dbe
+        queryStr ::
                Q.QueryString Q.W ( Text
-                                 , Int32
                                  , Text
-                                 , Text
-                                 , Bool
-                                 , (Text, Int32, Int32)
+                                 , Maybe (Text, Int32, Int32)
                                  , [((Text, Int32), Int32, (Text, Int64))]
-                                 , Int64) ()
-        qstr =
-            "INSERT INTO xoken.txid_outputs (txid,output_index,address,script_hash,is_recv,block_info,other,value) VALUES (?,?,?,?,?,?,?,?)"
-        par = getSimpleQueryParam (txid, outputIndex, address, scriptHash, isRecv, blockInfo, other, value)
-    queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstr))
-    res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryId par)
+                                 , Int64
+                                 , Text
+                                 , Int32
+                                 , Bool) ()
+        queryStr =
+            fromString $
+            "UPDATE xoken.txid_outputs SET address=?, script_hash=?, block_info=?, other=?, value=? " ++
+            "WHERE txid=? AND output_index=? AND is_recv=?"
+        queryPar = getSimpleQueryParam (address, scriptHash, blockInfo, other, value, txid, outputIndex, isRecv)
+    queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare queryStr))
+    res <- liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryId queryPar))
     case res of
-        Right _ -> return ()
         Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: INSERTing into: txid_outputs " ++ show e
-            throw KeyValueDBInsertException
-    return ()
+            err lg $
+                LG.msg $
+                C.pack $
+                "[ERROR] While inserting outputs for " <> (T.unpack txid) <> ":" <> (show outputIndex) <> ": " <>
+                (show e)
+            throw e
+        _ ->
+            debug lg $
+            LG.msg $ "Updated/Inserted outputs (block " ++ show blockInfo ++ ") for tx:" ++ show (txid, outputIndex)
 
 commitTxPage ::
        (HasBitcoinP2P m, HasLogger m, HasDatabaseHandles m, MonadBaseControl IO m, MonadIO m)
@@ -795,7 +813,8 @@ processConfTransaction bis tx bhash blkht txind = do
                          then ("00", op, rem)
                          else (\(a, b) -> (op, a, b)) $ B.splitAt 2 rem
              outputsExist <- checkOutputDataExists output
-             unless outputsExist $
+             unless outputsExist $ do
+                 commitScriptHashOutputs conn sh output (Just bi)
                  when (op_false == "00" && op_return == "6a") $ do
                      props <-
                          case runGet (getPropsG 3) (fst $ B16.decode remD) of
@@ -862,7 +881,7 @@ processConfTransaction bis tx bhash blkht txind = do
                                       conn
                                       (T.intercalate "." p)
                                       output
-                                      bi
+                                      (Just bi)
                                       fees
                                       (fromIntegral count))
                              prot
@@ -870,11 +889,7 @@ processConfTransaction bis tx bhash blkht txind = do
                          case v of
                              Just v' -> liftIO $ TSH.mutate v' (T.intercalate "_" protocol) fn
                              Nothing -> debug lg $ LG.msg $ "No ProtocolInfo Available for: " ++ show bhash
-             if outputsExist
-                 then updateBlockInfo output True bi
-                 else do
-                     commitScriptHashOutputs conn sh output bi
-                     insertTxIdOutputs conn output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o))
+             insertTxIdOutputs output a sh True (Just bi) (stripScriptHash <$> inputs) (fromIntegral $ outValue o))
         outAddrs
     debug lg $ LG.msg $ "Processing confirmed transaction <committed outputs> :" ++ show txhs
     mapM_
@@ -886,7 +901,7 @@ processConfTransaction bis tx bhash blkht txind = do
              if a == "" || sh == "" -- likely coinbase txns
                  then return ()
                  else do
-                     insertTxIdOutputs conn prevOutpoint a sh False bi (stripScriptHash <$> spendInfo) 0)
+                     insertTxIdOutputs prevOutpoint a sh False (Just bi) (stripScriptHash <$> spendInfo) 0)
         (zip (inAddrs) (map (\x -> (fst3 $ thd3 x, snd3 $ thd3 $ x)) inputs))
     debug lg $ LG.msg $ "Processing confirmed transaction <updated inputs> :" ++ show txhs
     --
@@ -963,7 +978,7 @@ getSatsValueFromOutpoint ::
     -> Bool
     -> IO ((Text, Text, Int64))
 getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait confirmedOnly = do
-    let qstr :: Q.QueryString Q.R (Text, Int32, Bool) (Text, Text, Int64, (Text, Int32, Int32))
+    let qstr :: Q.QueryString Q.R (Text, Int32, Bool) (Text, Text, Int64, Maybe (Text, Int32, Int32))
         qstr =
             "SELECT address, script_hash, value, block_info FROM xoken.txid_outputs WHERE txid=? AND output_index=? AND is_recv=?"
         par = getSimpleQueryParam (txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint, True)
@@ -974,7 +989,7 @@ getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait confirmedOnly 
                ((\r ->
                      case r of
                          [] -> False
-                         (_, _, _, bi):_ -> bi == ("", -1, -1))
+                         (_, _, _, bi):_ -> bi == Just ("", -1, -1) || isNothing bi)
                     results &&
                 confirmedOnly)
                 then do
@@ -1165,8 +1180,9 @@ handleIfAllegoryTx tx revert confirmed = do
             Left (SomeException e) -> do
                 err lg $
                     LG.msg $
-                    "[ERROR] While handling Allegory metadata for txid " <>
-                    txid <> " : failed to update graph (" <> show e <> ")"
+                    "[ERROR] While handling Allegory metadata for txid " <> txid <> " : failed to update graph (" <>
+                    show e <>
+                    ")"
                 throw e
 
 nodesExist :: (HasXokenNodeEnv env m, MonadIO m) => TxHash -> Allegory -> Bool -> m Bool
@@ -1203,7 +1219,7 @@ commitScriptOutputProtocol ::
     => XCqlClientState
     -> Text
     -> (Text, Int32)
-    -> (Text, Int32, Int32)
+    -> Maybe (Text, Int32, Int32)
     -> Int64
     -> Int32
     -> m ()
@@ -1211,9 +1227,7 @@ commitScriptOutputProtocol conn protocol (txid, output_index) blockInfo fees siz
     lg <- getLogger
     tm <- liftIO getCurrentTime
     blocksSynced <- checkBlocksFullySynced conn
-    let blkHeight = fromIntegral $ snd3 blockInfo
-        txIndex = fromIntegral $ thd3 blockInfo
-    nominalTxIndex <- generateNominalTxIndex (blkHeight, txIndex) output_index
+    nominalTxIndex <- generateNominalTxIndex blockInfo output_index
     let qstrAddrOuts :: Q.QueryString Q.W (Text, Text, Int64, Int32, Int32, Int64) ()
         qstrAddrOuts =
             "INSERT INTO xoken.script_output_protocol (proto_str, txid, fees, size, output_index, nominal_tx_index) VALUES (?,?,?,?,?,?)"
@@ -1276,7 +1290,9 @@ updateBlockInfo (txid, outputIndex) isRecv blockInfo = do
             err lg $
                 LG.msg $
                 C.pack $
-                "[ERROR] While updating spendInfo for confirmed Tx output " <>
-                (T.unpack txid) <> ":" <> (show outputIndex) <> ": " <> (show e)
+                "[ERROR] While updating spendInfo for confirmed Tx output " <> (T.unpack txid) <> ":" <>
+                (show outputIndex) <>
+                ": " <>
+                (show e)
             throw e
         _ -> debug lg $ LG.msg $ "Updated BlockInfo: " ++ show blockInfo ++ " for tx:" ++ show (txid, outputIndex)

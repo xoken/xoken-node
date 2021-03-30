@@ -636,11 +636,12 @@ withResource' pool f = do
         Right ret -> return ret
         Left (e :: SomeException) -> throw e
 
-getBlockInfo :: (T.Text, Int32, Int32) -> Maybe (T.Text, Int32, Int32)
-getBlockInfo (_, _, -1) = Nothing
-getBlockInfo (_, -1, _) = Nothing
-getBlockInfo ("", _, _) = Nothing
-getBlockInfo b = Just b
+getBlockInfo :: Maybe (T.Text, Int32, Int32) -> Maybe (T.Text, Int32, Int32)
+getBlockInfo Nothing = Nothing
+getBlockInfo (Just (_, _, -1)) = Nothing
+getBlockInfo (Just (_, -1, _)) = Nothing
+getBlockInfo (Just ("", _, _)) = Nothing
+getBlockInfo (Just b) = Just b
 
 fetchBestSyncedBlock :: (HasXokenNodeEnv env m, MonadIO m) => m (BlockHash, Int32)
 fetchBestSyncedBlock = do
@@ -674,8 +675,8 @@ fetchBestSyncedBlock = do
                                 Nothing -> throw InvalidBlockHashException
                         Nothing -> throw InvalidMetaDataException
 
-generateNominalTxIndex :: (HasXokenNodeEnv env m, MonadIO m) => (Int32, Int32) -> Int32 -> m Int64
-generateNominalTxIndex (-1, -1) outputIndex = do
+generateNominalTxIndex :: (HasXokenNodeEnv env m, MonadIO m) => Maybe (Text, Int32, Int32) -> Int32 -> m Int64
+generateNominalTxIndex Nothing outputIndex = do
     tm <- liftIO getCurrentTime
     (_, bestSyncedBlockHeight) <- fetchBestSyncedBlock
     return $
@@ -683,7 +684,7 @@ generateNominalTxIndex (-1, -1) outputIndex = do
         ((1000000000 * ((fromIntegral bestSyncedBlockHeight :: Int64) + 1)) +
          ((fromIntegral . floor $ utcTimeToPOSIXSeconds tm :: Int64) - 1600000000)) +
         (fromIntegral $ outputIndex `mod` 1000 :: Int64)
-generateNominalTxIndex (blockHeight, txIndex) outputIndex =
+generateNominalTxIndex (Just (_, blockHeight, txIndex)) outputIndex =
     return $
     1000 * ((1000000000 * (fromIntegral blockHeight :: Int64)) + 500000000 + (fromIntegral txIndex :: Int64)) +
     (fromIntegral $ outputIndex `mod` 1000 :: Int64)

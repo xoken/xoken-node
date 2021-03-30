@@ -379,7 +379,14 @@ processUnconfTransaction tx = do
                          then ("00", op, rem)
                          else (\(a, b) -> (op, a, b)) $ B.splitAt 2 rem
              outputsExist <- checkOutputDataExists output
-             unless outputsExist $
+             unless outputsExist $ do
+                 commitScriptHashOutputs conn sh output Nothing
+                 case decodeOutputBS $ scriptOutput o of
+                     Right so ->
+                         if isPayPK so
+                             then commitScriptHashOutputs conn a output Nothing
+                             else return ()
+                     Left e -> return ()
                  when (op_false == "00" && op_return == "6a") $ do
                      props <-
                          case runGet (getPropsG 3) (fst $ B16.decode remD) of
@@ -396,27 +403,11 @@ processUnconfTransaction tx = do
                                       conn
                                       (T.intercalate "." p)
                                       output
-                                      ("", -1, -1)
+                                      Nothing
                                       fees
                                       (fromIntegral count))
                              prot
-             unless outputsExist $ do
-                 insertTxIdOutputs
-                     conn
-                     output
-                     a
-                     sh
-                     True
-                     ("", -1, -1)
-                     (stripScriptHash <$> inputs)
-                     (fromIntegral $ outValue o)
-                 commitScriptHashOutputs conn sh output ("", -1, -1)
-                 case decodeOutputBS $ scriptOutput o of
-                     (Right so) ->
-                         if isPayPK so
-                             then commitScriptHashOutputs conn a output ("", -1, -1)
-                             else return ()
-                     (Left e) -> return ())
+             insertTxIdOutputs output a sh True Nothing (stripScriptHash <$> inputs) (fromIntegral $ outValue o))
         outAddrs
     debug lg $ LG.msg $ "Processing unconfirmed transaction <committed outputs> :" ++ show txhs
     mapM_
@@ -426,12 +417,16 @@ processUnconfTransaction tx = do
              let spendInfo = (\ov -> ((txHashToHex $ txHash tx, fromIntegral $ fst ov), i, snd $ ov)) <$> ovs
              if a == "" || sh == ""
                  then return ()
-                 else insertTxIdOutputs conn prevOutpoint a sh False ("", -1, -1) (stripScriptHash <$> spendInfo) 0)
+                 else insertTxIdOutputs prevOutpoint a sh False Nothing (stripScriptHash <$> spendInfo) 0)
         (zip inAddrs (map (\x -> (fst3 $ thd3 x, snd3 $ thd3 x)) inputs))
     debug lg $ LG.msg $ "Processing unconfirmed transaction <updated inputs> :" ++ show txhs
     let str = "INSERT INTO xoken.transactions (tx_id, block_info, tx_serialized, inputs, fees) values (?, ?, ?, ?, ?)"
         qstr =
-            str :: Q.QueryString Q.W (Text, (Text, Int32, Int32), Blob, [((Text, Int32), Int32, (Text, Int64))], Int64) ()
+            str :: Q.QueryString Q.W ( Text
+                                     , Maybe (Text, Int32, Int32)
+                                     , Blob
+                                     , [((Text, Int32), Int32, (Text, Int64))]
+                                     , Int64) ()
         serbs = runPutLazy $ putLazyByteString $ S.encodeLazy tx
         count = BSL.length serbs
         smb a = a * 16 * 1000 * 1000
@@ -445,7 +440,7 @@ processUnconfTransaction tx = do
             if segments > 1
                 then (LC.replicate 32 'f') <> (BSL.fromStrict $ DTE.encodeUtf8 $ T.pack $ show $ segments)
                 else serbs
-    let par = getSimpleQueryParam (txHashToHex $ txHash tx, ("", -1, -1), Blob fst, (stripScriptHash <$> inputs), fees)
+    let par = getSimpleQueryParam (txHashToHex $ txHash tx, Nothing, Blob fst, (stripScriptHash <$> inputs), fees)
     queryI <- liftIO $ queryPrepared conn (Q.RqPrepare $ Q.Prepare qstr)
     res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryI par)
     case res of
@@ -459,7 +454,7 @@ processUnconfTransaction tx = do
             (\(seg, i) -> do
                  let par =
                          getSimpleQueryParam
-                             ((txHashToHex $ txHash tx) <> (T.pack $ show i), ("", -1, -1), Blob seg, [], fees)
+                             ((txHashToHex $ txHash tx) <> (T.pack $ show i), Nothing, Blob seg, [], fees)
                  queryI <- liftIO $ queryPrepared conn (Q.RqPrepare $ Q.Prepare qstr)
                  res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryI par)
                  case res of

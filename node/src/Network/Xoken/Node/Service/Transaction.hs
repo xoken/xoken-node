@@ -110,7 +110,7 @@ xGetTxHash hash = do
         str = "SELECT tx_id, block_info, tx_serialized, inputs, fees from xoken.transactions where tx_id = ?"
         qstr =
             str :: Q.QueryString Q.R (Identity DT.Text) ( DT.Text
-                                                        , (DT.Text, Int32, Int32)
+                                                        , Maybe (DT.Text, Int32, Int32)
                                                         , Blob
                                                         , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
                                                         , Int64)
@@ -125,7 +125,7 @@ xGetTxHash hash = do
             if length iop == 0
                 then return Nothing
                 else do
-                    let (txid, (bhash, blkht, txind), psz, sinps, fees) = iop !! 0
+                    let (txid, binfo, psz, sinps, fees) = iop !! 0
                         inps = L.sortBy (\(_, x, _) (_, y, _) -> compare x y) $ Q.fromSet sinps
                     sz <-
                         if isSegmented $ fromBlob psz
@@ -133,9 +133,10 @@ xGetTxHash hash = do
                             else pure $ fromBlob psz
                     let tx = fromJust $ Extra.hush $ S.decodeLazy sz
                         (bi, mrkl') =
-                            case (bhash, blkht, txind) of
-                                ("", -1, -1) -> (Nothing, Nothing)
-                                _ ->
+                            case binfo of
+                                Nothing -> (Nothing, Nothing)
+                                Just ("", -1, -1) -> (Nothing, Nothing)
+                                Just (bhash, blkht, txind) ->
                                     ( Just $ BlockInfo' (DT.unpack bhash) (fromIntegral blkht) (fromIntegral txind)
                                     , Just mrkl)
                     return $
@@ -167,7 +168,7 @@ xGetTxHashes hashes = do
         str = "SELECT tx_id, block_info, tx_serialized, inputs, fees from xoken.transactions where tx_id in ?"
         qstr =
             str :: Q.QueryString Q.R (Identity [DT.Text]) ( DT.Text
-                                                          , (DT.Text, Int32, Int32)
+                                                          , Maybe (DT.Text, Int32, Int32)
                                                           , Blob
                                                           , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
                                                           , Int64)
@@ -242,7 +243,7 @@ getTxOutputsFromTxId txid = do
         toStr = "SELECT output_index,block_info,is_recv,other,value,address FROM xoken.txid_outputs WHERE txid=?"
         toQStr =
             toStr :: Q.QueryString Q.R (Identity DT.Text) ( Int32
-                                                          , (DT.Text, Int32, Int32)
+                                                          , Maybe (DT.Text, Int32, Int32)
                                                           , Bool
                                                           , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
                                                           , Int64
@@ -306,7 +307,7 @@ xGetTxOutputSpendStatus txId outputIndex = do
         str = "SELECT is_recv, block_info, other FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
         qstr =
             str :: Q.QueryString Q.R (DT.Text, Int32) ( Bool
-                                                      , (DT.Text, Int32, Int32)
+                                                      , Maybe (DT.Text, Int32, Int32)
                                                       , Set ((DT.Text, Int32), Int32, (DT.Text, Int64)))
         p = getSimpleQueryParam (DT.pack txId, outputIndex)
     iop <- liftIO $ query conn (Q.RqQuery $ Q.Query qstr p)
@@ -317,7 +318,8 @@ xGetTxOutputSpendStatus txId outputIndex = do
                 then return $ Just $ TxOutputSpendStatus False Nothing Nothing Nothing
                 else do
                     let siop = L.sortBy (\(x, _, _) (y, _, _) -> compare x y) iop
-                        (_, (_, spendingTxBlkHeight, _), other) = siop !! 0
+                        (_, binfo, other) = siop !! 0
+                        (_, spendingTxBlkHeight, _) = fromMaybe ("", -1, -1) binfo
                         ((spendingTxID, _), spendingTxIndex, _) = head $ Q.fromSet other
                     return $
                         Just $
@@ -390,7 +392,7 @@ xRelayTx rawTx = do
                                          "SELECT tx_id, block_info, tx_serialized from xoken.transactions where tx_id = ?"
                                      qstr =
                                          str :: Q.QueryString Q.R (Identity DT.Text) ( DT.Text
-                                                                                     , (DT.Text, Int32, Int32)
+                                                                                     , Maybe (DT.Text, Int32, Int32)
                                                                                      , Blob)
                                      p = getSimpleQueryParam $ Identity $ (txid)
                                  iop <- liftIO $ query conn (Q.RqQuery $ Q.Query qstr p)

@@ -98,7 +98,7 @@ import Xoken
 import qualified Xoken.NodeConfig as NC
 
 maxNTI :: Int64
-maxNTI = maxBound 
+maxNTI = maxBound
 
 getTxOutputsData :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => (DT.Text, Int32) -> m TxOutputData
 getTxOutputsData (txid, index) = do
@@ -107,7 +107,7 @@ getTxOutputsData (txid, index) = do
     let conn = xCqlClientState dbe
         toStr = "SELECT block_info,is_recv,other,value,address FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
         toQStr =
-            toStr :: Q.QueryString Q.R (DT.Text, Int32) ( (DT.Text, Int32, Int32)
+            toStr :: Q.QueryString Q.R (DT.Text, Int32) ( Maybe (DT.Text, Int32, Int32)
                                                         , Bool
                                                         , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
                                                         , Int64
@@ -141,52 +141,6 @@ getTxOutputsData (txid, index) = do
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: getTxOutputsData: " ++ show e
             throw KeyValueDBLookupException
-
-getUnConfTxOutputsData :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => (DT.Text, Int32) -> m TxOutputData
-getUnConfTxOutputsData (txid, index) = do
-    dbe <- getDB
-    lg <- getLogger
-    bp2pEnv <- getBitcoinP2P
-    ep <- liftIO $ readTVarIO (epochType bp2pEnv)
-    let conn = xCqlClientState dbe
-        toStr = "SELECT is_recv,other,value,address FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
-        toQStr =
-            toStr :: Q.QueryString Q.R (DT.Text, Int32) ( Bool
-                                                        , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
-                                                        , Int64
-                                                        , DT.Text)
-        top = getSimpleQueryParam (txid, index)
-    toRes <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query toQStr top)
-    case toRes of
-        Right es -> do
-            if L.null es
-                then do
-                    err lg $
-                        LG.msg $
-                        "Error: getUnConfTxOutputsData: No entry in ep_txid_outputs for (txid,index): " ++
-                        show (txid, index)
-                    throw KeyValueDBLookupException
-                else do
-                    let txg = L.sortBy (\(x, _, _, _) (y, _, _, _) -> compare x y) es
-                    return $
-                        case txg of
-                            [x] -> genUnConfTxOutputData (txid, index, x, Nothing)
-                            [x, y] -> genUnConfTxOutputData (txid, index, y, Just x)
-        Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: getUnConfTxOutputsData: " ++ show e
-            throw KeyValueDBLookupException
-
-deleteDuplicateUnconfs ::
-       (ResultWithCursor r a -> ResultWithCursor r a -> Bool)
-    -> [ResultWithCursor r a]
-    -> [ResultWithCursor r a]
-    -> [ResultWithCursor r a]
-deleteDuplicateUnconfs compareBy unconf conf =
-    let possibleDups = L.take (L.length unconf) conf
-     in runDeleteBy possibleDups unconf
-  where
-    runDeleteBy [] uc = uc
-    runDeleteBy (c:cs) uc = runDeleteBy cs (L.deleteBy compareBy c uc)
 
 compareRWCAddressOutputs :: ResultWithCursor AddressOutputs a -> ResultWithCursor AddressOutputs b -> Bool
 compareRWCAddressOutputs rwc1 rwc2 = (aoOutput $ res rwc1) == (aoOutput $ res rwc2)
