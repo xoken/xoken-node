@@ -7,6 +7,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE BangPatterns #-}
 
 module Network.Xoken.Node.P2P.UnconfTxSync
     ( processUnconfTransaction
@@ -282,8 +283,9 @@ processUnconfTransaction tx = do
     lg <- getLogger
     epoch <- liftIO $ readTVarIO $ epochType bp2pEnv
     let net = bitcoinNetwork $ nodeConfig bp2pEnv
-    let conn = xCqlClientState $ dbe'
-    debug lg $ LG.msg $ "Processing unconfirmed transaction: " ++ show (txHash tx)
+        conn = xCqlClientState $ dbe'
+        txhs = txHash tx
+    debug lg $ LG.msg $ "Processing unconfirmed transaction <begin> :" ++ show txhs
     --
     let inAddrs = zip (txIn tx) [0 :: Int32 ..]
     let outAddrs =
@@ -298,7 +300,7 @@ processUnconfTransaction tx = do
                      (txOut tx))
                 (txOut tx)
                 [0 :: Int32 ..]
-    inputs <-
+    !inputs <-
         mapM
             (\(b, j) -> do
                  tuple <- return Nothing
@@ -358,6 +360,7 @@ processUnconfTransaction tx = do
         fees = ipSum - opSum
         serbs = runPutLazy $ putLazyByteString $ S.encodeLazy tx
         count = BSL.length serbs
+    debug lg $ LG.msg $ "Processing unconfirmed transaction <fetched inputs> :" ++ show txhs
     --
     -- liftIO $
     --     TSH.insert
@@ -418,6 +421,7 @@ processUnconfTransaction tx = do
                                        else return ()
                                (Left e) -> return ())))
         outAddrs
+    debug lg $ LG.msg $ "Processing unconfirmed transaction <committed outputs> :" ++ show txhs
     mapM_
         (\((o, i), (a, sh)) -> do
              let prevOutpoint = (txHashToHex $ outPointHash $ prevOutput o, fromIntegral $ outPointIndex $ prevOutput o)
@@ -427,6 +431,7 @@ processUnconfTransaction tx = do
                  then return ()
                  else insertTxIdOutputs conn prevOutpoint a sh False ("", -1, -1) (stripScriptHash <$> spendInfo) 0)
         (zip inAddrs (map (\x -> (fst3 $ thd3 x, snd3 $ thd3 x)) inputs))
+    debug lg $ LG.msg $ "Processing unconfirmed transaction <updated inputs> :" ++ show txhs
     let str = "INSERT INTO xoken.transactions (tx_id, block_info, tx_serialized, inputs, fees) values (?, ?, ?, ?, ?)"
         qstr =
             str :: Q.QueryString Q.W (Text, (Text, Int32, Int32), Blob, [((Text, Int32), Int32, (Text, Int64))], Int64) ()
@@ -467,6 +472,7 @@ processUnconfTransaction tx = do
                          throw KeyValueDBInsertException)
             (zip segmentsData [1 ..])
     --
+    debug lg $ LG.msg $ "Processing unconfirmed transaction <end> :" ++ show txhs
     vall <- liftIO $ TSH.lookup (txSynchronizer bp2pEnv) (txHash tx)
     case vall of
         Just ev -> liftIO $ EV.signal ev
