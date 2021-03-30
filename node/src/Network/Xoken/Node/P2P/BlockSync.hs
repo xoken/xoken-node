@@ -600,22 +600,43 @@ insertTxIdOutputs (txid, outputIndex) address scriptHash isRecv blockInfo other 
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
     let conn = xCqlClientState dbe
-        queryStr ::
-               Q.QueryString Q.W ( Text
-                                 , Text
-                                 , Maybe (Text, Int32, Int32)
-                                 , [((Text, Int32), Int32, (Text, Int64))]
-                                 , Int64
-                                 , Text
-                                 , Int32
-                                 , Bool) ()
-        queryStr =
-            fromString $
-            "UPDATE xoken.txid_outputs SET address=?, script_hash=?, block_info=?, other=?, value=? " ++
-            "WHERE txid=? AND output_index=? AND is_recv=?"
-        queryPar = getSimpleQueryParam (address, scriptHash, blockInfo, other, value, txid, outputIndex, isRecv)
-    queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare queryStr))
-    res <- liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryId queryPar))
+    res <-
+        case blockInfo of
+            Nothing ->
+                let queryStr =
+                        fromString $
+                        "UPDATE xoken.txid_outputs SET address=?, script_hash=?, other=?, value=? " ++
+                        "WHERE txid=? AND output_index=? AND is_recv=?" :: Q.QueryString Q.W ( Text
+                                                                                             , Text
+                                                                                             , [( (Text, Int32)
+                                                                                                , Int32
+                                                                                                , (Text, Int64))]
+                                                                                             , Int64
+                                                                                             , Text
+                                                                                             , Int32
+                                                                                             , Bool) ()
+                    queryPar = getSimpleQueryParam (address, scriptHash, other, value, txid, outputIndex, isRecv)
+                 in liftIO $
+                    queryPrepared conn (Q.RqPrepare (Q.Prepare queryStr)) >>= \queryId ->
+                        liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryId queryPar))
+            Just bi ->
+                let queryStr =
+                        fromString $
+                        "UPDATE xoken.txid_outputs SET address=?, script_hash=?, block_info=?, other=?, value=? " ++
+                        "WHERE txid=? AND output_index=? AND is_recv=?" :: Q.QueryString Q.W ( Text
+                                                                                             , Text
+                                                                                             , (Text, Int32, Int32)
+                                                                                             , [( (Text, Int32)
+                                                                                                , Int32
+                                                                                                , (Text, Int64))]
+                                                                                             , Int64
+                                                                                             , Text
+                                                                                             , Int32
+                                                                                             , Bool) ()
+                    queryPar = getSimpleQueryParam (address, scriptHash, bi, other, value, txid, outputIndex, isRecv)
+                 in liftIO $
+                    queryPrepared conn (Q.RqPrepare (Q.Prepare queryStr)) >>= \queryId ->
+                        liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryId queryPar))
     case res of
         Left (e :: SomeException) -> do
             err lg $
