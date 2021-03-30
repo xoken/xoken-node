@@ -401,25 +401,22 @@ processUnconfTransaction tx = do
                                       (fromIntegral count))
                              prot
              unless outputsExist $ do
-                 concurrently_
-                     (insertTxIdOutputs
-                          conn
-                          output
-                          a
-                          sh
-                          True
-                          ("", -1, -1)
-                          (stripScriptHash <$> inputs)
-                          (fromIntegral $ outValue o))
-                     (concurrently_
-                          (commitScriptHashOutputs conn sh output ("", -1, -1))
-                          (case decodeOutputBS $ scriptOutput o of
-                               (Right so) ->
-                                   if isPayPK so
-                                       then do
-                                           (commitScriptHashOutputs conn a output ("", -1, -1))
-                                       else return ()
-                               (Left e) -> return ())))
+                 insertTxIdOutputs
+                     conn
+                     output
+                     a
+                     sh
+                     True
+                     ("", -1, -1)
+                     (stripScriptHash <$> inputs)
+                     (fromIntegral $ outValue o)
+                 commitScriptHashOutputs conn sh output ("", -1, -1)
+                 case decodeOutputBS $ scriptOutput o of
+                     (Right so) ->
+                         if isPayPK so
+                             then commitScriptHashOutputs conn a output ("", -1, -1)
+                             else return ()
+                     (Left e) -> return ())
         outAddrs
     debug lg $ LG.msg $ "Processing unconfirmed transaction <committed outputs> :" ++ show txhs
     mapM_
