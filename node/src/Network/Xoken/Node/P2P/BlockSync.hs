@@ -928,8 +928,8 @@ processConfTransaction bis tx bhash blkht txind = do
     --
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": updated spend info for inputs"
     -- persist tx
-    let qstr :: Q.QueryString Q.W (Text, (Text, Int32, Int32), Blob, [((Text, Int32), Int32, (Text, Int64))], Int64) ()
-        qstr = "insert INTO xoken.transactions (tx_id, block_info, tx_serialized , inputs, fees) values (?, ?, ?, ?, ?)"
+    let qstr :: Q.QueryString Q.W ((Text, Int32, Int32), Blob, [((Text, Int32), Int32, (Text, Int64))], Int64, Text) ()
+        qstr = "UPDATE xoken.transactions SET block_info=?, tx_serialized=?, inputs=?, fees=? WHERE tx_id=?"
         smb a = a * 16 * 1000 * 1000
         segments =
             let (d, m) = divMod count (smb 1)
@@ -943,11 +943,11 @@ processConfTransaction bis tx bhash blkht txind = do
                 else serbs
     let par =
             getSimpleQueryParam
-                ( txHashToHex txhs
-                , (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
+                ( (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
                 , Blob fst
                 , (stripScriptHash <$> inputs)
-                , fees)
+                , fees
+                , txHashToHex txhs)
     queryI <- liftIO $ queryPrepared conn (Q.RqPrepare $ Q.Prepare qstr)
     res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryI par)
     case res of
@@ -961,11 +961,11 @@ processConfTransaction bis tx bhash blkht txind = do
             (\(seg, i) -> do
                  let par =
                          getSimpleQueryParam
-                             ( (txHashToHex txhs) <> (T.pack $ show i)
-                             , (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
+                             ( (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
                              , Blob seg
                              , []
-                             , fees)
+                             , fees
+                             , (txHashToHex txhs) <> (T.pack $ show i))
                  queryI <- liftIO $ queryPrepared conn (Q.RqPrepare $ Q.Prepare qstr)
                  res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryI par)
                  case res of

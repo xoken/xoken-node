@@ -420,13 +420,8 @@ processUnconfTransaction tx = do
                  else insertTxIdOutputs prevOutpoint a sh False Nothing (stripScriptHash <$> spendInfo) 0)
         (zip inAddrs (map (\x -> (fst3 $ thd3 x, snd3 $ thd3 x)) inputs))
     debug lg $ LG.msg $ "Processing unconfirmed transaction <updated inputs> :" ++ show txhs
-    let str = "INSERT INTO xoken.transactions (tx_id, block_info, tx_serialized, inputs, fees) values (?, ?, ?, ?, ?)"
-        qstr =
-            str :: Q.QueryString Q.W ( Text
-                                     , Maybe (Text, Int32, Int32)
-                                     , Blob
-                                     , [((Text, Int32), Int32, (Text, Int64))]
-                                     , Int64) ()
+    let str = "UPDATE xoken.transactions SET tx_serialized=?, inputs=?, fees=? WHERE tx_id=?"
+        qstr = str :: Q.QueryString Q.W (Blob, [((Text, Int32), Int32, (Text, Int64))], Int64, Text) ()
         serbs = runPutLazy $ putLazyByteString $ S.encodeLazy tx
         count = BSL.length serbs
         smb a = a * 16 * 1000 * 1000
@@ -440,7 +435,7 @@ processUnconfTransaction tx = do
             if segments > 1
                 then (LC.replicate 32 'f') <> (BSL.fromStrict $ DTE.encodeUtf8 $ T.pack $ show $ segments)
                 else serbs
-    let par = getSimpleQueryParam (txHashToHex $ txHash tx, Nothing, Blob fst, (stripScriptHash <$> inputs), fees)
+    let par = getSimpleQueryParam (Blob fst, (stripScriptHash <$> inputs), fees, txHashToHex $ txHash tx)
     queryI <- liftIO $ queryPrepared conn (Q.RqPrepare $ Q.Prepare qstr)
     res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryI par)
     case res of
@@ -452,9 +447,7 @@ processUnconfTransaction tx = do
         let segmentsData = chunksOf (smb 1) serbs
         mapM_
             (\(seg, i) -> do
-                 let par =
-                         getSimpleQueryParam
-                             ((txHashToHex $ txHash tx) <> (T.pack $ show i), Nothing, Blob seg, [], fees)
+                 let par = getSimpleQueryParam (Blob seg, [], fees, (txHashToHex $ txHash tx) <> (T.pack $ show i))
                  queryI <- liftIO $ queryPrepared conn (Q.RqPrepare $ Q.Prepare qstr)
                  res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryI par)
                  case res of
