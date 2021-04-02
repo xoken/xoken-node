@@ -101,20 +101,21 @@ sendRequestMessages msg = do
         MGetHeaders hdr -> do
             allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
             let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
-            let fbh = getHash256 $ getBlockHash $ (getHeadersBL hdr) !! 0
-                md = BSS.index fbh $ (BSS.length fbh) - 1
-                pds =
-                    map
-                        (\p -> (fromIntegral (md + p) `mod` L.length connPeers))
-                        [1 .. fromIntegral (L.length connPeers)]
-                indices =
-                    case L.length (getHeadersBL hdr) of
-                        x
-                            | x >= 19 -> take 4 pds -- 2^19 = blk ht 524288
-                            | x < 19 -> take 1 pds
+            -- let fbh = getHash256 $ getBlockHash $ (getHeadersBL hdr) !! 0
+            --     md = BSS.index fbh $ (BSS.length fbh) - 1
+            --     pds =
+            --         map
+            --             (\p -> (fromIntegral (md + p) `mod` L.length connPeers))
+            --             [1 .. fromIntegral (L.length connPeers)]
+            --     indices =
+            --         case L.length (getHeadersBL hdr) of
+            --             x
+            --                 | x >= 19 -> take 4 pds -- 2^19 = blk ht 524288
+            --                 | x < 19 -> take 1 pds
             mapM_
-                (\z -> do
-                     let pr = snd $ connPeers !! z
+                (\(_, pr)
+                     -- let pr = snd $ connPeers !! z
+                  -> do
                      case (bpSocket pr) of
                          Just q -> do
                              let em = runPut . putMessage net $ msg
@@ -127,7 +128,7 @@ sendRequestMessages msg = do
                                      liftIO $ Network.Socket.close q
                                      throw e
                          Nothing -> debug lg $ LG.msg $ val "Error sending, no connections available")
-                indices
+                connPeers
         ___ -> undefined
 
 msgOrder :: Message -> Message -> Ordering
