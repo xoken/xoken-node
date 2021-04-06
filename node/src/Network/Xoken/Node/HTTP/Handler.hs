@@ -736,16 +736,23 @@ withAuthAs role onSuccess = do
 
 withReq :: Aeson.FromJSON a => (a -> Handler App App ()) -> Handler App App ()
 withReq handler = do
+    lg <- getLogger
     rq <- getRequest
     let ct = getHeader "content-type" rq <|> (getHeader "Content-Type" rq) <|> (getHeader "Content-type" rq)
     if ct == Just "application/json"
         then do
-            bsReq <- readRequestBody (8 * 2048)
-            case Aeson.eitherDecode bsReq of
-                Right r -> handler r
-                Left err -> do
+            res <- LE.try $ readRequestBody (1024 * 1024 * 1024) -- 1 GiB size limit for request body
+            case res of
+                Left (e :: SomeException) -> do
+                    err lg $ LG.msg $ BC.pack $ "[ERROR] Failed to read POST request body: " <> show e
                     modifyResponse $ setResponseStatus 400 "Bad Request"
-                    writeBS "Error: failed to decode request body JSON"
+                    writeBS $ BC.pack $ "Error: failed to read request body (" <> (show e) <> ")"
+                Right req ->
+                    case Aeson.eitherDecode req of
+                        Right r -> handler r
+                        Left err -> do
+                            modifyResponse $ setResponseStatus 400 "Bad Request"
+                            writeBS "Error: failed to decode request body JSON"
         else throwBadRequest
 
 parseAuthorizationHeader :: Maybe B.ByteString -> Maybe B.ByteString
