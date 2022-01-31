@@ -7,6 +7,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE BangPatterns #-}
 
 module Network.Xoken.Node.P2P.UnconfTxSync
     ( processUnconfTransaction
@@ -32,6 +33,7 @@ import Control.Monad.STM
 import Control.Monad.State.Strict
 import qualified Data.Aeson as A (decode, encode)
 import qualified Data.ByteString as B
+import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Char8 as C
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Lazy.Char8 as LC
@@ -151,6 +153,9 @@ sendTxGetData pr txHash = do
         Nothing -> err lg $ LG.msg $ val "Error sending, no connections available"
 
 runEpochSwitcher :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
+runEpochSwitcher = return ()
+
+{-
 runEpochSwitcher =
     forever $ do
         lg <- getLogger
@@ -158,57 +163,38 @@ runEpochSwitcher =
         dbe' <- getDB
         tm <- liftIO $ getCurrentTime
         let conn = xCqlClientState $ dbe'
-            hour = todHour $ timeToTimeOfDay $ utctDayTime tm
-            minute = todMin $ timeToTimeOfDay $ utctDayTime tm
-            epoch =
-                case hour `mod` 2 of
-                    0 -> True
-                    1 -> False
-        liftIO $ atomically $ writeTVar (epochType bp2pEnv) epoch
-        when (epoch && minute == 0) $ do
-            liftIO $ atomically $ writeTVar (epochTimestamp bp2pEnv) (floor $ utcTimeToPOSIXSeconds tm)
-        if minute == 0
-            then do
-                let str = "DELETE from xoken.ep_transactions where epoch = ?"
-                    qstr = str :: Q.QueryString Q.W (Identity Bool) ()
-                    p = getSimpleQueryParam $ Identity (not epoch)
-                res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr p)
-                case res of
-                    Right _ -> return ()
-                    Left (e :: SomeException) -> do
-                        err lg $ LG.msg ("Error: deleting stale epoch Txs: " ++ show e)
-                        throw e
-                let str = "DELETE from xoken.ep_script_hash_outputs where epoch = ?"
-                    qstr = str :: Q.QueryString Q.W (Identity Bool) ()
-                    p = getSimpleQueryParam $ Identity (not epoch)
-                res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr p)
-                case res of
-                    Right _ -> return ()
-                    Left (e :: SomeException) -> do
-                        err lg $ LG.msg ("Error: deleting stale epoch script_hash_outputs: " ++ show e)
-                        throw e
-                let str = "DELETE from xoken.ep_script_hash_unspent_outputs where epoch = ?"
-                    qstr = str :: Q.QueryString Q.W (Identity Bool) ()
-                    p = getSimpleQueryParam $ Identity (not epoch)
-                res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr p)
-                case res of
-                    Right _ -> return ()
-                    Left (e :: SomeException) -> do
-                        err lg $ LG.msg ("Error: deleting stale epoch script_hash_unspent_outputs: " ++ show e)
-                        throw e
-                let str = "DELETE from xoken.ep_txid_outputs where epoch = ?"
-                    qstr = str :: Q.QueryString Q.W (Identity Bool) ()
-                    p = getSimpleQueryParam $ Identity (not epoch)
-                res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr p)
-                case res of
-                    Right _ -> return ()
-                    Left (e :: SomeException) -> do
-                        err lg $ LG.msg ("Error: deleting stale epoch txid_outputs: " ++ show e)
-                        throw e
-                liftIO $ threadDelay (1000000 * 60 * 60)
-            else liftIO $ threadDelay (1000000 * 60 * (60 - minute))
+        epoch <- liftIO $ readTVarIO (epochType bp2pEnv)
+        liftIO $ atomically $ writeTVar (epochType bp2pEnv) (not epoch)
+        let str = "DELETE from xoken.ep_transactions where epoch = ?"
+            qstr = str :: Q.QueryString Q.W (Identity Bool) ()
+            p = getSimpleQueryParam $ Identity (not epoch)
+        res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr p)
+        case res of
+            Right _ -> return ()
+            Left (e :: SomeException) -> do
+                err lg $ LG.msg ("Error: deleting stale epoch Txs: " ++ show e)
+                throw e
+        let str = "DELETE from xoken.ep_script_hash_outputs where epoch = ?"
+            qstr = str :: Q.QueryString Q.W (Identity Bool) ()
+            p = getSimpleQueryParam $ Identity (not epoch)
+        res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr p)
+        case res of
+            Right _ -> return ()
+            Left (e :: SomeException) -> do
+                err lg $ LG.msg ("Error: deleting stale epoch script_hash_outputs: " ++ show e)
+                throw e
+        let str = "DELETE from xoken.ep_txid_outputs where epoch = ?"
+            qstr = str :: Q.QueryString Q.W (Identity Bool) ()
+            p = getSimpleQueryParam $ Identity (not epoch)
+        res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr p)
+        case res of
+            Right _ -> return ()
+            Left (e :: SomeException) -> do
+                err lg $ LG.msg ("Error: deleting stale epoch txid_outputs: " ++ show e)
+                throw e
+        liftIO $ threadDelay (1000000 * 60 * 60)
         return ()
-
+-}
 commitEpochScriptHashOutputs ::
        (HasLogger m, HasBitcoinP2P m, MonadIO m)
     => XCqlClientState
@@ -219,9 +205,8 @@ commitEpochScriptHashOutputs ::
 commitEpochScriptHashOutputs conn epoch sh output = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    bt <- liftIO $ readTVarIO (epochTimestamp bp2pEnv)
     tm <- liftIO getCurrentTime
-    let nominalTxIndex = (9000000 * 1000000000) + ((floor $ utcTimeToPOSIXSeconds tm) - bt)
+    let nominalTxIndex = (9000000 * 1000000000) + (floor $ utcTimeToPOSIXSeconds tm)
     let strAddrOuts =
             "INSERT INTO xoken.ep_script_hash_outputs (epoch, script_hash, nominal_tx_index, output) VALUES (?,?,?,?)"
         qstrAddrOuts = strAddrOuts :: Q.QueryString Q.W (Bool, Text, Int64, (Text, Int32)) ()
@@ -232,34 +217,6 @@ commitEpochScriptHashOutputs conn epoch sh output = do
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: INSERTing into 'ep_script_hash_outputs': " ++ show e
             throw KeyValueDBInsertException
-
-commitEpochScriptHashUnspentOutputs ::
-       (HasLogger m, MonadIO m) => XCqlClientState -> Bool -> Text -> (Text, Int32) -> m ()
-commitEpochScriptHashUnspentOutputs conn epoch sh output = do
-    lg <- getLogger
-    let str = "INSERT INTO xoken.ep_script_hash_unspent_outputs (epoch, script_hash, output) VALUES (?,?,?)"
-        qstr = str :: Q.QueryString Q.W (Bool, Text, (Text, Int32)) ()
-        par = getSimpleQueryParam (epoch, sh, output)
-    res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr par)
-    case res of
-        Right _ -> return ()
-        Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: INSERTing into 'ep_script_hash_unspent_outputs': " ++ show e
-            throw KeyValueDBInsertException
-
-deleteEpochScriptHashUnspentOutputs ::
-       (HasLogger m, MonadIO m) => XCqlClientState -> Bool -> Text -> (Text, Int32) -> m ()
-deleteEpochScriptHashUnspentOutputs conn epoch sh output = do
-    lg <- getLogger
-    let str = "DELETE FROM xoken.ep_script_hash_unspent_outputs WHERE epoch=? AND script_hash=? AND output=?"
-        qstr = str :: Q.QueryString Q.W (Bool, Text, (Text, Int32)) ()
-        par = getSimpleQueryParam (epoch, sh, output)
-    res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr par)
-    case res of
-        Right _ -> return ()
-        Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: DELETE'ing from 'ep_script_hash_unspent_outputs': " ++ show e
-            throw e
 
 insertEpochTxIdOutputs ::
        (HasLogger m, MonadIO m)
@@ -293,6 +250,32 @@ insertEpochTxIdOutputs conn epoch (txid, outputIndex) address scriptHash isRecv 
             err lg $ LG.msg $ "Error: INSERTing into ep_txid_outputs: " ++ show e
             throw KeyValueDBInsertException
 
+commitUnconfirmedScriptOutputProtocol ::
+       (HasBitcoinP2P m, HasLogger m, MonadIO m)
+    => XCqlClientState
+    -> Bool
+    -> Text
+    -> (Text, Int32)
+    -> Int64
+    -> Int32
+    -> m ()
+commitUnconfirmedScriptOutputProtocol conn epoch protocol (txid, output_index) fees size = do
+    lg <- getLogger
+    bp2pEnv <- getBitcoinP2P
+    tm <- liftIO getCurrentTime
+    let nominalTxIndex = (9000000 * 1000000000) + (floor $ utcTimeToPOSIXSeconds tm)
+        qstrAddrOuts :: Q.QueryString Q.W (Bool, Text, Text, Int64, Int32, Int32, Int64) ()
+        qstrAddrOuts =
+            "INSERT INTO xoken.ep_script_output_protocol (epoch, proto_str, txid, fees, size, output_index, nominal_tx_index) VALUES (?,?,?,?,?,?,?)"
+        parAddrOuts = getSimpleQueryParam (epoch, protocol, txid, fees, size, output_index, nominalTxIndex)
+    queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstrAddrOuts))
+    resAddrOuts <- liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryId parAddrOuts))
+    case resAddrOuts of
+        Right _ -> return ()
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: INSERTing into 'ep_script_output_protocol: " ++ show e
+            throw KeyValueDBInsertException
+
 processUnconfTransaction :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Tx -> m ()
 processUnconfTransaction tx = do
     dbe' <- getDB
@@ -300,8 +283,9 @@ processUnconfTransaction tx = do
     lg <- getLogger
     epoch <- liftIO $ readTVarIO $ epochType bp2pEnv
     let net = bitcoinNetwork $ nodeConfig bp2pEnv
-    let conn = xCqlClientState $ dbe'
-    debug lg $ LG.msg $ "Processing unconfirmed transaction: " ++ show (txHash tx)
+        conn = xCqlClientState $ dbe'
+        txhs = txHash tx
+    debug lg $ LG.msg $ "Processing unconfirmed transaction <begin> :" ++ show txhs
     --
     let inAddrs = zip (txIn tx) [0 :: Int32 ..]
     let outAddrs =
@@ -316,7 +300,7 @@ processUnconfTransaction tx = do
                      (txOut tx))
                 (txOut tx)
                 [0 :: Int32 ..]
-    inputs <-
+    !inputs <-
         mapM
             (\(b, j) -> do
                  tuple <- return Nothing
@@ -338,28 +322,28 @@ processUnconfTransaction tx = do
                                  else do
                                      valFromDB <-
                                          liftIO $
-                                         sourceSatsValueFromOutpoint
+                                         getSatsValueFromOutpoint
                                              conn
-                                             epoch
                                              (txSynchronizer bp2pEnv)
                                              lg
                                              net
                                              (prevOutput b)
-                                             250
-                                             (1000 * (txProcInputDependenciesWait $ nodeConfig bp2pEnv))
+                                             5
+                                             (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
+                                             False
                                      return valFromDB
                          Nothing -> do
                              valFromDB <-
                                  liftIO $
-                                 sourceSatsValueFromOutpoint
+                                 getSatsValueFromOutpoint
                                      conn
-                                     epoch
                                      (txSynchronizer bp2pEnv)
                                      lg
                                      net
                                      (prevOutput b)
-                                     250
-                                     (1000 * (txProcInputDependenciesWait $ nodeConfig bp2pEnv))
+                                     5
+                                     (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
+                                     False
                              return valFromDB
                  return
                      ((txHashToHex $ outPointHash $ prevOutput b, fromIntegral $ outPointIndex $ prevOutput b), j, val))
@@ -370,6 +354,14 @@ processUnconfTransaction tx = do
                      ( fromIntegral $ i
                      , (a, (txHashToHex $ TxHash $ sha256 (scriptOutput o)), fromIntegral $ outValue o)))
                 outAddrs
+    --
+    let ipSum = foldl (+) 0 $ (\(_, _, (_, _, val)) -> val) <$> inputs
+        opSum = foldl (+) 0 $ (\(_, o, _) -> fromIntegral $ outValue o) <$> outAddrs
+        fees = ipSum - opSum
+        serbs = runPutLazy $ putLazyByteString $ S.encodeLazy tx
+        count = BSL.length serbs
+    debug lg $ LG.msg $ "Processing unconfirmed transaction <fetched inputs> :" ++ show txhs
+    --
     -- liftIO $
     --     TSH.insert
     --         (txOutputValuesCache bp2pEnv)
@@ -380,30 +372,44 @@ processUnconfTransaction tx = do
         (\(a, o, i) -> do
              let sh = txHashToHex $ TxHash $ sha256 (scriptOutput o)
              let output = (txHashToHex $ txHash tx, i)
-             concurrently_
-                 (insertEpochTxIdOutputs
-                      conn
-                      epoch
-                      output
-                      a
-                      sh
-                      True
-                      (stripScriptHash <$> inputs)
-                      (fromIntegral $ outValue o))
-                 (concurrently_
-                      (concurrently_
-                           (commitEpochScriptHashOutputs conn epoch sh output)
-                           (commitEpochScriptHashUnspentOutputs conn epoch sh output))
-                      (case decodeOutputBS $ scriptOutput o of
-                           (Right so) ->
-                               if isPayPK so
-                                   then do
-                                       concurrently_
-                                           (commitEpochScriptHashOutputs conn epoch a output)
-                                           (commitEpochScriptHashUnspentOutputs conn epoch a output)
-                                   else return ()
-                           (Left e) -> return ())))
+             let bsh = B16.encode $ scriptOutput o
+             let (op, rem) = B.splitAt 2 bsh
+             let (op_false, op_return, remD) =
+                     if op == "6a"
+                         then ("00", op, rem)
+                         else (\(a, b) -> (op, a, b)) $ B.splitAt 2 rem
+             outputsExist <- checkOutputDataExists output
+             unless outputsExist $ do
+                 commitScriptHashOutputs conn sh output Nothing
+                 case decodeOutputBS $ scriptOutput o of
+                     Right so ->
+                         if isPayPK so
+                             then commitScriptHashOutputs conn a output Nothing
+                             else return ()
+                     Left e -> return ()
+                 when (op_false == "00" && op_return == "6a") $ do
+                     props <-
+                         case runGet (getPropsG 3) (fst $ B16.decode remD) of
+                             Right p -> return p
+                             Left str -> do
+                                 liftIO $ err lg $ LG.msg ("Error: Getting protocol name " ++ show str)
+                                 return []
+                     when (isJust (headMaybe props)) $ do
+                         let protocol = snd <$> props
+                             prot = tail $ L.inits protocol
+                         mapM_
+                             (\p ->
+                                  commitScriptOutputProtocol
+                                      conn
+                                      (T.intercalate "." p)
+                                      output
+                                      Nothing
+                                      fees
+                                      (fromIntegral count))
+                             prot
+             insertTxIdOutputs output a sh True Nothing (stripScriptHash <$> inputs) (fromIntegral $ outValue o))
         outAddrs
+    debug lg $ LG.msg $ "Processing unconfirmed transaction <committed outputs> :" ++ show txhs
     mapM_
         (\((o, i), (a, sh)) -> do
              let prevOutpoint = (txHashToHex $ outPointHash $ prevOutput o, fromIntegral $ outPointIndex $ prevOutput o)
@@ -411,20 +417,11 @@ processUnconfTransaction tx = do
              let spendInfo = (\ov -> ((txHashToHex $ txHash tx, fromIntegral $ fst ov), i, snd $ ov)) <$> ovs
              if a == "" || sh == ""
                  then return ()
-                 else do
-                     concurrently_
-                         (insertEpochTxIdOutputs conn epoch prevOutpoint a sh False (stripScriptHash <$> spendInfo) 0)
-                         (concurrently_
-                              (deleteEpochScriptHashUnspentOutputs conn epoch sh prevOutpoint)
-                              (deleteEpochScriptHashUnspentOutputs conn epoch a prevOutpoint)))
+                 else insertTxIdOutputs prevOutpoint a sh False Nothing (stripScriptHash <$> spendInfo) 0)
         (zip inAddrs (map (\x -> (fst3 $ thd3 x, snd3 $ thd3 x)) inputs))
-    --
-    let ipSum = foldl (+) 0 $ (\(_, _, (_, _, val)) -> val) <$> inputs
-        opSum = foldl (+) 0 $ (\(_, o, _) -> fromIntegral $ outValue o) <$> outAddrs
-        fees = ipSum - opSum
-    --
-    let str = "INSERT INTO xoken.ep_transactions (epoch, tx_id, tx_serialized, inputs, fees) values (?, ?, ?, ?, ?)"
-        qstr = str :: Q.QueryString Q.W (Bool, Text, Blob, [((Text, Int32), Int32, (Text, Int64))], Int64) ()
+    debug lg $ LG.msg $ "Processing unconfirmed transaction <updated inputs> :" ++ show txhs
+    let str = "UPDATE xoken.transactions SET tx_serialized=?, inputs=?, fees=? WHERE tx_id=?"
+        qstr = str :: Q.QueryString Q.W (Blob, [((Text, Int32), Int32, (Text, Int64))], Int64, Text) ()
         serbs = runPutLazy $ putLazyByteString $ S.encodeLazy tx
         count = BSL.length serbs
         smb a = a * 16 * 1000 * 1000
@@ -438,7 +435,7 @@ processUnconfTransaction tx = do
             if segments > 1
                 then (LC.replicate 32 'f') <> (BSL.fromStrict $ DTE.encodeUtf8 $ T.pack $ show $ segments)
                 else serbs
-    let par = getSimpleQueryParam (epoch, txHashToHex $ txHash tx, Blob fst, (stripScriptHash <$> inputs), fees)
+    let par = getSimpleQueryParam (Blob fst, (stripScriptHash <$> inputs), fees, txHashToHex $ txHash tx)
     queryI <- liftIO $ queryPrepared conn (Q.RqPrepare $ Q.Prepare qstr)
     res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryI par)
     case res of
@@ -450,8 +447,7 @@ processUnconfTransaction tx = do
         let segmentsData = chunksOf (smb 1) serbs
         mapM_
             (\(seg, i) -> do
-                 let par =
-                         getSimpleQueryParam (epoch, (txHashToHex $ txHash tx) <> (T.pack $ show i), Blob seg, [], fees)
+                 let par = getSimpleQueryParam (Blob seg, [], fees, (txHashToHex $ txHash tx) <> (T.pack $ show i))
                  queryI <- liftIO $ queryPrepared conn (Q.RqPrepare $ Q.Prepare qstr)
                  res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryI par)
                  case res of
@@ -461,88 +457,12 @@ processUnconfTransaction tx = do
                          throw KeyValueDBInsertException)
             (zip segmentsData [1 ..])
     --
+    debug lg $ LG.msg $ "Processing unconfirmed transaction <end> :" ++ show txhs
     vall <- liftIO $ TSH.lookup (txSynchronizer bp2pEnv) (txHash tx)
     case vall of
         Just ev -> liftIO $ EV.signal ev
         Nothing -> return ()
     --
-
-getSatsValueFromEpochOutpoint ::
-       XCqlClientState
-    -> Bool
-    -> (TSH.TSHashTable TxHash EV.Event)
-    -> Logger
-    -> Network
-    -> OutPoint
-    -> Int
-    -> Int
-    -> IO ((Text, Text, Int64))
-getSatsValueFromEpochOutpoint conn epoch txSync lg net outPoint wait maxWait = do
-    let str =
-            "SELECT address, script_hash, value FROM xoken.ep_txid_outputs WHERE epoch=? AND txid=? AND output_index=?"
-        qstr = str :: Q.QueryString Q.R (Bool, Text, Int32) (Text, Text, Int64)
-        par = getSimpleQueryParam $ (epoch, txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint)
-    queryI <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstr))
-    res <- liftIO $ try $ query conn (Q.RqExecute (Q.Execute queryI par))
-    case res of
-        Right results -> do
-            if L.length results == 0
-                then do
-                    debug lg $
-                        LG.msg $
-                        "[Unconfirmed] Tx not found: " ++
-                        (show $ txHashToHex $ outPointHash outPoint) ++ " _waiting_ for event"
-                    valx <- liftIO $ TSH.lookup txSync (outPointHash outPoint)
-                    event <-
-                        case valx of
-                            Just evt -> return evt
-                            Nothing -> EV.new
-                    liftIO $ TSH.insert txSync (outPointHash outPoint) event
-                    tofl <- waitTimeout event $ fromIntegral (wait * 1000000)
-                    if tofl == False
-                        then if wait < maxWait
-                                 then do
-                                     getSatsValueFromEpochOutpoint conn epoch txSync lg net outPoint maxWait maxWait -- re-attempt
-                                 else do
-                                     liftIO $ TSH.delete txSync (outPointHash outPoint)
-                                     throw $
-                                         TxIDNotFoundException
-                                             ( show $ txHashToHex $ outPointHash outPoint
-                                             , Just $ fromIntegral $ outPointIndex outPoint)
-                                             "getSatsValueFromEpochOutpoint"
-                        else do
-                            debug lg $
-                                LG.msg $
-                                "Event received _available_ [Unconfirmed] tx: " ++
-                                (show $ txHashToHex $ outPointHash outPoint)
-                            getSatsValueFromEpochOutpoint conn epoch txSync lg net outPoint maxWait maxWait
-                else do
-                    return $ head results
-        Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: getSatsValueFromEpochOutpoint: " ++ show e
-            throw e
-
-sourceSatsValueFromOutpoint ::
-       XCqlClientState
-    -> Bool
-    -> (TSH.TSHashTable TxHash EV.Event)
-    -> Logger
-    -> Network
-    -> OutPoint
-    -> Int
-    -> Int
-    -> IO ((Text, Text, Int64))
-sourceSatsValueFromOutpoint conn epoch txSync lg net outPoint waitSecs maxWait = do
-    res <-
-        LA.race
-            (liftIO $ do
-                 debug lg $ LG.msg $ "race getSatsValueFromOutpoint <start>: " <> (show outPoint)
-                 getSatsValueFromOutpoint conn txSync lg net outPoint 5 maxWait)
-            (liftIO $ do
-                 debug lg $ LG.msg $ "race getSatsValueFromEpochOutpoint <start>: " <> (show outPoint)
-                 getSatsValueFromEpochOutpoint conn epoch txSync lg net outPoint 5 waitSecs)
-    debug lg $ LG.msg $ "sourceSatsValueFromOutpoint race for " <> (show outPoint) <> " result: " <> (show res)
-    return $ either (GB.id) (GB.id) res
 
 convertToScriptHash :: Network -> String -> Maybe String
 convertToScriptHash net s = do

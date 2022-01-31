@@ -9,27 +9,12 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE BangPatterns #-}
 
-module Network.Xoken.Node.P2P.BlockSync
-    ( processBlock
-    , processConfTransaction
-    , peerBlockSync
-    , checkBlocksFullySynced
-    , runPeerSync
-    , runBlockCacheQueue
-    , getSatsValueFromOutpoint
-    , markBestSyncedBlock
-    , fetchBestSyncedBlock
-    , sendRequestMessages
-    , handleIfAllegoryTx
-    , commitTxPage
-    , getScriptHashFromOutpoint
-    , diffGregorianDurationClip
-    ) where
+module Network.Xoken.Node.P2P.BlockSync where
 
 import Codec.Serialise
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (AsyncCancelled, mapConcurrently, mapConcurrently_, race_)
-import Control.Concurrent.Async.Lifted as LA (async, concurrently_, race)
+import Control.Concurrent.Async.Lifted as LA (async, concurrently, concurrently_, race)
 import Control.Concurrent.Event as EV
 import Control.Concurrent.MVar
 import Control.Concurrent.QSem
@@ -65,6 +50,7 @@ import Data.Maybe
 import Data.Pool
 import Data.Serialize
 import Data.Serialize as S
+import Data.String
 import Data.String.Conversions
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -79,6 +65,7 @@ import qualified Database.Bolt as BT
 import Database.XCQL.Protocol as Q
 import qualified ListT as LT
 import qualified Network.Socket as NS
+import Network.Socket
 import qualified Network.Socket.ByteString as SB (recv)
 import qualified Network.Socket.ByteString.Lazy as LB (recv, sendAll)
 import Network.Xoken.Address
@@ -89,6 +76,8 @@ import Network.Xoken.Crypto.Hash
 import Network.Xoken.Network.Common
 import Network.Xoken.Network.Message
 import Network.Xoken.Node.Data as DA
+import Network.Xoken.Node.Data.Allegory
+import qualified Network.Xoken.Node.Data.Allegory as AL (Index(..))
 import qualified Network.Xoken.Node.Data.ThreadSafeHashTable as TSH
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.GraphDB
@@ -137,7 +126,9 @@ sendRequestMessages pr msg = do
                     case fromException e of
                         Just (t :: AsyncCancelled) -> throw e
                         otherwise -> do
-                            debug lg $ LG.msg $ "Error, sending out data: " ++ show e
+                            err lg $ LG.msg ("Error BS, sending out data: " ++ show e)
+                            liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
+                            liftIO $ Network.Socket.close s
                             throw e
             debug lg $ LG.msg $ "sending out GetData: " ++ show (bpAddress pr)
         Nothing -> err lg $ LG.msg $ val "Error sending, no connections available"
@@ -319,7 +310,7 @@ runBlockCacheQueue =
         fullySynced <- liftIO $ readTVarIO $ indexUnconfirmedTx bp2pEnv
         -- check any retries
         retn1 <-
-            do debug lg $ LG.msg $ val "Checking for retries"
+            do trace lg $ LG.msg $ val "Checking for retries"
                let unsent = L.filter (\x -> (fst $ snd x) == RequestQueued) syt
                let sent =
                        L.filter
@@ -374,7 +365,7 @@ runBlockCacheQueue =
                 Nothing -> do
                     if sysz < (blocksFetchWindow $ nodeConfig bp2pEnv)
                         then do
-                            (hash, ht) <- fetchBestSyncedBlock conn net
+                            (hash, ht) <- fetchBestSyncedBlock
                             let fetchMore = (blocksFetchWindow $ nodeConfig bp2pEnv) - sysz
                             let cacheInd = [1 .. fetchMore] -- getBatchSize net (fromIntegral $ L.length connPeers) ht
                             let !bks = map (\x -> ht + (fromIntegral x)) cacheInd
@@ -481,7 +472,7 @@ runBlockCacheQueue =
                                                      runInBatch
                                                          (\(protocol, (props, blockInf)) -> do
                                                               TSH.delete v' protocol
-                                                              tryWithResource
+                                                              withResource'
                                                                   (pool $ graphDB dbe)
                                                                   (`BT.run` insertProtocolWithBlockInfo
                                                                                 protocol
@@ -566,45 +557,19 @@ sortPeers peers = do
             peers
     return $ snd $ unzip $ L.sortBy (\(a, _) (b, _) -> compare a b) (zip ts peers)
 
-fetchBestSyncedBlock ::
-       (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => XCqlClientState -> Network -> m ((BlockHash, Int32))
-fetchBestSyncedBlock conn net = do
-    lg <- getLogger
-    bp2pEnv <- getBitcoinP2P
-    binfo <- liftIO $ atomically $ readTVar (bestSyncedBlock bp2pEnv)
-    case binfo of
-        Just bi -> return $ (biBlockHash bi, fromIntegral $ biBlockHeight bi)
-        Nothing -> do
-            let qstr ::
-                       Q.QueryString Q.R (Identity Text) (Identity (Maybe Bool, Maybe Int32, Maybe Int64, Maybe T.Text))
-                qstr = "SELECT value from xoken.misc_store where key = ?"
-                p = getSimpleQueryParam $ Identity "best-synced"
-            iop <- liftIO $ query conn (Q.RqQuery $ Q.Query qstr p)
-            if L.length iop == 0
-                then do
-                    debug lg $ LG.msg $ val "Best-synced-block is genesis."
-                    return ((headerHash $ getGenesisHeader net), 0)
-                else do
-                    let record = runIdentity $ iop !! 0
-                    --debug lg $ LG.msg $ "Best-synced-block from DB: " ++ (show record)
-                    case getTextVal record of
-                        Just tx -> do
-                            case (hexToBlockHash $ tx) of
-                                Just x -> do
-                                    case getIntVal record of
-                                        Just y -> return (x, y)
-                                        Nothing -> throw InvalidMetaDataException
-                                Nothing -> throw InvalidBlockHashException
-                        Nothing -> throw InvalidMetaDataException
-
 commitScriptHashOutputs ::
-       (HasLogger m, MonadIO m) => XCqlClientState -> Text -> (Text, Int32) -> (Text, Int32, Int32) -> m ()
+       (HasXokenNodeEnv env m, MonadIO m)
+    => XCqlClientState
+    -> Text
+    -> (Text, Int32)
+    -> Maybe (Text, Int32, Int32)
+    -> m ()
 commitScriptHashOutputs conn sh output blockInfo = do
     lg <- getLogger
-    let blkHeight = fromIntegral $ snd3 blockInfo
-        txIndex = fromIntegral $ thd3 blockInfo
-        nominalTxIndex = blkHeight * 1000000000 + txIndex
-        qstrAddrOuts :: Q.QueryString Q.W (Text, Int64, (Text, Int32)) ()
+    tm <- liftIO getCurrentTime
+    blocksSynced <- checkBlocksFullySynced conn
+    nominalTxIndex <- generateNominalTxIndex blockInfo (snd output)
+    let qstrAddrOuts :: Q.QueryString Q.W (Text, Int64, (Text, Int32)) ()
         qstrAddrOuts = "INSERT INTO xoken.script_hash_outputs (script_hash, nominal_tx_index, output) VALUES (?,?,?)"
         parAddrOuts = getSimpleQueryParam (sh, nominalTxIndex, output)
     queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstrAddrOuts))
@@ -615,67 +580,69 @@ commitScriptHashOutputs conn sh output blockInfo = do
             err lg $ LG.msg $ "Error: INSERTing into 'script_hash_outputs': " ++ show e
             throw KeyValueDBInsertException
 
-commitScriptHashUnspentOutputs :: (HasLogger m, MonadIO m) => XCqlClientState -> Text -> (Text, Int32) -> m ()
-commitScriptHashUnspentOutputs conn sh output = do
-    lg <- getLogger
-    let qstr :: Q.QueryString Q.W (Text, (Text, Int32)) ()
-        qstr = "INSERT INTO xoken.script_hash_unspent_outputs (script_hash, output) VALUES (?,?)"
-        par = getSimpleQueryParam (sh, output)
-    queryI <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstr))
-    res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryI par)
-    case res of
-        Right _ -> return ()
-        Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: INSERTing into 'script_hash_unspent_outputs': " ++ show e
-            throw KeyValueDBInsertException
-
-deleteScriptHashUnspentOutputs :: (HasLogger m, MonadIO m) => XCqlClientState -> Text -> (Text, Int32) -> m ()
-deleteScriptHashUnspentOutputs conn sh output = do
-    lg <- getLogger
-    let qstr :: Q.QueryString Q.W (Text, (Text, Int32)) ()
-        qstr = "DELETE FROM xoken.script_hash_unspent_outputs WHERE script_hash=? AND output=?"
-        par = getSimpleQueryParam (sh, output)
-    queryI <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstr))
-    res <- liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryI par))
-    case res of
-        Right _ -> return ()
-        Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: DELETE'ing from 'script_hash_unspent_outputs': " ++ show e
-            throw e
-
 insertTxIdOutputs ::
-       (HasLogger m, MonadIO m)
-    => XCqlClientState
-    -> (Text, Int32)
+       (HasXokenNodeEnv env m, MonadIO m)
+    => (Text, Int32)
     -> Text
     -> Text
     -> Bool
-    -> (Text, Int32, Int32)
+    -> Maybe (Text, Int32, Int32)
     -> [((Text, Int32), Int32, (Text, Int64))]
     -> Int64
     -> m ()
-insertTxIdOutputs conn (txid, outputIndex) address scriptHash isRecv blockInfo other value = do
+insertTxIdOutputs (txid, outputIndex) address scriptHash isRecv blockInfo other value = do
+    dbe <- getDB
     lg <- getLogger
-    let qstr ::
-               Q.QueryString Q.W ( Text
-                                 , Int32
-                                 , Text
-                                 , Text
-                                 , Bool
-                                 , (Text, Int32, Int32)
-                                 , [((Text, Int32), Int32, (Text, Int64))]
-                                 , Int64) ()
-        qstr =
-            "INSERT INTO xoken.txid_outputs (txid,output_index,address,script_hash,is_recv,block_info,other,value) VALUES (?,?,?,?,?,?,?,?)"
-        par = getSimpleQueryParam (txid, outputIndex, address, scriptHash, isRecv, blockInfo, other, value)
-    queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstr))
-    res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryId par)
+    bp2pEnv <- getBitcoinP2P
+    let conn = xCqlClientState dbe
+    res <-
+        case blockInfo of
+            Nothing ->
+                let queryStr =
+                        fromString $
+                        "UPDATE xoken.txid_outputs SET address=?, script_hash=?, other=?, value=? " ++
+                        "WHERE txid=? AND output_index=? AND is_recv=?" :: Q.QueryString Q.W ( Text
+                                                                                             , Text
+                                                                                             , [( (Text, Int32)
+                                                                                                , Int32
+                                                                                                , (Text, Int64))]
+                                                                                             , Int64
+                                                                                             , Text
+                                                                                             , Int32
+                                                                                             , Bool) ()
+                    queryPar = getSimpleQueryParam (address, scriptHash, other, value, txid, outputIndex, isRecv)
+                 in liftIO $
+                    queryPrepared conn (Q.RqPrepare (Q.Prepare queryStr)) >>= \queryId ->
+                        liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryId queryPar))
+            Just bi ->
+                let queryStr =
+                        fromString $
+                        "UPDATE xoken.txid_outputs SET address=?, script_hash=?, block_info=?, other=?, value=? " ++
+                        "WHERE txid=? AND output_index=? AND is_recv=?" :: Q.QueryString Q.W ( Text
+                                                                                             , Text
+                                                                                             , (Text, Int32, Int32)
+                                                                                             , [( (Text, Int32)
+                                                                                                , Int32
+                                                                                                , (Text, Int64))]
+                                                                                             , Int64
+                                                                                             , Text
+                                                                                             , Int32
+                                                                                             , Bool) ()
+                    queryPar = getSimpleQueryParam (address, scriptHash, bi, other, value, txid, outputIndex, isRecv)
+                 in liftIO $
+                    queryPrepared conn (Q.RqPrepare (Q.Prepare queryStr)) >>= \queryId ->
+                        liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryId queryPar))
     case res of
-        Right _ -> return ()
         Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: INSERTing into: txid_outputs " ++ show e
-            throw KeyValueDBInsertException
-    return ()
+            err lg $
+                LG.msg $
+                C.pack $
+                "[ERROR] While inserting outputs for " <>
+                (T.unpack txid) <> ":" <> (show outputIndex) <> ": " <> (show e)
+            throw e
+        _ ->
+            debug lg $
+            LG.msg $ "Updated/Inserted outputs (block " ++ show blockInfo ++ ") for tx:" ++ show (txid, outputIndex)
 
 commitTxPage ::
        (HasBitcoinP2P m, HasLogger m, HasDatabaseHandles m, MonadBaseControl IO m, MonadIO m)
@@ -707,7 +674,7 @@ processConfTransaction bis tx bhash blkht txind = do
     let !txhs = txHash tx
     let net = bitcoinNetwork $ nodeConfig bp2pEnv
         conn = xCqlClientState dbe'
-    debug lg $ LG.msg $ "processing Tx " ++ show (txhs)
+    debug lg $ LG.msg $ "Processing confirmed transaction <begin> :" ++ show txhs
     let !inAddrs = zip (txIn tx) [0 :: Int32 ..]
     let !outAddrs =
             zip3
@@ -723,7 +690,7 @@ processConfTransaction bis tx bhash blkht txind = do
                 [0 :: Int32 ..]
     --
     -- lookup into tx outputs value cache if cache-miss, fetch from DB
-    inputs <-
+    !inputs <-
         mapM
             (\(b, j) -> do
                  tuple <- return Nothing
@@ -762,6 +729,7 @@ processConfTransaction bis tx bhash blkht txind = do
                                                      (prevOutput b)
                                                      (5)
                                                      (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
+                                                     True
                                              case dbRes of
                                                  Right v -> return $ v
                                                  Left (e :: SomeException) -> do
@@ -796,6 +764,7 @@ processConfTransaction bis tx bhash blkht txind = do
                                              (prevOutput b)
                                              (5)
                                              (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
+                                             True
                                      case dbRes of
                                          Right v -> do
                                              debug lg $
@@ -814,23 +783,23 @@ processConfTransaction bis tx bhash blkht txind = do
                      ((txHashToHex $ outPointHash $ prevOutput b, fromIntegral $ outPointIndex $ prevOutput b), j, val))
             inAddrs
     -- calculate Tx fees
-    let ipSum = foldl (+) 0 $ (\(_, _, (_, _, val)) -> val) <$> inputs
-        opSum = foldl (+) 0 $ (\(_, o, _) -> fromIntegral $ outValue o) <$> outAddrs
-        fees =
+    let !ipSum = foldl (+) 0 $ (\(_, _, (_, _, val)) -> val) <$> inputs
+        !opSum = foldl (+) 0 $ (\(_, o, _) -> fromIntegral $ outValue o) <$> outAddrs
+        !fees =
             if txind == 0 -- coinbase tx
                 then 0
                 else ipSum - opSum
         serbs = runPutLazy $ putLazyByteString $ S.encodeLazy tx
         count = BSL.length serbs
-    debug lg $
-        LG.msg $
-        "processing Tx " ++
-        show txhs ++
-        ": calculated fees: " ++
-        show fees ++ " tx_index: " ++ show txind ++ " inputs: " ++ show inputs ++ " : outputs " ++ show outAddrs
     --
+    debug lg $ LG.msg $ "Processing confirmed transaction <fetched inputs> :" ++ show txhs
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": calculated fees"
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": fetched input(s): " ++ show inputs
+    -- handle allegory
+    eres <- LE.try $ handleIfAllegoryTx tx True True
+    case eres of
+        Right (flg) -> return ()
+        Left (e :: SomeException) -> err lg $ LG.msg ("Error: " ++ show e)
     --
     -- cache compile output values
     -- imp: order is (address, scriptHash, value)
@@ -859,91 +828,86 @@ processConfTransaction bis tx bhash blkht txind = do
                      if op == "6a"
                          then ("00", op, rem)
                          else (\(a, b) -> (op, a, b)) $ B.splitAt 2 rem
-             when (op_false == "00" && op_return == "6a") $ do
-                 props <-
-                     case runGet (getPropsG 3) (fst $ B16.decode remD) of
-                         Right p -> return p
-                         Left str -> do
-                             liftIO $
-                                 err lg $
-                                 LG.msg
-                                     ("Error: Getting protocol name " ++
-                                      show str ++
-                                      " for height: " ++
-                                      show blkht ++ " with bsh: " ++ show bsh ++ " with remD: " ++ show remD)
-                             return []
-                 when (isJust (headMaybe props)) $ do
-                     let protocol = snd <$> props
-                     ts <- (blockTimestamp' . DA.blockHeader . head) <$> xGetChainHeaders (fromIntegral blkht) 1
-                     let epd = utctDay $ posixSecondsToUTCTime 0
-                     let cd = utctDay $ posixSecondsToUTCTime (fromIntegral ts)
-                     let sec = diffUTCTime (posixSecondsToUTCTime (fromIntegral ts)) (posixSecondsToUTCTime 0)
-                     let (m, d) = diffGregorianDurationClip cd epd
-                     let (y', _, _) = toGregorian cd
-                     let (y'', _, _) = toGregorian epd
-                     let y = y' - y''
-                     let h = div (fromEnum $ sec / (10 ^ 12)) (60 * 60)
-                     let curBi =
-                             BlockPInfo
-                                 { height = blkht
-                                 , hash = T.pack $ show bhash
-                                 , timestamp = fromIntegral ts
-                                 , hour = h
-                                 , day =
-                                       let hh = div h 24
-                                        in if hh == 0
-                                               then 1
-                                               else hh
-                                 , absoluteHour = Prelude.rem h 24
-                                 , month = 1 + fromIntegral m
-                                 , year = fromIntegral y
-                                 , fees = fromIntegral fees
-                                 , bytes = binBlockSize bis
-                                 , count = 1
-                                 }
-                     let upf b =
-                             BlockPInfo
-                                 blkht
-                                 (Type.hash b)
-                                 (Type.timestamp b)
-                                 (hour b)
-                                 (day b)
-                                 (month b)
-                                 (year b)
-                                 ((fromIntegral fees) + (Type.fees b))
-                                 ((binBlockSize bis) + (Type.bytes b))
-                                 ((Type.count b) + 1)
-                                 (absoluteHour b)
-                     let fn x =
-                             case x of
-                                 Just (p, bi) -> (Just (props, upf bi), ())
-                                 Nothing -> (Just (props, curBi), ())
-                         prot = tail $ L.inits protocol
-                     mapM_
-                         (\p ->
-                              commitScriptOutputProtocol conn (T.intercalate "." p) output bi fees (fromIntegral count))
-                         prot
-                     v <- liftIO $ TSH.lookup (protocolInfo bp2pEnv) bhash
-                     case v of
-                         Just v' -> liftIO $ TSH.mutate v' (T.intercalate "_" protocol) fn
-                         Nothing -> debug lg $ LG.msg $ "No ProtocolInfo Available for: " ++ show bhash
-             insertTxIdOutputs conn output a sh True bi (stripScriptHash <$> inputs) (fromIntegral $ outValue o)
-             commitScriptHashOutputs
-                 conn --
-                 sh -- scriptHash
-                 output
-                 bi
-             commitScriptHashUnspentOutputs conn sh output
-             case decodeOutputBS $ scriptOutput o of
-                 (Right so) ->
-                     if isPayPK so
-                         then do
-                             commitScriptHashOutputs conn a output bi
-                             commitScriptHashUnspentOutputs conn a output
-                         else return ()
-                 (Left e) -> return ())
+             outputsExist <- checkOutputDataExists output
+             unless outputsExist $ do
+                 commitScriptHashOutputs conn sh output (Just bi)
+                 when (op_false == "00" && op_return == "6a") $ do
+                     props <-
+                         case runGet (getPropsG 3) (fst $ B16.decode remD) of
+                             Right p -> return p
+                             Left str -> do
+                                 liftIO $
+                                     err lg $
+                                     LG.msg
+                                         ("Error: Getting protocol name " ++
+                                          show str ++
+                                          " for height: " ++
+                                          show blkht ++ " with bsh: " ++ show bsh ++ " with remD: " ++ show remD)
+                                 return []
+                     when (isJust (headMaybe props)) $ do
+                         let protocol = snd <$> props
+                         ts <- (blockTimestamp' . DA.blockHeader . head) <$> xGetChainHeaders (fromIntegral blkht) 1
+                         let epd = utctDay $ posixSecondsToUTCTime 0
+                         let cd = utctDay $ posixSecondsToUTCTime (fromIntegral ts)
+                         let sec = diffUTCTime (posixSecondsToUTCTime (fromIntegral ts)) (posixSecondsToUTCTime 0)
+                         let (m, d) = diffGregorianDurationClip cd epd
+                         let (y', _, _) = toGregorian cd
+                         let (y'', _, _) = toGregorian epd
+                         let y = y' - y''
+                         let h = div (fromEnum $ sec / (10 ^ 12)) (60 * 60)
+                         let curBi =
+                                 BlockPInfo
+                                     { height = blkht
+                                     , hash = T.pack $ show bhash
+                                     , timestamp = fromIntegral ts
+                                     , hour = h
+                                     , day =
+                                           let hh = div h 24
+                                            in if hh == 0
+                                                   then 1
+                                                   else hh
+                                     , absoluteHour = Prelude.rem h 24
+                                     , month = 1 + fromIntegral m
+                                     , year = fromIntegral y
+                                     , fees = fromIntegral fees
+                                     , bytes = binBlockSize bis
+                                     , count = 1
+                                     }
+                         let upf b =
+                                 BlockPInfo
+                                     blkht
+                                     (Type.hash b)
+                                     (Type.timestamp b)
+                                     (hour b)
+                                     (day b)
+                                     (month b)
+                                     (year b)
+                                     ((fromIntegral fees) + (Type.fees b))
+                                     ((binBlockSize bis) + (Type.bytes b))
+                                     ((Type.count b) + 1)
+                                     (absoluteHour b)
+                         let fn x =
+                                 case x of
+                                     Just (p, bi) -> (Just (props, upf bi), ())
+                                     Nothing -> (Just (props, curBi), ())
+                             prot = tail $ L.inits protocol
+                         mapM_
+                             (\p ->
+                                  commitScriptOutputProtocol
+                                      conn
+                                      (T.intercalate "." p)
+                                      output
+                                      (Just bi)
+                                      fees
+                                      (fromIntegral count))
+                             prot
+                         v <- liftIO $ TSH.lookup (protocolInfo bp2pEnv) bhash
+                         case v of
+                             Just v' -> liftIO $ TSH.mutate v' (T.intercalate "_" protocol) fn
+                             Nothing -> debug lg $ LG.msg $ "No ProtocolInfo Available for: " ++ show bhash
+             insertTxIdOutputs output a sh True (Just bi) (stripScriptHash <$> inputs) (fromIntegral $ outValue o))
         outAddrs
-    debug lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": committed scripthash,txid_outputs tables"
+    debug lg $ LG.msg $ "Processing confirmed transaction <committed outputs> :" ++ show txhs
     mapM_
         (\((o, i), (a, sh)) -> do
              let bi = (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
@@ -953,15 +917,14 @@ processConfTransaction bis tx bhash blkht txind = do
              if a == "" || sh == "" -- likely coinbase txns
                  then return ()
                  else do
-                     insertTxIdOutputs conn prevOutpoint a sh False bi (stripScriptHash <$> spendInfo) 0
-                     deleteScriptHashUnspentOutputs conn sh prevOutpoint
-                     deleteScriptHashUnspentOutputs conn a prevOutpoint)
+                     insertTxIdOutputs prevOutpoint a sh False (Just bi) (stripScriptHash <$> spendInfo) 0)
         (zip (inAddrs) (map (\x -> (fst3 $ thd3 x, snd3 $ thd3 $ x)) inputs))
+    debug lg $ LG.msg $ "Processing confirmed transaction <updated inputs> :" ++ show txhs
     --
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": updated spend info for inputs"
     -- persist tx
-    let qstr :: Q.QueryString Q.W (Text, (Text, Int32, Int32), Blob, [((Text, Int32), Int32, (Text, Int64))], Int64) ()
-        qstr = "insert INTO xoken.transactions (tx_id, block_info, tx_serialized , inputs, fees) values (?, ?, ?, ?, ?)"
+    let qstr :: Q.QueryString Q.W ((Text, Int32, Int32), Blob, [((Text, Int32), Int32, (Text, Int64))], Int64, Text) ()
+        qstr = "UPDATE xoken.transactions SET block_info=?, tx_serialized=?, inputs=?, fees=? WHERE tx_id=?"
         smb a = a * 16 * 1000 * 1000
         segments =
             let (d, m) = divMod count (smb 1)
@@ -975,11 +938,11 @@ processConfTransaction bis tx bhash blkht txind = do
                 else serbs
     let par =
             getSimpleQueryParam
-                ( txHashToHex txhs
-                , (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
+                ( (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
                 , Blob fst
                 , (stripScriptHash <$> inputs)
-                , fees)
+                , fees
+                , txHashToHex txhs)
     queryI <- liftIO $ queryPrepared conn (Q.RqPrepare $ Q.Prepare qstr)
     res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryI par)
     case res of
@@ -993,11 +956,11 @@ processConfTransaction bis tx bhash blkht txind = do
             (\(seg, i) -> do
                  let par =
                          getSimpleQueryParam
-                             ( (txHashToHex txhs) <> (T.pack $ show i)
-                             , (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
+                             ( (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
                              , Blob seg
                              , []
-                             , fees)
+                             , fees
+                             , (txHashToHex txhs) <> (T.pack $ show i))
                  queryI <- liftIO $ queryPrepared conn (Q.RqPrepare $ Q.Prepare qstr)
                  res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryI par)
                  case res of
@@ -1008,11 +971,6 @@ processConfTransaction bis tx bhash blkht txind = do
             (zip segmentsData [1 ..])
     --
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": persisted in DB"
-    -- handle allegory
-    eres <- LE.try $ handleIfAllegoryTx tx True True
-    case eres of
-        Right (flg) -> return ()
-        Left (e :: SomeException) -> err lg $ LG.msg ("Error: " ++ show e)
     --
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": handled Allegory Tx"
     -- signal 'done' event for tx's that were processed out of sequence
@@ -1021,67 +979,7 @@ processConfTransaction bis tx bhash blkht txind = do
     case vall of
         Just ev -> liftIO $ EV.signal ev
         Nothing -> return ()
-    debug lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": end of processing signaled " ++ show bhash
-
-__getSatsValueFromOutpoint ::
-       XCqlClientState
-    -> TSH.TSHashTable TxHash EV.Event
-    -> Logger
-    -> Network
-    -> OutPoint
-    -> Int
-    -> Int
-    -> IO ((Text, Text, Int64))
-__getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait = do
-    let qstr :: Q.QueryString Q.R (Text, Int32, Bool) (Text, Text, Int64)
-        qstr =
-            "SELECT address, script_hash, value FROM xoken.txid_outputs WHERE txid=? AND output_index=? AND is_recv=?"
-        par = getSimpleQueryParam (txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint, True)
-    queryI <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstr))
-    res <- liftIO $ try $ query conn (Q.RqExecute (Q.Execute queryI par))
-    case res of
-        Right results -> do
-            if L.length results == 0
-                then do
-                    debug lg $
-                        LG.msg $
-                        "Tx not found: " ++ (show $ txHashToHex $ outPointHash outPoint) ++ " _waiting_ for event"
-                    valx <- liftIO $ TSH.lookup txSync (outPointHash outPoint)
-                    event <-
-                        case valx of
-                            Just evt -> return evt
-                            Nothing -> EV.new
-                    liftIO $ TSH.insert txSync (outPointHash outPoint) event
-                    tofl <- waitTimeout event $ fromIntegral (wait * 1000000)
-                    if tofl == False
-                        then if wait < maxWait
-                                 then do
-                                     getSatsValueFromOutpoint conn txSync lg net outPoint maxWait maxWait -- re-attempt
-                                 else do
-                                     liftIO $ TSH.delete txSync (outPointHash outPoint)
-                                     err lg $
-                                         LG.msg $
-                                         "[ERROR] TxID not found: " <> (show $ txHashToHex $ outPointHash outPoint)
-                                     throw $
-                                         TxIDNotFoundException
-                                             ( show $ txHashToHex $ outPointHash outPoint
-                                             , Just $ fromIntegral $ outPointIndex outPoint)
-                                             "getSatsValueFromOutpoint"
-                        else do
-                            debug lg $
-                                LG.msg $ "event received _available_: " ++ (show $ txHashToHex $ outPointHash outPoint)
-                            getSatsValueFromOutpoint conn txSync lg net outPoint maxWait maxWait
-                else do
-                    if wait == maxWait
-                        then liftIO $ TSH.delete txSync (outPointHash outPoint)
-                        else return ()
-                    return $ head results
-        Left (e :: SomeException) -> do
-            err lg $
-                LG.msg $
-                "Error: getSatsValueFromOutpoint (txid: " ++
-                (show $ txHashToHex $ outPointHash outPoint) ++ "): " ++ show e
-            throw e
+    debug lg $ LG.msg $ "Processing confirmed transaction <end> :" ++ show txhs
 
 --
 --
@@ -1093,16 +991,32 @@ getSatsValueFromOutpoint ::
     -> OutPoint
     -> Int
     -> Int
+    -> Bool
     -> IO ((Text, Text, Int64))
-getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait = do
-    let qstr :: Q.QueryString Q.R (Text, Int32) (Text, Text, Int64)
-        qstr = "SELECT address, script_hash, value FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
-        par = getSimpleQueryParam (txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint)
+getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait confirmedOnly = do
+    let qstr :: Q.QueryString Q.R (Text, Int32, Bool) (Text, Text, Int64, Maybe (Text, Int32, Int32))
+        qstr =
+            "SELECT address, script_hash, value, block_info FROM xoken.txid_outputs WHERE txid=? AND output_index=? AND is_recv=?"
+        par = getSimpleQueryParam (txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint, True)
     res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
     case res of
         Right results -> do
-            if L.length results == 0
+            if (L.length results == 0) ||
+               ((\r ->
+                     case r of
+                         [] -> False
+                         (_, _, _, bi):_ -> isNothing bi)
+                    results &&
+                confirmedOnly)
                 then do
+                    debug lg $
+                        LG.msg $
+                        "getSatsValueFromOutpoint txid: " ++
+                        (show outPoint) ++
+                        ", results: " ++
+                        (show $ L.length results) ++
+                        ", blockInfo: " ++
+                        (show $ (\(_, _, _, bi) -> bi) <$> results) ++ ", confirmed: " ++ (show confirmedOnly)
                     debug lg $
                         LG.msg $
                         "Tx not found: " ++ (show $ txHashToHex $ outPointHash outPoint) ++ " _waiting_ for event"
@@ -1116,7 +1030,15 @@ getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait = do
                     if tofl == False
                         then if ((2 * wait) < maxWait)
                                  then do
-                                     getSatsValueFromOutpoint conn txSync lg net outPoint (2 * wait) maxWait
+                                     getSatsValueFromOutpoint
+                                         conn
+                                         txSync
+                                         lg
+                                         net
+                                         outPoint
+                                         (2 * wait)
+                                         maxWait
+                                         confirmedOnly
                                  else do
                                      liftIO $ TSH.delete txSync (outPointHash outPoint)
                                      debug lg $
@@ -1132,9 +1054,9 @@ getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait = do
                         else do
                             debug lg $
                                 LG.msg $ "event received _available_: " ++ (show $ txHashToHex $ outPointHash outPoint)
-                            getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait
+                            getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait confirmedOnly
                 else do
-                    let (addr, scriptHash, val) = head $ results
+                    let (addr, scriptHash, val, blockInfo) = head $ results
                     return $ (addr, scriptHash, val)
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: getSatsValueFromOutpoint: " ++ show e
@@ -1219,7 +1141,8 @@ handleIfAllegoryTx tx revert confirmed = do
     lg <- getLogger
     trace lg $ LG.msg $ val $ "Checking for Allegory OP_RETURN"
     let op_return = head (txOut tx)
-    let hexstr = B16.encode (scriptOutput op_return)
+        hexstr = B16.encode (scriptOutput op_return)
+        txid = T.unpack . txHashToHex . txHash $ tx
     if "006a0f416c6c65676f72792f416c6c506179" `L.isPrefixOf` (C.unpack hexstr)
         then do
             liftIO $ print (hexstr)
@@ -1231,11 +1154,31 @@ handleIfAllegoryTx tx revert confirmed = do
                             case (deserialiseOrFail $ BSL.fromStrict payload) of
                                 Right (allegory) -> do
                                     liftIO $ print (allegory)
-                                    if revert
+                                    checkNodes <- LE.try $ nodesExist (txHash tx) allegory confirmed
+                                    nodesAlreadyExist <-
+                                        case checkNodes of
+                                            Left (e :: SomeException) -> do
+                                                err lg $
+                                                    LG.msg $
+                                                    C.pack $
+                                                    "[ERROR] Failed to check if nUTXO nodes exist for outputs of transaction " <>
+                                                    txid
+                                                throw e
+                                            Right res -> return res
+                                    if nodesAlreadyExist
                                         then do
-                                            _ <- resdb dbe revertAllegoryStateTree tx allegory
-                                            resdb dbe (updateAllegoryStateTrees confirmed) tx allegory
-                                        else resdb dbe (updateAllegoryStateTrees confirmed) tx allegory
+                                            debug lg $
+                                                LG.msg $
+                                                C.pack $
+                                                "handleIfAllegoryTx: nUTXO nodes already exist for outputs of transaction " <>
+                                                txid
+                                            return True
+                                        else do
+                                            if revert
+                                                then do
+                                                    _ <- resdb lg dbe revertAllegoryStateTree tx allegory
+                                                    resdb lg dbe (updateAllegoryStateTrees confirmed) tx allegory
+                                                else resdb lg dbe (updateAllegoryStateTrees confirmed) tx allegory
                                 Left (e :: DeserialiseFailure) -> do
                                     err lg $ LG.msg $ "error deserialising OP_RETURN CBOR data" ++ show e
                                     throw e
@@ -1245,27 +1188,62 @@ handleIfAllegoryTx tx revert confirmed = do
         else do
             return False
   where
-    resdb db fn tx al = do
-        eres <- liftIO $ try $ withResource (pool $ graphDB db) (`BT.run` fn tx al)
+    resdb lg db fn tx al = do
+        let txid = T.unpack . txHashToHex . txHash $ tx
+        eres <- liftIO $ try $ withResource' (pool $ graphDB db) (`BT.run` fn tx al)
         case eres of
             Right () -> return True
-            Left (SomeException e) -> throw e
+            Left (SomeException e) -> do
+                err lg $
+                    LG.msg $
+                    "[ERROR] While handling Allegory metadata for txid " <>
+                    txid <> " : failed to update graph (" <> show e <> ")"
+                throw e
+
+nodesExist :: (HasXokenNodeEnv env m, MonadIO m) => TxHash -> Allegory -> Bool -> m Bool
+nodesExist txId allegory confirmed = do
+    lg <- getLogger
+    gdb <- graphDB <$> getDB
+    let txHash = T.unpack $ txHashToHex txId
+        outputIndices = getOutputIndices allegory
+        outpoints = (\index -> txHash ++ ":" ++ (show index)) <$> outputIndices
+    opsExist <- liftIO $ sequence $ nodeExists lg gdb confirmed <$> T.pack <$> outpoints
+    return $ L.all (== True) opsExist
+  where
+    nodeExists lg gdb oc op = do
+        res <-
+            catch (withResource' (pool gdb) (`BT.run` nUtxoNodeByOutpoint op oc)) $ \(e :: SomeException) -> do
+                err lg $ LG.msg $ C.pack $ "[ERROR] nodesExist: While running Neo4j query: " <> show e
+                throw e
+        return . not . L.null $ res
+    getOutputIndices al =
+        AL.index <$>
+        case action al of
+            OwnerAction _ oo _ -> [owner oo]
+            ProducerAction _ po poo es ->
+                (producer po) :
+                (maybe mempty (\o -> [owner o]) poo) ++
+                ((\e ->
+                      case e of
+                          OwnerExtension oeo _ -> owner oeo
+                          ProducerExtension peo _ -> producer peo) <$>
+                 es)
 
 commitScriptOutputProtocol ::
-       (HasLogger m, MonadIO m)
+       (HasXokenNodeEnv env m, MonadIO m)
     => XCqlClientState
     -> Text
     -> (Text, Int32)
-    -> (Text, Int32, Int32)
+    -> Maybe (Text, Int32, Int32)
     -> Int64
     -> Int32
     -> m ()
 commitScriptOutputProtocol conn protocol (txid, output_index) blockInfo fees size = do
     lg <- getLogger
-    let blkHeight = fromIntegral $ snd3 blockInfo
-        txIndex = fromIntegral $ thd3 blockInfo
-        nominalTxIndex = blkHeight * 1000000000 + txIndex
-        qstrAddrOuts :: Q.QueryString Q.W (Text, Text, Int64, Int32, Int32, Int64) ()
+    tm <- liftIO getCurrentTime
+    blocksSynced <- checkBlocksFullySynced conn
+    nominalTxIndex <- generateNominalTxIndex blockInfo output_index
+    let qstrAddrOuts :: Q.QueryString Q.W (Text, Text, Int64, Int32, Int32, Int64) ()
         qstrAddrOuts =
             "INSERT INTO xoken.script_output_protocol (proto_str, txid, fees, size, output_index, nominal_tx_index) VALUES (?,?,?,?,?,?)"
         parAddrOuts = getSimpleQueryParam (protocol, txid, fees, size, output_index, nominalTxIndex)
@@ -1294,3 +1272,40 @@ diffGregorianDurationClip day2 day1 =
                          else ymdiff + 1
         dayAllowed = addGregorianMonthsClip ymAllowed day1
      in (ymAllowed, diffDays day2 dayAllowed)
+
+checkOutputDataExists :: (HasXokenNodeEnv env m, MonadIO m) => (Text, Int32) -> m Bool
+checkOutputDataExists (txid, outputIndex) = do
+    dbe <- getDB
+    lg <- getLogger
+    bp2pEnv <- getBitcoinP2P
+    let conn = xCqlClientState dbe
+        queryStr :: Q.QueryString Q.R (T.Text, Int32, Bool) (Identity Bool)
+        queryStr = "SELECT is_recv FROM xoken.txid_outputs WHERE txid=? AND output_index=? AND is_recv=?"
+        queryPar = getSimpleQueryParam (txid, outputIndex, True)
+    res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query queryStr queryPar)
+    case res of
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ C.pack $ "[ERROR] Querying database while checking if output exists: " <> (show e)
+            throw KeyValueDBLookupException
+        Right res -> return $ not . L.null $ res
+
+updateBlockInfo :: (HasXokenNodeEnv env m, MonadIO m) => (Text, Int32) -> Bool -> (Text, Int32, Int32) -> m ()
+updateBlockInfo (txid, outputIndex) isRecv blockInfo = do
+    dbe <- getDB
+    lg <- getLogger
+    bp2pEnv <- getBitcoinP2P
+    let conn = xCqlClientState dbe
+        queryStr :: Q.QueryString Q.W ((Text, Int32, Int32), Text, Int32, Bool) ()
+        queryStr = "UPDATE xoken.txid_outputs SET block_info=? WHERE txid=? AND output_index=? AND is_recv=?"
+        queryPar = getSimpleQueryParam (blockInfo, txid, outputIndex, isRecv)
+    queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare queryStr))
+    res <- liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryId queryPar))
+    case res of
+        Left (e :: SomeException) -> do
+            err lg $
+                LG.msg $
+                C.pack $
+                "[ERROR] While updating spendInfo for confirmed Tx output " <>
+                (T.unpack txid) <> ":" <> (show outputIndex) <> ": " <> (show e)
+            throw e
+        _ -> debug lg $ LG.msg $ "Updated BlockInfo: " ++ show blockInfo ++ " for tx:" ++ show (txid, outputIndex)

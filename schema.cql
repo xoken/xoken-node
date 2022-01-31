@@ -40,13 +40,6 @@ CREATE TABLE xoken.ep_script_hash_outputs (
     PRIMARY KEY (epoch, script_hash, nominal_tx_index, output)
 ) WITH CLUSTERING ORDER BY (script_hash ASC, nominal_tx_index DESC, output ASC);
 
-CREATE TABLE xoken.ep_script_hash_unspent_outputs (
-    epoch boolean,
-    script_hash text,
-    output frozen<tuple<text, int>>,
-    PRIMARY KEY (epoch, script_hash, output)
-);
-
 CREATE TABLE xoken.ep_txid_outputs (
     epoch boolean,
     txid text,
@@ -65,12 +58,6 @@ CREATE TABLE xoken.script_hash_outputs (
     output frozen<tuple<text, int>>,
     PRIMARY KEY (script_hash, nominal_tx_index, output)
 ) WITH CLUSTERING ORDER BY (nominal_tx_index DESC);
-
-CREATE TABLE xoken.script_hash_unspent_outputs (
-    script_hash text,
-    output frozen<tuple<text, int>>,
-    PRIMARY KEY (script_hash, output)
-) WITH CLUSTERING ORDER BY (output DESC);
 
 CREATE TABLE xoken.txid_outputs (
     txid text,
@@ -125,3 +112,14 @@ CREATE TABLE xoken.script_output_protocol (
     nominal_tx_index bigint,
     PRIMARY KEY (proto_str, nominal_tx_index)
 ) WITH CLUSTERING ORDER BY (nominal_tx_index ASC);
+
+CREATE TABLE xoken.ep_script_output_protocol (
+    epoch boolean,
+    proto_str text,
+    txid text,
+    fees bigint,
+    size int,
+    output_index int,
+    nominal_tx_index bigint,
+    PRIMARY KEY (epoch, proto_str, nominal_tx_index)
+) WITH CLUSTERING ORDER BY (proto_str ASC, nominal_tx_index DESC);

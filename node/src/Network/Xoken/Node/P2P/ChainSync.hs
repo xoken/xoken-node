@@ -58,7 +58,7 @@ import Network.Xoken.Network.Message
 import Network.Xoken.Node.Data
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.GraphDB
-import qualified Network.Xoken.Node.P2P.BlockSync as NXB (fetchBestSyncedBlock, markBestSyncedBlock)
+import qualified Network.Xoken.Node.P2P.BlockSync as NXB (markBestSyncedBlock)
 import Network.Xoken.Node.P2P.Common
 import Network.Xoken.Node.P2P.Types
 import Network.Xoken.Node.Service.Block
@@ -101,35 +101,34 @@ sendRequestMessages msg = do
         MGetHeaders hdr -> do
             allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
             let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
-            let fbh = getHash256 $ getBlockHash $ (getHeadersBL hdr) !! 0
-                md = BSS.index fbh $ (BSS.length fbh) - 1
-                pds =
-                    map
-                        (\p -> (fromIntegral (md + p) `mod` L.length connPeers))
-                        [1 .. fromIntegral (L.length connPeers)]
-                indices =
-                    case L.length (getHeadersBL hdr) of
-                        x
-                            | x >= 19 -> take 4 pds -- 2^19 = blk ht 524288
-                            | x < 19 -> take 1 pds
-            res <-
-                liftIO $
-                try $
-                mapM_
-                    (\z -> do
-                         let pr = snd $ connPeers !! z
-                         case (bpSocket pr) of
-                             Just q -> do
-                                 let em = runPut . putMessage net $ msg
-                                 liftIO $ sendEncMessage (bpWriteMsgLock pr) q (BSL.fromStrict em)
-                                 debug lg $ LG.msg ("sending out GetHeaders: " ++ show (bpAddress pr))
-                             Nothing -> debug lg $ LG.msg $ val "Error sending, no connections available")
-                    indices
-            case res of
-                Right () -> return ()
-                Left (e :: SomeException) -> do
-                    err lg $ LG.msg ("Error, sending out data: " ++ show e)
-                    throw e
+            -- let fbh = getHash256 $ getBlockHash $ (getHeadersBL hdr) !! 0
+            --     md = BSS.index fbh $ (BSS.length fbh) - 1
+            --     pds =
+            --         map
+            --             (\p -> (fromIntegral (md + p) `mod` L.length connPeers))
+            --             [1 .. fromIntegral (L.length connPeers)]
+            --     indices =
+            --         case L.length (getHeadersBL hdr) of
+            --             x
+            --                 | x >= 19 -> take 4 pds -- 2^19 = blk ht 524288
+            --                 | x < 19 -> take 1 pds
+            mapM_
+                (\(_, pr)
+                     -- let pr = snd $ connPeers !! z
+                  -> do
+                     case (bpSocket pr) of
+                         Just q -> do
+                             let em = runPut . putMessage net $ msg
+                             res <- liftIO $ try $ sendEncMessage (bpWriteMsgLock pr) q (BSL.fromStrict em)
+                             case res of
+                                 Right () -> debug lg $ LG.msg ("sending out GetHeaders: " ++ show (bpAddress pr))
+                                 Left (e :: SomeException) -> do
+                                     err lg $ LG.msg ("Error CS, sending out data: " ++ show e)
+                                     liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
+                                     liftIO $ Network.Socket.close q
+                                     throw e
+                         Nothing -> debug lg $ LG.msg $ val "Error sending, no connections available")
+                connPeers
         ___ -> undefined
 
 msgOrder :: Message -> Message -> Ordering
@@ -271,7 +270,7 @@ processHeaders hdrs = do
                                                              LG.val
                                                                  ("Does not match best-block, potential block re-org...")
                                                          let reOrgDiff = zip [(matchBHt + 1) ..] (headersList hdrs) -- potential re-org
-                                                         bestSynced <- NXB.fetchBestSyncedBlock conn net
+                                                         bestSynced <- fetchBestSyncedBlock
                                                          if snd bestSynced >= matchBHt
                                                              then do
                                                                  debug lg $
@@ -412,11 +411,12 @@ updateChainWork indexed conn = do
                             then do
                                 if L.null lagIndexed -- both lag and lagIndexed are null
                                     then return (chainWork, height)
-                                    else do -- only lag is null
+                                            -- only lag is null
+                                    else do
                                         let updatedBlock = fst $ last lagIndexed
                                             updatedChainwork = T.pack $ show $ indexedCW + (read . T.unpack $ chainWork)
                                         return (updatedChainwork, updatedBlock)
-                            else do -- lag is not null
+                            else do
                                 lagCW <- calculateChainWork lag conn
                                 let updatedChainwork = T.pack $ show $ lagCW + indexedCW + (read . T.unpack $ chainWork)
                                     updatedBlock =

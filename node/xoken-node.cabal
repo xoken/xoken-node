@@ -118,7 +118,7 @@ executable xoken-nexa
     , async
     , streamly
     , lifted-base
-    , hasbolt >=0.1.3.6
+    , hasbolt 
     , resource-pool
     , hashtables
     , base16-bytestring
@@ -132,6 +132,7 @@ executable xoken-nexa
     , vformat
     , daemons
     , snap
+    , snap-core
     , lens
     , list-t
     , xcql
@@ -195,7 +196,7 @@ test-suite xoken-node-test
     , stm
     , stm-containers
     , resource-pool
-    , hasbolt >=0.1.3.6
+    , hasbolt 
     , serialise
     , exceptions
     , monad-control

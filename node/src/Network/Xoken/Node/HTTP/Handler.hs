@@ -51,7 +51,15 @@ import Network.Xoken.Node.Data
     )
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.HTTP.Types
-import Network.Xoken.Node.P2P.Common (addNewUser, generateSessionKey, getSimpleQueryParam, indexMaybe, query, write)
+import Network.Xoken.Node.P2P.Common
+    ( BlockSyncException(..)
+    , addNewUser
+    , generateSessionKey
+    , getSimpleQueryParam
+    , indexMaybe
+    , query
+    , write
+    )
 import Network.Xoken.Node.P2P.Types
 import Network.Xoken.Node.Service
 import Snap
@@ -293,10 +301,11 @@ getOutputsByAddr = do
     pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
     cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
     pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    isAsc <- (maybe False (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "ascending")
     bp2pEnv <- getBitcoinP2P
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
     lg <- getLogger
-    res <- LE.try $ xGetOutputsAddress (fromJust addr) pgSize (decodeNTI cursor)
+    res <- LE.try $ xGetOutputsAddress (fromJust addr) pgSize (decodeNTI cursor) isAsc
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetOutputsAddress: " ++ show e
@@ -315,10 +324,11 @@ getOutputsByAddrs = do
             pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
             cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
             pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+            isAsc <- (maybe False (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "ascending")
             bp2pEnv <- getBitcoinP2P
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
             lg <- getLogger
-            res <- LE.try $ runWithManyInputs xGetOutputsAddress addrs pgSize (decodeNTI cursor)
+            res <- LE.try $ runWithManyInputs xGetOutputsAddress addrs pgSize (decodeNTI cursor) isAsc
             case res of
                 Left (e :: SomeException) -> do
                     err lg $ LG.msg $ "Error: xGetOutputsAddresses: " ++ show e
@@ -337,10 +347,11 @@ getOutputsByScriptHash = do
     pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
     cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
     pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    isAsc <- (maybe False (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "ascending")
     bp2pEnv <- getBitcoinP2P
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
     lg <- getLogger
-    res <- LE.try $ xGetOutputsScriptHash (fromJust sh) pgSize (decodeNTI cursor)
+    res <- LE.try $ xGetOutputsScriptHash (fromJust sh) pgSize (decodeNTI cursor) isAsc
     case res of
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
@@ -359,10 +370,11 @@ getOutputsByScriptHashes = do
             pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
             cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
             pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+            isAsc <- (maybe False (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "ascending")
             bp2pEnv <- getBitcoinP2P
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
             lg <- getLogger
-            res <- LE.try $ runWithManyInputs xGetOutputsScriptHash sh pgSize (decodeNTI cursor)
+            res <- LE.try $ runWithManyInputs xGetOutputsScriptHash sh pgSize (decodeNTI cursor) isAsc
             case res of
                 Left (e :: SomeException) -> do
                     modifyResponse $ setResponseStatus 500 "Internal Server Error"
@@ -381,9 +393,10 @@ getUTXOsByAddr = do
     pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
     cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
     pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    isAsc <- (maybe False (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "ascending")
     bp2pEnv <- getBitcoinP2P
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
-    res <- LE.try $ xGetUTXOsAddress (fromJust addr) pgSize (decodeOP cursor)
+    res <- LE.try $ xGetUtxosAddress (fromJust addr) pgSize (decodeNTI cursor) isAsc
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetUTXOsAddress: " ++ show e
@@ -392,7 +405,7 @@ getUTXOsByAddr = do
         Right ops -> do
             writeBS $
                 BSL.toStrict $
-                encodeResp pretty $ RespUTXOsByAddress (encodeOP $ getNextCursor ops) (fromResultWithCursor <$> ops)
+                encodeResp pretty $ RespUTXOsByAddress (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
 
 getUTXOsByAddrs :: Handler App App ()
 getUTXOsByAddrs = do
@@ -402,10 +415,11 @@ getUTXOsByAddrs = do
             pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
             cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
             pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+            isAsc <- (maybe False (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "ascending")
             bp2pEnv <- getBitcoinP2P
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
             lg <- getLogger
-            res <- LE.try $ runWithManyInputs xGetUTXOsAddress addrs pgSize (decodeOP cursor)
+            res <- LE.try $ runWithManyInputs xGetUtxosAddress addrs pgSize (decodeNTI cursor) isAsc
             case res of
                 Left (e :: SomeException) -> do
                     err lg $ LG.msg $ "Error: xGetUTXOsAddress: " ++ show e
@@ -415,7 +429,7 @@ getUTXOsByAddrs = do
                     writeBS $
                         BSL.toStrict $
                         encodeResp pretty $
-                        RespUTXOsByAddresses (encodeOP $ getNextCursor ops) (fromResultWithCursor <$> ops)
+                        RespUTXOsByAddresses (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
         Nothing -> throwBadRequest
 
 getUTXOsByScriptHash :: Handler App App ()
@@ -424,10 +438,11 @@ getUTXOsByScriptHash = do
     pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
     cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
     pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    isAsc <- (maybe False (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "ascending")
     bp2pEnv <- getBitcoinP2P
     let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
     lg <- getLogger
-    res <- LE.try $ xGetUTXOsScriptHash (fromJust sh) pgSize (decodeOP cursor)
+    res <- LE.try $ xGetUtxosScriptHash (fromJust sh) pgSize (decodeNTI cursor) isAsc
     case res of
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
@@ -435,7 +450,7 @@ getUTXOsByScriptHash = do
         Right ops -> do
             writeBS $
                 BSL.toStrict $
-                encodeResp pretty $ RespUTXOsByScriptHash (encodeOP $ getNextCursor ops) (fromResultWithCursor <$> ops)
+                encodeResp pretty $ RespUTXOsByScriptHash (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
 
 getUTXOsByScriptHashes :: Handler App App ()
 getUTXOsByScriptHashes = do
@@ -445,10 +460,11 @@ getUTXOsByScriptHashes = do
             pgSize <- (fmap $ read . DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "pagesize")
             cursor <- (fmap $ DT.unpack . DTE.decodeUtf8) <$> (getQueryParam "cursor")
             pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+            isAsc <- (maybe False (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "ascending")
             bp2pEnv <- getBitcoinP2P
             let net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
             lg <- getLogger
-            res <- LE.try $ runWithManyInputs xGetUTXOsScriptHash sh pgSize (decodeOP cursor)
+            res <- LE.try $ runWithManyInputs xGetUtxosScriptHash sh pgSize (decodeNTI cursor) isAsc
             case res of
                 Left (e :: SomeException) -> do
                     modifyResponse $ setResponseStatus 500 "Internal Server Error"
@@ -457,7 +473,7 @@ getUTXOsByScriptHashes = do
                     writeBS $
                         BSL.toStrict $
                         encodeResp pretty $
-                        RespUTXOsByScriptHashes (encodeOP $ getNextCursor ops) (fromResultWithCursor <$> ops)
+                        RespUTXOsByScriptHashes (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
         Nothing -> throwBadRequest
 
 getMNodesByTxID :: Handler App App ()
@@ -489,9 +505,20 @@ relayTx RelayTx {..} = do
     pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     res <- LE.try $ xRelayTx rTx
     case res of
-        Left (e :: SomeException) -> do
-            modifyResponse $ setResponseStatus 500 "Internal Server Error"
-            writeBS "INTERNAL_SERVER_ERROR"
+        Left (e :: BlockSyncException) -> do
+            case e of
+                ParentProcessingException e -> do
+                    modifyResponse $ setResponseStatus 400 "Bad Request"
+                    writeBS $ "Rejected relay: exception while processing parent(s) of transaction: " <> S.pack e
+                RelayFailureException -> do
+                    modifyResponse $ setResponseStatus 500 "Internal Server Error"
+                    writeBS "Failed to relay transaction to any Nexa peer"
+                DoubleSpendException ins -> do
+                    modifyResponse $ setResponseStatus 400 "Bad Request"
+                    writeBS $ BC.pack $ "Invalid inputs, double spending at indices: " <> (show ins)
+                _ -> do
+                    modifyResponse $ setResponseStatus 500 "Internal Server Error"
+                    writeBS "INTERNAL_SERVER_ERROR"
         Right ops -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespRelayTx ops
 relayTx _ = throwBadRequest
 
@@ -542,7 +569,6 @@ getPurchasedNames (GetPurchasedNames nameArray pgSize cursor) = do
             writeBS (S.pack $ show e)
         Right (names, nextCursor) -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespPurchasedNames names nextCursor
 getPurchasedNames _ = throwBadRequest
-
 
 getCurrentUser :: Handler App App ()
 getCurrentUser = do
@@ -710,16 +736,23 @@ withAuthAs role onSuccess = do
 
 withReq :: Aeson.FromJSON a => (a -> Handler App App ()) -> Handler App App ()
 withReq handler = do
+    lg <- getLogger
     rq <- getRequest
     let ct = getHeader "content-type" rq <|> (getHeader "Content-Type" rq) <|> (getHeader "Content-type" rq)
     if ct == Just "application/json"
         then do
-            bsReq <- readRequestBody (8 * 2048)
-            case Aeson.eitherDecode bsReq of
-                Right r -> handler r
-                Left err -> do
+            res <- LE.try $ readRequestBody (1024 * 1024 * 1024) -- 1 GiB size limit for request body
+            case res of
+                Left (e :: SomeException) -> do
+                    err lg $ LG.msg $ BC.pack $ "[ERROR] Failed to read POST request body: " <> show e
                     modifyResponse $ setResponseStatus 400 "Bad Request"
-                    writeBS "Error: failed to decode request body JSON"
+                    writeBS $ BC.pack $ "Error: failed to read request body (" <> (show e) <> ")"
+                Right req ->
+                    case Aeson.eitherDecode req of
+                        Right r -> handler r
+                        Left err -> do
+                            modifyResponse $ setResponseStatus 400 "Bad Request"
+                            writeBS "Error: failed to decode request body JSON"
         else throwBadRequest
 
 parseAuthorizationHeader :: Maybe B.ByteString -> Maybe B.ByteString

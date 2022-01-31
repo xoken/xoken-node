@@ -28,7 +28,7 @@ data Action
     | OwnerAction
           { ownerInput :: !Index
           , ownerOutput :: !OwnerOutput
-          , oProxyProviders :: ![ProxyProvider]
+          , registrations :: ![Registration]
           }
     deriving (Show, Generic, Eq, Serialise)
 
@@ -63,12 +63,13 @@ data Extension
           }
     deriving (Show, Generic, Eq, Serialise)
 
-data ProxyProvider =
-    ProxyProvider
+data Registration =
+    AllPayRegistration
         { service :: !String
         , mode :: !String
-        , endpoint :: !Endpoint
-        , registration :: !Registration
+        , identityPubKey :: !String
+        , authEncryptPubKey :: !String
+        , signingPubKey :: !String
         }
     deriving (Show, Generic, Eq, Serialise)
 
@@ -78,17 +79,6 @@ data Endpoint =
         , uri :: !String
         }
     deriving (Show, Generic, Eq, Serialise)
-
-data Registration =
-    Registration
-        { addressCommitment :: !String
-        , utxoCommitment :: !String
-        , signature :: !String
-        , expiry :: !Int
-        }
-    deriving (Show, Generic, Eq, Serialise)
-
-instance ToJSON ProxyProvider
 
 instance ToJSON Registration
 

@@ -198,41 +198,49 @@ data RPCReqParams'
           { gaAddrOutputs :: String
           , gaPageSize :: Maybe Int32
           , gaCursor :: Maybe String
+          , gaAscending :: Bool
           }
     | GetOutputsByAddresses
           { gasAddrOutputs :: [String]
           , gasPageSize :: Maybe Int32
           , gasCursor :: Maybe String
+          , gasAscending :: Bool
           }
     | GetOutputsByScriptHash
           { gaScriptHashOutputs :: String
           , gaScriptHashPageSize :: Maybe Int32
           , gaScriptHashCursor :: Maybe String
+          , gaScriptHashAscending :: Bool
           }
     | GetOutputsByScriptHashes
           { gasScriptHashOutputs :: [String]
           , gasScriptHashPageSize :: Maybe Int32
           , gasScriptHashCursor :: Maybe String
+          , gasScriptHashAscending :: Bool
           }
     | GetUTXOsByAddress
           { guaAddrOutputs :: String
           , guaPageSize :: Maybe Int32
           , guaCursor :: Maybe String
+          , guaAscending :: Bool
           }
     | GetUTXOsByScriptHash
           { guScriptHashOutputs :: String
           , guScriptHashPageSize :: Maybe Int32
           , guScriptHashCursor :: Maybe String
+          , guScriptHashAscending :: Bool
           }
     | GetUTXOsByAddresses
           { guasAddrOutputs :: [String]
           , guasPageSize :: Maybe Int32
           , guasCursor :: Maybe String
+          , guasAscending :: Bool
           }
     | GetUTXOsByScriptHashes
           { gusScriptHashOutputs :: [String]
           , gusScriptHashPageSize :: Maybe Int32
           , gusScriptHashCursor :: Maybe String
+          , gusAscending :: Bool
           }
     | GetMerkleBranchByTxID
           { gmbMerkleBranch :: String
@@ -279,14 +287,20 @@ instance FromJSON RPCReqParams' where
         (GetTransactionsByTxIDs <$> o .: "txids") <|>
         (GetRawTransactionByTxID <$> o .: "txid") <|>
         (GetRawTransactionsByTxIDs <$> o .: "txids") <|>
-        (GetOutputsByAddress <$> o .: "address" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
-        (GetOutputsByAddresses <$> o .: "addresses" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
-        (GetOutputsByScriptHash <$> o .: "scriptHash" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
-        (GetOutputsByScriptHashes <$> o .: "scriptHashes" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
-        (GetUTXOsByAddress <$> o .: "address" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
-        (GetUTXOsByAddresses <$> o .: "addresses" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
-        (GetUTXOsByScriptHash <$> o .: "scriptHash" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
-        (GetUTXOsByScriptHashes <$> o .: "scriptHashes" <*> o .:? "pageSize" <*> o .:? "cursor") <|>
+        (GetOutputsByAddress <$> o .: "address" <*> o .:? "pageSize" <*> o .:? "cursor" <*> o .:? "ascending" .!= False) <|>
+        (GetOutputsByAddresses <$> o .: "addresses" <*> o .:? "pageSize" <*> o .:? "cursor" <*>
+         o .:? "ascending" .!= False) <|>
+        (GetOutputsByScriptHash <$> o .: "scriptHash" <*> o .:? "pageSize" <*> o .:? "cursor" <*>
+         o .:? "ascending" .!= False) <|>
+        (GetOutputsByScriptHashes <$> o .: "scriptHashes" <*> o .:? "pageSize" <*> o .:? "cursor" <*>
+         o .:? "ascending" .!= False) <|>
+        (GetUTXOsByAddress <$> o .: "address" <*> o .:? "pageSize" <*> o .:? "cursor" <*> o .:? "ascending" .!= False) <|>
+        (GetUTXOsByAddresses <$> o .: "addresses" <*> o .:? "pageSize" <*> o .:? "cursor" <*>
+         o .:? "ascending" .!= False) <|>
+        (GetUTXOsByScriptHash <$> o .: "scriptHash" <*> o .:? "pageSize" <*> o .:? "cursor" <*>
+         o .:? "ascending" .!= False) <|>
+        (GetUTXOsByScriptHashes <$> o .: "scriptHashes" <*> o .:? "pageSize" <*> o .:? "cursor" <*>
+         o .:? "ascending" .!= False) <|>
         (GetMerkleBranchByTxID <$> o .: "txid") <|>
         (GetAllegoryNameBranch <$> o .: "name" <*> o .: "isProducer") <|>
         (RelayTx . B64.decodeLenient . T.encodeUtf8 <$> o .: "rawTx") <|>
@@ -653,9 +667,9 @@ instance ToJSON RawTxRecord where
         object
             [ "txId" .= tId
             , "size" .= sz
-            , "txIndex" .= (binfTxIndex <$> tBI)
-            , "blockHash" .= (binfBlockHash <$> tBI)
-            , "blockHeight" .= (binfBlockHeight <$> tBI)
+            , "txIndex" .= (_getNullForDef (-1) $ binfTxIndex <$> tBI)
+            , "blockHash" .= (_getNullForDef "" $ binfBlockHash <$> tBI)
+            , "blockHeight" .= (_getNullForDef (-1) $ binfBlockHeight <$> tBI)
             , "txSerialized" .= (T.decodeUtf8 . BL.toStrict . B64L.encode $ tS)
             , "txOutputs" .= txo
             , "txInputs" .= txi
@@ -679,9 +693,9 @@ instance ToJSON TxRecord where
         object
             [ "txId" .= tId
             , "size" .= sz
-            , "txIndex" .= (binfTxIndex <$> tBI)
-            , "blockHash" .= (binfBlockHash <$> tBI)
-            , "blockHeight" .= (binfBlockHeight <$> tBI)
+            , "txIndex" .= (_getNullForDef (-1) $ binfTxIndex <$> tBI)
+            , "blockHash" .= (_getNullForDef "" $ binfBlockHash <$> tBI)
+            , "blockHeight" .= (_getNullForDef (-1) $ binfBlockHeight <$> tBI)
             , "tx" .= tx'
             , "fees" .= fee
             , "merkleBranch" .= mrkl
@@ -762,9 +776,9 @@ instance ToJSON AddressOutputs where
             [ "address" .= addr
             , "outputTxHash" .= (opTxHash out)
             , "outputIndex" .= (opIndex out)
-            , "txIndex" .= (binfTxIndex <$> bi)
-            , "blockHash" .= (binfBlockHash <$> bi)
-            , "blockHeight" .= (binfBlockHeight <$> bi)
+            , "txIndex" .= (_getNullForDef (-1) $ binfTxIndex <$> bi)
+            , "blockHash" .= (_getNullForDef "" $ binfBlockHash <$> bi)
+            , "blockHeight" .= (_getNullForDef (-1) $ binfBlockHeight <$> bi)
             , "spendInfo" .= ios
             , "prevOutpoint" .= po
             , "value" .= val
@@ -787,9 +801,9 @@ instance ToJSON ScriptOutputs where
             [ "scriptHash" .= dh
             , "outputTxHash" .= (opTxHash out)
             , "outputIndex" .= (opIndex out)
-            , "txIndex" .= (binfTxIndex <$> bi)
-            , "blockHash" .= (binfBlockHash <$> bi)
-            , "blockHeight" .= (binfBlockHeight <$> bi)
+            , "txIndex" .= (_getNullForDef (-1) $ binfTxIndex <$> bi)
+            , "blockHash" .= (_getNullForDef "" $ binfBlockHash <$> bi)
+            , "blockHeight" .= (_getNullForDef (-1) $ binfBlockHeight <$> bi)
             , "spendInfo" .= ios
             , "prevOutpoint" .= po
             , "value" .= val
@@ -947,7 +961,7 @@ mergeAddrTxOutTxOutput addr (TxOut {..}) txOutput = txOutput {lockingScript = sc
 txToTx' :: Tx -> [TxOutput] -> [TxInput] -> Tx'
 txToTx' (Tx {..}) txout txin = Tx' txVersion txout txin txLockTime
 
-type TxIdOutputs = ((T.Text, Int32, Int32), Bool, Set ((T.Text, Int32), Int32, (T.Text, Int64)), Int64, T.Text)
+type TxIdOutputs = (Maybe (T.Text, Int32, Int32), Bool, Set ((T.Text, Int32), Int32, (T.Text, Int64)), Int64, T.Text)
 
 type TxIdOutputs' = (Bool, Set ((T.Text, Int32), Int32, (T.Text, Int64)), Int64, T.Text)
 
@@ -961,10 +975,13 @@ genUnConfTxOutputData (txId, txIndex, (_, inps, val, addr), Just (_, oth, _, _))
      in TxOutputData txId txIndex addr val Nothing (Q.fromSet inps) Nothing
 
 genTxOutputData :: (T.Text, Int32, TxIdOutputs, Maybe TxIdOutputs) -> TxOutputData
-genTxOutputData (txId, txIndex, ((hs, ht, ind), _, inps, val, addr), Nothing) =
-    TxOutputData txId txIndex addr val (Just $ BlockInfo' (T.unpack hs) ht ind) (Q.fromSet inps) Nothing
-genTxOutputData (txId, txIndex, ((hs, ht, ind), _, inps, val, addr), Just ((shs, sht, sind), _, oth, _, _)) =
-    let other = Q.fromSet oth
+genTxOutputData (txId, txIndex, (binfo, _, inps, val, addr), Nothing) =
+    let (hs, ht, ind) = fromMaybe ("", -1, -1) binfo
+     in TxOutputData txId txIndex addr val (Just $ BlockInfo' (T.unpack hs) ht ind) (Q.fromSet inps) Nothing
+genTxOutputData (txId, txIndex, (binfo, _, inps, val, addr), Just (sbinfo, _, oth, _, _)) =
+    let (hs, ht, ind) = fromMaybe ("", -1, -1) binfo
+        (shs, sht, sind) = fromMaybe ("", -1, -1) sbinfo
+        other = Q.fromSet oth
         ((stid, _), stidx, _) = head $ other
         si = (\((_, soi), _, (ad, vl)) -> SpendInfo' soi ad vl) <$> other
      in TxOutputData
@@ -982,6 +999,36 @@ txOutputDataToOutput (TxOutputData {..}) = TxOutput txind (T.unpack address) spe
 fromResultWithCursor :: ResultWithCursor r c -> r
 fromResultWithCursor = (\(ResultWithCursor res cur) -> res)
 
+addressOutputToResultWithCursor ::
+       String -> ((Int64, (T.Text, Int32)), TxOutputData) -> ResultWithCursor AddressOutputs Int64
+addressOutputToResultWithCursor address ((nominalTxIndex, (opTxId, opIndex)), TxOutputData _ _ _ value blockInfo inputs spendInfo) =
+    ResultWithCursor
+        (AddressOutputs
+             address
+             (OutPoint' (T.unpack opTxId) (fromIntegral opIndex))
+             blockInfo
+             spendInfo
+             ((\((oph, opi), ii, (_, ov)) ->
+                   (OutPoint' (T.unpack oph) (fromIntegral opi), fromIntegral ii, fromIntegral ov)) <$>
+              inputs)
+             value)
+        nominalTxIndex
+
+scriptOutputToResultWithCursor ::
+       ((T.Text, Int64, (T.Text, Int32)), TxOutputData) -> ResultWithCursor ScriptOutputs Int64
+scriptOutputToResultWithCursor ((scriptHash, nominalTxIndex, (opTxId, opIndex)), TxOutputData _ _ _ value blockInfo inputs spendInfo) =
+    ResultWithCursor
+        (ScriptOutputs
+             (T.unpack scriptHash)
+             (OutPoint' (T.unpack opTxId) (fromIntegral opIndex))
+             blockInfo
+             spendInfo
+             ((\((oph, opi), ii, (_, ov)) ->
+                   (OutPoint' (T.unpack oph) (fromIntegral opi), fromIntegral ii, fromIntegral ov)) <$>
+              inputs)
+             value)
+        nominalTxIndex
+
 reverse2 :: String -> String
 reverse2 (x:y:xs) = reverse2 xs ++ [x, y]
 reverse2 x = x
@@ -992,3 +1039,10 @@ maxBoundOutput = (T.pack "ffffffffffffffffffffffffffffffffffffffffffffffffffffff
 encodeResp :: ToJSON a => Bool -> a -> C.ByteString
 encodeResp True = AP.encodePretty
 encodeResp False = A.encode
+
+_getNullForDef :: Eq a => a -> Maybe a -> Maybe a
+_getNullForDef _ Nothing = Nothing
+_getNullForDef v (Just x) =
+    if v == x
+        then Nothing
+        else Just x
