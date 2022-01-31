@@ -580,58 +580,24 @@ commitScriptHashOutputs conn sh output blockInfo = do
             err lg $ LG.msg $ "Error: INSERTing into 'script_hash_outputs': " ++ show e
             throw KeyValueDBInsertException
 
-insertTxIdOutputs ::
-       (HasXokenNodeEnv env m, MonadIO m)
-    => (Text, Int32)
-    -> Text
-    -> Text
-    -> Bool
-    -> Maybe (Text, Int32, Int32)
-    -> [((Text, Int32), Int32, (Text, Int64))]
-    -> Int64
-    -> m ()
-insertTxIdOutputs (txid, outputIndex) address scriptHash isRecv blockInfo other value = do
+insertTxIdOutputs :: (HasXokenNodeEnv env m, MonadIO m) => (Text, Int32) -> Text -> Text -> Int64 -> m ()
+insertTxIdOutputs (txid, outputIndex) address script value = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
     let conn = xCqlClientState dbe
+    let queryStr =
+            fromString $
+            "INSERT INTO xoken.txid_outputs (txid , output_index, address, script,  value) VALUES (?,?,?,?,?) " :: Q.QueryString Q.W ( Text
+                                                                                                                                     , Int32
+                                                                                                                                     , Text
+                                                                                                                                     , Text
+                                                                                                                                     , Int64) ()
+    let queryPar = getSimpleQueryParam (txid, outputIndex, address, script, value)
     res <-
-        case blockInfo of
-            Nothing ->
-                let queryStr =
-                        fromString $
-                        "UPDATE xoken.txid_outputs SET address=?, script_hash=?, other=?, value=? " ++
-                        "WHERE txid=? AND output_index=? AND is_recv=?" :: Q.QueryString Q.W ( Text
-                                                                                             , Text
-                                                                                             , [( (Text, Int32)
-                                                                                                , Int32
-                                                                                                , (Text, Int64))]
-                                                                                             , Int64
-                                                                                             , Text
-                                                                                             , Int32
-                                                                                             , Bool) ()
-                    queryPar = getSimpleQueryParam (address, scriptHash, other, value, txid, outputIndex, isRecv)
-                 in liftIO $
-                    queryPrepared conn (Q.RqPrepare (Q.Prepare queryStr)) >>= \queryId ->
-                        liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryId queryPar))
-            Just bi ->
-                let queryStr =
-                        fromString $
-                        "UPDATE xoken.txid_outputs SET address=?, script_hash=?, block_info=?, other=?, value=? " ++
-                        "WHERE txid=? AND output_index=? AND is_recv=?" :: Q.QueryString Q.W ( Text
-                                                                                             , Text
-                                                                                             , (Text, Int32, Int32)
-                                                                                             , [( (Text, Int32)
-                                                                                                , Int32
-                                                                                                , (Text, Int64))]
-                                                                                             , Int64
-                                                                                             , Text
-                                                                                             , Int32
-                                                                                             , Bool) ()
-                    queryPar = getSimpleQueryParam (address, scriptHash, bi, other, value, txid, outputIndex, isRecv)
-                 in liftIO $
-                    queryPrepared conn (Q.RqPrepare (Q.Prepare queryStr)) >>= \queryId ->
-                        liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryId queryPar))
+        liftIO $
+        queryPrepared conn (Q.RqPrepare (Q.Prepare queryStr)) >>= \queryId ->
+            liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryId queryPar))
     case res of
         Left (e :: SomeException) -> do
             err lg $
@@ -640,9 +606,33 @@ insertTxIdOutputs (txid, outputIndex) address scriptHash isRecv blockInfo other 
                 "[ERROR] While inserting outputs for " <>
                 (T.unpack txid) <> ":" <> (show outputIndex) <> ": " <> (show e)
             throw e
-        _ ->
-            debug lg $
-            LG.msg $ "Updated/Inserted outputs (block " ++ show blockInfo ++ ") for tx:" ++ show (txid, outputIndex)
+        _ -> debug lg $ LG.msg $ "Insert outputs for tx:" ++ show (txid, outputIndex)
+
+updateSpendInfoOutputs :: (HasXokenNodeEnv env m, MonadIO m) => Text -> Int32 -> (Text, Int32) -> m ()
+updateSpendInfoOutputs txid outputIndex spendInfo = do
+    dbe <- getDB
+    lg <- getLogger
+    bp2pEnv <- getBitcoinP2P
+    let conn = xCqlClientState dbe
+    let queryStr =
+            fromString $ "UPDATE xoken.txid_outputs SET spend_info=? WHERE txid=? AND output_index=? " :: Q.QueryString Q.W ( ( Text
+                                                                                                                              , Int32)
+                                                                                                                            , Text
+                                                                                                                            , Int32) ()
+    let queryPar = getSimpleQueryParam (spendInfo, txid, outputIndex)
+    res <-
+        liftIO $
+        queryPrepared conn (Q.RqPrepare (Q.Prepare queryStr)) >>= \queryId ->
+            liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryId queryPar))
+    case res of
+        Left (e :: SomeException) -> do
+            err lg $
+                LG.msg $
+                C.pack $
+                "[ERROR] While updating outputs for " <>
+                (T.unpack txid) <> ":" <> (show outputIndex) <> ": " <> (show e)
+            throw e
+        _ -> debug lg $ LG.msg $ "Updated spend-info for output:" ++ show spendInfo
 
 commitTxPage ::
        (HasBitcoinP2P m, HasLogger m, HasDatabaseHandles m, MonadBaseControl IO m, MonadIO m)
@@ -905,7 +895,7 @@ processConfTransaction bis tx bhash blkht txind = do
                          case v of
                              Just v' -> liftIO $ TSH.mutate v' (T.intercalate "_" protocol) fn
                              Nothing -> debug lg $ LG.msg $ "No ProtocolInfo Available for: " ++ show bhash
-             insertTxIdOutputs output a sh True (Just bi) (stripScriptHash <$> inputs) (fromIntegral $ outValue o))
+             insertTxIdOutputs output a sh (fromIntegral $ outValue o))
         outAddrs
     debug lg $ LG.msg $ "Processing confirmed transaction <committed outputs> :" ++ show txhs
     mapM_
@@ -916,8 +906,7 @@ processConfTransaction bis tx bhash blkht txind = do
              let spendInfo = (\ov -> ((txHashToHex txhs, fromIntegral $ fst $ ov), i, snd $ ov)) <$> ovs
              if a == "" || sh == "" -- likely coinbase txns
                  then return ()
-                 else do
-                     insertTxIdOutputs prevOutpoint a sh False (Just bi) (stripScriptHash <$> spendInfo) 0)
+                 else updateSpendInfoOutputs (fst prevOutpoint) (snd prevOutpoint) (txHashToHex txhs, i))
         (zip (inAddrs) (map (\x -> (fst3 $ thd3 x, snd3 $ thd3 $ x)) inputs))
     debug lg $ LG.msg $ "Processing confirmed transaction <updated inputs> :" ++ show txhs
     --
@@ -994,29 +983,18 @@ getSatsValueFromOutpoint ::
     -> Bool
     -> IO ((Text, Text, Int64))
 getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait confirmedOnly = do
-    let qstr :: Q.QueryString Q.R (Text, Int32, Bool) (Text, Text, Int64, Maybe (Text, Int32, Int32))
-        qstr =
-            "SELECT address, script_hash, value, block_info FROM xoken.txid_outputs WHERE txid=? AND output_index=? AND is_recv=?"
-        par = getSimpleQueryParam (txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint, True)
+    let qstr :: Q.QueryString Q.R (Text, Int32) (Text, Text, Int64)
+        qstr = "SELECT address, script, value FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
+        par = getSimpleQueryParam (txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint)
     res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
     case res of
         Right results -> do
-            if (L.length results == 0) ||
-               ((\r ->
-                     case r of
-                         [] -> False
-                         (_, _, _, bi):_ -> isNothing bi)
-                    results &&
-                confirmedOnly)
+            if (L.length results == 0)
                 then do
                     debug lg $
                         LG.msg $
                         "getSatsValueFromOutpoint txid: " ++
-                        (show outPoint) ++
-                        ", results: " ++
-                        (show $ L.length results) ++
-                        ", blockInfo: " ++
-                        (show $ (\(_, _, _, bi) -> bi) <$> results) ++ ", confirmed: " ++ (show confirmedOnly)
+                        (show outPoint) ++ ", results: " ++ (show $ L.length results)
                     debug lg $
                         LG.msg $
                         "Tx not found: " ++ (show $ txHashToHex $ outPointHash outPoint) ++ " _waiting_ for event"
@@ -1056,7 +1034,7 @@ getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait confirmedOnly 
                                 LG.msg $ "event received _available_: " ++ (show $ txHashToHex $ outPointHash outPoint)
                             getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait confirmedOnly
                 else do
-                    let (addr, scriptHash, val, blockInfo) = head $ results
+                    let (addr, scriptHash, val) = head $ results
                     return $ (addr, scriptHash, val)
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: getSatsValueFromOutpoint: " ++ show e
@@ -1279,33 +1257,32 @@ checkOutputDataExists (txid, outputIndex) = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
     let conn = xCqlClientState dbe
-        queryStr :: Q.QueryString Q.R (T.Text, Int32, Bool) (Identity Bool)
-        queryStr = "SELECT is_recv FROM xoken.txid_outputs WHERE txid=? AND output_index=? AND is_recv=?"
-        queryPar = getSimpleQueryParam (txid, outputIndex, True)
+        queryStr :: Q.QueryString Q.R (T.Text, Int32) (Identity Int32)
+        queryStr = "SELECT output_index FROM xoken.txid_outputs WHERE txid=? AND output_index=? "
+        queryPar = getSimpleQueryParam (txid, outputIndex)
     res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query queryStr queryPar)
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ C.pack $ "[ERROR] Querying database while checking if output exists: " <> (show e)
             throw KeyValueDBLookupException
         Right res -> return $ not . L.null $ res
-
-updateBlockInfo :: (HasXokenNodeEnv env m, MonadIO m) => (Text, Int32) -> Bool -> (Text, Int32, Int32) -> m ()
-updateBlockInfo (txid, outputIndex) isRecv blockInfo = do
-    dbe <- getDB
-    lg <- getLogger
-    bp2pEnv <- getBitcoinP2P
-    let conn = xCqlClientState dbe
-        queryStr :: Q.QueryString Q.W ((Text, Int32, Int32), Text, Int32, Bool) ()
-        queryStr = "UPDATE xoken.txid_outputs SET block_info=? WHERE txid=? AND output_index=? AND is_recv=?"
-        queryPar = getSimpleQueryParam (blockInfo, txid, outputIndex, isRecv)
-    queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare queryStr))
-    res <- liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryId queryPar))
-    case res of
-        Left (e :: SomeException) -> do
-            err lg $
-                LG.msg $
-                C.pack $
-                "[ERROR] While updating spendInfo for confirmed Tx output " <>
-                (T.unpack txid) <> ":" <> (show outputIndex) <> ": " <> (show e)
-            throw e
-        _ -> debug lg $ LG.msg $ "Updated BlockInfo: " ++ show blockInfo ++ " for tx:" ++ show (txid, outputIndex)
+-- updateBlockInfo :: (HasXokenNodeEnv env m, MonadIO m) => (Text, Int32) -> Bool -> (Text, Int32, Int32) -> m ()
+-- updateBlockInfo (txid, outputIndex) isRecv blockInfo = do
+--     dbe <- getDB
+--     lg <- getLogger
+--     bp2pEnv <- getBitcoinP2P
+--     let conn = xCqlClientState dbe
+--         queryStr :: Q.QueryString Q.W ((Text, Int32, Int32), Text, Int32, Bool) ()
+--         queryStr = "UPDATE xoken.txid_outputs SET block_info=? WHERE txid=? AND output_index=? "
+--         queryPar = getSimpleQueryParam (blockInfo, txid, outputIndex, isRecv)
+--     queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare queryStr))
+--     res <- liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryId queryPar))
+--     case res of
+--         Left (e :: SomeException) -> do
+--             err lg $
+--                 LG.msg $
+--                 C.pack $
+--                 "[ERROR] While updating spendInfo for confirmed Tx output " <>
+--                 (T.unpack txid) <> ":" <> (show outputIndex) <> ": " <> (show e)
+--             throw e
+--         _ -> debug lg $ LG.msg $ "Updated BlockInfo: " ++ show blockInfo ++ " for tx:" ++ show (txid, outputIndex)
