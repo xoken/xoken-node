@@ -371,7 +371,8 @@ updateMerkleSubTrees dbe lg hashComp newhash left right ht ind final = do
                                                         Left (e :: SomeException) -> do
                                                             err lg $
                                                                 LG.msg $
-                                                                "Error: MerkleSubTreeDBInsertException (1): " <> (show e)
+                                                                "Error: MerkleSubTreeDBInsertException (1): " <>
+                                                                (show e)
                                                             throw MerkleSubTreeDBInsertException
                                                 else do
                                                     liftIO $ threadDelay (1000000 * 5) -- time to recover
@@ -449,7 +450,8 @@ merkleTreeBuilder tque blockHash treeHt = do
                     else do
                         liftIO $ modifyIORef' txPage (\x -> x ++ [txh])
                 res <-
-                    LE.try $ liftIO $ updateMerkleSubTrees dbe lg hcstate (getTxHash txh) Nothing Nothing treeHt 0 isLast
+                    LE.try $
+                    liftIO $ updateMerkleSubTrees dbe lg hcstate (getTxHash txh) Nothing Nothing treeHt 0 isLast
                 case res of
                     Right (hcs) -> do
                         liftIO $ writeIORef tv hcs
@@ -612,10 +614,11 @@ readNextMessage net sock ingss = do
                 Left e -> do
                     err lg $ msg ("Error decoding incoming message header: " ++ e)
                     throw MessageParsingException
-                Right (MessageHeader headMagic cmd len cks) -> do
+                Right (MessageHeader headMagic extcmd extlen cks) -> do
+                    debug lg $ msg (" message header: " ++ (show extcmd))
                     if headMagic == getNetworkMagic net
                         then do
-                            if cmd == MCBlock
+                            if extcmd == MCBlock
                                 then do
                                     byts <- recvAll sock (88) -- 80 byte Block header + VarInt (max 8 bytes) Tx count
                                     case runGetLazyState (getDeflatedBlock) (byts) of
@@ -633,23 +636,26 @@ readNextMessage net sock ingss = do
                                                             BlockIngestState
                                                                 { binUnspentBytes = unused
                                                                 , binTxPayloadLeft =
-                                                                      fromIntegral (len) - (88 - LC.length unused)
+                                                                      fromIntegral (extlen) - (88 - LC.length unused)
                                                                 , binTxTotalCount = fromIntegral $ txnCount b
                                                                 , binTxIngested = 0
-                                                                , binBlockSize = fromIntegral $ len
+                                                                , binBlockSize = fromIntegral $ extlen
                                                                 , binChecksum = cks
                                                                 }
                                                     return (Just $ MBlock b, Just $ IngressStreamState bi Nothing)
                                                 Nothing -> throw DeflatedBlockParseException
                                 else do
                                     byts <-
-                                        if len == 0
+                                        if extlen == 0
                                             then return hdr
                                             else do
-                                                b <- recvAll sock (fromIntegral len)
+                                                b <- recvAll sock (fromIntegral extlen)
                                                 return (hdr `BSL.append` b)
                                     case runGetLazy (getMessage net) byts of
-                                        Left e -> throw MessageParsingException
+                                        Left e -> do
+                                            err lg $ msg (" type???: " ++ show e)
+                                            -- throw MessageParsingException
+                                            return (Just $ MOther C.empty C.empty, Nothing)
                                         Right mg -> do
                                             debug lg $ msg ("Message recv' : " ++ (show $ msgType mg))
                                             return (Just mg, Nothing)
@@ -679,8 +685,10 @@ doVersionHandshake net sock sa = do
         ver = buildVersion net nonce bb ad rmt now
         em = runPut . putMessage net $ (MVersion ver)
     mv <- liftIO $ (newMVar ())
+    debug lg $ msg $ val "Starting handshake.. "
     liftIO $ sendEncMessage mv sock (BSL.fromStrict em)
     (hs1, _) <- readNextMessage net sock Nothing
+    debug lg $ msg $ val "Got this in return - handshake.. "
     case hs1 of
         Just (MVersion __) -> do
             (hs2, _) <- readNextMessage net sock Nothing
@@ -693,8 +701,19 @@ doVersionHandshake net sock sa = do
                 __ -> do
                     err lg $ msg $ val "Error, unexpected message (2) during handshake"
                     return False
+        Just (MOther _ _) -> do
+            (hs2, _) <- readNextMessage net sock Nothing
+            case hs2 of
+                Just MVerAck -> do
+                    let em2 = runPut . putMessage net $ (MVerAck)
+                    liftIO $ sendEncMessage mv sock (BSL.fromStrict em2)
+                    debug lg $ msg ("Version handshake complete'': " ++ show sa)
+                    return True
+                __ -> do
+                    err lg $ msg $ val "Error, unexpected message (2) during handshake''"
+                    return False
         __ -> do
-            err lg $ msg $ val "Error, unexpected message (1) during handshake"
+            err lg $ msg $ val "Error, unexpected message (1) during handshake''"
             return False
 
 messageHandler ::
