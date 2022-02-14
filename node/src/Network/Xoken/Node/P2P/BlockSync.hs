@@ -613,6 +613,7 @@ updateSpendInfoOutputs txid outputIndex spendInfo = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
+    debug lg $ LG.msg $ "updateSpendInfoOutputs :" ++ show spendInfo ++ " " ++ show txid ++ " " ++ show outputIndex
     let conn = xCqlClientState dbe
     let queryStr =
             fromString $ "UPDATE xoken.txid_outputs SET spend_info=? WHERE txid=? AND output_index=? " :: Q.QueryString Q.W ( ( Text
@@ -810,6 +811,10 @@ processConfTransaction bis tx bhash blkht txind = do
     mapM_
         (\(a, o, i) -> do
              let sh = txHashToHex $ TxHash $ sha256 (scriptOutput o)
+             let script =
+                     if a == ""
+                         then (scriptOutput o)
+                         else ""
              let bi = (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
              let output = (txHashToHex txhs, i)
              let bsh = B16.encode $ scriptOutput o
@@ -895,7 +900,7 @@ processConfTransaction bis tx bhash blkht txind = do
                          case v of
                              Just v' -> liftIO $ TSH.mutate v' (T.intercalate "_" protocol) fn
                              Nothing -> debug lg $ LG.msg $ "No ProtocolInfo Available for: " ++ show bhash
-             insertTxIdOutputs output a sh (fromIntegral $ outValue o))
+             insertTxIdOutputs output a (T.pack $ C.unpack script) (fromIntegral $ outValue o))
         outAddrs
     debug lg $ LG.msg $ "Processing confirmed transaction <committed outputs> :" ++ show txhs
     mapM_
@@ -904,9 +909,8 @@ processConfTransaction bis tx bhash blkht txind = do
              let blockHeight = fromIntegral blkht
              let prevOutpoint = (txHashToHex $ outPointHash $ prevOutput o, fromIntegral $ outPointIndex $ prevOutput o)
              let spendInfo = (\ov -> ((txHashToHex txhs, fromIntegral $ fst $ ov), i, snd $ ov)) <$> ovs
-             if a == "" || sh == "" -- likely coinbase txns
-                 then return ()
-                 else updateSpendInfoOutputs (fst prevOutpoint) (snd prevOutpoint) (txHashToHex txhs, i))
+             -- this will fail to update for coinbase txns, its cool
+             updateSpendInfoOutputs (fst prevOutpoint) (snd prevOutpoint) (txHashToHex txhs, i))
         (zip (inAddrs) (map (\x -> (fst3 $ thd3 x, snd3 $ thd3 $ x)) inputs))
     debug lg $ LG.msg $ "Processing confirmed transaction <updated inputs> :" ++ show txhs
     --
