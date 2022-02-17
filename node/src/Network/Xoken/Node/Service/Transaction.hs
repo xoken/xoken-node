@@ -244,45 +244,35 @@ getTxOutputsFromTxId txid = do
     bp2pEnv <- getBitcoinP2P
     ep <- liftIO $ readTVarIO (epochType bp2pEnv)
     let conn = xCqlClientState dbe
-        toStr = "SELECT output_index,block_info,is_recv,other,value,address FROM xoken.txid_outputs WHERE txid=?"
-        toQStr =
-            toStr :: Q.QueryString Q.R (Identity DT.Text) ( Int32
-                                                          , Maybe (DT.Text, Int32, Int32)
-                                                          , Bool
-                                                          , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
-                                                          , Int64
-                                                          , DT.Text)
+        toStr = "SELECT output_index, value, address, script, spend_info FROM xoken.txid_outputs WHERE txid=?"
+        toQStr = toStr :: Q.QueryString Q.R (Identity DT.Text) (Int32, Int64, DT.Text, DT.Text, Maybe (DT.Text, Int32))
         par = getSimpleQueryParam (Identity txid)
     res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query toQStr par)
-    out <-
-        case res of
-            Right t -> do
-                if length t == 0
-                    then do
-                        err lg $
-                            LG.msg $ "Error: getTxOutputsFromTxId: No entry in txid_outputs for txid: " ++ show txid
-                        return []
-                    else do
-                        let txg =
-                                (L.sortBy (\(_, _, x, _, _, _) (_, _, y, _, _, _) -> compare x y)) <$>
-                                (L.groupBy (\(x, _, _, _, _, _) (y, _, _, _, _, _) -> x == y) t)
-                            txOutData =
-                                (\inp ->
-                                     case inp of
-                                         [(idx, bif, recv, oth, val, addr)] ->
-                                             genTxOutputData (txid, idx, (bif, recv, oth, val, addr), Nothing)
-                                         [(idx1, bif1, recv1, oth1, val1, addr1), (_, bif2, recv2, oth2, val2, addr2)] ->
-                                             genTxOutputData
-                                                 ( txid
-                                                 , idx1
-                                                 , (bif2, recv2, oth2, val2, addr2)
-                                                 , Just (bif1, recv1, oth1, val1, addr1))) <$>
-                                txg
-                        return $ txOutputDataToOutput <$> txOutData
-            Left (e :: SomeException) -> do
-                err lg $ LG.msg $ "Error: getTxOutputsFromTxId: " ++ show e
-                throw KeyValueDBLookupException
-    return out
+    case res of
+        Right t -> do
+            debug lg $ LG.msg $ "AAAA: T length: " ++ show (t)
+            if length t == 0
+                then do
+                    err lg $ LG.msg $ "Error: getTxOutputsFromTxId: No entry in txid_outputs for txid: " ++ show txid
+                    return []
+                else do
+                    let xx =
+                            L.map
+                                (\rw -> do
+                                     case rw of
+                                         (idx, val, addr, script, spendInfo) ->
+                                             TxOutput
+                                                 idx
+                                                 (DT.unpack addr)
+                                                 Nothing
+                                                 val
+                                                 (BC.pack $ DT.unpack script) -- TODO: pass appropriate SpendInfo
+                                 )
+                                t
+                    return xx
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: getTxOutputsFromTxId: " ++ show e
+            throw KeyValueDBLookupException
 
 xGetTxIDsByBlockHash :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => String -> Int32 -> Int32 -> m [String]
 xGetTxIDsByBlockHash hash pgSize pgNum = do

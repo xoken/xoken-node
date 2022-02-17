@@ -100,18 +100,14 @@ import qualified Xoken.NodeConfig as NC
 maxNTI :: Int64
 maxNTI = maxBound
 
-getTxOutputsData :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => (DT.Text, Int32) -> m TxOutputData
+getTxOutputsData :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => (DT.Text, Int32) -> m TxOutput
 getTxOutputsData (txid, index) = do
     dbe <- getDB
     lg <- getLogger
     let conn = xCqlClientState dbe
-        toStr = "SELECT block_info,is_recv,other,value,address FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
-        toQStr =
-            toStr :: Q.QueryString Q.R (DT.Text, Int32) ( Maybe (DT.Text, Int32, Int32)
-                                                        , Bool
-                                                        , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
-                                                        , Int64
-                                                        , DT.Text)
+        toStr =
+            "SELECT output_index, value, address, script, spend_info FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
+        toQStr = toStr :: Q.QueryString Q.R (DT.Text, Int32) (Int32, Int64, DT.Text, DT.Text, Maybe (DT.Text, Int32))
         top = getSimpleQueryParam (txid, index)
     toRes <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query toQStr top)
     case toRes of
@@ -123,21 +119,12 @@ getTxOutputsData (txid, index) = do
                         "Error: getTxOutputsData: No entry in txid_outputs for (txid,index): " ++ show (txid, index)
                     throw KeyValueDBLookupException
                 else do
-                    let txg = L.sortBy (\(_, x, _, _, _) (_, y, _, _, _) -> compare x y) es
-                    debug lg $
-                        LG.msg $
-                        BC.pack $
-                        "getTxOutputsData " <> (show $ (txid, index)) <> ": Tx output data pair: got: " <> (show txg)
-                    let outputData =
-                            case txg of
-                                [x] -> genTxOutputData (txid, index, x, Nothing)
-                                [x, y] -> genTxOutputData (txid, index, y, Just x)
-                    debug lg $
-                        LG.msg $
-                        BC.pack $
-                        "getTxOutputsData " <> (show $ (txid, index)) <> ": Tx output data generated: " <>
-                        (show outputData)
-                    return outputData
+                    debug lg $ LG.msg $ "AAAA: ES : " ++ show (es)
+                    case es of
+                        [(idx, val, addr, script, spendInfo)]
+                            -- TODO: lookup spendInfo tuple and replace Nothing
+                         -> do
+                            return $ TxOutput idx (DT.unpack addr) Nothing val (BC.pack $ DT.unpack $ script)
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: getTxOutputsData: " ++ show e
             throw KeyValueDBLookupException
@@ -164,9 +151,11 @@ xGetOutputsAddress address pgSize mbNominalTxIndex isAsc = do
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ BC.pack $ "[ERROR] xGetOutputsAddress: Fetching confirmed/unconfirmed outputs: " <> show e
             throw KeyValueDBLookupException
-        Right conf ->
-            let confRwc = addressOutputToResultWithCursor address <$> conf
-             in return $ L.take (fromMaybe maxBound (fromIntegral <$> pgSize)) $ confRwc
+        Right conf -> do
+            let xx = L.map (\ado -> addressOutputToResultWithCursor address ado [] Nothing) conf -- TODO: pass the correct BlockInfo and TxInputs
+            return $ L.take (fromMaybe maxBound (fromIntegral <$> pgSize)) $ xx
+            -- let confRwc = addressOutputToResultWithCursor address conf [] Nothing
+            --  in return $ L.take (fromMaybe maxBound (fromIntegral <$> pgSize)) $ confRwc
 
 xGetUtxosAddress ::
        (HasXokenNodeEnv env m, MonadIO m)
@@ -186,8 +175,10 @@ xGetUtxosAddress address pgSize mbNominalTxIndex isAsc = do
             throw KeyValueDBLookupException
         Right conf -> do
             debug lg $ LG.msg $ BC.pack $ "xGetUtxosAddress: Got confirmed utxos: " <> (show conf)
-            let confRwc = addressOutputToResultWithCursor address <$> conf
-             in return $ L.take (fromMaybe maxBound (fromIntegral <$> pgSize)) $ confRwc
+            let xx = L.map (\ado -> addressOutputToResultWithCursor address ado [] Nothing) conf -- TODO: pass the correct BlockInfo and TxInputs
+            return $ L.take (fromMaybe maxBound (fromIntegral <$> pgSize)) $ xx
+            -- let confRwc = addressOutputToResultWithCursor address <$> conf
+            --  in return $ L.take (fromMaybe maxBound (fromIntegral <$> pgSize)) $ confRwc
 
 getConfirmedOutputsByAddress ::
        (HasXokenNodeEnv env m, MonadIO m)
@@ -195,7 +186,7 @@ getConfirmedOutputsByAddress ::
     -> Maybe Int32
     -> Maybe Int64
     -> Bool
-    -> m [((Int64, (DT.Text, Int32)), TxOutputData)]
+    -> m [((Int64, (DT.Text, Int32)), TxOutput)]
 getConfirmedOutputsByAddress address pgSize mbNominalTxIndex isAsc = do
     dbe <- getDB
     lg <- getLogger
@@ -240,6 +231,8 @@ getConfirmedOutputsByAddress address pgSize mbNominalTxIndex isAsc = do
                 err lg $ LG.msg $ BC.pack $ "[ERROR] getConfirmedOutputsByAddress: While running query: " <> show e
                 throw KeyValueDBLookupException
             Right (scriptHashResults, addressResults) -> do
+                debug lg $ LG.msg $ "AAAA: scriptHashResults: " ++ show (scriptHashResults)
+                debug lg $ LG.msg $ "AAAA: addressResults: " ++ show (addressResults)
                 let allOutpoints =
                         fmap head $
                         L.groupBy (\(_, op1) (_, op2) -> op1 == op2) $
@@ -266,7 +259,7 @@ getConfirmedUtxosByAddress ::
     -> Maybe Int32
     -> Maybe Int64
     -> Bool
-    -> m [((Int64, (DT.Text, Int32)), TxOutputData)]
+    -> m [((Int64, (DT.Text, Int32)), TxOutput)]
 getConfirmedUtxosByAddress address pgSize nominalTxIndex isAsc = do
     lg <- getLogger
     res <- LE.try $ getConfirmedOutputsByAddress address pgSize nominalTxIndex isAsc
@@ -278,14 +271,14 @@ getConfirmedUtxosByAddress address pgSize nominalTxIndex isAsc = do
             debug lg $
                 LG.msg $
                 BC.pack $
-                "gcuba: Call to gcoba pgSize: " <> (show pgSize) <> " nti: " <> (show nominalTxIndex) <> ", outs: " <>
-                (show outputs)
-            let utxos = L.filter (\(_, outputData) -> isNothing $ spendInfo outputData) outputs
+                "gcuba: Call to gcoba pgSize: " <>
+                (show pgSize) <> " nti: " <> (show nominalTxIndex) <> ", outs: " <> (show outputs)
+            let utxos = L.filter (\(_, outputData) -> isNothing $ txSpendInfo outputData) outputs
             debug lg $
                 LG.msg $
                 BC.pack $
-                "gcuba: Call to gcoba pgSize: " <> (show pgSize) <> " nti: " <> (show nominalTxIndex) <> ", filtered: " <>
-                (show utxos)
+                "gcuba: Call to gcoba pgSize: " <>
+                (show pgSize) <> " nti: " <> (show nominalTxIndex) <> ", filtered: " <> (show utxos)
             if (L.length utxos < fromMaybe (L.length utxos) (fromIntegral <$> pgSize)) &&
                (not . L.null $ outputs) && (not . isNothing $ pgSize)
                 then do
@@ -312,9 +305,12 @@ xGetOutputsScriptHash scriptHash pgSize mbNominalTxIndex isAsc = do
             err lg $
                 LG.msg $ BC.pack $ "[ERROR] xGetOutputsScriptHash: Fetching confirmed/unconfirmed outputs: " <> show e
             throw KeyValueDBLookupException
-        Right conf ->
-            let confRwc = scriptOutputToResultWithCursor <$> conf
-             in return $ L.take (fromMaybe maxBound (fromIntegral <$> pgSize)) $ confRwc
+        Right conf -> do
+            let xx = L.map (\ado -> scriptOutputToResultWithCursor ado [] Nothing) conf -- TODO: pass the correct BlockInfo and TxInputs
+            return $ L.take (fromMaybe maxBound (fromIntegral <$> pgSize)) $ xx
+        -- Right conf ->
+        --     let confRwc = scriptOutputToResultWithCursor <$> conf
+        --      in return $ L.take (fromMaybe maxBound (fromIntegral <$> pgSize)) $ confRwc
 
 xGetUtxosScriptHash ::
        (HasXokenNodeEnv env m, MonadIO m)
@@ -333,9 +329,11 @@ xGetUtxosScriptHash scriptHash pgSize mbNominalTxIndex isAsc = do
             err lg $
                 LG.msg $ BC.pack $ "[ERROR] xGetUtxosScriptHash: Fetching confirmed/unconfirmed outputs: " <> show e
             throw KeyValueDBLookupException
-        Right conf ->
-            let confRwc = scriptOutputToResultWithCursor <$> conf
-             in return $ L.take (fromMaybe maxBound (fromIntegral <$> pgSize)) $ confRwc
+        Right conf -> do
+            let xx = L.map (\ado -> scriptOutputToResultWithCursor ado [] Nothing) conf -- TODO: pass the correct BlockInfo and TxInputs
+            return $ L.take (fromMaybe maxBound (fromIntegral <$> pgSize)) $ xx
+            -- let confRwc = scriptOutputToResultWithCursor <$> conf
+            --  in return $ L.take (fromMaybe maxBound (fromIntegral <$> pgSize)) $ confRwc
 
 getConfirmedOutputsByScriptHash ::
        (HasXokenNodeEnv env m, MonadIO m)
@@ -343,7 +341,7 @@ getConfirmedOutputsByScriptHash ::
     -> Maybe Int32
     -> Maybe Int64
     -> Bool
-    -> m [((DT.Text, Int64, (DT.Text, Int32)), TxOutputData)]
+    -> m [((DT.Text, Int64, (DT.Text, Int32)), TxOutput)]
 getConfirmedOutputsByScriptHash scriptHash pgSize mbNominalTxIndex isAsc = do
     dbe <- getDB
     lg <- getLogger
@@ -386,7 +384,7 @@ getConfirmedUtxosByScriptHash ::
     -> Maybe Int32
     -> Maybe Int64
     -> Bool
-    -> m [((DT.Text, Int64, (DT.Text, Int32)), TxOutputData)]
+    -> m [((DT.Text, Int64, (DT.Text, Int32)), TxOutput)]
 getConfirmedUtxosByScriptHash scriptHash pgSize nominalTxIndex isAsc = do
     lg <- getLogger
     res <- LE.try $ getConfirmedOutputsByScriptHash scriptHash pgSize nominalTxIndex isAsc
@@ -395,7 +393,7 @@ getConfirmedUtxosByScriptHash scriptHash pgSize nominalTxIndex isAsc = do
             err lg $ LG.msg $ BC.pack $ "[ERROR] getConfirmedUtxosByScriptHash: Fetching outputs: " <> show e
             throw KeyValueDBLookupException
         Right outputs ->
-            let utxos = L.filter (\(_, outputData) -> isNothing $ spendInfo outputData) outputs
+            let utxos = L.filter (\(_, outputData) -> isNothing $ txSpendInfo outputData) outputs
              in if (L.length utxos < fromMaybe (L.length utxos) (fromIntegral <$> pgSize)) && (not . L.null $ outputs)
                     then do
                         let nextPgSize = (fromJust pgSize) - (fromIntegral $ L.length utxos)
