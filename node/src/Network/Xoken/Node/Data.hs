@@ -1017,14 +1017,15 @@ addressOutputToResultWithCursor address ((nominalTxIndex, (opTxId, opIndex)), (T
         nominalTxIndex
 
 scriptOutputToResultWithCursor ::
-       ((T.Text, Int64, (T.Text, Int32)), TxOutput)
+       String
+    -> ((Int64, (T.Text, Int32)), TxOutput)
     -> TxInputs
     -> Maybe BlockInfo'
     -> ResultWithCursor ScriptOutputs Int64
-scriptOutputToResultWithCursor ((scriptHash, nominalTxIndex, (opTxId, opIndex)), (TxOutput idx addr spendInfo value script)) inputs blockInfo =
+scriptOutputToResultWithCursor scriptHash ((nominalTxIndex, (opTxId, opIndex)), (TxOutput idx addr spendInfo value script)) inputs blockInfo =
     ResultWithCursor
         (ScriptOutputs
-             (T.unpack scriptHash)
+             scriptHash
              (OutPoint' (T.unpack opTxId) (fromIntegral opIndex))
              blockInfo
              spendInfo
