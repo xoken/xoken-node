@@ -223,16 +223,17 @@ runThreads config nodeConf bp2p conn lg certPaths = do
     runAppM
         serviceEnv
         (do bp2pEnv <- getBitcoinP2P
-            withAsync runEpochSwitcher $ \_ -> do
-                withAsync setupSeedPeerConnection $ \_ -> do
-                    withAsync runEgressChainSync $ \_ -> do
-                        withAsync runBlockCacheQueue $ \_ -> do
-                            withAsync (handleNewConnectionRequest epHandler) $ \_ -> do
-                                withAsync runPeerSync $ \_ -> do
-                                    withAsync runSyncStatusChecker $ \_ -> do
-                                        withAsync runWatchDog $ \z -> do
-                                            _ <- LA.wait z
-                                            return ())
+            withAsync runTMTDaemon $ \_ -> do
+                withAsync runEpochSwitcher $ \_ -> do
+                    withAsync setupSeedPeerConnection $ \_ -> do
+                        withAsync runEgressChainSync $ \_ -> do
+                            withAsync runBlockCacheQueue $ \_ -> do
+                                withAsync (handleNewConnectionRequest epHandler) $ \_ -> do
+                                    withAsync runPeerSync $ \_ -> do
+                                        withAsync runSyncStatusChecker $ \_ -> do
+                                            withAsync runWatchDog $ \z -> do
+                                                _ <- LA.wait z
+                                                return ())
     liftIO $ destroyAllResources $ pool gdbState
     liftIO $ putStrLn $ "node recovering from fatal DB connection failure!"
     return ()
@@ -358,7 +359,8 @@ defBitcoinP2P nodeCnf ept = do
     tpfa <- newTVarIO 0
     bsb <- newTVarIO Nothing
     pi <- TSH.new 32
-    return $ BitcoinP2P nodeCnf g bp mv hl st tl ep epts tc (rpf, rpc) mq ts tbt iut udc tpfa bsb pi
+    tmt <- TSH.new 4
+    return $ BitcoinP2P nodeCnf g bp mv hl st tl ep epts tc (rpf, rpc) mq ts tbt iut udc tpfa bsb pi tmt
 
 initNexa :: IO ()
 initNexa = do

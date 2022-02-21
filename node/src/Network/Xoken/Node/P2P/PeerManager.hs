@@ -11,6 +11,7 @@
 module Network.Xoken.Node.P2P.PeerManager
     ( createSocket
     , setupSeedPeerConnection
+    , runTMTDaemon
     ) where
 
 import Control.Concurrent (threadDelay)
@@ -33,7 +34,7 @@ import Control.Monad.Reader
 import Control.Monad.STM
 import Control.Monad.State.Strict
 import Control.Monad.Trans.Control
-import qualified Data.Aeson as A (decode, encode)
+import qualified Data.Aeson as A (decode, eitherDecode, encode)
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as C
 import qualified Data.ByteString.Lazy as BSL
@@ -41,6 +42,7 @@ import qualified Data.ByteString.Lazy.Char8 as LC
 import Data.ByteString.Short as BSS
 import Data.Char
 import Data.Default
+import Data.Either
 import Data.Function ((&))
 import Data.Functor.Identity
 import qualified Data.HashTable as CHT
@@ -53,6 +55,7 @@ import Data.Pool
 import Data.Serialize
 import Data.String.Conversions
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as DTE
 import Data.Time.Clock.POSIX
 import Data.Word
 import qualified Database.Bolt as BT
@@ -294,7 +297,7 @@ pushHash (stateMap, res) nhash left right ht ind final =
                                   final
                          else (updateState, res)
   where
-    insertSpecial sib lft rht flg lst = L.insert (MerkleNode sib lft rht flg) lst
+    insertSpecial sib lft rht flg lst = [(MerkleNode sib lft rht flg)] ++ lst
     updateState = M.insert ind (MerkleNode (Just nhash) left right True) stateMap
     prev =
         case M.lookupIndex (fromIntegral ind) stateMap of
@@ -303,6 +306,7 @@ pushHash (stateMap, res) nhash left right ht ind final =
 
 updateMerkleSubTrees ::
        DatabaseHandles
+    -> (TSH.TSHashTable Int MerkleNode)
     -> Logger
     -> HashCompute
     -> Hash256
@@ -311,17 +315,25 @@ updateMerkleSubTrees ::
     -> Int8
     -> Int8
     -> Bool
+    -> Bool
+    -> Int32
     -> IO (HashCompute)
-updateMerkleSubTrees dbe lg hashComp newhash left right ht ind final = do
+updateMerkleSubTrees dbe tmtState lg hashComp newhash left right ht ind final onlySubTree pageNum = do
     eres <- try $ return $ pushHash hashComp newhash left right ht ind final
     case eres of
         Left MerkleTreeInvalidException -> do
             print (" PushHash Invalid Merkle Leaves exception")
             throw MerkleSubTreeDBInsertException
-        Right (state, res) -- = pushHash hashComp newhash left right ht ind final
-         -> do
+        Right (state, res) -> do
             if not $ L.null res
                 then do
+                    nres <-
+                        if (not onlySubTree) && final
+                            then do
+                                let stRoot = head res
+                                liftIO $ TSH.insert tmtState (fromIntegral pageNum) stRoot
+                                return $ tail res
+                            else return res
                     let (create, match) =
                             L.partition
                                 (\x ->
@@ -332,7 +344,7 @@ updateMerkleSubTrees dbe lg hashComp newhash left right ht ind final = do
                                                  else if isJust sib
                                                           then True
                                                           else throw MerkleTreeComputeException)
-                                (res)
+                                (nres)
                     let finMatch =
                             L.sortBy
                                 (\x y ->
@@ -415,33 +427,29 @@ resilientRead sock !blin = do
                     return (res, LC.length txbyt2)
         Right res -> return (res, LC.length txbyt)
 
-merkleTreeBuilder ::
+persistTxListByPage ::
        (HasBitcoinP2P m, HasLogger m, HasDatabaseHandles m, MonadBaseControl IO m, MonadIO m)
     => TQueue (TxHash, Bool)
     -> BlockHash
-    -> Int8
     -> m ()
-merkleTreeBuilder tque blockHash treeHt = do
+persistTxListByPage tque blockHash = do
     p2pEnv <- getBitcoinP2P
     lg <- getLogger
     dbe <- getDB
     continue <- liftIO $ newIORef True
     txPage <- liftIO $ newIORef []
     txPageNum <- liftIO $ newIORef 1
-    tv <- liftIO $ newIORef (M.empty, [])
     whileM_ (liftIO $ readIORef continue) $ do
-        hcstate <- liftIO $ readIORef tv
-        ores <- LA.race (liftIO $ threadDelay (1000000 * 60)) (liftIO $ atomically $ readTQueue tque)
+        ores <- LA.race (liftIO $ threadDelay (1000000 * 60 * 10)) (liftIO $ atomically $ readTQueue tque)
         case ores of
             Left ()
                 -- likely the peer conn terminated, just end this thread
                 -- do NOT delete queue as another peer connection could have establised meanwhile
              -> do
                 liftIO $ writeIORef continue False
-                liftIO $ MS.signal (maxTMTBuilderThreadLock p2pEnv)
             Right (txh, isLast) -> do
                 pg <- liftIO $ readIORef txPage
-                if (fromIntegral $ L.length pg) == 100
+                if (fromIntegral $ L.length pg) == 256 -- 100
                     then do
                         pgn <- liftIO $ readIORef txPageNum
                         LA.async $ commitTxPage pg blockHash pgn
@@ -449,39 +457,6 @@ merkleTreeBuilder tque blockHash treeHt = do
                         liftIO $ writeIORef txPageNum (pgn + 1)
                     else do
                         liftIO $ modifyIORef' txPage (\x -> x ++ [txh])
-                res <-
-                    LE.try $
-                    liftIO $ updateMerkleSubTrees dbe lg hcstate (getTxHash txh) Nothing Nothing treeHt 0 isLast
-                case res of
-                    Right (hcs) -> do
-                        liftIO $ writeIORef tv hcs
-                    Left MerkleSubTreeAlreadyExistsException
-                        -- second attempt, after deleting stale TMT nodes
-                     -> do
-                        pres <-
-                            LE.try $
-                            liftIO $ updateMerkleSubTrees dbe lg hcstate (getTxHash txh) Nothing Nothing treeHt 0 isLast
-                        case pres of
-                            Left (SomeException e) -> do
-                                err lg $
-                                    LG.msg
-                                        ("[ERROR] Quit building TMT. FATAL Bug! (2)" ++
-                                         show e ++ " | " ++ show (getTxHash txh))
-                                liftIO $ writeIORef continue False
-                                liftIO $ MS.signal (maxTMTBuilderThreadLock p2pEnv)
-                                -- do NOT delete queue here, merely end this thread
-                                throw e
-                            Right (hcs) -> do
-                                liftIO $ writeIORef tv hcs
-                    Left ee -> do
-                        err lg $
-                            LG.msg
-                                ("[ERROR] Quit building TMT. FATAL Bug! (1) " ++
-                                 show ee ++ " | " ++ show (getTxHash txh))
-                        liftIO $ writeIORef continue False
-                        liftIO $ MS.signal (maxTMTBuilderThreadLock p2pEnv)
-                        -- do NOT delete queue here, merely end this thread
-                        throw ee
                 when isLast $ do
                     pg <- liftIO $ readIORef txPage
                     if L.null pg
@@ -492,7 +467,276 @@ merkleTreeBuilder tque blockHash treeHt = do
                             return ()
                     liftIO $ writeIORef continue False
                     liftIO $ TSH.delete (merkleQueueMap p2pEnv) blockHash
-                    liftIO $ MS.signal (maxTMTBuilderThreadLock p2pEnv)
+
+loadTxIDPagesTMT ::
+       (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
+    => BlockHash
+    -> Int32
+    -> Bool
+    -> m ([(MerkleNode, Bool)], (Int32, Bool))
+loadTxIDPagesTMT blkHash pageNum onlySubTree = do
+    p2pEnv <- getBitcoinP2P
+    lg <- getLogger
+    dbe <- getDB
+    let conn = xCqlClientState $ dbe
+    -- let isLastPage = pageNum == ((fst $ totalTxCount `divMod` 256) + 1)
+    debug lg $ LG.msg $ "loadTxIDPagesTMT block_hash: " ++ show (blkHash) ++ ", pagenum: " ++ show pageNum
+    let str = "SELECT txids from xoken.blockhash_txids where block_hash = ? and page_number = ? "
+        qstr = str :: Q.QueryString Q.R (T.Text, Int32) (Identity [T.Text])
+        p = getSimpleQueryParam $ (blockHashToHex blkHash, pageNum)
+    res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr p)
+    case res of
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: xGetTxIDsByBlockHash: " <> show e
+            throw KeyValueDBLookupException
+        Right rx -> do
+            if L.null rx
+                then do
+                    debug lg $ LG.msg $ "loadTxIDPagesTMT| waiting for page in DB: " <> show pageNum
+                    liftIO $ threadDelay (100000) -- 0.1 sec
+                    loadTxIDPagesTMT blkHash pageNum onlySubTree
+                else do
+                    let txList = runIdentity $ rx !! 0
+                        txct = L.length txList
+                        mklNodeList =
+                            map
+                                (\(mn, indx) -> do
+                                     let mn =
+                                             MerkleNode
+                                                 { node = node mn
+                                                 , leftChild = Nothing
+                                                 , rightChild = Nothing
+                                                 , isLeft = False
+                                                 }
+                                     if indx == txct
+                                         then (mn, True)
+                                         else (mn, False))
+                                (zip txList [1 .. txct])
+                    return (mklNodeList, (pageNum, onlySubTree))
+
+persistTMT ::
+       (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BlockHash -> ([(MerkleNode, Bool)], (Int32, Bool)) -> m ()
+persistTMT blockHash (mklNodes, (pageNum, onlySubTree)) = do
+    p2pEnv <- getBitcoinP2P
+    lg <- getLogger
+    dbe <- getDB
+    tv <- liftIO $ newIORef (M.empty, [])
+    tmtState' <- liftIO $ TSH.lookup (tmtSubTreeState p2pEnv) blockHash
+    let treeHt = computeTreeHeight (fromIntegral $ (L.length mklNodes) + 1)
+    case tmtState' of
+        Nothing -> do
+            err lg $ LG.msg ("[ERROR] persistTMT | TMT_Sub_Tree_State not found for " ++ show blockHash)
+        Just tmtState -> do
+            mapM_
+                (\(mn, isLast) -> do
+                     hcstate <- liftIO $ readIORef tv
+                     res <-
+                         LE.try $
+                         liftIO $
+                         updateMerkleSubTrees
+                             dbe
+                             tmtState
+                             lg
+                             hcstate
+                             (fromJust $ node mn)
+                             (leftChild mn)
+                             (rightChild mn)
+                             treeHt
+                             0
+                             isLast
+                             onlySubTree
+                             pageNum
+                     case res of
+                         Right (hcs) -> do
+                             liftIO $ writeIORef tv hcs
+                         Left MerkleSubTreeAlreadyExistsException -> do
+                             pres <-
+                                 LE.try $
+                                 liftIO $
+                                 updateMerkleSubTrees
+                                     dbe
+                                     tmtState
+                                     lg
+                                     hcstate
+                                     (fromJust $ node mn)
+                                     (leftChild mn)
+                                     (rightChild mn)
+                                     treeHt
+                                     0
+                                     isLast
+                                     onlySubTree
+                                     pageNum
+                             case pres of
+                                 Left (SomeException e) -> do
+                                     err lg $
+                                         LG.msg
+                                             ("[ERROR] Quit building TMT. FATAL Bug! (2)" ++
+                                              show e ++ " | " ++ show (fromJust $ node mn))
+                                     throw e
+                                 Right (hcs) -> do
+                                     liftIO $ writeIORef tv hcs
+                         Left ee -> do
+                             err lg $
+                                 LG.msg
+                                     ("[ERROR] Quit building TMT. FATAL Bug! (1) " ++
+                                      show ee ++ " | " ++ show (fromJust $ node mn))
+                             throw ee)
+                (mklNodes)
+
+processTMTSubTrees :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BlockHash -> Int32 -> m ()
+processTMTSubTrees blkHash txCount = do
+    p2pEnv <- getBitcoinP2P
+    lg <- getLogger
+    dbe <- getDB
+    lg <- getLogger
+    lg <- getLogger
+    let conn = xCqlClientState $ dbe
+        pages = (fst $ txCount `divMod` 256) + 1
+    S.drain $
+        aheadly $
+        (do S.fromList [1 .. pages]) &
+        S.mapM
+            (\pageNum -> do
+                 if pages == 1
+                     then loadTxIDPagesTMT blkHash pageNum True
+                     else loadTxIDPagesTMT blkHash pageNum False) &
+        S.mapM (persistTMT blkHash) &
+        S.maxBuffer (maxTMTBuilderThreads $ nodeConfig p2pEnv) &
+        S.maxThreads (maxTMTBuilderThreads $ nodeConfig p2pEnv)
+    --
+    if pages == 1
+        then return ()
+        else do
+            tmtState' <- liftIO $ TSH.lookup (tmtSubTreeState p2pEnv) blkHash
+            case tmtState' of
+                Nothing -> do
+                    err lg $ LG.msg ("[ERROR] processTMTSubTrees |  TMT_Sub_Tree_State not found for " ++ show blkHash)
+                Just tmtState -> do
+                    swmn <-
+                        mapM
+                            (\pg -> do
+                                 if 1 == pg `mod` 2
+                                     then do
+                                         left <- liftIO $ TSH.lookup tmtState pg
+                                         if (pg < fromIntegral pages)
+                                             then do
+                                                 right <- liftIO $ TSH.lookup tmtState (pg + 1)
+                                                 let swpd = swapSiblings (fromJust left) (fromJust right)
+                                                 return $ [fst swpd, snd swpd]
+                                             else return [fromJust left]
+                                     else return [])
+                            [1 .. (fromIntegral pages)]
+                    let concatNodes = L.concat swmn
+                        txct = L.length concatNodes
+                        finalIntermediateMerkleNodes =
+                            map
+                                (\(mn, indx) -> do
+                                     if indx == txct
+                                         then (mn, True)
+                                         else (mn, False))
+                                (zip concatNodes ([1 .. txct]))
+                    persistTMT blkHash (finalIntermediateMerkleNodes, (-1, True))
+
+runTMTDaemon :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
+runTMTDaemon =
+    forever $ do
+        p2pEnv <- getBitcoinP2P
+        lg <- getLogger
+        dbe <- getDB
+        lg <- getLogger
+        lg <- getLogger
+        let conn = xCqlClientState $ dbe
+        debug lg $ LG.msg $ val "AAA| runTMTDaemon ..."
+        let qstr :: Q.QueryString Q.R (Identity T.Text) (Identity (Maybe Bool, Maybe Int32, Maybe Int64, Maybe T.Text))
+            qstr = "SELECT value from xoken.misc_store where key = ?"
+            p = getSimpleQueryParam "transpose_merkle_tree"
+        res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr p)
+        mes <-
+            case res of
+                (Right iop) -> do
+                    if L.null iop
+                        then do
+                            debug lg $ LG.msg $ val "Best TMT persisted is genesis."
+                            return Nothing
+                        else do
+                            debug lg $ LG.msg $ val "AAA| aaa..."
+                            let record = runIdentity $ iop !! 0
+                            debug lg $ LG.msg $ "Best TMT persisted is : " ++ show (record)
+                            case getTextVal record of
+                                Just tx -> do
+                                    case (hexToBlockHash $ tx) of
+                                        Just x -> do
+                                            case getIntVal record of
+                                                Just y -> return $ Just (x, y)
+                                                Nothing -> throw InvalidMetaDataException
+                                        Nothing -> throw InvalidBlockHashException
+                                Nothing -> throw InvalidMetaDataException
+                Left (e :: SomeException) -> throw InvalidMetaDataException
+        case mes of
+            Nothing -> return ()
+            Just (bhash, height) -> do
+                debug lg $ LG.msg $ val "AAA| bbb..."
+                let str = "SELECT block_hash, tx_count, block_header from xoken.blocks_by_height where block_height = ?"
+                    qstr = str :: Q.QueryString Q.R (Identity Int32) (T.Text, Maybe Int32, T.Text)
+                    p = getSimpleQueryParam $ Identity (height + 1)
+                res1 <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr p)
+                case res1 of
+                    Right iop -> do
+                        if L.length iop == 0
+                            then return ()
+                            else do
+                                let (nbhs, ntxc, nbhdr) = iop !! 0
+                                debug lg $ LG.msg $ val "AAA | ccc..."
+                                case ntxc of
+                                    Just txCount -> do
+                                        case (A.eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 nbhdr) of
+                                            Right bh -> do
+                                                debug lg $
+                                                    LG.msg $
+                                                    "AAA comparing blk-hashes: " ++ show (prevBlock bh) ++ show bhash
+                                                if (prevBlock bh) == bhash
+                                                    then do
+                                                        yy <-
+                                                            LE.try $
+                                                            processTMTSubTrees (fromJust $ hexToBlockHash nbhs) txCount
+                                                        --
+                                                        case yy of
+                                                            Right y -> do
+                                                                let q :: Q.QueryString Q.W ( T.Text
+                                                                                           , ( Maybe Bool
+                                                                                             , Int32
+                                                                                             , Maybe Int64
+                                                                                             , T.Text)) ()
+                                                                    q =
+                                                                        Q.QueryString
+                                                                            "insert INTO xoken.misc_store (key,value) values (?,?)"
+                                                                    p :: Q.QueryParams ( T.Text
+                                                                                       , ( Maybe Bool
+                                                                                         , Int32
+                                                                                         , Maybe Int64
+                                                                                         , T.Text))
+                                                                    p =
+                                                                        getSimpleQueryParam
+                                                                            ( "transpose_merkle_tree"
+                                                                            , (Nothing, height + 1, Nothing, nbhs))
+                                                                res <-
+                                                                    liftIO $ try $ write conn (Q.RqQuery $ Q.Query q p)
+                                                                case res of
+                                                                    Right _ -> return ()
+                                                                    Left (e :: SomeException) -> do
+                                                                        err lg $
+                                                                            LG.msg
+                                                                                ("Error: Marking [Best-Synced] blockhash failed: " ++
+                                                                                 show e)
+                                                                        throw KeyValueDBInsertException
+                                                            Left (e :: SomeException) -> do
+                                                                err lg $ LG.msg $ "Error while persistTMT: " ++ show e
+                                                    else err lg $ LG.msg $ val "Potential Chain reorg occured?!"
+                                            Left err -> do
+                                                liftIO $ print $ "Decode failed with error: " <> show err
+                                    Nothing -> return ()
+                    Left (e :: SomeException) -> do
+                        err lg $ LG.msg $ "Error invalid while querying DB: " ++ show e
 
 updateBlocks :: (HasLogger m, HasDatabaseHandles m, MonadIO m) => BlockHash -> BlockHeight -> Int -> Int -> Tx -> m ()
 updateBlocks bhash blkht bsize txcount cbase = do
@@ -569,10 +813,8 @@ readNextMessage net sock ingss = do
                                             return ()
                                 qq <- liftIO $ atomically $ newTQueue
                                         -- wait for TMT threads alloc
-                                liftIO $ MS.wait (maxTMTBuilderThreadLock p2pEnv)
                                 liftIO $ TSH.insert (merkleQueueMap p2pEnv) (biBlockHash $ bf) qq
-                                LA.async $
-                                    merkleTreeBuilder qq (biBlockHash $ bf) (computeTreeHeight $ binTxTotalCount blin)
+                                LA.async $ persistTxListByPage qq (biBlockHash $ bf)
                                 updateBlocks
                                     (biBlockHash bf)
                                     (biBlockHeight bf)

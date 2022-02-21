@@ -112,9 +112,7 @@ queryAllegoryNameBranch name isProducer = do
   where
     cypher =
         " MATCH p=(pointer:namestate {name: {namestr}})-[:REVISION]-()-[:INPUT*]->(start:nutxo) " <>
-        " WHERE NOT (start)-[:INPUT]->() " <>
-        " UNWIND tail(nodes(p)) AS elem " <>
-        " RETURN elem.outpoint"
+        " WHERE NOT (start)-[:INPUT]->() " <> " UNWIND tail(nodes(p)) AS elem " <> " RETURN elem.outpoint"
     params =
         if isProducer
             then fromList [("namestr", T (name <> pack "|producer"))]
@@ -517,8 +515,8 @@ insertMerkleSubTree leaves inodes = do
             then " CREATE " <> cyCreate
             else " MATCH " <> cyMatch <> " CREATE " <> cyCreate
     txtTx i = txHashToHex $ TxHash $ fromJust i
-    vars m = Prelude.map (\x -> Data.Text.filter (isAlpha) $ numrepl $ Data.Text.take 8 $ txtTx x) (m)
-    var m = Data.Text.filter (isAlpha) $ numrepl $ Data.Text.take 8 $ txtTx m
+    vars m = Prelude.map (\x -> var x) (m)
+    var m = Data.Text.append (Data.Text.pack "a") (Data.Text.take 16 $ txtTx m)
     numrepl txt =
         Data.Text.map
             (\x ->
@@ -561,7 +559,8 @@ insertProtocolWithBlockInfo name properties BlockPInfo {..} = do
     return ()
   where
     cypher =
-        " MERGE (a: protocol { name: {name}}) ON CREATE SET " <> props <>
+        " MERGE (a: protocol { name: {name}}) ON CREATE SET " <>
+        props <>
         " MERGE (b: block { hash: {hash}}) ON CREATE SET b.height= {height}, b.timestamp= {timestamp}, b.day= {day }, b.month= {month}, b.year= {year}, b.hour= {hour}, b.absoluteHour= {absoluteHour} " <>
         " MERGE (a)-[r:PRESENT_IN{bytes: {bytes}, fees: {fees}, tx_count: {count}}]->(b)"
     props = intercalate "," $ Prelude.map (\(a, _) -> "a." <> a <> "= {" <> a <> "}") properties

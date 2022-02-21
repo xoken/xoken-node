@@ -139,6 +139,14 @@ type HashCompute = (M.Map Int8 (MerkleNode), [MerkleNode])
 emptyMerkleNode :: MerkleNode
 emptyMerkleNode = MerkleNode {node = Nothing, leftChild = Nothing, rightChild = Nothing, isLeft = False}
 
+swapSiblings :: MerkleNode -> MerkleNode -> (MerkleNode, MerkleNode)
+swapSiblings left right = (mleft, mright)
+  where
+    mleft =
+        MerkleNode {node = node right, leftChild = leftChild left, rightChild = rightChild left, isLeft = isLeft left}
+    mright =
+        MerkleNode {node = node left, leftChild = leftChild right, rightChild = rightChild right, isLeft = isLeft right}
+
 data IngressStreamState =
     IngressStreamState
         { issBlockIngest :: !BlockIngestState
