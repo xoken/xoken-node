@@ -21,6 +21,7 @@ import qualified Data.HashTable as CHT
 import Data.IORef
 import Data.Int
 import qualified Data.Map.Strict as M
+import Data.Maybe
 import Data.Pool
 import Data.Serialize
 import Data.Text
@@ -134,6 +135,8 @@ data MerkleNode =
         }
     deriving (Show, Eq, Ord)
 
+-- instance Show MerkleNode where
+--     show mn = (show $ fromJust $ node mn)
 type HashCompute = (M.Map Int8 (MerkleNode), [MerkleNode])
 
 emptyMerkleNode :: MerkleNode
@@ -142,10 +145,8 @@ emptyMerkleNode = MerkleNode {node = Nothing, leftChild = Nothing, rightChild = 
 swapSiblings :: MerkleNode -> MerkleNode -> (MerkleNode, MerkleNode)
 swapSiblings left right = (mleft, mright)
   where
-    mleft =
-        MerkleNode {node = node right, leftChild = leftChild left, rightChild = rightChild left, isLeft = isLeft left}
-    mright =
-        MerkleNode {node = node left, leftChild = leftChild right, rightChild = rightChild right, isLeft = isLeft right}
+    mleft = MerkleNode (node right) (leftChild left) (rightChild left) (isLeft left)
+    mright = MerkleNode (node left) (leftChild right) (rightChild right) (isLeft right)
 
 data IngressStreamState =
     IngressStreamState

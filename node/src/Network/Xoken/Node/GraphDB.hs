@@ -442,6 +442,7 @@ updateAllegoryStateTrees confirmed tx allegory = do
 insertMerkleSubTree :: [MerkleNode] -> [MerkleNode] -> BoltActionT IO ()
 insertMerkleSubTree leaves inodes = do
     queryP cypher params
+    liftIO $ print $ "insertMerkleSubTree, query: " <> (pack $ show cypher) <> " params: " <> (pack $ show params)
     return ()
   where
     lefts = Prelude.map (leftChild) inodes
@@ -494,7 +495,10 @@ insertMerkleSubTree leaves inodes = do
                               [cyCreateLeaves, cyCreateT, cyRelationLeft, cyRelationRight, cySiblingReln]
                      else Data.Text.intercalate (" , ") $
                           Data.List.filter (not . Data.Text.null) [cyCreateLeaves, cySiblingReln]
-            else cyCreateT
+            else if length inodes > 0
+                     then Data.Text.intercalate (" , ") $
+                          Data.List.filter (not . Data.Text.null) [cyCreateT, cyRelationLeft, cyRelationRight]
+                     else cyCreateT -- invalid scenario
     parCreateLeaves = Prelude.map (\(i, x) -> (i, T $ txtTx $ node x)) (zip (vars $ Prelude.map (node) leaves) leaves)
     parCreateSiblingReln =
         Prelude.map
@@ -553,8 +557,9 @@ deleteMerkleSubTree inodes = do
     txtTx i = txHashToHex $ TxHash $ fromJust i
 
 insertProtocolWithBlockInfo :: Text -> [(Text, Text)] -> BlockPInfo -> BoltActionT IO ()
-insertProtocolWithBlockInfo name properties BlockPInfo {..} = do
-    liftIO $ print $ "insertProtocolWithBlockInfo for height: " <> (pack $ show height) <> " query: " <> cypher
+insertProtocolWithBlockInfo name properties BlockPInfo {..}
+    -- liftIO $ print $ "insertProtocolWithBlockInfo for height: " <> (pack $ show height) <> " query: " <> cypher
+ = do
     queryP cypher params
     return ()
   where

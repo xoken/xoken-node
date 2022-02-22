@@ -332,8 +332,15 @@ updateMerkleSubTrees dbe tmtState lg hashComp newhash left right ht ind final on
                             then do
                                 let stRoot = head res
                                 liftIO $ TSH.insert tmtState (fromIntegral pageNum) stRoot
+                                debug lg $
+                                    LG.msg $ "AAA: tmtState, pgnum : " <> (show pageNum) ++ " , root: " ++ show stRoot
                                 return $ tail res
-                            else return res
+                            else do
+                                debug lg $
+                                    LG.msg $
+                                    "AAA: tmtState, txhash : " <> (show newhash) ++
+                                    " final: " ++ (show final) ++ " res: " ++ show res
+                                return res
                     let (create, match) =
                             L.partition
                                 (\x ->
@@ -372,27 +379,17 @@ updateMerkleSubTrees dbe tmtState lg hashComp newhash left right ht ind final on
                                             -- could be a previously aborted block being reprocessed
                                             -- or a chain-reorg with repeat Txs, so handle TMT subtree accordingly.
                                                 then do
-                                                    pres <-
-                                                        liftIO $
-                                                        try $
-                                                        withResource'
-                                                            (pool $ graphDB dbe)
-                                                            (`BT.run` deleteMerkleSubTree (create ++ finMatch))
-                                                    case pres of
-                                                        Right rt -> throw MerkleSubTreeAlreadyExistsException -- attempt new insert
-                                                        Left (e :: SomeException) -> do
-                                                            err lg $
-                                                                LG.msg $
-                                                                "Error: MerkleSubTreeDBInsertException (1): " <>
-                                                                (show e)
-                                                            throw MerkleSubTreeDBInsertException
-                                                else do
-                                                    liftIO $ threadDelay (1000000 * 5) -- time to recover
-                                                    err lg $
+                                                    warn lg $
                                                         LG.msg $
-                                                        "Error: MerkleSubTreeDBInsertException (2): " <> (show e)
+                                                        "Warning (Ignore): likely due to reprocessing." <> (show e)
+                                                    return (state, [])
+                                                else do
+                                                    err lg $
+                                                        LG.msg $ "Error: MerkleSubTreeDBInsertException : " <> (show e)
                                                     throw MerkleSubTreeDBInsertException
-                else return (state, res)
+                else do
+                    debug lg $ LG.msg $ "AAA: tmtState, else : " <> (show pageNum)
+                    return (state, res)
                     -- else block --
 
 resilientRead ::
@@ -500,14 +497,9 @@ loadTxIDPagesTMT blkHash pageNum onlySubTree = do
                         txct = L.length txList
                         mklNodeList =
                             map
-                                (\(mn, indx) -> do
-                                     let mn =
-                                             MerkleNode
-                                                 { node = node mn
-                                                 , leftChild = Nothing
-                                                 , rightChild = Nothing
-                                                 , isLeft = False
-                                                 }
+                                (\(hs, indx) -> do
+                                     let txhs = fromJust $ hexToTxHash hs
+                                     let mn = MerkleNode (Just $ getTxHash txhs) Nothing Nothing False
                                      if indx == txct
                                          then (mn, True)
                                          else (mn, False))
@@ -515,14 +507,26 @@ loadTxIDPagesTMT blkHash pageNum onlySubTree = do
                     return (mklNodeList, (pageNum, onlySubTree))
 
 persistTMT ::
-       (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BlockHash -> ([(MerkleNode, Bool)], (Int32, Bool)) -> m ()
-persistTMT blockHash (mklNodes, (pageNum, onlySubTree)) = do
+       (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
+    => BlockHash
+    -> Maybe Int8
+    -> ([(MerkleNode, Bool)], (Int32, Bool))
+    -> m ()
+persistTMT blockHash isFixedTreeHeight (mklNodes, (pageNum, onlySubTree)) = do
     p2pEnv <- getBitcoinP2P
     lg <- getLogger
     dbe <- getDB
     tv <- liftIO $ newIORef (M.empty, [])
     tmtState' <- liftIO $ TSH.lookup (tmtSubTreeState p2pEnv) blockHash
-    let treeHt = computeTreeHeight (fromIntegral $ (L.length mklNodes) + 1)
+    let treeHt =
+            case isFixedTreeHeight of
+                Just fth -> fth
+                Nothing -> computeTreeHeight (fromIntegral $ L.length mklNodes)
+    debug lg $
+        LG.msg
+            ("persistTMT | blockhash " ++
+             show blockHash ++ " (pageNum,onlyST): " ++ show (pageNum, onlySubTree) ++ (show $ L.length mklNodes))
+    debug lg $ LG.msg ("persistTMT | mkl-nodes " ++ show mklNodes)
     case tmtState' of
         Nothing -> do
             err lg $ LG.msg ("[ERROR] persistTMT | TMT_Sub_Tree_State not found for " ++ show blockHash)
@@ -530,6 +534,7 @@ persistTMT blockHash (mklNodes, (pageNum, onlySubTree)) = do
             mapM_
                 (\(mn, isLast) -> do
                      hcstate <- liftIO $ readIORef tv
+                     debug lg $ LG.msg ("persistTMT | aaa " ++ show (blockHash, isLast))
                      res <-
                          LE.try $
                          liftIO $
@@ -549,37 +554,11 @@ persistTMT blockHash (mklNodes, (pageNum, onlySubTree)) = do
                      case res of
                          Right (hcs) -> do
                              liftIO $ writeIORef tv hcs
-                         Left MerkleSubTreeAlreadyExistsException -> do
-                             pres <-
-                                 LE.try $
-                                 liftIO $
-                                 updateMerkleSubTrees
-                                     dbe
-                                     tmtState
-                                     lg
-                                     hcstate
-                                     (fromJust $ node mn)
-                                     (leftChild mn)
-                                     (rightChild mn)
-                                     treeHt
-                                     0
-                                     isLast
-                                     onlySubTree
-                                     pageNum
-                             case pres of
-                                 Left (SomeException e) -> do
-                                     err lg $
-                                         LG.msg
-                                             ("[ERROR] Quit building TMT. FATAL Bug! (2)" ++
-                                              show e ++ " | " ++ show (fromJust $ node mn))
-                                     throw e
-                                 Right (hcs) -> do
-                                     liftIO $ writeIORef tv hcs
-                         Left ee -> do
+                         Left (ee :: SomeException) -> do
                              err lg $
                                  LG.msg
-                                     ("[ERROR] Quit building TMT. FATAL Bug! (1) " ++
-                                      show ee ++ " | " ++ show (fromJust $ node mn))
+                                     ("[ERROR] Quit building TMT. FATAL error!" ++
+                                      (show ee) ++ " | " ++ show (fromJust $ node mn))
                              throw ee)
                 (mklNodes)
 
@@ -592,17 +571,27 @@ processTMTSubTrees blkHash txCount = do
     lg <- getLogger
     let conn = xCqlClientState $ dbe
         pages = (fst $ txCount `divMod` 256) + 1
-    S.drain $
+    tmts <- liftIO $ TSH.new 4
+    liftIO $ TSH.insert (tmtSubTreeState p2pEnv) blkHash tmts
+    yy <-
+        LE.try $
+        S.drain $
         aheadly $
         (do S.fromList [1 .. pages]) &
         S.mapM
-            (\pageNum -> do
+            (\pageNum
+                 -- liftIO $ threadDelay (1000000 * 5) -- TODO remove this, only for testing
+              -> do
                  if pages == 1
                      then loadTxIDPagesTMT blkHash pageNum True
                      else loadTxIDPagesTMT blkHash pageNum False) &
-        S.mapM (persistTMT blkHash) &
+        S.mapM (persistTMT blkHash (Just 8)) & -- fixed tree height of 8 corresponding to max 256 leaf nodes
         S.maxBuffer (maxTMTBuilderThreads $ nodeConfig p2pEnv) &
         S.maxThreads (maxTMTBuilderThreads $ nodeConfig p2pEnv)
+    case yy of
+        Right _ -> return ()
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error while processTMTSubTrees: " ++ show e
     --
     if pages == 1
         then return ()
@@ -622,7 +611,7 @@ processTMTSubTrees blkHash txCount = do
                                              then do
                                                  right <- liftIO $ TSH.lookup tmtState (pg + 1)
                                                  let swpd = swapSiblings (fromJust left) (fromJust right)
-                                                 return $ [fst swpd, snd swpd]
+                                                 return $ [snd swpd, fst swpd]
                                              else return [fromJust left]
                                      else return [])
                             [1 .. (fromIntegral pages)]
@@ -635,7 +624,10 @@ processTMTSubTrees blkHash txCount = do
                                          then (mn, True)
                                          else (mn, False))
                                 (zip concatNodes ([1 .. txct]))
-                    persistTMT blkHash (finalIntermediateMerkleNodes, (-1, True))
+                    debug lg $
+                        LG.msg
+                            ("processTMTSubTrees |  finalIntermediateMerkleNodes " ++ show finalIntermediateMerkleNodes)
+                    persistTMT blkHash Nothing (finalIntermediateMerkleNodes, (-1, True))
 
 runTMTDaemon :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
 runTMTDaemon =
@@ -726,9 +718,10 @@ runTMTDaemon =
                                                                     Left (e :: SomeException) -> do
                                                                         err lg $
                                                                             LG.msg
-                                                                                ("Error: Marking [Best-Synced] blockhash failed: " ++
+                                                                                ("Error: Marking [transpose_merkle_tree] failed: " ++
                                                                                  show e)
                                                                         throw KeyValueDBInsertException
+                                                                return ()
                                                             Left (e :: SomeException) -> do
                                                                 err lg $ LG.msg $ "Error while persistTMT: " ++ show e
                                                     else err lg $ LG.msg $ val "Potential Chain reorg occured?!"
