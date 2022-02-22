@@ -612,21 +612,21 @@ runTMTDaemon =
         dbe <- getDB
         lg <- getLogger
         lg <- getLogger
-        let conn = xCqlClientState $ dbe
-        debug lg $ LG.msg $ val "AAA| runTMTDaemon ..."
+        let net = bitcoinNetwork $ nodeConfig p2pEnv
+            conn = xCqlClientState $ dbe
         let qstr :: Q.QueryString Q.R (Identity T.Text) (Identity (Maybe Bool, Maybe Int32, Maybe Int64, Maybe T.Text))
             qstr = "SELECT value from xoken.misc_store where key = ?"
             p = getSimpleQueryParam "transpose_merkle_tree"
         res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr p)
-        mes <-
+        (bhash, height) <-
             case res of
                 (Right iop) -> do
                     if L.null iop
                         then do
-                            debug lg $ LG.msg $ val "Best TMT persisted is genesis."
-                            return Nothing
+                            let genesisHash = headerHash $ getGenesisHeader net
+                            debug lg $ LG.msg $ val "Best TMT empty, starting with genesis."
+                            return (genesisHash, 0)
                         else do
-                            debug lg $ LG.msg $ val "AAA| aaa..."
                             let record = runIdentity $ iop !! 0
                             debug lg $ LG.msg $ "Best TMT persisted is : " ++ show (record)
                             case getTextVal record of
@@ -634,77 +634,69 @@ runTMTDaemon =
                                     case (hexToBlockHash $ tx) of
                                         Just x -> do
                                             case getIntVal record of
-                                                Just y -> return $ Just (x, y)
+                                                Just y -> return (x, y)
                                                 Nothing -> throw InvalidMetaDataException
                                         Nothing -> throw InvalidBlockHashException
                                 Nothing -> throw InvalidMetaDataException
                 Left (e :: SomeException) -> throw InvalidMetaDataException
-        case mes of
-            Nothing -> return ()
-            Just (bhash, height) -> do
-                debug lg $ LG.msg $ val "AAA| bbb..."
-                let str = "SELECT block_hash, tx_count, block_header from xoken.blocks_by_height where block_height = ?"
-                    qstr = str :: Q.QueryString Q.R (Identity Int32) (T.Text, Maybe Int32, T.Text)
-                    p = getSimpleQueryParam $ Identity (height + 1)
-                res1 <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr p)
-                case res1 of
-                    Right iop -> do
-                        if L.length iop == 0
-                            then return ()
-                            else do
-                                let (nbhs, ntxc, nbhdr) = iop !! 0
-                                debug lg $ LG.msg $ val "AAA | ccc..."
-                                case ntxc of
-                                    Just txCount -> do
-                                        case (A.eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 nbhdr) of
-                                            Right bh -> do
-                                                debug lg $
-                                                    LG.msg $
-                                                    "AAA comparing blk-hashes: " ++ show (prevBlock bh) ++ show bhash
-                                                if (prevBlock bh) == bhash
-                                                    then do
-                                                        yy <-
-                                                            LE.try $
-                                                            processTMTSubTrees (fromJust $ hexToBlockHash nbhs) txCount
+        let str = "SELECT block_hash, tx_count, block_header from xoken.blocks_by_height where block_height = ?"
+            qstr = str :: Q.QueryString Q.R (Identity Int32) (T.Text, Maybe Int32, T.Text)
+            p = getSimpleQueryParam $ Identity (height + 1)
+        res1 <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr p)
+        case res1 of
+            Right iop -> do
+                if L.length iop == 0
+                    then return ()
+                    else do
+                        let (nbhs, ntxc, nbhdr) = iop !! 0
+                        case ntxc of
+                            Just txCount -> do
+                                case (A.eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 nbhdr) of
+                                    Right bh -> do
+                                        debug lg $
+                                            LG.msg $ "AAA comparing blk-hashes: " ++ show (prevBlock bh) ++ show bhash
+                                        if (prevBlock bh) == bhash
+                                            then do
+                                                yy <-
+                                                    LE.try $ processTMTSubTrees (fromJust $ hexToBlockHash nbhs) txCount
                                                         --
-                                                        case yy of
-                                                            Right y -> do
-                                                                let q :: Q.QueryString Q.W ( T.Text
-                                                                                           , ( Maybe Bool
-                                                                                             , Int32
-                                                                                             , Maybe Int64
-                                                                                             , T.Text)) ()
-                                                                    q =
-                                                                        Q.QueryString
-                                                                            "insert INTO xoken.misc_store (key,value) values (?,?)"
-                                                                    p :: Q.QueryParams ( T.Text
-                                                                                       , ( Maybe Bool
-                                                                                         , Int32
-                                                                                         , Maybe Int64
-                                                                                         , T.Text))
-                                                                    p =
-                                                                        getSimpleQueryParam
-                                                                            ( "transpose_merkle_tree"
-                                                                            , (Nothing, height + 1, Nothing, nbhs))
-                                                                res <-
-                                                                    liftIO $ try $ write conn (Q.RqQuery $ Q.Query q p)
-                                                                case res of
-                                                                    Right _ -> return ()
-                                                                    Left (e :: SomeException) -> do
-                                                                        err lg $
-                                                                            LG.msg
-                                                                                ("Error: Marking [transpose_merkle_tree] failed: " ++
-                                                                                 show e)
-                                                                        throw KeyValueDBInsertException
-                                                                return ()
+                                                case yy of
+                                                    Right y -> do
+                                                        let q :: Q.QueryString Q.W ( T.Text
+                                                                                   , ( Maybe Bool
+                                                                                     , Int32
+                                                                                     , Maybe Int64
+                                                                                     , T.Text)) ()
+                                                            q =
+                                                                Q.QueryString
+                                                                    "insert INTO xoken.misc_store (key,value) values (?,?)"
+                                                            p :: Q.QueryParams ( T.Text
+                                                                               , ( Maybe Bool
+                                                                                 , Int32
+                                                                                 , Maybe Int64
+                                                                                 , T.Text))
+                                                            p =
+                                                                getSimpleQueryParam
+                                                                    ( "transpose_merkle_tree"
+                                                                    , (Nothing, height + 1, Nothing, nbhs))
+                                                        res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query q p)
+                                                        case res of
+                                                            Right _ -> return ()
                                                             Left (e :: SomeException) -> do
-                                                                err lg $ LG.msg $ "Error while persistTMT: " ++ show e
-                                                    else err lg $ LG.msg $ val "Potential Chain reorg occured?!"
-                                            Left err -> do
-                                                liftIO $ print $ "Decode failed with error: " <> show err
-                                    Nothing -> return ()
-                    Left (e :: SomeException) -> do
-                        err lg $ LG.msg $ "Error invalid while querying DB: " ++ show e
+                                                                err lg $
+                                                                    LG.msg
+                                                                        ("Error: Marking [transpose_merkle_tree] failed: " ++
+                                                                         show e)
+                                                                throw KeyValueDBInsertException
+                                                        return ()
+                                                    Left (e :: SomeException) -> do
+                                                        err lg $ LG.msg $ "Error while persistTMT: " ++ show e
+                                            else err lg $ LG.msg $ val "Potential Chain reorg occured?!"
+                                    Left err -> do
+                                        liftIO $ print $ "Decode failed with error: " <> show err
+                            Nothing -> return ()
+            Left (e :: SomeException) -> do
+                err lg $ LG.msg $ "Error invalid while querying DB: " ++ show e
 
 updateBlocks :: (HasLogger m, HasDatabaseHandles m, MonadIO m) => BlockHash -> BlockHeight -> Int -> Int -> Tx -> m ()
 updateBlocks bhash blkht bsize txcount cbase = do
