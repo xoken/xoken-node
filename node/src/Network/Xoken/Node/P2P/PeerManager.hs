@@ -332,13 +332,12 @@ updateMerkleSubTrees dbe tmtState lg hashComp newhash left right ht ind final on
                             then do
                                 let stRoot = head res
                                 liftIO $ TSH.insert tmtState (fromIntegral pageNum) stRoot
-                                debug lg $
-                                    LG.msg $ "AAA: tmtState, pgnum : " <> (show pageNum) ++ " , root: " ++ show stRoot
+                                debug lg $ LG.msg $ "tmtState, pgnum : " <> (show pageNum) ++ " , root: " ++ show stRoot
                                 return $ tail res
                             else do
                                 debug lg $
                                     LG.msg $
-                                    "AAA: tmtState, txhash : " <> (show newhash) ++
+                                    "tmtState, txhash : " <> (show newhash) ++
                                     " final: " ++ (show final) ++ " res: " ++ show res
                                 return res
                     let (create, match) =
@@ -510,14 +509,14 @@ persistTMT ::
        (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
     => BlockHash
     -> Maybe Int8
+    -> (TSH.TSHashTable Int MerkleNode)
     -> ([(MerkleNode, Bool)], (Int32, Bool))
     -> m ()
-persistTMT blockHash isFixedTreeHeight (mklNodes, (pageNum, onlySubTree)) = do
+persistTMT blockHash isFixedTreeHeight tmtState (mklNodes, (pageNum, onlySubTree)) = do
     p2pEnv <- getBitcoinP2P
     lg <- getLogger
     dbe <- getDB
     tv <- liftIO $ newIORef (M.empty, [])
-    tmtState' <- liftIO $ TSH.lookup (tmtSubTreeState p2pEnv) blockHash
     let treeHt =
             case isFixedTreeHeight of
                 Just fth -> fth
@@ -526,41 +525,35 @@ persistTMT blockHash isFixedTreeHeight (mklNodes, (pageNum, onlySubTree)) = do
         LG.msg
             ("persistTMT | blockhash " ++
              show blockHash ++ " (pageNum,onlyST): " ++ show (pageNum, onlySubTree) ++ (show $ L.length mklNodes))
-    debug lg $ LG.msg ("persistTMT | mkl-nodes " ++ show mklNodes)
-    case tmtState' of
-        Nothing -> do
-            err lg $ LG.msg ("[ERROR] persistTMT | TMT_Sub_Tree_State not found for " ++ show blockHash)
-        Just tmtState -> do
-            mapM_
-                (\(mn, isLast) -> do
-                     hcstate <- liftIO $ readIORef tv
-                     debug lg $ LG.msg ("persistTMT | aaa " ++ show (blockHash, isLast))
-                     res <-
-                         LE.try $
-                         liftIO $
-                         updateMerkleSubTrees
-                             dbe
-                             tmtState
-                             lg
-                             hcstate
-                             (fromJust $ node mn)
-                             (leftChild mn)
-                             (rightChild mn)
-                             treeHt
-                             0
-                             isLast
-                             onlySubTree
-                             pageNum
-                     case res of
-                         Right (hcs) -> do
-                             liftIO $ writeIORef tv hcs
-                         Left (ee :: SomeException) -> do
-                             err lg $
-                                 LG.msg
-                                     ("[ERROR] Quit building TMT. FATAL error!" ++
-                                      (show ee) ++ " | " ++ show (fromJust $ node mn))
-                             throw ee)
-                (mklNodes)
+    mapM_
+        (\(mn, isLast) -> do
+             hcstate <- liftIO $ readIORef tv
+             res <-
+                 LE.try $
+                 liftIO $
+                 updateMerkleSubTrees
+                     dbe
+                     tmtState
+                     lg
+                     hcstate
+                     (fromJust $ node mn)
+                     (leftChild mn)
+                     (rightChild mn)
+                     treeHt
+                     0
+                     isLast
+                     onlySubTree
+                     pageNum
+             case res of
+                 Right (hcs) -> do
+                     liftIO $ writeIORef tv hcs
+                 Left (ee :: SomeException) -> do
+                     err lg $
+                         LG.msg
+                             ("[ERROR] Quit building TMT. FATAL error!" ++
+                              (show ee) ++ " | " ++ show (fromJust $ node mn))
+                     throw ee)
+        (mklNodes)
 
 processTMTSubTrees :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BlockHash -> Int32 -> m ()
 processTMTSubTrees blkHash txCount = do
@@ -571,8 +564,7 @@ processTMTSubTrees blkHash txCount = do
     lg <- getLogger
     let conn = xCqlClientState $ dbe
         pages = (fst $ txCount `divMod` 256) + 1
-    tmts <- liftIO $ TSH.new 4
-    liftIO $ TSH.insert (tmtSubTreeState p2pEnv) blkHash tmts
+    tmtState <- liftIO $ TSH.new 4
     yy <-
         LE.try $
         S.drain $
@@ -585,7 +577,7 @@ processTMTSubTrees blkHash txCount = do
                  if pages == 1
                      then loadTxIDPagesTMT blkHash pageNum True
                      else loadTxIDPagesTMT blkHash pageNum False) &
-        S.mapM (persistTMT blkHash (Just 8)) & -- fixed tree height of 8 corresponding to max 256 leaf nodes
+        S.mapM (persistTMT blkHash (Just 8) tmtState) & -- fixed tree height of 8 corresponding to max 256 leaf nodes
         S.maxBuffer (maxTMTBuilderThreads $ nodeConfig p2pEnv) &
         S.maxThreads (maxTMTBuilderThreads $ nodeConfig p2pEnv)
     case yy of
@@ -596,38 +588,21 @@ processTMTSubTrees blkHash txCount = do
     if pages == 1
         then return ()
         else do
-            tmtState' <- liftIO $ TSH.lookup (tmtSubTreeState p2pEnv) blkHash
-            case tmtState' of
-                Nothing -> do
-                    err lg $ LG.msg ("[ERROR] processTMTSubTrees |  TMT_Sub_Tree_State not found for " ++ show blkHash)
-                Just tmtState -> do
-                    swmn <-
-                        mapM
-                            (\pg -> do
-                                 if 1 == pg `mod` 2
-                                     then do
-                                         left <- liftIO $ TSH.lookup tmtState pg
-                                         if (pg < fromIntegral pages)
-                                             then do
-                                                 right <- liftIO $ TSH.lookup tmtState (pg + 1)
-                                                 let swpd = swapSiblings (fromJust left) (fromJust right)
-                                                 return $ [snd swpd, fst swpd]
-                                             else return [fromJust left]
-                                     else return [])
-                            [1 .. (fromIntegral pages)]
-                    let concatNodes = L.concat swmn
-                        txct = L.length concatNodes
-                        finalIntermediateMerkleNodes =
-                            map
-                                (\(mn, indx) -> do
-                                     if indx == txct
-                                         then (mn, True)
-                                         else (mn, False))
-                                (zip concatNodes ([1 .. txct]))
-                    debug lg $
-                        LG.msg
-                            ("processTMTSubTrees |  finalIntermediateMerkleNodes " ++ show finalIntermediateMerkleNodes)
-                    persistTMT blkHash Nothing (finalIntermediateMerkleNodes, (-1, True))
+            interimNodes <-
+                mapM
+                    (\pg -> do
+                         xx <- liftIO $ TSH.lookup tmtState pg
+                         return $ fromJust xx)
+                    [1 .. (fromIntegral pages)]
+            let txct = L.length interimNodes
+                finalIntermediateMerkleNodes =
+                    map
+                        (\(mn, indx) -> do
+                             if indx == txct
+                                 then (mn, True)
+                                 else (mn, False))
+                        (zip interimNodes ([1 .. txct]))
+            persistTMT blkHash Nothing tmtState (finalIntermediateMerkleNodes, (-1, True))
 
 runTMTDaemon :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
 runTMTDaemon =
