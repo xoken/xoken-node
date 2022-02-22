@@ -244,45 +244,53 @@ getTxOutputsFromTxId txid = do
     bp2pEnv <- getBitcoinP2P
     ep <- liftIO $ readTVarIO (epochType bp2pEnv)
     let conn = xCqlClientState dbe
-        toStr = "SELECT output_index,block_info,is_recv,other,value,address FROM xoken.txid_outputs WHERE txid=?"
-        toQStr =
-            toStr :: Q.QueryString Q.R (Identity DT.Text) ( Int32
-                                                          , Maybe (DT.Text, Int32, Int32)
-                                                          , Bool
-                                                          , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
-                                                          , Int64
-                                                          , DT.Text)
+        toStr = "SELECT output_index, value, address, script, spend_info FROM xoken.txid_outputs WHERE txid=?"
+        toQStr = toStr :: Q.QueryString Q.R (Identity DT.Text) (Int32, Int64, DT.Text, DT.Text, Maybe (DT.Text, Int32))
         par = getSimpleQueryParam (Identity txid)
     res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query toQStr par)
-    out <-
-        case res of
-            Right t -> do
-                if length t == 0
-                    then do
-                        err lg $
-                            LG.msg $ "Error: getTxOutputsFromTxId: No entry in txid_outputs for txid: " ++ show txid
-                        return []
-                    else do
-                        let txg =
-                                (L.sortBy (\(_, _, x, _, _, _) (_, _, y, _, _, _) -> compare x y)) <$>
-                                (L.groupBy (\(x, _, _, _, _, _) (y, _, _, _, _, _) -> x == y) t)
-                            txOutData =
-                                (\inp ->
-                                     case inp of
-                                         [(idx, bif, recv, oth, val, addr)] ->
-                                             genTxOutputData (txid, idx, (bif, recv, oth, val, addr), Nothing)
-                                         [(idx1, bif1, recv1, oth1, val1, addr1), (_, bif2, recv2, oth2, val2, addr2)] ->
-                                             genTxOutputData
-                                                 ( txid
-                                                 , idx1
-                                                 , (bif2, recv2, oth2, val2, addr2)
-                                                 , Just (bif1, recv1, oth1, val1, addr1))) <$>
-                                txg
-                        return $ txOutputDataToOutput <$> txOutData
-            Left (e :: SomeException) -> do
-                err lg $ LG.msg $ "Error: getTxOutputsFromTxId: " ++ show e
-                throw KeyValueDBLookupException
-    return out
+    case res of
+        Right t -> do
+            if length t == 0
+                then do
+                    err lg $ LG.msg $ "Error: getTxOutputsFromTxId: No entry in txid_outputs for txid: " ++ show txid
+                    return []
+                else do
+                    LA.mapConcurrently
+                        (\(idx, val, addr, script, si) -> do
+                             case si of
+                                 Nothing -> do
+                                     return $ TxOutput idx (DT.unpack addr) Nothing val (BC.pack $ DT.unpack script)
+                                 Just situple -> do
+                                     let conn1 = xCqlClientState dbe
+                                         toStr1 = "SELECT block_info FROM xoken.transactions WHERE tx_id=?"
+                                         toQStr1 =
+                                             toStr1 :: Q.QueryString Q.R (Identity DT.Text) (Identity ( DT.Text
+                                                                                                      , Int32
+                                                                                                      , Int32))
+                                         par1 = getSimpleQueryParam (Identity $ fst situple)
+                                     res1 <- liftIO $ LE.try $ query conn1 (Q.RqQuery $ Q.Query toQStr1 par1)
+                                     case res1 of
+                                         Right rx -> do
+                                             let (bhash, bht, txindx) = runIdentity $ rx !! 0
+                                             return $
+                                                 TxOutput
+                                                     idx
+                                                     (DT.unpack addr)
+                                                     (Just $
+                                                      SpendInfo
+                                                          (DT.unpack $ fst situple)
+                                                          (snd situple)
+                                                          (BlockInfo' (DT.unpack bhash) bht txindx)
+                                                          [])
+                                                     val
+                                                     (BC.pack $ DT.unpack script)
+                                         Left (e :: SomeException) -> do
+                                             err lg $ LG.msg $ "Error: getTxOutputsFromTxId: " ++ show e
+                                             throw KeyValueDBLookupException)
+                        t
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: getTxOutputsFromTxId: " ++ show e
+            throw KeyValueDBLookupException
 
 xGetTxIDsByBlockHash :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => String -> Int32 -> Int32 -> m [String]
 xGetTxIDsByBlockHash hash pgSize pgNum = do

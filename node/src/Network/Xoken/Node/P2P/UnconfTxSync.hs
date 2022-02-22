@@ -407,7 +407,7 @@ processUnconfTransaction tx = do
                                       fees
                                       (fromIntegral count))
                              prot
-             insertTxIdOutputs output a sh True Nothing (stripScriptHash <$> inputs) (fromIntegral $ outValue o))
+             insertTxIdOutputs output a sh (fromIntegral $ outValue o))
         outAddrs
     debug lg $ LG.msg $ "Processing unconfirmed transaction <committed outputs> :" ++ show txhs
     mapM_
@@ -415,9 +415,8 @@ processUnconfTransaction tx = do
              let prevOutpoint = (txHashToHex $ outPointHash $ prevOutput o, fromIntegral $ outPointIndex $ prevOutput o)
              let output = (txHashToHex $ txHash tx, i)
              let spendInfo = (\ov -> ((txHashToHex $ txHash tx, fromIntegral $ fst ov), i, snd $ ov)) <$> ovs
-             if a == "" || sh == ""
-                 then return ()
-                 else insertTxIdOutputs prevOutpoint a sh False Nothing (stripScriptHash <$> spendInfo) 0)
+             -- this will fail to update for coinbase txns, its cool
+             updateSpendInfoOutputs (fst prevOutpoint) (snd prevOutpoint) (txHashToHex txhs, i))
         (zip inAddrs (map (\x -> (fst3 $ thd3 x, snd3 $ thd3 x)) inputs))
     debug lg $ LG.msg $ "Processing unconfirmed transaction <updated inputs> :" ++ show txhs
     let str = "UPDATE xoken.transactions SET tx_serialized=?, inputs=?, fees=? WHERE tx_id=?"

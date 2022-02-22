@@ -112,9 +112,7 @@ queryAllegoryNameBranch name isProducer = do
   where
     cypher =
         " MATCH p=(pointer:namestate {name: {namestr}})-[:REVISION]-()-[:INPUT*]->(start:nutxo) " <>
-        " WHERE NOT (start)-[:INPUT]->() " <>
-        " UNWIND tail(nodes(p)) AS elem " <>
-        " RETURN elem.outpoint"
+        " WHERE NOT (start)-[:INPUT]->() " <> " UNWIND tail(nodes(p)) AS elem " <> " RETURN elem.outpoint"
     params =
         if isProducer
             then fromList [("namestr", T (name <> pack "|producer"))]
@@ -496,7 +494,10 @@ insertMerkleSubTree leaves inodes = do
                               [cyCreateLeaves, cyCreateT, cyRelationLeft, cyRelationRight, cySiblingReln]
                      else Data.Text.intercalate (" , ") $
                           Data.List.filter (not . Data.Text.null) [cyCreateLeaves, cySiblingReln]
-            else cyCreateT
+            else if length inodes > 0
+                     then Data.Text.intercalate (" , ") $
+                          Data.List.filter (not . Data.Text.null) [cyCreateT, cyRelationLeft, cyRelationRight]
+                     else cyCreateT -- invalid scenario
     parCreateLeaves = Prelude.map (\(i, x) -> (i, T $ txtTx $ node x)) (zip (vars $ Prelude.map (node) leaves) leaves)
     parCreateSiblingReln =
         Prelude.map
@@ -517,8 +518,8 @@ insertMerkleSubTree leaves inodes = do
             then " CREATE " <> cyCreate
             else " MATCH " <> cyMatch <> " CREATE " <> cyCreate
     txtTx i = txHashToHex $ TxHash $ fromJust i
-    vars m = Prelude.map (\x -> Data.Text.filter (isAlpha) $ numrepl $ Data.Text.take 8 $ txtTx x) (m)
-    var m = Data.Text.filter (isAlpha) $ numrepl $ Data.Text.take 8 $ txtTx m
+    vars m = Prelude.map (\x -> var x) (m)
+    var m = Data.Text.append (Data.Text.pack "a") (Data.Text.take 16 $ txtTx m)
     numrepl txt =
         Data.Text.map
             (\x ->
@@ -556,12 +557,12 @@ deleteMerkleSubTree inodes = do
 
 insertProtocolWithBlockInfo :: Text -> [(Text, Text)] -> BlockPInfo -> BoltActionT IO ()
 insertProtocolWithBlockInfo name properties BlockPInfo {..} = do
-    liftIO $ print $ "insertProtocolWithBlockInfo for height: " <> (pack $ show height) <> " query: " <> cypher
     queryP cypher params
     return ()
   where
     cypher =
-        " MERGE (a: protocol { name: {name}}) ON CREATE SET " <> props <>
+        " MERGE (a: protocol { name: {name}}) ON CREATE SET " <>
+        props <>
         " MERGE (b: block { hash: {hash}}) ON CREATE SET b.height= {height}, b.timestamp= {timestamp}, b.day= {day }, b.month= {month}, b.year= {year}, b.hour= {hour}, b.absoluteHour= {absoluteHour} " <>
         " MERGE (a)-[r:PRESENT_IN{bytes: {bytes}, fees: {fees}, tx_count: {count}}]->(b)"
     props = intercalate "," $ Prelude.map (\(a, _) -> "a." <> a <> "= {" <> a <> "}") properties

@@ -223,16 +223,17 @@ runThreads config nodeConf bp2p conn lg certPaths = do
     runAppM
         serviceEnv
         (do bp2pEnv <- getBitcoinP2P
-            withAsync runEpochSwitcher $ \_ -> do
-                withAsync setupSeedPeerConnection $ \_ -> do
-                    withAsync runEgressChainSync $ \_ -> do
-                        withAsync runBlockCacheQueue $ \_ -> do
-                            withAsync (handleNewConnectionRequest epHandler) $ \_ -> do
-                                withAsync runPeerSync $ \_ -> do
-                                    withAsync runSyncStatusChecker $ \_ -> do
-                                        withAsync runWatchDog $ \z -> do
-                                            _ <- LA.wait z
-                                            return ())
+            withAsync runTMTDaemon $ \_ -> do
+                withAsync runEpochSwitcher $ \_ -> do
+                    withAsync setupSeedPeerConnection $ \_ -> do
+                        withAsync runEgressChainSync $ \_ -> do
+                            withAsync runBlockCacheQueue $ \_ -> do
+                                withAsync (handleNewConnectionRequest epHandler) $ \_ -> do
+                                    withAsync runPeerSync $ \_ -> do
+                                        withAsync runSyncStatusChecker $ \_ -> do
+                                            withAsync runWatchDog $ \z -> do
+                                                _ <- LA.wait z
+                                                return ())
     liftIO $ destroyAllResources $ pool gdbState
     liftIO $ putStrLn $ "node recovering from fatal DB connection failure!"
     return ()

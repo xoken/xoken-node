@@ -961,38 +961,36 @@ mergeAddrTxOutTxOutput addr (TxOut {..}) txOutput = txOutput {lockingScript = sc
 txToTx' :: Tx -> [TxOutput] -> [TxInput] -> Tx'
 txToTx' (Tx {..}) txout txin = Tx' txVersion txout txin txLockTime
 
-type TxIdOutputs = (Maybe (T.Text, Int32, Int32), Bool, Set ((T.Text, Int32), Int32, (T.Text, Int64)), Int64, T.Text)
+type TxInputs = [(((T.Text, Int32), Int32, (T.Text, Int64)))]
 
-type TxIdOutputs' = (Bool, Set ((T.Text, Int32), Int32, (T.Text, Int64)), Int64, T.Text)
-
-genUnConfTxOutputData :: (T.Text, Int32, TxIdOutputs', Maybe TxIdOutputs') -> TxOutputData
-genUnConfTxOutputData (txId, txIndex, (_, inps, val, addr), Nothing) =
-    TxOutputData txId txIndex addr val Nothing (Q.fromSet inps) Nothing
-genUnConfTxOutputData (txId, txIndex, (_, inps, val, addr), Just (_, oth, _, _)) =
-    let other = Q.fromSet oth
-        ((stid, _), stidx, _) = head $ other
-        si = (\((_, soi), _, (ad, vl)) -> SpendInfo' soi ad vl) <$> other
-     in TxOutputData txId txIndex addr val Nothing (Q.fromSet inps) Nothing
-
-genTxOutputData :: (T.Text, Int32, TxIdOutputs, Maybe TxIdOutputs) -> TxOutputData
-genTxOutputData (txId, txIndex, (binfo, _, inps, val, addr), Nothing) =
-    let (hs, ht, ind) = fromMaybe ("", -1, -1) binfo
-     in TxOutputData txId txIndex addr val (Just $ BlockInfo' (T.unpack hs) ht ind) (Q.fromSet inps) Nothing
-genTxOutputData (txId, txIndex, (binfo, _, inps, val, addr), Just (sbinfo, _, oth, _, _)) =
-    let (hs, ht, ind) = fromMaybe ("", -1, -1) binfo
-        (shs, sht, sind) = fromMaybe ("", -1, -1) sbinfo
-        other = Q.fromSet oth
-        ((stid, _), stidx, _) = head $ other
-        si = (\((_, soi), _, (ad, vl)) -> SpendInfo' soi ad vl) <$> other
-     in TxOutputData
-            txId
-            txIndex
-            addr
-            val
-            (Just $ BlockInfo' (T.unpack hs) ht ind)
-            (Q.fromSet inps)
-            (Just $ SpendInfo (T.unpack stid) stidx (BlockInfo' (T.unpack shs) sht sind) si)
-
+-- type TxIdOutputs = (Maybe (T.Text, Int32, Int32), Bool, Set ((T.Text, Int32), Int32, (T.Text, Int64)), Int64, T.Text)
+-- type TxIdOutputs' = (Bool, Set ((T.Text, Int32), Int32, (T.Text, Int64)), Int64, T.Text)
+-- genUnConfTxOutputData :: (T.Text, Int32, TxIdOutputs', Maybe TxIdOutputs') -> TxOutputData
+-- genUnConfTxOutputData (txId, txIndex, (_, inps, val, addr), Nothing) =
+--     TxOutputData txId txIndex addr val Nothing (Q.fromSet inps) Nothing
+-- genUnConfTxOutputData (txId, txIndex, (_, inps, val, addr), Just (_, oth, _, _)) =
+--     let other = Q.fromSet oth
+--         ((stid, _), stidx, _) = head $ other
+--         si = (\((_, soi), _, (ad, vl)) -> SpendInfo' soi ad vl) <$> other
+--      in TxOutputData txId txIndex addr val Nothing (Q.fromSet inps) Nothing
+-- genTxOutputData :: (T.Text, Int32, Int64, T.Text, T.Text, (T.Text, Int32)) -> TxOutputData
+-- genTxOutputData (txId, txIndex, (binfo, _, inps, val, addr), Nothing) =
+--     let (hs, ht, ind) = fromMaybe ("", -1, -1) binfo
+--      in TxOutputData txId txIndex addr val (Just $ BlockInfo' (T.unpack hs) ht ind) (Q.fromSet inps) Nothing
+-- genTxOutputData (txId, txIndex, (binfo, _, inps, val, addr), Just (sbinfo, _, oth, _, _)) =
+--     let (hs, ht, ind) = fromMaybe ("", -1, -1) binfo
+--         (shs, sht, sind) = fromMaybe ("", -1, -1) sbinfo
+--         other = Q.fromSet oth
+--         ((stid, _), stidx, _) = head $ other
+--         si = (\((_, soi), _, (ad, vl)) -> SpendInfo' soi ad vl) <$> other
+--      in TxOutputData
+--             txId
+--             txIndex
+--             addr
+--             val
+--             (Just $ BlockInfo' (T.unpack hs) ht ind)
+--             (Q.fromSet inps)
+--             (Just $ SpendInfo (T.unpack stid) stidx (BlockInfo' (T.unpack shs) sht sind) si)
 txOutputDataToOutput :: TxOutputData -> TxOutput
 txOutputDataToOutput (TxOutputData {..}) = TxOutput txind (T.unpack address) spendInfo value ""
 
@@ -1000,8 +998,12 @@ fromResultWithCursor :: ResultWithCursor r c -> r
 fromResultWithCursor = (\(ResultWithCursor res cur) -> res)
 
 addressOutputToResultWithCursor ::
-       String -> ((Int64, (T.Text, Int32)), TxOutputData) -> ResultWithCursor AddressOutputs Int64
-addressOutputToResultWithCursor address ((nominalTxIndex, (opTxId, opIndex)), TxOutputData _ _ _ value blockInfo inputs spendInfo) =
+       String
+    -> ((Int64, (T.Text, Int32)), TxOutput)
+    -> TxInputs
+    -> Maybe BlockInfo'
+    -> ResultWithCursor AddressOutputs Int64
+addressOutputToResultWithCursor address ((nominalTxIndex, (opTxId, opIndex)), (TxOutput idx addr spendInfo value script)) inputs blockInfo =
     ResultWithCursor
         (AddressOutputs
              address
@@ -1015,11 +1017,15 @@ addressOutputToResultWithCursor address ((nominalTxIndex, (opTxId, opIndex)), Tx
         nominalTxIndex
 
 scriptOutputToResultWithCursor ::
-       ((T.Text, Int64, (T.Text, Int32)), TxOutputData) -> ResultWithCursor ScriptOutputs Int64
-scriptOutputToResultWithCursor ((scriptHash, nominalTxIndex, (opTxId, opIndex)), TxOutputData _ _ _ value blockInfo inputs spendInfo) =
+       String
+    -> ((Int64, (T.Text, Int32)), TxOutput)
+    -> TxInputs
+    -> Maybe BlockInfo'
+    -> ResultWithCursor ScriptOutputs Int64
+scriptOutputToResultWithCursor scriptHash ((nominalTxIndex, (opTxId, opIndex)), (TxOutput idx addr spendInfo value script)) inputs blockInfo =
     ResultWithCursor
         (ScriptOutputs
-             (T.unpack scriptHash)
+             scriptHash
              (OutPoint' (T.unpack opTxId) (fromIntegral opIndex))
              blockInfo
              spendInfo

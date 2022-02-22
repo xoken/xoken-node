@@ -100,18 +100,14 @@ import qualified Xoken.NodeConfig as NC
 maxNTI :: Int64
 maxNTI = maxBound
 
-getTxOutputsData :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => (DT.Text, Int32) -> m TxOutputData
+getTxOutputsData :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => (DT.Text, Int32) -> m TxOutput
 getTxOutputsData (txid, index) = do
     dbe <- getDB
     lg <- getLogger
     let conn = xCqlClientState dbe
-        toStr = "SELECT block_info,is_recv,other,value,address FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
-        toQStr =
-            toStr :: Q.QueryString Q.R (DT.Text, Int32) ( Maybe (DT.Text, Int32, Int32)
-                                                        , Bool
-                                                        , Set ((DT.Text, Int32), Int32, (DT.Text, Int64))
-                                                        , Int64
-                                                        , DT.Text)
+        toStr =
+            "SELECT output_index, value, address, script, spend_info FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
+        toQStr = toStr :: Q.QueryString Q.R (DT.Text, Int32) (Int32, Int64, DT.Text, DT.Text, Maybe (DT.Text, Int32))
         top = getSimpleQueryParam (txid, index)
     toRes <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query toQStr top)
     case toRes of
@@ -123,21 +119,38 @@ getTxOutputsData (txid, index) = do
                         "Error: getTxOutputsData: No entry in txid_outputs for (txid,index): " ++ show (txid, index)
                     throw KeyValueDBLookupException
                 else do
-                    let txg = L.sortBy (\(_, x, _, _, _) (_, y, _, _, _) -> compare x y) es
-                    debug lg $
-                        LG.msg $
-                        BC.pack $
-                        "getTxOutputsData " <> (show $ (txid, index)) <> ": Tx output data pair: got: " <> (show txg)
-                    let outputData =
-                            case txg of
-                                [x] -> genTxOutputData (txid, index, x, Nothing)
-                                [x, y] -> genTxOutputData (txid, index, y, Just x)
-                    debug lg $
-                        LG.msg $
-                        BC.pack $
-                        "getTxOutputsData " <> (show $ (txid, index)) <> ": Tx output data generated: " <>
-                        (show outputData)
-                    return outputData
+                    case es of
+                        [(idx, val, addr, script, si)] -> do
+                            case si of
+                                Nothing -> do
+                                    return $ TxOutput idx (DT.unpack addr) Nothing val (BC.pack $ DT.unpack script)
+                                Just situple -> do
+                                    let conn1 = xCqlClientState dbe
+                                        toStr1 = "SELECT block_info FROM xoken.transactions WHERE tx_id=?"
+                                        toQStr1 =
+                                            toStr1 :: Q.QueryString Q.R (Identity DT.Text) (Identity ( DT.Text
+                                                                                                     , Int32
+                                                                                                     , Int32))
+                                        par1 = getSimpleQueryParam (Identity $ fst situple)
+                                    res1 <- liftIO $ LE.try $ query conn1 (Q.RqQuery $ Q.Query toQStr1 par1)
+                                    case res1 of
+                                        Right rx -> do
+                                            let (bhash, bht, txindx) = runIdentity $ rx !! 0
+                                            return $
+                                                TxOutput
+                                                    idx
+                                                    (DT.unpack addr)
+                                                    (Just $
+                                                     SpendInfo
+                                                         (DT.unpack $ fst situple)
+                                                         (snd situple)
+                                                         (BlockInfo' (DT.unpack bhash) bht txindx)
+                                                         [])
+                                                    val
+                                                    (BC.pack $ DT.unpack script)
+                                        Left (e :: SomeException) -> do
+                                            err lg $ LG.msg $ "Error: getTxOutputsData: " ++ show e
+                                            throw KeyValueDBLookupException
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: getTxOutputsData: " ++ show e
             throw KeyValueDBLookupException
@@ -157,6 +170,7 @@ xGetOutputsAddress ::
     -> m ([ResultWithCursor AddressOutputs Int64])
 xGetOutputsAddress address pgSize mbNominalTxIndex isAsc = do
     lg <- getLogger
+    dbe <- getDB
     bp2pEnv <- getBitcoinP2P
     epoch <- liftIO $ readTVarIO (epochType bp2pEnv)
     res <- LE.try $ getConfirmedOutputsByAddress address pgSize mbNominalTxIndex isAsc
@@ -164,9 +178,44 @@ xGetOutputsAddress address pgSize mbNominalTxIndex isAsc = do
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ BC.pack $ "[ERROR] xGetOutputsAddress: Fetching confirmed/unconfirmed outputs: " <> show e
             throw KeyValueDBLookupException
-        Right conf ->
-            let confRwc = addressOutputToResultWithCursor address <$> conf
-             in return $ L.take (fromMaybe maxBound (fromIntegral <$> pgSize)) $ confRwc
+        Right conf -> do
+            xx <-
+                LA.mapConcurrently
+                    (\ado -> do
+                         case ado of
+                             ((_, (opTxId, _)), _) -> do
+                                 let conn1 = xCqlClientState dbe
+                                     toStr1 = "SELECT block_info, inputs FROM xoken.transactions WHERE tx_id=?"
+                                     toQStr1 =
+                                         toStr1 :: Q.QueryString Q.R (Identity DT.Text) ( Maybe (DT.Text, Int32, Int32)
+                                                                                        , Set ( (DT.Text, Int32)
+                                                                                              , Int32
+                                                                                              , (DT.Text, Int64)))
+                                     par1 = getSimpleQueryParam (Identity opTxId)
+                                 res1 <- liftIO $ LE.try $ query conn1 (Q.RqQuery $ Q.Query toQStr1 par1)
+                                 case res1 of
+                                     Right [(bi, inputs)] -> do
+                                         case bi of
+                                             Nothing -> do
+                                                 return $
+                                                     addressOutputToResultWithCursor
+                                                         address
+                                                         ado
+                                                         (Q.fromSet inputs)
+                                                         Nothing
+                                             Just blkinf -> do
+                                                 let (bhash, bht, txindx) = blkinf
+                                                 return $
+                                                     addressOutputToResultWithCursor
+                                                         address
+                                                         ado
+                                                         (Q.fromSet inputs)
+                                                         (Just $ BlockInfo' (DT.unpack bhash) bht txindx)
+                                     Left (e :: SomeException) -> do
+                                         err lg $ LG.msg $ "Error: xGetOutputsAddress: " ++ show e
+                                         throw KeyValueDBLookupException)
+                    conf
+            return $ L.take (fromMaybe maxBound (fromIntegral <$> pgSize)) $ xx
 
 xGetUtxosAddress ::
        (HasXokenNodeEnv env m, MonadIO m)
@@ -177,6 +226,7 @@ xGetUtxosAddress ::
     -> m ([ResultWithCursor AddressOutputs Int64])
 xGetUtxosAddress address pgSize mbNominalTxIndex isAsc = do
     lg <- getLogger
+    dbe <- getDB
     bp2pEnv <- getBitcoinP2P
     epoch <- liftIO $ readTVarIO (epochType bp2pEnv)
     res <- LE.try $ getConfirmedUtxosByAddress address pgSize mbNominalTxIndex isAsc
@@ -186,8 +236,43 @@ xGetUtxosAddress address pgSize mbNominalTxIndex isAsc = do
             throw KeyValueDBLookupException
         Right conf -> do
             debug lg $ LG.msg $ BC.pack $ "xGetUtxosAddress: Got confirmed utxos: " <> (show conf)
-            let confRwc = addressOutputToResultWithCursor address <$> conf
-             in return $ L.take (fromMaybe maxBound (fromIntegral <$> pgSize)) $ confRwc
+            xx <-
+                LA.mapConcurrently
+                    (\ado -> do
+                         case ado of
+                             ((_, (opTxId, _)), _) -> do
+                                 let conn1 = xCqlClientState dbe
+                                     toStr1 = "SELECT block_info, inputs FROM xoken.transactions WHERE tx_id=?"
+                                     toQStr1 =
+                                         toStr1 :: Q.QueryString Q.R (Identity DT.Text) ( Maybe (DT.Text, Int32, Int32)
+                                                                                        , Set ( (DT.Text, Int32)
+                                                                                              , Int32
+                                                                                              , (DT.Text, Int64)))
+                                     par1 = getSimpleQueryParam (Identity opTxId)
+                                 res1 <- liftIO $ LE.try $ query conn1 (Q.RqQuery $ Q.Query toQStr1 par1)
+                                 case res1 of
+                                     Right [(bi, inputs)] -> do
+                                         case bi of
+                                             Nothing -> do
+                                                 return $
+                                                     addressOutputToResultWithCursor
+                                                         address
+                                                         ado
+                                                         (Q.fromSet inputs)
+                                                         Nothing
+                                             Just blkinf -> do
+                                                 let (bhash, bht, txindx) = blkinf
+                                                 return $
+                                                     addressOutputToResultWithCursor
+                                                         address
+                                                         ado
+                                                         (Q.fromSet inputs)
+                                                         (Just $ BlockInfo' (DT.unpack bhash) bht txindx)
+                                     Left (e :: SomeException) -> do
+                                         err lg $ LG.msg $ "Error: xGetUtxosAddress: " ++ show e
+                                         throw KeyValueDBLookupException)
+                    conf
+            return $ L.take (fromMaybe maxBound (fromIntegral <$> pgSize)) $ xx
 
 getConfirmedOutputsByAddress ::
        (HasXokenNodeEnv env m, MonadIO m)
@@ -195,7 +280,7 @@ getConfirmedOutputsByAddress ::
     -> Maybe Int32
     -> Maybe Int64
     -> Bool
-    -> m [((Int64, (DT.Text, Int32)), TxOutputData)]
+    -> m [((Int64, (DT.Text, Int32)), TxOutput)]
 getConfirmedOutputsByAddress address pgSize mbNominalTxIndex isAsc = do
     dbe <- getDB
     lg <- getLogger
@@ -240,6 +325,8 @@ getConfirmedOutputsByAddress address pgSize mbNominalTxIndex isAsc = do
                 err lg $ LG.msg $ BC.pack $ "[ERROR] getConfirmedOutputsByAddress: While running query: " <> show e
                 throw KeyValueDBLookupException
             Right (scriptHashResults, addressResults) -> do
+                debug lg $ LG.msg $ "AAAA: scriptHashResults: " ++ show (scriptHashResults)
+                debug lg $ LG.msg $ "AAAA: addressResults: " ++ show (addressResults)
                 let allOutpoints =
                         fmap head $
                         L.groupBy (\(_, op1) (_, op2) -> op1 == op2) $
@@ -266,7 +353,7 @@ getConfirmedUtxosByAddress ::
     -> Maybe Int32
     -> Maybe Int64
     -> Bool
-    -> m [((Int64, (DT.Text, Int32)), TxOutputData)]
+    -> m [((Int64, (DT.Text, Int32)), TxOutput)]
 getConfirmedUtxosByAddress address pgSize nominalTxIndex isAsc = do
     lg <- getLogger
     res <- LE.try $ getConfirmedOutputsByAddress address pgSize nominalTxIndex isAsc
@@ -278,14 +365,14 @@ getConfirmedUtxosByAddress address pgSize nominalTxIndex isAsc = do
             debug lg $
                 LG.msg $
                 BC.pack $
-                "gcuba: Call to gcoba pgSize: " <> (show pgSize) <> " nti: " <> (show nominalTxIndex) <> ", outs: " <>
-                (show outputs)
-            let utxos = L.filter (\(_, outputData) -> isNothing $ spendInfo outputData) outputs
+                "gcuba: Call to gcoba pgSize: " <>
+                (show pgSize) <> " nti: " <> (show nominalTxIndex) <> ", outs: " <> (show outputs)
+            let utxos = L.filter (\(_, outputData) -> isNothing $ txSpendInfo outputData) outputs
             debug lg $
                 LG.msg $
                 BC.pack $
-                "gcuba: Call to gcoba pgSize: " <> (show pgSize) <> " nti: " <> (show nominalTxIndex) <> ", filtered: " <>
-                (show utxos)
+                "gcuba: Call to gcoba pgSize: " <>
+                (show pgSize) <> " nti: " <> (show nominalTxIndex) <> ", filtered: " <> (show utxos)
             if (L.length utxos < fromMaybe (L.length utxos) (fromIntegral <$> pgSize)) &&
                (not . L.null $ outputs) && (not . isNothing $ pgSize)
                 then do
@@ -304,6 +391,7 @@ xGetOutputsScriptHash ::
     -> m ([ResultWithCursor ScriptOutputs Int64])
 xGetOutputsScriptHash scriptHash pgSize mbNominalTxIndex isAsc = do
     lg <- getLogger
+    dbe <- getDB
     bp2pEnv <- getBitcoinP2P
     epoch <- liftIO $ readTVarIO (epochType bp2pEnv)
     res <- LE.try $ getConfirmedOutputsByScriptHash scriptHash pgSize mbNominalTxIndex isAsc
@@ -312,9 +400,45 @@ xGetOutputsScriptHash scriptHash pgSize mbNominalTxIndex isAsc = do
             err lg $
                 LG.msg $ BC.pack $ "[ERROR] xGetOutputsScriptHash: Fetching confirmed/unconfirmed outputs: " <> show e
             throw KeyValueDBLookupException
-        Right conf ->
-            let confRwc = scriptOutputToResultWithCursor <$> conf
-             in return $ L.take (fromMaybe maxBound (fromIntegral <$> pgSize)) $ confRwc
+        Right conf -> do
+            debug lg $ LG.msg $ BC.pack $ "xGetUtxosAddress: Got confirmed utxos: " <> (show conf)
+            xx <-
+                LA.mapConcurrently
+                    (\ado -> do
+                         case ado of
+                             ((_, (opTxId, _)), _) -> do
+                                 let conn1 = xCqlClientState dbe
+                                     toStr1 = "SELECT block_info, inputs FROM xoken.transactions WHERE tx_id=?"
+                                     toQStr1 =
+                                         toStr1 :: Q.QueryString Q.R (Identity DT.Text) ( Maybe (DT.Text, Int32, Int32)
+                                                                                        , Set ( (DT.Text, Int32)
+                                                                                              , Int32
+                                                                                              , (DT.Text, Int64)))
+                                     par1 = getSimpleQueryParam (Identity opTxId)
+                                 res1 <- liftIO $ LE.try $ query conn1 (Q.RqQuery $ Q.Query toQStr1 par1)
+                                 case res1 of
+                                     Right [(bi, inputs)] -> do
+                                         case bi of
+                                             Nothing -> do
+                                                 return $
+                                                     scriptOutputToResultWithCursor
+                                                         scriptHash
+                                                         ado
+                                                         (Q.fromSet inputs)
+                                                         Nothing
+                                             Just blkinf -> do
+                                                 let (bhash, bht, txindx) = blkinf
+                                                 return $
+                                                     scriptOutputToResultWithCursor
+                                                         scriptHash
+                                                         ado
+                                                         (Q.fromSet inputs)
+                                                         (Just $ BlockInfo' (DT.unpack bhash) bht txindx)
+                                     Left (e :: SomeException) -> do
+                                         err lg $ LG.msg $ "Error: xGetOutputsScriptHash: " ++ show e
+                                         throw KeyValueDBLookupException)
+                    conf
+            return $ L.take (fromMaybe maxBound (fromIntegral <$> pgSize)) $ xx
 
 xGetUtxosScriptHash ::
        (HasXokenNodeEnv env m, MonadIO m)
@@ -325,6 +449,7 @@ xGetUtxosScriptHash ::
     -> m ([ResultWithCursor ScriptOutputs Int64])
 xGetUtxosScriptHash scriptHash pgSize mbNominalTxIndex isAsc = do
     lg <- getLogger
+    dbe <- getDB
     bp2pEnv <- getBitcoinP2P
     epoch <- liftIO $ readTVarIO (epochType bp2pEnv)
     res <- LE.try $ getConfirmedUtxosByScriptHash scriptHash pgSize mbNominalTxIndex isAsc
@@ -333,9 +458,45 @@ xGetUtxosScriptHash scriptHash pgSize mbNominalTxIndex isAsc = do
             err lg $
                 LG.msg $ BC.pack $ "[ERROR] xGetUtxosScriptHash: Fetching confirmed/unconfirmed outputs: " <> show e
             throw KeyValueDBLookupException
-        Right conf ->
-            let confRwc = scriptOutputToResultWithCursor <$> conf
-             in return $ L.take (fromMaybe maxBound (fromIntegral <$> pgSize)) $ confRwc
+        Right conf -> do
+            debug lg $ LG.msg $ BC.pack $ "xGetUtxosAddress: Got confirmed utxos: " <> (show conf)
+            xx <-
+                LA.mapConcurrently
+                    (\ado -> do
+                         case ado of
+                             ((_, (opTxId, _)), _) -> do
+                                 let conn1 = xCqlClientState dbe
+                                     toStr1 = "SELECT block_info, inputs FROM xoken.transactions WHERE tx_id=?"
+                                     toQStr1 =
+                                         toStr1 :: Q.QueryString Q.R (Identity DT.Text) ( Maybe (DT.Text, Int32, Int32)
+                                                                                        , Set ( (DT.Text, Int32)
+                                                                                              , Int32
+                                                                                              , (DT.Text, Int64)))
+                                     par1 = getSimpleQueryParam (Identity opTxId)
+                                 res1 <- liftIO $ LE.try $ query conn1 (Q.RqQuery $ Q.Query toQStr1 par1)
+                                 case res1 of
+                                     Right [(bi, inputs)] -> do
+                                         case bi of
+                                             Nothing -> do
+                                                 return $
+                                                     scriptOutputToResultWithCursor
+                                                         scriptHash
+                                                         ado
+                                                         (Q.fromSet inputs)
+                                                         Nothing
+                                             Just blkinf -> do
+                                                 let (bhash, bht, txindx) = blkinf
+                                                 return $
+                                                     scriptOutputToResultWithCursor
+                                                         scriptHash
+                                                         ado
+                                                         (Q.fromSet inputs)
+                                                         (Just $ BlockInfo' (DT.unpack bhash) bht txindx)
+                                     Left (e :: SomeException) -> do
+                                         err lg $ LG.msg $ "Error: xGetUtxosScriptHash: " ++ show e
+                                         throw KeyValueDBLookupException)
+                    conf
+            return $ L.take (fromMaybe maxBound (fromIntegral <$> pgSize)) $ xx
 
 getConfirmedOutputsByScriptHash ::
        (HasXokenNodeEnv env m, MonadIO m)
@@ -343,7 +504,7 @@ getConfirmedOutputsByScriptHash ::
     -> Maybe Int32
     -> Maybe Int64
     -> Bool
-    -> m [((DT.Text, Int64, (DT.Text, Int32)), TxOutputData)]
+    -> m [((Int64, (DT.Text, Int32)), TxOutput)]
 getConfirmedOutputsByScriptHash scriptHash pgSize mbNominalTxIndex isAsc = do
     dbe <- getDB
     lg <- getLogger
@@ -358,14 +519,12 @@ getConfirmedOutputsByScriptHash scriptHash pgSize mbNominalTxIndex isAsc = do
                         then 0
                         else maxNTI
         confOutputsByScriptHashQuery =
-            "SELECT script_hash, nominal_tx_index, output FROM xoken.script_hash_outputs WHERE script_hash=?" ++
+            "SELECT nominal_tx_index, output FROM xoken.script_hash_outputs WHERE script_hash=?" ++
             (if isAsc
                  then " AND nominal_tx_index>? ORDER BY nominal_tx_index ASC"
                  else " AND nominal_tx_index<?")
         queryString =
-            fromString confOutputsByScriptHashQuery :: Q.QueryString Q.R (DT.Text, Int64) ( DT.Text
-                                                                                          , Int64
-                                                                                          , (DT.Text, Int32))
+            fromString confOutputsByScriptHashQuery :: Q.QueryString Q.R (DT.Text, Int64) (Int64, (DT.Text, Int32))
         params = getSimpleQueryParam (DT.pack scriptHash, nominalTxIndex)
     res <-
         if isNothing pgSize || pgSize > Just 0
@@ -377,7 +536,7 @@ getConfirmedOutputsByScriptHash scriptHash pgSize mbNominalTxIndex isAsc = do
                 err lg $ LG.msg $ BC.pack $ "[ERROR] getConfirmedOutputsByScriptHash: While running query: " <> show e
                 throw KeyValueDBLookupException
             Right results ->
-                (results, ) <$> (sequence $ (\(_, _, (txid, index)) -> getTxOutputsData (txid, index)) <$> results)
+                (results, ) <$> (sequence $ (\(_, (txid, index)) -> getTxOutputsData (txid, index)) <$> results)
     return $ zip outpoints outputData
 
 getConfirmedUtxosByScriptHash ::
@@ -386,7 +545,7 @@ getConfirmedUtxosByScriptHash ::
     -> Maybe Int32
     -> Maybe Int64
     -> Bool
-    -> m [((DT.Text, Int64, (DT.Text, Int32)), TxOutputData)]
+    -> m [((Int64, (DT.Text, Int32)), TxOutput)]
 getConfirmedUtxosByScriptHash scriptHash pgSize nominalTxIndex isAsc = do
     lg <- getLogger
     res <- LE.try $ getConfirmedOutputsByScriptHash scriptHash pgSize nominalTxIndex isAsc
@@ -395,11 +554,11 @@ getConfirmedUtxosByScriptHash scriptHash pgSize nominalTxIndex isAsc = do
             err lg $ LG.msg $ BC.pack $ "[ERROR] getConfirmedUtxosByScriptHash: Fetching outputs: " <> show e
             throw KeyValueDBLookupException
         Right outputs ->
-            let utxos = L.filter (\(_, outputData) -> isNothing $ spendInfo outputData) outputs
+            let utxos = L.filter (\(_, outputData) -> isNothing $ txSpendInfo outputData) outputs
              in if (L.length utxos < fromMaybe (L.length utxos) (fromIntegral <$> pgSize)) && (not . L.null $ outputs)
                     then do
                         let nextPgSize = (fromJust pgSize) - (fromIntegral $ L.length utxos)
-                            nextCursor = snd3 $ fst $ last outputs
+                            nextCursor = fst $ fst $ last outputs
                         nextPage <- getConfirmedUtxosByScriptHash scriptHash (Just nextPgSize) (Just nextCursor) isAsc
                         return $ utxos ++ nextPage
                     else return utxos

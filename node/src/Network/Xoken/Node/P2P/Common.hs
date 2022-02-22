@@ -686,3 +686,8 @@ generateNominalTxIndex (Just (_, blockHeight, txIndex)) outputIndex =
     return $
     1000 * ((1000000000 * (fromIntegral blockHeight :: Int64)) + 500000000 + (fromIntegral txIndex :: Int64)) +
     (fromIntegral $ outputIndex `mod` 1000 :: Int64)
+
+mapBut1 :: (a -> a) -> [a] -> [a]
+mapBut1 f [] = []
+mapBut1 f [x] = [x]
+mapBut1 f (x:xs) = f x : mapBut1 f xs
