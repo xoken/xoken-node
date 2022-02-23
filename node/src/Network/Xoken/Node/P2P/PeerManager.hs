@@ -475,7 +475,6 @@ loadTxIDPagesTMT blkHash pageNum onlySubTree = do
     lg <- getLogger
     dbe <- getDB
     let conn = xCqlClientState $ dbe
-    -- let isLastPage = pageNum == ((fst $ totalTxCount `divMod` 256) + 1)
     debug lg $ LG.msg $ "loadTxIDPagesTMT block_hash: " ++ show (blkHash) ++ ", pagenum: " ++ show pageNum
     let str = "SELECT txids from xoken.blockhash_txids where block_hash = ? and page_number = ? "
         qstr = str :: Q.QueryString Q.R (T.Text, Int32) (Identity [T.Text])
@@ -563,7 +562,11 @@ processTMTSubTrees blkHash txCount = do
     lg <- getLogger
     lg <- getLogger
     let conn = xCqlClientState $ dbe
-        pages = (fst $ txCount `divMod` 256) + 1
+        dpx = txCount `divMod` 256
+        pages =
+            if snd dpx == 0
+                then fst dpx
+                else fst dpx + 1
     tmtState <- liftIO $ TSH.new 4
     yy <-
         LE.try $
