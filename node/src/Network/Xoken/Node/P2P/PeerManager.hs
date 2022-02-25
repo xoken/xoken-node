@@ -425,10 +425,10 @@ resilientRead sock !blin = do
 
 persistTxListByPage ::
        (HasBitcoinP2P m, HasLogger m, HasDatabaseHandles m, MonadBaseControl IO m, MonadIO m)
-    => TQueue (TxHash, Bool)
+    => MerkleTxQueue
     -> BlockHash
     -> m ()
-persistTxListByPage tque blockHash = do
+persistTxListByPage mtque blockHash = do
     p2pEnv <- getBitcoinP2P
     lg <- getLogger
     dbe <- getDB
@@ -436,7 +436,7 @@ persistTxListByPage tque blockHash = do
     txPage <- liftIO $ newIORef []
     txPageNum <- liftIO $ newIORef 1
     whileM_ (liftIO $ readIORef continue) $ do
-        ores <- LA.race (liftIO $ threadDelay (1000000 * 60 * 10)) (liftIO $ atomically $ readTQueue tque)
+        ores <- LA.race (liftIO $ threadDelay (1000000 * 60 * 10)) (liftIO $ atomically $ readTQueue $ mTxQueue mtque)
         case ores of
             Left ()
                 -- likely the peer conn terminated, just end this thread
@@ -448,7 +448,7 @@ persistTxListByPage tque blockHash = do
                 if (fromIntegral $ L.length pg) == 256 -- 100
                     then do
                         pgn <- liftIO $ readIORef txPageNum
-                        LA.async $ commitTxPage pg blockHash pgn
+                        commitTxPage pg blockHash pgn
                         liftIO $ writeIORef txPage [txh]
                         liftIO $ writeIORef txPageNum (pgn + 1)
                     else do
@@ -459,9 +459,10 @@ persistTxListByPage tque blockHash = do
                         then return ()
                         else do
                             pgn <- liftIO $ readIORef txPageNum
-                            LA.async $ commitTxPage pg blockHash pgn
+                            commitTxPage pg blockHash pgn
                             return ()
                     liftIO $ writeIORef continue False
+                    liftIO $ putMVar (mTxQueueSem mtque) ()
                     liftIO $ TSH.delete (merkleQueueMap p2pEnv) blockHash
 
 loadTxIDPagesTMT ::
@@ -758,7 +759,7 @@ readNextMessage net sock ingss = do
             let blin = issBlockIngest iss
             ((txns, unused), txbytLen) <- resilientRead sock blin
             debug lg $ msg ("Confirmed-Tx: " ++ (show (L.length txns)) ++ " unused: " ++ show (LC.length unused))
-            qe <-
+            mqe <-
                 case (issBlockInfo iss) of
                     Just bf ->
                         if (binTxIngested blin == 0) -- very first Tx
@@ -775,16 +776,18 @@ readNextMessage net sock ingss = do
                                                 (ar, (binTxTotalCount blin))
                                             return ()
                                 qq <- liftIO $ atomically $ newTQueue
+                                qs <- liftIO $ newEmptyMVar
+                                let mtq = MerkleTxQueue qq qs
                                         -- wait for TMT threads alloc
-                                liftIO $ TSH.insert (merkleQueueMap p2pEnv) (biBlockHash $ bf) qq
-                                LA.async $ persistTxListByPage qq (biBlockHash $ bf)
+                                liftIO $ TSH.insert (merkleQueueMap p2pEnv) (biBlockHash $ bf) mtq
+                                LA.async $ persistTxListByPage mtq (biBlockHash $ bf)
                                 updateBlocks
                                     (biBlockHash bf)
                                     (biBlockHeight bf)
                                     (binBlockSize blin)
                                     (binTxTotalCount blin)
                                     (txns !! 0)
-                                return qq
+                                return mtq
                             else do
                                 valx <- liftIO $ TSH.lookup (merkleQueueMap p2pEnv) (biBlockHash $ bf)
                                 case valx of
@@ -794,14 +797,16 @@ readNextMessage net sock ingss = do
             let isLastBatch = ((binTxTotalCount blin) == ((L.length txns) + binTxIngested blin))
             let txct = L.length txns
             liftIO $
-                atomically $
                 mapM_
                     (\(tx, ct) -> do
                          let isLast =
                                  if isLastBatch
                                      then txct == ct
                                      else False
-                         writeTQueue qe ((txHash tx), isLast))
+                         atomically $ writeTQueue (mTxQueue mqe) ((txHash tx), isLast)
+                         if isLast
+                             then liftIO $ takeMVar (mTxQueueSem mqe) --blocked until the Tx queue is processed
+                             else return ())
                     (zip txns [1 ..])
             let bio =
                     BlockIngestState
