@@ -66,6 +66,12 @@ data AllegoryEnv =
         { allegorySecretKey :: !SecKey
         }
 
+data MerkleTxQueue =
+    MerkleTxQueue
+        { mTxQueue :: !(TQueue (TxHash, Bool))
+        , mTxQueueSem :: !(MVar ())
+        }
+
 data BitcoinP2P =
     BitcoinP2P
         { nodeConfig :: !NodeConfig
@@ -80,7 +86,7 @@ data BitcoinP2P =
         , unconfirmedTxCache :: !(TSH.TSHashTable TxShortHash (Bool, TxHash))
         -- , txOutputValuesCache :: !(TSH.TSHashTable TxShortHash (TxHash, [(Word32, (Text, Text, Int64))]))
         , peerReset :: !(MVar Bool, TVar Int)
-        , merkleQueueMap :: !(TSH.TSHashTable BlockHash (TQueue (TxHash, Bool)))
+        , merkleQueueMap :: !(TSH.TSHashTable BlockHash MerkleTxQueue)
         , txSynchronizer :: !(TSH.TSHashTable TxHash Event)
         , maxTMTBuilderThreadLock :: !(MSem Int)
         , indexUnconfirmedTx :: !(TVar Bool)

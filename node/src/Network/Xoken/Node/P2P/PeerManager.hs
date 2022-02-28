@@ -172,7 +172,8 @@ setupSeedPeerConnection =
                                                   fw <- liftIO $ newTVarIO 0
                                                   res <- LE.try $ liftIO $ createSocket y
                                                   trk <- liftIO $ getNewTracker
-                                                  bfq <- liftIO $ newEmptyMVar
+                                                  cfq <- liftIO $ newMVar ()
+                                                  nfq <- liftIO $ newEmptyMVar
                                                   case res of
                                                       Right (sock) -> do
                                                           case sock of
@@ -187,7 +188,8 @@ setupSeedPeerConnection =
                                                                               Nothing
                                                                               99999
                                                                               trk
-                                                                              bfq
+                                                                              cfq
+                                                                              nfq
                                                                   liftIO $
                                                                       atomically $
                                                                       modifyTVar'
@@ -246,12 +248,13 @@ setupPeerConnection saddr = do
                                      st <- liftIO $ newTVarIO Nothing
                                      fw <- liftIO $ newTVarIO 0
                                      trk <- liftIO $ getNewTracker
-                                     bfq <- liftIO $ newEmptyMVar
+                                     cfq <- liftIO $ newMVar ()
+                                     nfq <- liftIO $ newEmptyMVar
                                      case sock of
                                          Just sx -> do
                                              debug lg $ LG.msg ("Discovered Net-Address: " ++ (show $ saddr))
                                              fl <- doVersionHandshake net sx $ saddr
-                                             let bp = BitcoinPeer (saddr) sock wl fl Nothing 99999 trk bfq
+                                             let bp = BitcoinPeer (saddr) sock wl fl Nothing 99999 trk cfq nfq
                                              liftIO $
                                                  atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.insert (saddr) bp)
                                              return $ Just bp
@@ -332,10 +335,10 @@ updateMerkleSubTrees dbe tmtState lg hashComp newhash left right ht ind final on
                             then do
                                 let stRoot = head res
                                 liftIO $ TSH.insert tmtState (fromIntegral pageNum) stRoot
-                                debug lg $ LG.msg $ "tmtState, pgnum : " <> (show pageNum) ++ " , root: " ++ show stRoot
+                                trace lg $ LG.msg $ "tmtState, pgnum : " <> (show pageNum) ++ " , root: " ++ show stRoot
                                 return $ tail res
                             else do
-                                debug lg $
+                                trace lg $
                                     LG.msg $
                                     "tmtState, txhash : " <> (show newhash) ++
                                     " final: " ++ (show final) ++ " res: " ++ show res
@@ -387,7 +390,7 @@ updateMerkleSubTrees dbe tmtState lg hashComp newhash left right ht ind final on
                                                         LG.msg $ "Error: MerkleSubTreeDBInsertException : " <> (show e)
                                                     throw MerkleSubTreeDBInsertException
                 else do
-                    debug lg $ LG.msg $ "AAA: tmtState, else : " <> (show pageNum)
+                    trace lg $ LG.msg $ "tmtState, else : " <> (show pageNum)
                     return (state, res)
                     -- else block --
 
@@ -425,10 +428,10 @@ resilientRead sock !blin = do
 
 persistTxListByPage ::
        (HasBitcoinP2P m, HasLogger m, HasDatabaseHandles m, MonadBaseControl IO m, MonadIO m)
-    => TQueue (TxHash, Bool)
+    => MerkleTxQueue
     -> BlockHash
     -> m ()
-persistTxListByPage tque blockHash = do
+persistTxListByPage mtque blockHash = do
     p2pEnv <- getBitcoinP2P
     lg <- getLogger
     dbe <- getDB
@@ -436,7 +439,7 @@ persistTxListByPage tque blockHash = do
     txPage <- liftIO $ newIORef []
     txPageNum <- liftIO $ newIORef 1
     whileM_ (liftIO $ readIORef continue) $ do
-        ores <- LA.race (liftIO $ threadDelay (1000000 * 60 * 10)) (liftIO $ atomically $ readTQueue tque)
+        ores <- LA.race (liftIO $ threadDelay (1000000 * 60 * 10)) (liftIO $ atomically $ readTQueue $ mTxQueue mtque)
         case ores of
             Left ()
                 -- likely the peer conn terminated, just end this thread
@@ -448,7 +451,7 @@ persistTxListByPage tque blockHash = do
                 if (fromIntegral $ L.length pg) == 256 -- 100
                     then do
                         pgn <- liftIO $ readIORef txPageNum
-                        LA.async $ commitTxPage pg blockHash pgn
+                        commitTxPage pg blockHash pgn
                         liftIO $ writeIORef txPage [txh]
                         liftIO $ writeIORef txPageNum (pgn + 1)
                     else do
@@ -459,9 +462,10 @@ persistTxListByPage tque blockHash = do
                         then return ()
                         else do
                             pgn <- liftIO $ readIORef txPageNum
-                            LA.async $ commitTxPage pg blockHash pgn
+                            commitTxPage pg blockHash pgn
                             return ()
                     liftIO $ writeIORef continue False
+                    liftIO $ putMVar (mTxQueueSem mtque) ()
                     liftIO $ TSH.delete (merkleQueueMap p2pEnv) blockHash
 
 loadTxIDPagesTMT ::
@@ -487,7 +491,7 @@ loadTxIDPagesTMT blkHash pageNum onlySubTree = do
         Right rx -> do
             if L.null rx
                 then do
-                    debug lg $ LG.msg $ "loadTxIDPagesTMT| waiting for page in DB: " <> show pageNum
+                    trace lg $ LG.msg $ "loadTxIDPagesTMT| waiting for page in DB: " <> show pageNum
                     liftIO $ threadDelay (100000) -- 0.1 sec
                     loadTxIDPagesTMT blkHash pageNum onlySubTree
                 else do
@@ -520,7 +524,7 @@ persistTMT blockHash isFixedTreeHeight tmtState (mklNodes, (pageNum, onlySubTree
             case isFixedTreeHeight of
                 Just fth -> fth
                 Nothing -> computeTreeHeight (fromIntegral $ L.length mklNodes)
-    debug lg $
+    trace lg $
         LG.msg
             ("persistTMT | blockhash " ++
              show blockHash ++ " (pageNum,onlyST): " ++ show (pageNum, onlySubTree) ++ (show $ L.length mklNodes))
@@ -758,7 +762,7 @@ readNextMessage net sock ingss = do
             let blin = issBlockIngest iss
             ((txns, unused), txbytLen) <- resilientRead sock blin
             debug lg $ msg ("Confirmed-Tx: " ++ (show (L.length txns)) ++ " unused: " ++ show (LC.length unused))
-            qe <-
+            mqe <-
                 case (issBlockInfo iss) of
                     Just bf ->
                         if (binTxIngested blin == 0) -- very first Tx
@@ -775,16 +779,18 @@ readNextMessage net sock ingss = do
                                                 (ar, (binTxTotalCount blin))
                                             return ()
                                 qq <- liftIO $ atomically $ newTQueue
+                                qs <- liftIO $ newEmptyMVar
+                                let mtq = MerkleTxQueue qq qs
                                         -- wait for TMT threads alloc
-                                liftIO $ TSH.insert (merkleQueueMap p2pEnv) (biBlockHash $ bf) qq
-                                LA.async $ persistTxListByPage qq (biBlockHash $ bf)
+                                liftIO $ TSH.insert (merkleQueueMap p2pEnv) (biBlockHash $ bf) mtq
+                                LA.async $ persistTxListByPage mtq (biBlockHash $ bf)
                                 updateBlocks
                                     (biBlockHash bf)
                                     (biBlockHeight bf)
                                     (binBlockSize blin)
                                     (binTxTotalCount blin)
                                     (txns !! 0)
-                                return qq
+                                return mtq
                             else do
                                 valx <- liftIO $ TSH.lookup (merkleQueueMap p2pEnv) (biBlockHash $ bf)
                                 case valx of
@@ -794,14 +800,16 @@ readNextMessage net sock ingss = do
             let isLastBatch = ((binTxTotalCount blin) == ((L.length txns) + binTxIngested blin))
             let txct = L.length txns
             liftIO $
-                atomically $
                 mapM_
                     (\(tx, ct) -> do
                          let isLast =
                                  if isLastBatch
                                      then txct == ct
                                      else False
-                         writeTQueue qe ((txHash tx), isLast))
+                         atomically $ writeTQueue (mTxQueue mqe) ((txHash tx), isLast)
+                         if isLast
+                             then liftIO $ takeMVar (mTxQueueSem mqe) --blocked until the Tx queue is processed
+                             else return ())
                     (zip txns [1 ..])
             let bio =
                     BlockIngestState
@@ -1147,6 +1155,7 @@ readNextMessage' peer readLock = do
                                             debug lg $
                                                 LG.msg $ ("putMVar readLock Nothing - " ++ (show $ bpAddress peer))
                                             liftIO $ putMVar readLock Nothing
+                                            liftIO $ putMVar (blockFetchCurrent peer) ()
                                         else do
                                             liftIO $
                                                 TSH.insert

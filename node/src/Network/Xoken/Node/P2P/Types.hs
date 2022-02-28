@@ -80,7 +80,8 @@ data BitcoinPeer =
         , bpVersion :: !(Maybe Version) -- protocol version
         , bpNonce :: !Word64 -- random nonce sent during handshake
         , statsTracker :: !PeerTracker -- track sync stats
-        , blockFetchQueue :: !(MVar (BlockInfo))
+        , blockFetchCurrent :: !(MVar ())
+        , blockFetchNext :: !(MVar (BlockInfo))
         }
 
 data PeerTracker =
