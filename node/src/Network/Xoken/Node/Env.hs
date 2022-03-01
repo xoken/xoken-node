@@ -84,7 +84,6 @@ data BitcoinP2P =
         , epochType :: !(TVar Bool)
         , epochTimestamp :: !(TVar Int64)
         , unconfirmedTxCache :: !(TSH.TSHashTable TxShortHash (Bool, TxHash))
-        -- , txOutputValuesCache :: !(TSH.TSHashTable TxShortHash (TxHash, [(Word32, (Text, Text, Int64))]))
         , peerReset :: !(MVar Bool, TVar Int)
         , merkleQueueMap :: !(TSH.TSHashTable BlockHash MerkleTxQueue)
         , txSynchronizer :: !(TSH.TSHashTable TxHash (MVar ()))
@@ -94,6 +93,8 @@ data BitcoinP2P =
         , txProcFailAttempts :: !(TVar Int)
         , bestSyncedBlock :: !(TVar (Maybe BlockInfo))
         , protocolInfo :: !(TSH.TSHashTable BlockHash (TSH.TSHashTable Text ([(Text, Text)], BlockPInfo)))
+        , blockCacheLock :: !(MVar ())
+        , peerFetchQueue :: !(TQueue BitcoinPeer)
         }
 
 class HasBitcoinP2P m where

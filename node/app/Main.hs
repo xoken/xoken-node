@@ -227,7 +227,7 @@ runThreads config nodeConf bp2p conn lg certPaths = do
                 withAsync runEpochSwitcher $ \_ -> do
                     withAsync setupSeedPeerConnection $ \_ -> do
                         withAsync runEgressChainSync $ \_ -> do
-                            withAsync runBlockCacheQueue $ \_ -> do
+                            withAsync runBlockSync $ \_ -> do
                                 withAsync (handleNewConnectionRequest epHandler) $ \_ -> do
                                     withAsync runPeerSync $ \_ -> do
                                         withAsync runSyncStatusChecker $ \_ -> do
@@ -359,7 +359,9 @@ defBitcoinP2P nodeCnf ept = do
     tpfa <- newTVarIO 0
     bsb <- newTVarIO Nothing
     pi <- TSH.new 32
-    return $ BitcoinP2P nodeCnf g bp mv hl st tl ep epts tc (rpf, rpc) mq ts tbt iut udc tpfa bsb pi
+    ql <- newMVar ()
+    pq <- liftIO $ newTQueueIO
+    return $ BitcoinP2P nodeCnf g bp mv hl st tl ep epts tc (rpf, rpc) mq ts tbt iut udc tpfa bsb pi ql pq
 
 initNexa :: IO ()
 initNexa = do

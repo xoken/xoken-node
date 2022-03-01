@@ -12,6 +12,7 @@ module Network.Xoken.Node.P2P.PeerManager
     ( createSocket
     , setupSeedPeerConnection
     , runTMTDaemon
+    , runBlockSync
     ) where
 
 import Control.Concurrent (threadDelay)
@@ -116,6 +117,60 @@ createSocketFromSockAddr saddr = do
             liftIO $ Network.Socket.close ss
             throw $ SocketConnectException (saddr)
 
+runBlockSync :: (HasXokenNodeEnv env m, MonadIO m) => m ()
+runBlockSync =
+    forever $ do
+        bp2pEnv <- getBitcoinP2P
+        lg <- getLogger
+        let net = bitcoinNetwork $ nodeConfig bp2pEnv
+        res <-
+            LE.try $
+            S.drain $
+            S.aheadly $
+            S.repeatM
+                (do pr <- liftIO $ atomically $ peekTQueue $ peerFetchQueue bp2pEnv -- get enlisted peer
+                    -- check if its active 
+                    allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
+                    let isPeerConnected =
+                            L.filter
+                                (\x -> (bpConnected (snd x)) && ((bpAddress pr) == (bpAddress $ snd x)))
+                                (M.toList allPeers)
+                    if L.length isPeerConnected == 0
+                        then do
+                            liftIO $ atomically $ readTQueue $ peerFetchQueue bp2pEnv -- stale peer, removing
+                            throw UnresponsivePeerException
+                        else do
+                            debug lg $ msg $ (val "Got enlisted peer: ") +++ (show pr)
+                            _ <- liftIO $ takeMVar (blockCacheLock bp2pEnv) -- lock begin
+                            res <- LE.try $ produceGetDataMessage pr -- get the Inv message 
+                            case res of
+                                Right mm -> do
+                                    liftIO $ putMVar (blockCacheLock bp2pEnv) () -- lock end/1
+                                    case mm of
+                                        Nothing -> do
+                                            liftIO $ threadDelay (1000000)
+                                            return (pr, Nothing)
+                                        Just __ -> do
+                                            liftIO $ atomically $ readTQueue $ peerFetchQueue bp2pEnv -- dequeue finally!
+                                            return (pr, mm)
+                                Left (e :: SomeException) -> do
+                                    liftIO $ putMVar (blockCacheLock bp2pEnv) () -- lock end/2
+                                    liftIO $ err lg $ msg ("Error: while runBlockSync:produceGetData: " ++ show e)
+                                    throw KeyValueDBInsertException) &
+            S.mapM -- send the msg
+                (\(pr, msg) ->
+                     case msg of
+                         Just m -> do
+                             sendRequestMessages pr m
+                         Nothing -> return ()) &
+            S.mapM (\_ -> commitBlockCacheQueue) &
+            S.maxBuffer 2 &
+            S.maxThreads 2
+        case res of
+            Right (a) -> return ()
+            Left (e :: SomeException) -> do
+                err lg $ msg $ (val "[ERROR] FATAL error in runBlockSync ") +++ (show e)
+
 setupSeedPeerConnection :: (HasXokenNodeEnv env m, MonadIO m) => m ()
 setupSeedPeerConnection =
     forever $ do
@@ -171,7 +226,6 @@ setupSeedPeerConnection =
                                                   st <- liftIO $ newTVarIO Nothing
                                                   fw <- liftIO $ newTVarIO 0
                                                   res <- LE.try $ liftIO $ createSocket y
-                                                  trk <- liftIO $ getNewTracker
                                                   cfq <- liftIO $ newEmptyMVar
                                                   nfq <- liftIO $ newEmptyMVar
                                                   case res of
@@ -187,15 +241,15 @@ setupSeedPeerConnection =
                                                                               fl
                                                                               Nothing
                                                                               99999
-                                                                              trk
-                                                                              cfq
-                                                                              nfq
                                                                   liftIO $
                                                                       atomically $
                                                                       modifyTVar'
                                                                           (bitcoinPeers bp2pEnv)
                                                                           (M.insert (addrAddress y) bp)
-                                                                  handleIncomingMessages bp
+                                                                  liftIO $
+                                                                      atomically $
+                                                                      writeTQueue (peerFetchQueue bp2pEnv) bp
+                                                                  handleIncomingMessages bp -- must be the last step, as blocking
                                                               Nothing -> return ()
                                                       Left (SocketConnectException addr) ->
                                                           warn lg $ msg ("SocketConnectException: " ++ show addr)))
@@ -247,14 +301,13 @@ setupPeerConnection saddr = do
                                      rc <- liftIO $ newTVarIO Nothing
                                      st <- liftIO $ newTVarIO Nothing
                                      fw <- liftIO $ newTVarIO 0
-                                     trk <- liftIO $ getNewTracker
                                      cfq <- liftIO $ newEmptyMVar
                                      nfq <- liftIO $ newEmptyMVar
                                      case sock of
                                          Just sx -> do
                                              debug lg $ LG.msg ("Discovered Net-Address: " ++ (show $ saddr))
                                              fl <- doVersionHandshake net sx $ saddr
-                                             let bp = BitcoinPeer (saddr) sock wl fl Nothing 99999 trk cfq nfq
+                                             let bp = BitcoinPeer (saddr) sock wl fl Nothing 99999
                                              liftIO $
                                                  atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.insert (saddr) bp)
                                              return $ Just bp
@@ -992,7 +1045,9 @@ messageHandler peer (mm, ingss) = do
                              bp <- setupPeerConnection $ naAddress x
                              LA.async $
                                  (case bp of
-                                      Just p -> handleIncomingMessages p
+                                      Just p -> do
+                                          liftIO $ atomically $ writeTQueue (peerFetchQueue bp2pEnv) p
+                                          handleIncomingMessages p -- must be the last step, as blocking loop
                                       Nothing -> return ()))
                         (addrList addrs)
                     return $ msgType msg
@@ -1060,9 +1115,7 @@ processTxBatch txns iss = do
                         ("Tx already processed, block: " ++
                          (show $ biBlockHash bf) ++ ", tx-index: " ++ show (binTxIngested bi))
                 else do
-                    yy <-
-                        LE.try $
-                        S.drain $
+                    S.drain $
                         aheadly $
                         (do let start = (binTxIngested bi) - (L.length txns)
                                 end = (binTxIngested bi) - 1
@@ -1076,15 +1129,13 @@ processTxBatch txns iss = do
                         S.mapM (processTxStream bi) &
                         S.maxBuffer (maxTxProcessingBuffer $ nodeConfig bp2pEnv) &
                         S.maxThreads (maxTxProcessingThreads $ nodeConfig bp2pEnv)
-                    case yy of
-                        Right _ -> do
-                            valy <- liftIO $ TSH.lookup (blockTxProcessingLeftMap bp2pEnv) (biBlockHash bf)
-                            case valy of
-                                Just lefta -> liftIO $ TSH.insert (fst lefta) (txHash $ head txns) (L.length txns)
-                                Nothing -> return ()
+                    valy <- liftIO $ TSH.lookup (blockTxProcessingLeftMap bp2pEnv) (biBlockHash bf)
+                    case valy of
+                        Just lefta -> do
+                            liftIO $ TSH.insert (fst lefta) (txHash $ head txns) (L.length txns)
                             return ()
-                        Left (e :: SomeException) -> do
-                            err lg $ LG.msg $ "Error while processTxBatch: " ++ show e
+                        Nothing -> return ()
+                    return ()
         Nothing -> throw InvalidStreamStateException
 
 --
@@ -1116,7 +1167,6 @@ readNextMessage' peer readLock = do
     bp2pEnv <- getBitcoinP2P
     lg <- getLogger
     let net = bitcoinNetwork $ nodeConfig bp2pEnv
-        tracker = statsTracker peer
     case bpSocket peer of
         Just sock -> do
             prIss <- liftIO $ takeMVar $ readLock
@@ -1147,10 +1197,9 @@ readNextMessage' peer readLock = do
                             case issBlockInfo iss of
                                 Just bi -> do
                                     tm <- liftIO $ getCurrentTime
-                                    liftIO $ writeIORef (ptLastTxRecvTime tracker) $ Just tm
                                     if binTxTotalCount ingst == binTxIngested ingst
-                                            -- liftIO $ atomicModifyIORef' (ptBlockFetchWindow tracker) (\z -> (z - 1, ()))
                                         then do
+                                            liftIO $ atomically $ writeTQueue (peerFetchQueue bp2pEnv) peer
                                             liftIO $
                                                 TSH.insert
                                                     (blockSyncStatusMap bp2pEnv)
@@ -1158,7 +1207,6 @@ readNextMessage' peer readLock = do
                                                     (BlockReceiveComplete tm, biBlockHeight bi)
                                             debug lg $
                                                 LG.msg $ ("putMVar readLock Nothing - " ++ (show $ bpAddress peer))
-                                            _ <- liftIO $ tryTakeMVar (blockFetchCurrent peer)
                                             liftIO $ putMVar readLock Nothing
                                         else do
                                             liftIO $
@@ -1177,30 +1225,22 @@ readNextMessage' peer readLock = do
             return (msg, ingressState)
         Nothing -> throw PeerSocketNotConnectedException
 
-produceInvMessageOrTimeout :: (HasXokenNodeEnv env m, MonadIO m) => BitcoinPeer -> m (Message)
-produceInvMessageOrTimeout peer = do
-    bp2pEnv <- getBitcoinP2P
-    lg <- getLogger
-    let stm = fromInteger $ fromIntegral (unresponsivePeerConnTimeoutSecs $ nodeConfig bp2pEnv)
-    res <- race (produceGetDataMessage peer) (liftIO $ threadDelay (stm * 1000000))
-    case res of
-        Left msg -> return msg
-        Right _ -> do
-            res <- liftIO $ tryTakeMVar (blockFetchCurrent peer)
-            case res of
-                Nothing -> return ()
-                Just bi -> do
-                    let bsh = biBlockHash bi
-                    debug lg $ LG.msg $ "deleting from blockSyncStatusMap: " <> show bsh
-                    liftIO $ TSH.delete (blockSyncStatusMap bp2pEnv) bsh
-                    liftIO $ TSH.delete (blockTxProcessingLeftMap bp2pEnv) bsh
-            debug lg $ LG.msg ("Timeout! Removing unresponsive peer. (**)" ++ show peer)
-            case bpSocket peer of
-                Just sock -> liftIO $ Network.Socket.close $ sock
-                Nothing -> return ()
-            liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress peer))
-            throw UnresponsivePeerException
-
+-- produceInvMessageOrTimeout :: (HasXokenNodeEnv env m, MonadIO m) => BitcoinPeer -> m (Maybe Message)
+-- produceInvMessageOrTimeout peer = do
+--     bp2pEnv <- getBitcoinP2P
+--     lg <- getLogger
+--     debug lg $ LG.msg ("produceInvMessageOrTimeout peer. (**)" ++ show peer)
+--     let stm = fromInteger $ fromIntegral (unresponsivePeerConnTimeoutSecs $ nodeConfig bp2pEnv)
+--     res <- race (produceGetDataMessage peer) (liftIO $ threadDelay (stm * 1000000))
+--     case res of
+--         Left msg -> return (msg)
+--         Right _ -> do
+--             debug lg $ LG.msg ("Timeout! Removing unresponsive peer. (**)" ++ show peer)
+--             case bpSocket peer of
+--                 Just sock -> liftIO $ Network.Socket.close $ sock
+--                 Nothing -> return ()
+--             liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress peer))
+--             throw UnresponsivePeerException
 handleIncomingMessages :: (HasXokenNodeEnv env m, MonadIO m) => BitcoinPeer -> m ()
 handleIncomingMessages pr = do
     bp2pEnv <- getBitcoinP2P
@@ -1209,15 +1249,13 @@ handleIncomingMessages pr = do
     rlk <- liftIO $ newMVar Nothing
     res <-
         LE.try $
-        LA.concurrently_
-            (S.drain $ S.serially $ S.repeatM (produceInvMessageOrTimeout pr) & S.mapM (sendRequestMessages pr))
-            (S.drain $
-             S.asyncly $
-             S.repeatM (readNextMessage' pr rlk) & -- read next msgs
-             S.mapM (messageHandler pr) & -- handle read msgs
-             S.mapM (logMessage pr) & -- log msgs & collect stats
-             S.maxBuffer 2 &
-             S.maxThreads 2)
+        S.drain $
+        S.asyncly $
+        S.repeatM (readNextMessage' pr rlk) & -- read next msgs
+        S.mapM (messageHandler pr) & -- handle read msgs
+        S.mapM (logMessage pr) & -- log msgs & collect stats
+        S.maxBuffer 2 &
+        S.maxThreads 2
     case res of
         Right (a) -> return ()
         Left (e :: SomeException)
