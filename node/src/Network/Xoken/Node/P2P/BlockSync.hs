@@ -1226,11 +1226,15 @@ commitScriptOutputProtocol ::
     -> Int64
     -> Int32
     -> m ()
-commitScriptOutputProtocol conn protocol (txid, output_index) blockInfo fees size = do
+commitScriptOutputProtocol conn protocol' (txid, output_index) blockInfo fees size = do
     lg <- getLogger
     tm <- liftIO getCurrentTime
     blocksSynced <- checkBlocksFullySynced conn
     nominalTxIndex <- generateNominalTxIndex blockInfo output_index
+    let protocol =
+            if (T.length protocol') == 0
+                then "00"
+                else protocol'
     let qstrAddrOuts :: Q.QueryString Q.W (Text, Text, Int64, Int32, Int32, Int64) ()
         qstrAddrOuts =
             "INSERT INTO xoken.script_output_protocol (proto_str, txid, fees, size, output_index, nominal_tx_index) VALUES (?,?,?,?,?,?)"
