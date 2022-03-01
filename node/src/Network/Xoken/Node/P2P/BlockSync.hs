@@ -105,6 +105,7 @@ produceGetDataMessage peer = do
     bp2pEnv <- getBitcoinP2P
     debug lg $ LG.msg $ "Block - produceGetDataMessage - called." ++ (show peer)
     bl <- liftIO $ takeMVar (blockFetchNext peer)
+    liftIO $ putMVar (blockFetchCurrent peer) bl
     trace lg $ LG.msg $ "took mvar.. " ++ (show bl) ++ (show peer)
     let gd = GetData $ [InvVector InvBlock $ getBlockHash $ biBlockHash bl]
     debug lg $ LG.msg $ "GetData req: " ++ show gd
@@ -133,71 +134,70 @@ sendRequestMessages pr msg = do
             debug lg $ LG.msg $ "sending out GetData: " ++ show (bpAddress pr)
         Nothing -> err lg $ LG.msg $ val "Error sending, no connections available"
 
-peerBlockSync :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BitcoinPeer -> m ()
-peerBlockSync peer =
-    forever $ do
-        lg <- getLogger
-        bp2pEnv <- getBitcoinP2P
-        trace lg $ LG.msg $ ("peer block sync : " ++ (show peer))
-        !tm <- liftIO $ getCurrentTime
-        let tracker = statsTracker peer
-        fw <- liftIO $ readIORef $ ptBlockFetchWindow tracker
-        recvtm <- liftIO $ readIORef $ ptLastTxRecvTime tracker
-        sendtm <- liftIO $ readIORef $ ptLastGetDataSent tracker
-        let staleTime = fromInteger $ fromIntegral (unresponsivePeerConnTimeoutSecs $ nodeConfig bp2pEnv)
-        case recvtm of
-            Just rt -> do
-                if (fw == 0 && (diffUTCTime tm rt < staleTime))
-                    then do
-                        msg <- produceGetDataMessage peer
-                        res <- LE.try $ sendRequestMessages peer msg
-                        case res of
-                            Right () -> do
-                                debug lg $ LG.msg $ val "updating state."
-                                liftIO $ writeIORef (ptLastGetDataSent tracker) $ Just tm
-                                liftIO $ atomicModifyIORef' (ptBlockFetchWindow tracker) (\z -> (z + 1, ()))
-                            Left (e :: SomeException) -> do
-                                err lg $ LG.msg ("[ERROR] peerBlockSync " ++ show e)
-                                ------------
-                                throw e
-                    else if (diffUTCTime tm rt > staleTime)
-                             then do
-                                 debug lg $ LG.msg ("Removing unresponsive peer. (1)" ++ show peer)
-                                 case bpSocket peer of
-                                     Just sock -> liftIO $ NS.close $ sock
-                                     Nothing -> return ()
-                                 liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress peer))
-                                 throw UnresponsivePeerException
-                             else return ()
-            Nothing -> do
-                case sendtm of
-                    Just st -> do
-                        if (diffUTCTime tm st > staleTime)
-                            then do
-                                debug lg $ LG.msg ("Removing unresponsive peer. (2)" ++ show peer)
-                                case bpSocket peer of
-                                    Just sock -> liftIO $ NS.close $ sock
-                                    Nothing -> return ()
-                                liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress peer))
-                                throw UnresponsivePeerException
-                            else return ()
-                    Nothing -> do
-                        if (fw == 0)
-                            then do
-                                msg <- produceGetDataMessage peer
-                                res <- LE.try $ sendRequestMessages peer msg
-                                case res of
-                                    Right () -> do
-                                        debug lg $ LG.msg $ val "updating state."
-                                        liftIO $ writeIORef (ptLastGetDataSent tracker) $ Just tm
-                                        liftIO $ atomicModifyIORef' (ptBlockFetchWindow tracker) (\z -> (z + 1, ()))
-                                    Left (e :: SomeException) -> do
-                                        err lg $ LG.msg ("[ERROR] peerBlockSync " ++ show e)
-                                        throw e
-                            else return ()
-        liftIO $ threadDelay (100000) -- 0.1 sec
-        return ()
-
+-- peerBlockSync :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BitcoinPeer -> m ()
+-- peerBlockSync peer =
+--     forever $ do
+--         lg <- getLogger
+--         bp2pEnv <- getBitcoinP2P
+--         trace lg $ LG.msg $ ("peer block sync : " ++ (show peer))
+--         !tm <- liftIO $ getCurrentTime
+--         let tracker = statsTracker peer
+--         fw <- liftIO $ readIORef $ ptBlockFetchWindow tracker
+--         recvtm <- liftIO $ readIORef $ ptLastTxRecvTime tracker
+--         sendtm <- liftIO $ readIORef $ ptLastGetDataSent tracker
+--         let staleTime = fromInteger $ fromIntegral (unresponsivePeerConnTimeoutSecs $ nodeConfig bp2pEnv)
+--         case recvtm of
+--             Just rt -> do
+--                 if (fw == 0 && (diffUTCTime tm rt < staleTime))
+--                     then do
+--                         msg <- produceGetDataMessage peer
+--                         res <- LE.try $ sendRequestMessages peer msg
+--                         case res of
+--                             Right () -> do
+--                                 debug lg $ LG.msg $ val "updating state."
+--                                 liftIO $ writeIORef (ptLastGetDataSent tracker) $ Just tm
+--                                 liftIO $ atomicModifyIORef' (ptBlockFetchWindow tracker) (\z -> (z + 1, ()))
+--                             Left (e :: SomeException) -> do
+--                                 err lg $ LG.msg ("[ERROR] peerBlockSync " ++ show e)
+--                                 ------------
+--                                 throw e
+--                     else if (diffUTCTime tm rt > staleTime)
+--                              then do
+--                                  debug lg $ LG.msg ("Removing unresponsive peer. (1)" ++ show peer)
+--                                  case bpSocket peer of
+--                                      Just sock -> liftIO $ NS.close $ sock
+--                                      Nothing -> return ()
+--                                  liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress peer))
+--                                  throw UnresponsivePeerException
+--                              else return ()
+--             Nothing -> do
+--                 case sendtm of
+--                     Just st -> do
+--                         if (diffUTCTime tm st > staleTime)
+--                             then do
+--                                 debug lg $ LG.msg ("Removing unresponsive peer. (2)" ++ show peer)
+--                                 case bpSocket peer of
+--                                     Just sock -> liftIO $ NS.close $ sock
+--                                     Nothing -> return ()
+--                                 liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress peer))
+--                                 throw UnresponsivePeerException
+--                             else return ()
+--                     Nothing -> do
+--                         if (fw == 0)
+--                             then do
+--                                 msg <- produceGetDataMessage peer
+--                                 res <- LE.try $ sendRequestMessages peer msg
+--                                 case res of
+--                                     Right () -> do
+--                                         debug lg $ LG.msg $ val "updating state."
+--                                         liftIO $ writeIORef (ptLastGetDataSent tracker) $ Just tm
+--                                         liftIO $ atomicModifyIORef' (ptBlockFetchWindow tracker) (\z -> (z + 1, ()))
+--                                     Left (e :: SomeException) -> do
+--                                         err lg $ LG.msg ("[ERROR] peerBlockSync " ++ show e)
+--                                         throw e
+--                             else return ()
+--         liftIO $ threadDelay (100000) -- 0.1 sec
+--         return ()
 runPeerSync :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
 runPeerSync =
     forever $ do
@@ -362,7 +362,7 @@ runBlockCacheQueue =
                     if sysz < (blocksFetchWindow $ nodeConfig bp2pEnv)
                         then do
                             (hash, ht) <- fetchBestSyncedBlock
-                            let fetchMore = (blocksFetchWindow $ nodeConfig bp2pEnv) - sysz
+                            let fetchMore = (blocksFetchWindow $ nodeConfig bp2pEnv) -- - sysz
                             let cacheInd = [1 .. fetchMore] -- getBatchSize net (fromIntegral $ L.length connPeers) ht
                             let !bks = map (\x -> ht + (fromIntegral x)) cacheInd
                             let qstr :: Q.QueryString Q.R (Identity [Int32]) ((Int32, T.Text))
@@ -510,10 +510,9 @@ runBlockCacheQueue =
                          ltst <- liftIO $ readIORef latest
                          if ltst
                              then do
-                                 curBi <- liftIO $ tryTakeMVar (blockFetchCurrent pr)
-                                 case curBi of
-                                     Nothing -> trace lg $ LG.msg $ val "still fetching current blk.. waiting"
-                                     Just _ -> do
+                                 curEmpty <- liftIO $ isEmptyMVar (blockFetchCurrent pr)
+                                 if curEmpty
+                                     then do
                                          trace lg $ LG.msg $ val "either init or fetched current block; get next.."
                                          trace lg $ LG.msg $ "try putting mvar.. " ++ (show bbi)
                                          fl <- liftIO $ tryPutMVar (blockFetchNext pr) bbi
@@ -528,6 +527,7 @@ runBlockCacheQueue =
                                                          (RequestSent tm, biBlockHeight bbi)
                                                  liftIO $ writeIORef latest False
                                              else return ()
+                                     else trace lg $ LG.msg $ val "still fetching current blk.. waiting"
                              else return ())
                     (sortedPeers)
             Nothing -> do
@@ -689,10 +689,6 @@ processConfTransaction bis tx bhash blkht txind = do
         mapM
             (\(b, j) -> do
                  tuple <- return Nothing
-                    --  liftIO $
-                    --  TSH.lookup
-                    --      (txOutputValuesCache bp2pEnv)
-                    --      (getTxShortHash (outPointHash $ prevOutput b) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
                  val <-
                      case tuple of
                          Just (ftxh, indexvals) ->
@@ -805,11 +801,6 @@ processConfTransaction bis tx bhash blkht txind = do
                      , (a, (txHashToHex $ TxHash $ sha256 (scriptOutput o)), fromIntegral $ outValue o)))
                 outAddrs
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": compiled output value(s): " ++ (show ovs)
-    -- liftIO $
-    --     TSH.insert
-    --         (txOutputValuesCache bp2pEnv)
-    --         (getTxShortHash (txHash tx) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
-    --         (txHash tx, ovs)
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": added outputvals to cache"
     -- update outputs and scripthash tables
     mapM_
@@ -974,7 +965,7 @@ processConfTransaction bis tx bhash blkht txind = do
     --
     vall <- liftIO $ TSH.lookup (txSynchronizer bp2pEnv) txhs
     case vall of
-        Just ev -> liftIO $ EV.signal ev
+        Just ev -> liftIO $ putMVar ev () -- EV.set ev
         Nothing -> return ()
     debug lg $ LG.msg $ "Processing confirmed transaction <end> :" ++ show txhs
 
@@ -982,7 +973,7 @@ processConfTransaction bis tx bhash blkht txind = do
 --
 getSatsValueFromOutpoint ::
        XCqlClientState
-    -> TSH.TSHashTable TxHash EV.Event
+    -> TSH.TSHashTable TxHash (MVar ()) -- EV.Event
     -> Logger
     -> Network
     -> OutPoint
@@ -1010,39 +1001,39 @@ getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait confirmedOnly 
                     event <-
                         case valx of
                             Just evt -> return evt
-                            Nothing -> EV.new
+                            Nothing -> do
+                                nn <- liftIO $ newEmptyMVar -- EV.new
+                                return nn
                     liftIO $ TSH.insert txSync (outPointHash outPoint) event
-                    -- tofl <- waitTimeout event (1000000 * (fromIntegral wait))
-                    tofl <- waitTimeout event (1000000 * (fromIntegral maxWait))
-                    if tofl == False
-                        -- then if ((2 * wait) < maxWait)
-                        --          then do
-                        --              getSatsValueFromOutpoint
-                        --                  conn
-                        --                  txSync
-                        --                  lg
-                        --                  net
-                        --                  outPoint
-                        --                  (2 * wait)
-                        --                  maxWait
-                        --                  confirmedOnly
-                        --          else do
-                        then do
-                            liftIO $ TSH.delete txSync (outPointHash outPoint)
-                            debug lg $
-                                LG.msg $
-                                "TxIDNotFoundException: While querying txid_outputs for (TxID, Index): " ++
-                                (show $ txHashToHex $ outPointHash outPoint) ++
-                                ", " ++ show (outPointIndex outPoint) ++ ")"
-                            throw $
-                                TxIDNotFoundException
-                                    ( show $ txHashToHex $ outPointHash outPoint
-                                    , Just $ fromIntegral $ outPointIndex outPoint)
-                                    "getSatsValueFromOutpoint"
-                        else do
+                    tofl <- liftIO $ race (readMVar event) (do threadDelay (1000000 * (fromIntegral wait)))
+                    case tofl of
+                        Left _ -> do
                             debug lg $
                                 LG.msg $ "event received _available_: " ++ (show $ txHashToHex $ outPointHash outPoint)
                             getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait confirmedOnly
+                        Right _ -> do
+                            if ((2 * wait) < maxWait)
+                                then do
+                                    getSatsValueFromOutpoint
+                                        conn
+                                        txSync
+                                        lg
+                                        net
+                                        outPoint
+                                        (2 * wait)
+                                        maxWait
+                                        confirmedOnly
+                                else do
+                                    liftIO $ TSH.delete txSync (outPointHash outPoint)
+                                    debug lg $
+                                        LG.msg $
+                                        "TxIDNotFoundException: While querying txid_outputs for (TxID, Index): " ++
+                                        (show $ txHashToHex $ outPointHash outPoint) ++
+                                        ", " ++ show (outPointIndex outPoint) ++ ")"
+                                    throw $
+                                        TxIDNotFoundException
+                                            ( show $ txHashToHex $ outPointHash outPoint
+                                            , fromIntegral $ outPointIndex outPoint)
                 else do
                     let (addr, scriptHash, val) = head $ results
                     return $ (addr, scriptHash, val)
@@ -1051,70 +1042,73 @@ getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait confirmedOnly 
             throw e
 
 --
-getScriptHashFromOutpoint ::
-       XCqlClientState -> TSH.TSHashTable TxHash EV.Event -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Text)
-getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs = do
-    let str = "SELECT tx_serialized from xoken.transactions where tx_id = ?"
-        qstr = str :: Q.QueryString Q.R (Identity Text) (Identity Blob)
-        p = getSimpleQueryParam $ Identity $ txHashToHex $ outPointHash outPoint
-    res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr p)
-    case res of
-        Left (e :: SomeException) -> do
-            err lg $ LG.msg ("Error: getScriptHashFromOutpoint: " ++ show e)
-            throw e
-        Right (iop) -> do
-            if L.length iop == 0
-                then do
-                    debug lg $
-                        LG.msg ("TxID not found: (waiting for event) " ++ (show $ txHashToHex $ outPointHash outPoint))
-                    --
-                    -- tmap <- liftIO $ takeMVar (txSync)
-                    valx <- liftIO $ TSH.lookup txSync (outPointHash outPoint)
-                    event <-
-                        case valx of
-                            Just evt -> return evt
-                            Nothing -> EV.new
-                    -- liftIO $ putMVar (txSync) (M.insert (outPointHash outPoint) event tmap)
-                    liftIO $ TSH.insert txSync (outPointHash outPoint) event
-                    tofl <- waitTimeout event (1000000 * (fromIntegral waitSecs))
-                    if tofl == False -- False indicates a timeout occurred.
-                            -- tmap <- liftIO $ takeMVar (txSync)
-                            -- liftIO $ putMVar (txSync) (M.delete (outPointHash outPoint) tmap)
-                        then do
-                            liftIO $ TSH.delete txSync (outPointHash outPoint)
-                            debug lg $ LG.msg ("TxIDNotFoundException" ++ (show $ txHashToHex $ outPointHash outPoint))
-                            throw $
-                                TxIDNotFoundException
-                                    ( show $ txHashToHex $ outPointHash outPoint
-                                    , Just $ fromIntegral $ outPointIndex outPoint)
-                                    "getScriptHashFromOutpoint"
-                        else getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs -- if being signalled, try again to success
-                    --
-                    return Nothing
-                else do
-                    let txbyt = runIdentity $ iop !! 0
-                    ctxbyt <-
-                        if isSegmented (fromBlob txbyt)
-                            then liftIO $
-                                 getCompleteTx
-                                     conn
-                                     (txHashToHex $ outPointHash outPoint)
-                                     (getSegmentCount (fromBlob txbyt))
-                            else pure $ fromBlob txbyt
-                    case runGetLazy (getConfirmedTx) ctxbyt of
-                        Left e -> do
-                            debug lg $ LG.msg (encodeHex $ BSL.toStrict ctxbyt)
-                            throw DBTxParseException
-                        Right (txd) -> do
-                            case txd of
-                                Just tx ->
-                                    if (fromIntegral $ outPointIndex outPoint) > (L.length $ txOut tx)
-                                        then throw InvalidOutpointException
-                                        else do
-                                            let output = (txOut tx) !! (fromIntegral $ outPointIndex outPoint)
-                                            return $ Just $ txHashToHex $ TxHash $ sha256 (scriptOutput output)
-                                Nothing -> return Nothing
-
+-- getScriptHashFromOutpoint ::
+--        XCqlClientState -> TSH.TSHashTable TxHash (MVar ()) -> Logger -> Network -> OutPoint -> Int -> IO (Maybe Text)
+-- getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs = do
+--     let str = "SELECT tx_serialized from xoken.transactions where tx_id = ?"
+--         qstr = str :: Q.QueryString Q.R (Identity Text) (Identity Blob)
+--         p = getSimpleQueryParam $ Identity $ txHashToHex $ outPointHash outPoint
+--     res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr p)
+--     case res of
+--         Left (e :: SomeException) -> do
+--             err lg $ LG.msg ("Error: getScriptHashFromOutpoint: " ++ show e)
+--             throw e
+--         Right (iop) -> do
+--             if L.length iop == 0
+--                 then do
+--                     debug lg $
+--                         LG.msg ("TxID not found: (waiting for event) " ++ (show $ txHashToHex $ outPointHash outPoint))
+--                     --
+--                     -- tmap <- liftIO $ takeMVar (txSync)
+--                     valx <- liftIO $ TSH.lookup txSync (outPointHash outPoint)
+--                     event <-
+--                         case valx of
+--                             Just evt -> return evt
+--                             Nothing -> do
+--                                 nn <- liftIO $ newMVar () -- EV.new
+--                                 return nn
+--                     -- liftIO $ putMVar (txSync) (M.insert (outPointHash outPoint) event tmap)
+--                     liftIO $ TSH.insert txSync (outPointHash outPoint) event
+--                     tofl <- liftIO $ readMVar event
+--                     -- tofl <- waitTimeout event (1000000 * (fromIntegral waitSecs))
+--                     -- if tofl == False -- False indicates a timeout occurred.
+--                     --         -- tmap <- liftIO $ takeMVar (txSync)
+--                     --         -- liftIO $ putMVar (txSync) (M.delete (outPointHash outPoint) tmap)
+--                     --     then do
+--                     --         liftIO $ TSH.delete txSync (outPointHash outPoint)
+--                     --         debug lg $ LG.msg ("TxIDNotFoundException" ++ (show $ txHashToHex $ outPointHash outPoint))
+--                     --         throw $
+--                     --             TxIDNotFoundException
+--                     --                 ( show $ txHashToHex $ outPointHash outPoint
+--                     --                 , Just $ fromIntegral $ outPointIndex outPoint)
+--                     --                 "getScriptHashFromOutpoint"
+--                     --    else 
+--                     getScriptHashFromOutpoint conn txSync lg net outPoint waitSecs -- if being signalled, try again to success
+--                     --
+--                     return Nothing
+--                 else do
+--                     let txbyt = runIdentity $ iop !! 0
+--                     ctxbyt <-
+--                         if isSegmented (fromBlob txbyt)
+--                             then liftIO $
+--                                  getCompleteTx
+--                                      conn
+--                                      (txHashToHex $ outPointHash outPoint)
+--                                      (getSegmentCount (fromBlob txbyt))
+--                             else pure $ fromBlob txbyt
+--                     case runGetLazy (getConfirmedTx) ctxbyt of
+--                         Left e -> do
+--                             debug lg $ LG.msg (encodeHex $ BSL.toStrict ctxbyt)
+--                             throw DBTxParseException
+--                         Right (txd) -> do
+--                             case txd of
+--                                 Just tx ->
+--                                     if (fromIntegral $ outPointIndex outPoint) > (L.length $ txOut tx)
+--                                         then throw InvalidOutpointException
+--                                         else do
+--                                             let output = (txOut tx) !! (fromIntegral $ outPointIndex outPoint)
+--                                             return $ Just $ txHashToHex $ TxHash $ sha256 (scriptOutput output)
+--                                 Nothing -> return Nothing
 processBlock :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => DefBlock -> m ()
 processBlock dblk = do
     lg <- getLogger

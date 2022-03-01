@@ -459,7 +459,7 @@ processUnconfTransaction tx = do
     debug lg $ LG.msg $ "Processing unconfirmed transaction <end> :" ++ show txhs
     vall <- liftIO $ TSH.lookup (txSynchronizer bp2pEnv) (txHash tx)
     case vall of
-        Just ev -> liftIO $ EV.signal ev
+        Just ev -> liftIO $ putMVar ev () --EV.set ev
         Nothing -> return ()
     --
 

@@ -87,7 +87,7 @@ data BitcoinP2P =
         -- , txOutputValuesCache :: !(TSH.TSHashTable TxShortHash (TxHash, [(Word32, (Text, Text, Int64))]))
         , peerReset :: !(MVar Bool, TVar Int)
         , merkleQueueMap :: !(TSH.TSHashTable BlockHash MerkleTxQueue)
-        , txSynchronizer :: !(TSH.TSHashTable TxHash Event)
+        , txSynchronizer :: !(TSH.TSHashTable TxHash (MVar ()))
         , maxTMTBuilderThreadLock :: !(MSem Int)
         , indexUnconfirmedTx :: !(TVar Bool)
         , userDataCache :: !(HashTable Text (Text, Int32, Int32, UTCTime, [Text])) -- (name, quota, used, expiry time, roles)
