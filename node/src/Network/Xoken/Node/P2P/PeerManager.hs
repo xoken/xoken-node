@@ -184,7 +184,7 @@ setupSeedPeerConnection =
                                                                               (addrAddress y)
                                                                               sock
                                                                               wl
-                                                                              fl
+                                                                              True -- fl
                                                                               Nothing
                                                                               99999
                                                                               trk
@@ -254,7 +254,7 @@ setupPeerConnection saddr = do
                                          Just sx -> do
                                              debug lg $ LG.msg ("Discovered Net-Address: " ++ (show $ saddr))
                                              fl <- doVersionHandshake net sx $ saddr
-                                             let bp = BitcoinPeer (saddr) sock wl fl Nothing 99999 trk cfq nfq
+                                             let bp = BitcoinPeer (saddr) sock wl True Nothing 99999 trk cfq nfq
                                              liftIO $
                                                  atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.insert (saddr) bp)
                                              return $ Just bp
