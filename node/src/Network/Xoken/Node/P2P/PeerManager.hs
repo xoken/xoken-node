@@ -172,8 +172,7 @@ setupSeedPeerConnection =
                                                   fw <- liftIO $ newTVarIO 0
                                                   res <- LE.try $ liftIO $ createSocket y
                                                   trk <- liftIO $ getNewTracker
-                                                  cfq <- liftIO $ newMVar ()
-                                                  nfq <- liftIO $ newEmptyMVar
+                                                  bfq <- liftIO $ newEmptyMVar
                                                   case res of
                                                       Right (sock) -> do
                                                           case sock of
@@ -184,12 +183,11 @@ setupSeedPeerConnection =
                                                                               (addrAddress y)
                                                                               sock
                                                                               wl
-                                                                              True -- fl
+                                                                              fl
                                                                               Nothing
                                                                               99999
                                                                               trk
-                                                                              cfq
-                                                                              nfq
+                                                                              bfq
                                                                   liftIO $
                                                                       atomically $
                                                                       modifyTVar'
@@ -248,13 +246,12 @@ setupPeerConnection saddr = do
                                      st <- liftIO $ newTVarIO Nothing
                                      fw <- liftIO $ newTVarIO 0
                                      trk <- liftIO $ getNewTracker
-                                     cfq <- liftIO $ newMVar ()
-                                     nfq <- liftIO $ newEmptyMVar
+                                     bfq <- liftIO $ newEmptyMVar
                                      case sock of
                                          Just sx -> do
                                              debug lg $ LG.msg ("Discovered Net-Address: " ++ (show $ saddr))
                                              fl <- doVersionHandshake net sx $ saddr
-                                             let bp = BitcoinPeer (saddr) sock wl True Nothing 99999 trk cfq nfq
+                                             let bp = BitcoinPeer (saddr) sock wl fl Nothing 99999 trk bfq
                                              liftIO $
                                                  atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.insert (saddr) bp)
                                              return $ Just bp
@@ -335,10 +332,10 @@ updateMerkleSubTrees dbe tmtState lg hashComp newhash left right ht ind final on
                             then do
                                 let stRoot = head res
                                 liftIO $ TSH.insert tmtState (fromIntegral pageNum) stRoot
-                                trace lg $ LG.msg $ "tmtState, pgnum : " <> (show pageNum) ++ " , root: " ++ show stRoot
+                                debug lg $ LG.msg $ "tmtState, pgnum : " <> (show pageNum) ++ " , root: " ++ show stRoot
                                 return $ tail res
                             else do
-                                trace lg $
+                                debug lg $
                                     LG.msg $
                                     "tmtState, txhash : " <> (show newhash) ++
                                     " final: " ++ (show final) ++ " res: " ++ show res
@@ -390,7 +387,7 @@ updateMerkleSubTrees dbe tmtState lg hashComp newhash left right ht ind final on
                                                         LG.msg $ "Error: MerkleSubTreeDBInsertException : " <> (show e)
                                                     throw MerkleSubTreeDBInsertException
                 else do
-                    trace lg $ LG.msg $ "tmtState, else : " <> (show pageNum)
+                    debug lg $ LG.msg $ "AAA: tmtState, else : " <> (show pageNum)
                     return (state, res)
                     -- else block --
 
@@ -491,7 +488,7 @@ loadTxIDPagesTMT blkHash pageNum onlySubTree = do
         Right rx -> do
             if L.null rx
                 then do
-                    trace lg $ LG.msg $ "loadTxIDPagesTMT| waiting for page in DB: " <> show pageNum
+                    debug lg $ LG.msg $ "loadTxIDPagesTMT| waiting for page in DB: " <> show pageNum
                     liftIO $ threadDelay (100000) -- 0.1 sec
                     loadTxIDPagesTMT blkHash pageNum onlySubTree
                 else do
@@ -524,7 +521,7 @@ persistTMT blockHash isFixedTreeHeight tmtState (mklNodes, (pageNum, onlySubTree
             case isFixedTreeHeight of
                 Just fth -> fth
                 Nothing -> computeTreeHeight (fromIntegral $ L.length mklNodes)
-    trace lg $
+    debug lg $
         LG.msg
             ("persistTMT | blockhash " ++
              show blockHash ++ " (pageNum,onlyST): " ++ show (pageNum, onlySubTree) ++ (show $ L.length mklNodes))
@@ -1155,7 +1152,6 @@ readNextMessage' peer readLock = do
                                             debug lg $
                                                 LG.msg $ ("putMVar readLock Nothing - " ++ (show $ bpAddress peer))
                                             liftIO $ putMVar readLock Nothing
-                                            liftIO $ putMVar (blockFetchCurrent peer) ()
                                         else do
                                             liftIO $
                                                 TSH.insert

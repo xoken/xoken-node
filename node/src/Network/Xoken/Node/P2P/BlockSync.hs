@@ -104,7 +104,7 @@ produceGetDataMessage peer = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
     debug lg $ LG.msg $ "Block - produceGetDataMessage - called." ++ (show peer)
-    bl <- liftIO $ takeMVar (blockFetchNext peer)
+    bl <- liftIO $ takeMVar (blockFetchQueue peer)
     trace lg $ LG.msg $ "took mvar.. " ++ (show bl) ++ (show peer)
     let gd = GetData $ [InvVector InvBlock $ getBlockHash $ biBlockHash bl]
     debug lg $ LG.msg $ "GetData req: " ++ show gd
@@ -269,23 +269,27 @@ checkBlocksFullySynced conn = do
             err lg $ LG.msg $ "checkBlocksFullySynced: error while querying DB: " ++ show e
             return False
 
-getSleepIntervalMainnet :: Int32 -> Int32
-getSleepIntervalMainnet n
-    | n < 200000 = 100000
-    | n >= 200000 && n < 300000 = 200000
-    | n >= 300000 && n < 400000 = 300000
-    | n >= 400000 && n < 500000 = 500000
-    | otherwise = 1000000
+getBatchSizeMainnet :: Int32 -> Int32 -> [Int32]
+getBatchSizeMainnet peerCount n
+    | n < 200000 =
+        if peerCount > 8
+            then [1 .. 4]
+            else [1 .. 2]
+    | n >= 200000 && n < 540000 =
+        if peerCount > 4
+            then [1 .. 2]
+            else [1]
+    | otherwise = [1]
 
-getSleepIntervalTestnet :: Int32 -> Int32
-getSleepIntervalTestnet n
-    | n < 500000 = 100000
-    | otherwise = 500000
+getBatchSizeTestnet :: Int32 -> Int32 -> [Int32]
+getBatchSizeTestnet peerCount n
+    | peerCount > 4 = [1 .. 2]
+    | otherwise = [1]
 
-getSleepInterval :: Network -> Int32 -> Int32
-getSleepInterval net n
-    | (getNetworkName net == "bsvtest") = getSleepIntervalTestnet n
-    | otherwise = getSleepIntervalMainnet n
+getBatchSize :: Network -> Int32 -> Int32 -> [Int32]
+getBatchSize net peerCount n
+    | (getNetworkName net == "bsvtest") = getBatchSizeTestnet peerCount n
+    | otherwise = getBatchSizeMainnet peerCount n
 
 runBlockCacheQueue :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
 runBlockCacheQueue =
@@ -500,7 +504,7 @@ runBlockCacheQueue =
                     compl
                 return ()
             else return ()
-        --    
+        --                                                   
         case retn of
             Just bbi -> do
                 latest <- liftIO $ newIORef True
@@ -510,34 +514,26 @@ runBlockCacheQueue =
                          ltst <- liftIO $ readIORef latest
                          if ltst
                              then do
-                                 curBi <- liftIO $ tryTakeMVar (blockFetchCurrent pr)
-                                 case curBi of
-                                     Nothing -> trace lg $ LG.msg $ val "still fetching current blk.. waiting"
-                                     Just _ -> do
-                                         trace lg $ LG.msg $ val "either init or fetched current block; get next.."
-                                         trace lg $ LG.msg $ "try putting mvar.. " ++ (show bbi)
-                                         fl <- liftIO $ tryPutMVar (blockFetchNext pr) bbi
-                                         if fl
-                                             then do
-                                                 trace lg $ LG.msg $ "done putting mvar.. " ++ (show bbi)
-                                                 !tm <- liftIO $ getCurrentTime
-                                                 liftIO $
-                                                     TSH.insert
-                                                         (blockSyncStatusMap bp2pEnv)
-                                                         (biBlockHash bbi)
-                                                         (RequestSent tm, biBlockHeight bbi)
-                                                 liftIO $ writeIORef latest False
-                                             else return ()
+                                 trace lg $ LG.msg $ "try putting mvar.. " ++ (show bbi)
+                                 fl <- liftIO $ tryPutMVar (blockFetchQueue pr) bbi
+                                 if fl
+                                     then do
+                                         trace lg $ LG.msg $ "done putting mvar.. " ++ (show bbi)
+                                         !tm <- liftIO $ getCurrentTime
+                                         liftIO $
+                                             TSH.insert
+                                                 (blockSyncStatusMap bp2pEnv)
+                                                 (biBlockHash bbi)
+                                                 (RequestSent tm, biBlockHeight bbi)
+                                         liftIO $ writeIORef latest False
+                                     else return ()
                              else return ())
                     (sortedPeers)
             Nothing -> do
                 trace lg $ LG.msg $ "nothing yet" ++ ""
         --
-        let si =
-                if L.length sortedList > 0
-                    then fromIntegral $ getSleepInterval net (fromIntegral $ snd $ snd $ head sortedList)
-                    else 500000 -- 1/2 sec
-        liftIO $ threadDelay si
+        liftIO $ threadDelay (100000) -- 0.1 sec
+        return ()
   where
     getHead l = head $ L.sortOn (snd . snd) (l)
     mkBlkInf h = Just $ BlockInfo (fst h) (snd $ snd h)
@@ -1012,33 +1008,31 @@ getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait confirmedOnly 
                             Just evt -> return evt
                             Nothing -> EV.new
                     liftIO $ TSH.insert txSync (outPointHash outPoint) event
-                    -- tofl <- waitTimeout event (1000000 * (fromIntegral wait))
-                    tofl <- waitTimeout event (1000000 * (fromIntegral maxWait))
+                    tofl <- waitTimeout event (1000000 * (fromIntegral wait))
                     if tofl == False
-                        -- then if ((2 * wait) < maxWait)
-                        --          then do
-                        --              getSatsValueFromOutpoint
-                        --                  conn
-                        --                  txSync
-                        --                  lg
-                        --                  net
-                        --                  outPoint
-                        --                  (2 * wait)
-                        --                  maxWait
-                        --                  confirmedOnly
-                        --          else do
-                        then do
-                            liftIO $ TSH.delete txSync (outPointHash outPoint)
-                            debug lg $
-                                LG.msg $
-                                "TxIDNotFoundException: While querying txid_outputs for (TxID, Index): " ++
-                                (show $ txHashToHex $ outPointHash outPoint) ++
-                                ", " ++ show (outPointIndex outPoint) ++ ")"
-                            throw $
-                                TxIDNotFoundException
-                                    ( show $ txHashToHex $ outPointHash outPoint
-                                    , Just $ fromIntegral $ outPointIndex outPoint)
-                                    "getSatsValueFromOutpoint"
+                        then if ((2 * wait) < maxWait)
+                                 then do
+                                     getSatsValueFromOutpoint
+                                         conn
+                                         txSync
+                                         lg
+                                         net
+                                         outPoint
+                                         (2 * wait)
+                                         maxWait
+                                         confirmedOnly
+                                 else do
+                                     liftIO $ TSH.delete txSync (outPointHash outPoint)
+                                     debug lg $
+                                         LG.msg $
+                                         "TxIDNotFoundException: While querying txid_outputs for (TxID, Index): " ++
+                                         (show $ txHashToHex $ outPointHash outPoint) ++
+                                         ", " ++ show (outPointIndex outPoint) ++ ")"
+                                     throw $
+                                         TxIDNotFoundException
+                                             ( show $ txHashToHex $ outPointHash outPoint
+                                             , Just $ fromIntegral $ outPointIndex outPoint)
+                                             "getSatsValueFromOutpoint"
                         else do
                             debug lg $
                                 LG.msg $ "event received _available_: " ++ (show $ txHashToHex $ outPointHash outPoint)
