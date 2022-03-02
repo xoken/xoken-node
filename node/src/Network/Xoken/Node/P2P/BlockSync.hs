@@ -557,6 +557,39 @@ processConfTransaction bis tx bhash blkht txind = do
     let !txhs = txHash tx
     let net = bitcoinNetwork $ nodeConfig bp2pEnv
         conn = xCqlClientState dbe'
+    debug lg $ LG.msg $ "(Wrapper) Processing lock begin :" ++ show txhs
+    -- lock begin
+    lockv <- liftIO $ TSH.getOrCreate (txSynchronizer bp2pEnv) (txhs, ParentTxProcessing) (liftIO $ newMVar ())
+    liftIO $ takeMVar lockv
+    --
+    res <- LE.try $ processConfTransaction' bis tx bhash blkht txind -- get the Inv message 
+    case res of
+        Right mm -> do
+            liftIO $ putMVar lockv () -- lock end/1
+            debug lg $ LG.msg $ "(Wrapper) Processing lock ends :" ++ show txhs
+            --
+            vall <- liftIO $ TSH.lookup (txSynchronizer bp2pEnv) (txhs, ChildTxWaiting)
+            case vall of
+                Just ev -> do
+                    liftIO $ tryPutMVar ev ()
+                    return ()
+                Nothing -> return ()
+            --
+        Left (e :: SomeException) -> do
+            liftIO $ putMVar lockv () -- lock end/2
+            liftIO $ err lg $ LG.msg ("Error: while processConfTransaction: " ++ show e)
+            throw e
+    --
+
+processConfTransaction' ::
+       (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BlockIngestState -> Tx -> BlockHash -> Int -> Int -> m ()
+processConfTransaction' bis tx bhash blkht txind = do
+    dbe' <- getDB
+    bp2pEnv <- getBitcoinP2P
+    lg <- getLogger
+    let !txhs = txHash tx
+    let net = bitcoinNetwork $ nodeConfig bp2pEnv
+        conn = xCqlClientState dbe'
     debug lg $ LG.msg $ "Processing confirmed transaction <begin> :" ++ show txhs
     let !inAddrs = zip (txIn tx) [0 :: Int32 ..]
     let !outAddrs =
@@ -606,9 +639,7 @@ processConfTransaction bis tx bhash blkht txind = do
                                                      lg
                                                      net
                                                      (prevOutput b)
-                                                     (5)
                                                      (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
-                                                     True
                                              case dbRes of
                                                  Right v -> return $ v
                                                  Left (e :: SomeException) -> do
@@ -641,9 +672,7 @@ processConfTransaction bis tx bhash blkht txind = do
                                              lg
                                              net
                                              (prevOutput b)
-                                             (5)
                                              (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
-                                             True
                                      case dbRes of
                                          Right v -> do
                                              debug lg $
@@ -766,8 +795,8 @@ processConfTransaction bis tx bhash blkht txind = do
                                      (absoluteHour b)
                          let fn x =
                                  case x of
-                                     Just (p, bi) -> (Just (props, upf bi), ())
-                                     Nothing -> (Just (props, curBi), ())
+                                     Just (p, bi) -> return (Just (props, upf bi), ())
+                                     Nothing -> return (Just (props, curBi), ())
                              prot = tail $ L.inits protocol
                          mapM_
                              (\p ->
@@ -851,33 +880,30 @@ processConfTransaction bis tx bhash blkht txind = do
     trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": handled Allegory Tx"
     -- signal 'done' event for tx's that were processed out of sequence
     --
-    vall <- liftIO $ TSH.lookup (txSynchronizer bp2pEnv) txhs
-    case vall of
-        Just ev -> do
-            liftIO $ tryPutMVar ev () -- EV.set ev
-            return ()
-        Nothing -> return ()
     debug lg $ LG.msg $ "Processing confirmed transaction <end> :" ++ show txhs
 
 --
 --
 getSatsValueFromOutpoint ::
        XCqlClientState
-    -> TSH.TSHashTable TxHash (MVar ()) -- EV.Event
+    -> TSH.TSHashTable (TxHash, DependentTxStatus) (MVar ()) -- EV.Event
     -> Logger
     -> Network
     -> OutPoint
     -> Int
-    -> Int
-    -> Bool
     -> IO ((Text, Text, Int64))
-getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait confirmedOnly = do
+getSatsValueFromOutpoint conn txSync lg net outPoint maxWait = do
     let qstr :: Q.QueryString Q.R (Text, Int32) (Text, Text, Int64)
         qstr = "SELECT address, script, value FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
         par = getSimpleQueryParam (txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint)
+    -- parent lock begin
+    lockp <- liftIO $ TSH.getOrCreate txSync ((outPointHash outPoint), ParentTxProcessing) (liftIO $ newMVar ())
+    liftIO $ takeMVar lockp
+    --
     res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
     case res of
         Right results -> do
+            liftIO $ putMVar lockp () -- parent lock ends/1
             if (L.length results == 0)
                 then do
                     debug lg $
@@ -887,47 +913,32 @@ getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait confirmedOnly 
                     debug lg $
                         LG.msg $
                         "Tx not found: " ++ (show $ txHashToHex $ outPointHash outPoint) ++ " _waiting_ for event"
-                    valx <- liftIO $ TSH.lookup txSync (outPointHash outPoint)
-                    event <-
-                        case valx of
-                            Just evt -> return evt
-                            Nothing -> do
-                                nn <- liftIO $ newEmptyMVar -- EV.new
-                                return nn
-                    liftIO $ TSH.insert txSync (outPointHash outPoint) event
-                    tofl <- liftIO $ race (readMVar event) (do threadDelay (1000000 * (fromIntegral wait)))
+                    --
+                    lockc <-
+                        liftIO $
+                        TSH.getOrCreate txSync ((outPointHash outPoint), ChildTxWaiting) (liftIO $ newEmptyMVar)
+                    --
+                    tofl <- liftIO $ race (readMVar lockc) (do threadDelay (1000000 * (fromIntegral maxWait)))
                     case tofl of
                         Left _ -> do
                             debug lg $
                                 LG.msg $ "event received _available_: " ++ (show $ txHashToHex $ outPointHash outPoint)
-                            getSatsValueFromOutpoint conn txSync lg net outPoint wait maxWait confirmedOnly
+                            getSatsValueFromOutpoint conn txSync lg net outPoint maxWait
                         Right _ -> do
-                            if ((2 * wait) < maxWait)
-                                then do
-                                    getSatsValueFromOutpoint
-                                        conn
-                                        txSync
-                                        lg
-                                        net
-                                        outPoint
-                                        (2 * wait)
-                                        maxWait
-                                        confirmedOnly
-                                else do
-                                    liftIO $ TSH.delete txSync (outPointHash outPoint)
-                                    debug lg $
-                                        LG.msg $
-                                        "TxIDNotFoundException: While querying txid_outputs for (TxID, Index): " ++
-                                        (show $ txHashToHex $ outPointHash outPoint) ++
-                                        ", " ++ show (outPointIndex outPoint) ++ ")"
-                                    throw $
-                                        TxIDNotFoundException
-                                            ( show $ txHashToHex $ outPointHash outPoint
-                                            , fromIntegral $ outPointIndex outPoint)
+                            liftIO $ TSH.delete txSync ((outPointHash outPoint), ChildTxWaiting)
+                            debug lg $
+                                LG.msg $
+                                "TxIDNotFoundException: While querying txid_outputs for (TxID, Index): " ++
+                                (show $ txHashToHex $ outPointHash outPoint) ++
+                                ", " ++ show (outPointIndex outPoint) ++ ")"
+                            throw $
+                                TxIDNotFoundException
+                                    (show $ txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint)
                 else do
                     let (addr, scriptHash, val) = head $ results
                     return $ (addr, scriptHash, val)
         Left (e :: SomeException) -> do
+            liftIO $ putMVar lockp () -- parent lock ends/2
             err lg $ LG.msg $ "Error: getSatsValueFromOutpoint: " ++ show e
             throw e
 

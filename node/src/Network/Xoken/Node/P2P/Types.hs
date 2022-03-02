@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE DeriveAnyClass #-}
 
 module Network.Xoken.Node.P2P.Types where
 
@@ -18,6 +19,7 @@ import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as LB
 import Data.Functor.Identity
 import qualified Data.HashTable as CHT
+import Data.Hashable
 import Data.IORef
 import Data.Int
 import qualified Data.Map.Strict as M
@@ -147,6 +149,13 @@ data BlockSyncStatus
     | BlockReceiveComplete !UTCTime
     | BlockProcessingComplete
     deriving (Eq, Ord, Show)
+
+data DependentTxStatus
+    = ParentTxProcessing
+    | ChildTxWaiting
+    deriving (Eq, Ord, Show, Generic)
+
+instance Hashable DependentTxStatus
 
 -- |A pool of connections to Neo4j server
 data ServerState =
