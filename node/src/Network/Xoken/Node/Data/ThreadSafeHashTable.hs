@@ -20,6 +20,7 @@ module Network.Xoken.Node.Data.ThreadSafeHashTable
     , fromList
     , toList
     , getOrCreate
+    , purgeAll
     -- , lookupIndex
     -- , nextByIndex
     ) where
@@ -113,6 +114,16 @@ fromList size kv = do
     tsh <- new size
     traverse (\(k, v) -> insert tsh k v) kv
     return tsh
+
+purgeAll :: TSHashTable k v -> IO ()
+purgeAll tsh = do
+    mapM
+        (\x -> do
+             _ <- tryTakeMVar x
+             hm <- H.new
+             putMVar x hm)
+        (hashTableList tsh)
+    return ()
 --
 -- lookupIndex :: (Eq k, Hashable k) => TSHashTable k v -> k -> IO (Maybe (Int, Word))
 -- lookupIndex tsh k = lookupIndex' (hashTableList tsh) k 0

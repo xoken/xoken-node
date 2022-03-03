@@ -110,6 +110,7 @@ data BlockSyncException
     | ParentProcessingException String
     | RelayFailureException
     | DoubleSpendException [Int]
+    | UnexpectedDeadlockException
     deriving (Show)
 
 instance Exception BlockSyncException
