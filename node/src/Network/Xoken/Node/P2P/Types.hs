@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE DeriveAnyClass #-}
 
 module Network.Xoken.Node.P2P.Types where
 
@@ -18,6 +19,7 @@ import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as LB
 import Data.Functor.Identity
 import qualified Data.HashTable as CHT
+import Data.Hashable
 import Data.IORef
 import Data.Int
 import qualified Data.Map.Strict as M
@@ -79,27 +81,7 @@ data BitcoinPeer =
         , bpConnected :: !Bool --  peer is connected and ready
         , bpVersion :: !(Maybe Version) -- protocol version
         , bpNonce :: !Word64 -- random nonce sent during handshake
-        , statsTracker :: !PeerTracker -- track sync stats
-        , blockFetchCurrent :: !(MVar ())
-        , blockFetchNext :: !(MVar (BlockInfo))
         }
-
-data PeerTracker =
-    PeerTracker
-        { ptIngressMsgCount :: !(IORef Int) -- recent msg count for detecting stale peer connections
-        , ptLastTxRecvTime :: !(IORef (Maybe UTCTime)) -- last tx recv time
-        , ptLastGetDataSent :: !(IORef (Maybe UTCTime)) -- block 'GetData' sent time
-        , ptBlockFetchWindow :: !(IORef Int) -- number of outstanding blocks
-        -- ptLastPing , Ping :: !(Maybe (UTCTime, Word64)) -- last sent ping time and nonce
-        }
-
-getNewTracker :: IO (PeerTracker)
-getNewTracker = do
-    imc <- liftIO $ newIORef 0
-    rc <- liftIO $ newIORef Nothing
-    st <- liftIO $ newIORef Nothing
-    fw <- liftIO $ newIORef 0
-    return $ PeerTracker imc rc st fw
 
 instance Show BitcoinPeer where
     show p = (show $ bpAddress p) ++ " : " ++ (show $ bpConnected p)
@@ -163,11 +145,17 @@ data BlockIngestState =
 
 data BlockSyncStatus
     = RequestSent !UTCTime
-    | RequestQueued
     | RecentTxReceiveTime !(UTCTime, Int)
     | BlockReceiveComplete !UTCTime
     | BlockProcessingComplete
     deriving (Eq, Ord, Show)
+
+data DependentTxStatus
+    = ParentTxProcessing
+    | ChildTxWaiting
+    deriving (Eq, Ord, Show, Generic)
+
+instance Hashable DependentTxStatus
 
 -- |A pool of connections to Neo4j server
 data ServerState =

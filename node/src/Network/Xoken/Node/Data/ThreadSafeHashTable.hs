@@ -19,6 +19,8 @@ module Network.Xoken.Node.Data.ThreadSafeHashTable
     , Network.Xoken.Node.Data.ThreadSafeHashTable.mapM_
     , fromList
     , toList
+    , getOrCreate
+    , purgeAll
     -- , lookupIndex
     -- , nextByIndex
     ) where
@@ -68,16 +70,36 @@ lookup tsh k = do
     let index = (hash k) `mod` (fromIntegral $ size tsh)
     withMVar ((hashTableList tsh) !! index) (\hx -> H.lookup hx k)
 
-mutate :: (Eq k, Hashable k) => TSHashTable k v -> k -> (Maybe v -> (Maybe v, a)) -> IO a
+mutate :: (Eq k, Hashable k) => TSHashTable k v -> k -> (Maybe v -> IO (Maybe v, a)) -> IO a
 mutate tsh k f = do
-    v <- Network.Xoken.Node.Data.ThreadSafeHashTable.lookup tsh k
-    case f v of
-        (Nothing, a) -> do
-            delete tsh k
-            return a
-        (Just v, a) -> do
-            insert tsh k v
-            return a
+    let index = (hash k) `mod` (fromIntegral $ size tsh)
+    withMVar
+        ((hashTableList tsh) !! index)
+        (\hx -> do
+             v <- H.lookup hx k
+             res <- f v
+             case res of
+                 (Nothing, a) -> do
+                     H.delete hx k
+                     return a
+                 (Just v, a) -> do
+                     H.insert hx k v
+                     return a)
+
+getOrCreate :: (Eq k, Hashable k) => TSHashTable k v -> k -> (IO v) -> IO v
+getOrCreate tsh k f = do
+    let index = (hash k) `mod` (fromIntegral $ size tsh)
+    withMVar
+        ((hashTableList tsh) !! index)
+        (\hx -> do
+             vx <- H.lookup hx k
+             case vx of
+                 (Just v) -> do
+                     return v
+                 (Nothing) -> do
+                     new <- f
+                     H.insert hx k new
+                     return new)
 
 mapM_ :: ((k, v) -> IO a) -> TSHashTable k v -> IO ()
 mapM_ f tsh = do
@@ -92,6 +114,16 @@ fromList size kv = do
     tsh <- new size
     traverse (\(k, v) -> insert tsh k v) kv
     return tsh
+
+purgeAll :: TSHashTable k v -> IO ()
+purgeAll tsh = do
+    mapM
+        (\x -> do
+             _ <- tryTakeMVar x
+             hm <- H.new
+             putMVar x hm)
+        (hashTableList tsh)
+    return ()
 --
 -- lookupIndex :: (Eq k, Hashable k) => TSHashTable k v -> k -> IO (Maybe (Int, Word))
 -- lookupIndex tsh k = lookupIndex' (hashTableList tsh) k 0

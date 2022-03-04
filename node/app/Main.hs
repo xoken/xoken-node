@@ -227,7 +227,7 @@ runThreads config nodeConf bp2p conn lg certPaths = do
                 withAsync runEpochSwitcher $ \_ -> do
                     withAsync setupSeedPeerConnection $ \_ -> do
                         withAsync runEgressChainSync $ \_ -> do
-                            withAsync runBlockCacheQueue $ \_ -> do
+                            withAsync runBlockSync $ \_ -> do
                                 withAsync (handleNewConnectionRequest epHandler) $ \_ -> do
                                     withAsync runPeerSync $ \_ -> do
                                         withAsync runSyncStatusChecker $ \_ -> do
@@ -339,27 +339,53 @@ defaultAdminUser conn = do
 
 defBitcoinP2P :: NodeConfig -> Int64 -> IO (BitcoinP2P)
 defBitcoinP2P nodeCnf ept = do
-    g <- newTVarIO M.empty
-    bp <- newTVarIO M.empty
-    mv <- newMVar True
-    hl <- newMVar True
-    st <- TSH.new 1
-    tl <- TSH.new 4
-    ep <- newTVarIO False
-    epts <- newTVarIO ept
-    tc <- TSH.new 16
-    -- vc <- TSH.new 8 -- TSH.new 16
+    bitcoinPeers <- newTVarIO M.empty
+    blacklistedPeers <- newTVarIO M.empty
+    bestBlockUpdated <- newMVar True
+    headersWriteLock <- newMVar True
+    blockSyncStatusMap <- TSH.new 2
+    blockTxProcessingLeftMap <- TSH.new 4
+    epochType <- newTVarIO False
+    epochTimestamp <- newTVarIO ept
+    unconfirmedTxCache <- TSH.new 16
     rpf <- newEmptyMVar
     rpc <- newTVarIO 0
-    mq <- TSH.new 4
-    ts <- TSH.new 4
-    tbt <- MS.new $ maxTMTBuilderThreads nodeCnf
-    iut <- newTVarIO False
-    udc <- H.new
-    tpfa <- newTVarIO 0
-    bsb <- newTVarIO Nothing
-    pi <- TSH.new 32
-    return $ BitcoinP2P nodeCnf g bp mv hl st tl ep epts tc (rpf, rpc) mq ts tbt iut udc tpfa bsb pi
+    let peerReset = (rpf, rpc)
+    merkleQueueMap <- TSH.new 4
+    txSynchronizer <- TSH.new 32
+    maxTMTBuilderThreadLock <- MS.new $ maxTMTBuilderThreads nodeCnf
+    indexUnconfirmedTx <- newTVarIO False
+    userDataCache <- H.new
+    txProcFailAttempts <- newTVarIO 0
+    bestSyncedBlock <- newTVarIO Nothing
+    protocolInfo <- TSH.new 4
+    blockCacheLock <- newMVar ()
+    peerFetchQueue <- liftIO $ newTQueueIO
+    --
+    return $
+        BitcoinP2P
+            nodeCnf
+            bitcoinPeers
+            blacklistedPeers
+            bestBlockUpdated
+            headersWriteLock
+            blockSyncStatusMap
+            blockTxProcessingLeftMap
+            epochType
+            epochTimestamp
+            unconfirmedTxCache
+            peerReset
+            merkleQueueMap
+            txSynchronizer
+            maxTMTBuilderThreadLock
+            indexUnconfirmedTx
+            userDataCache
+            txProcFailAttempts
+            bestSyncedBlock
+            protocolInfo
+            blockCacheLock
+            peerFetchQueue
+    -- 
 
 initNexa :: IO ()
 initNexa = do

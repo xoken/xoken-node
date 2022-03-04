@@ -328,9 +328,7 @@ processUnconfTransaction tx = do
                                              lg
                                              net
                                              (prevOutput b)
-                                             5
                                              (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
-                                             False
                                      return valFromDB
                          Nothing -> do
                              valFromDB <-
@@ -341,9 +339,7 @@ processUnconfTransaction tx = do
                                      lg
                                      net
                                      (prevOutput b)
-                                     5
                                      (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
-                                     False
                              return valFromDB
                  return
                      ((txHashToHex $ outPointHash $ prevOutput b, fromIntegral $ outPointIndex $ prevOutput b), j, val))
@@ -457,10 +453,10 @@ processUnconfTransaction tx = do
             (zip segmentsData [1 ..])
     --
     debug lg $ LG.msg $ "Processing unconfirmed transaction <end> :" ++ show txhs
-    vall <- liftIO $ TSH.lookup (txSynchronizer bp2pEnv) (txHash tx)
-    case vall of
-        Just ev -> liftIO $ EV.signal ev
-        Nothing -> return ()
+    -- vall <- liftIO $ TSH.lookup (txSynchronizer bp2pEnv) (txHash tx)
+    -- case vall of
+    --     Just ev -> liftIO $ putMVar ev () --EV.set ev
+    --     Nothing -> return ()
     --
 
 convertToScriptHash :: Network -> String -> Maybe String

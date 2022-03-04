@@ -95,7 +95,7 @@ data BlockSyncException
     | InvalidBlockInfoException
     | OutpointAddressNotFoundException
     | InvalidAddressException
-    | TxIDNotFoundException (String, Maybe Int) String
+    | TxIDNotFoundException (String, Int)
     | InvalidOutpointException
     | DBTxParseException
     | MerkleTreeComputeException
@@ -110,6 +110,7 @@ data BlockSyncException
     | ParentProcessingException String
     | RelayFailureException
     | DoubleSpendException [Int]
+    | UnexpectedDeadlockException
     deriving (Show)
 
 instance Exception BlockSyncException
