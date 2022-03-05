@@ -68,4 +68,11 @@ maxTxProcessingBuffer: 32
 
 maxInsertsProtocol: 20
 
-blocksFetchWindow: 4
+blocksFetchWindow:
+  - heightBegin: 1
+    heightEnd: 100000
+    windowSize: 8
+
+  - heightBegin: 100000
+    heightEnd: 300000
+    windowSize: 4

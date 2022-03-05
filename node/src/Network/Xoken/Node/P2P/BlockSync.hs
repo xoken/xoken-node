@@ -99,18 +99,26 @@ import System.Random
 import Xoken
 import Xoken.NodeConfig
 
-produceGetDataMessage :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BitcoinPeer -> m (Maybe Message)
-produceGetDataMessage peer = do
+produceGetDataMessages :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BitcoinPeer -> m ([Message])
+produceGetDataMessages peer = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    debug lg $ LG.msg $ "Block - produceGetDataMessage - called." ++ (show peer)
-    blkinfo <- fetchBlockCacheQueue
-    case blkinfo of
-        Nothing -> return Nothing
-        Just bl -> do
-            let gd = GetData $ [InvVector InvBlock $ getBlockHash $ biBlockHash bl]
-            debug lg $ LG.msg $ "GetData req: " ++ show gd
-            return $ Just (MGetData gd)
+    trace lg $ LG.msg $ "Block - produceGetDataMessages - called." ++ (show peer)
+    pendingReqs <- liftIO $ TSH.toList (bpPendingRequests peer)
+    let pend = L.length pendingReqs
+    (blkhash, blkht) <- fetchBestSyncedBlock
+    let fw = getFetchWindowSize (blocksFetchWindow $ nodeConfig bp2pEnv) (fromIntegral blkht)
+    blkinfo <- fetchBlockCacheQueue (fw - (fromIntegral pend))
+    gds <-
+        mapM
+            (\bi -> do
+                 liftIO $ TSH.insert (bpPendingRequests peer) (biBlockHash bi) ()
+                 return $ MGetData $ GetData $ [InvVector InvBlock $ getBlockHash $ biBlockHash bi])
+            blkinfo
+    if L.null gds
+        then return ()
+        else debug lg $ LG.msg $ "GetData reqs: " ++ show gds
+    return gds
 
 sendRequestMessages :: (HasXokenNodeEnv env m, MonadIO m) => BitcoinPeer -> Message -> m ()
 sendRequestMessages pr msg = do
@@ -224,8 +232,21 @@ getSleepInterval net n
     | (getNetworkName net == "bsvtest") = getSleepIntervalTestnet n
     | otherwise = getSleepIntervalMainnet n
 
-fetchBlockCacheQueue :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m (Maybe BlockInfo)
-fetchBlockCacheQueue = do
+getFetchWindowSize :: [BlockFetchWindow] -> Int8 -> Int8
+getFetchWindowSize fwlst ht = do
+    let fw' =
+            L.filter
+                (\bf -> do
+                     if ((fromIntegral $ heightBegin bf) <= ht && ht <= (fromIntegral $ heightEnd bf))
+                         then True
+                         else False)
+                fwlst
+    if L.null fw'
+        then 1 :: Int8 --default of 1
+        else fromIntegral $ windowSize $ fw' !! 0
+
+fetchBlockCacheQueue :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Int8 -> m ([BlockInfo])
+fetchBlockCacheQueue gdSize = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
     dbe <- getDB
@@ -239,7 +260,7 @@ fetchBlockCacheQueue = do
         sysz = fromIntegral $ L.length syt
     fullySynced <- liftIO $ readTVarIO $ indexUnconfirmedTx bp2pEnv
         -- check any retries
-    retn1 <-
+    ffc <-
         do trace lg $ LG.msg $ val "Checking for retries"
            let sent =
                    L.filter
@@ -276,86 +297,85 @@ fetchBlockCacheQueue = do
                        (\(_, ((BlockReceiveComplete t), _)) ->
                             (diffUTCTime tm t > (fromIntegral $ blockProcessingTimeout nc)))
                        recvComplete
-                -- all blocks received, empty the cache, cache-miss gracefully
-           if L.length processingIncomplete > 0
-               then return $ mkBlkInf $ getHead processingIncomplete
-               else if L.length recvTimedOut > 0
-                        then return $ mkBlkInf $ getHead recvTimedOut
-                        else if L.length recvNotStarted > 0
-                                 then return $ mkBlkInf $ getHead recvNotStarted
-                                 else return Nothing
-        -- reload cache
-    retn <-
-        case retn1 of
-            Just x -> do
-                liftIO $
-                    TSH.insert
-                        (blockSyncStatusMap bp2pEnv)
-                        (biBlockHash x)
-                        (RequestSent tm, fromIntegral $ biBlockHeight x)
-                return $ Just x
-            Nothing -> do
-                if sysz < (blocksFetchWindow $ nodeConfig bp2pEnv)
-                    then do
-                        (hash, ht) <- fetchBestSyncedBlock
-                        let fetchMore = (blocksFetchWindow $ nodeConfig bp2pEnv) -- - sysz
-                        let cacheInd = [1 .. fetchMore]
-                        let !bks = map (\x -> ht + (fromIntegral x)) cacheInd
-                        let qstr :: Q.QueryString Q.R (Identity [Int32]) ((Int32, T.Text))
-                            qstr = "SELECT block_height, block_hash from xoken.blocks_by_height where block_height in ?"
-                            p = getSimpleQueryParam $ Identity (bks)
-                        res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr p)
-                        case res of
-                            Left (e :: SomeException) -> do
-                                err lg $ LG.msg ("Error: fetchBlockCacheQueue: " ++ show e)
-                                return Nothing
-                            Right (op) -> do
-                                if L.length op == 0
-                                    then do
-                                        trace lg $ LG.msg $ val "Synced fully!"
-                                        return (Nothing)
-                                    else do
-                                        p <-
-                                            mapM
-                                                (\x ->
-                                                     case (hexToBlockHash $ snd x) of
-                                                         Just h -> do
-                                                             val <- liftIO $ TSH.lookup (blockSyncStatusMap bp2pEnv) h
-                                                             case val of
-                                                                 Nothing -> do
-                                                                     return $
-                                                                         Just
-                                                                             (h, (RequestSent tm, fromIntegral $ fst x))
-                                                                 Just v -> return Nothing
-                                                         Nothing -> return Nothing)
-                                                (op)
-                                        let cmp = catMaybes p
-                                        if L.null cmp
-                                            then do
-                                                trace lg $ LG.msg $ val "Nothing to add."
-                                                return Nothing
-                                            else do
-                                                debug lg $ LG.msg $ val "Adding to cache."
-                                                mapM
-                                                    (\(k, v) -> do
-                                                         liftIO $ TSH.insert (blockSyncStatusMap bp2pEnv) k v
-                                                         liftIO $
-                                                             catch
-                                                                 (liftIO $
-                                                                  TSH.new 32 >>= \pie ->
-                                                                      liftIO $ TSH.insert (protocolInfo bp2pEnv) k pie)
-                                                                 (\(e :: SomeException) ->
-                                                                      err lg $
-                                                                      LG.msg $
-                                                                      "Error: Failed to insert into protocolInfo TSH (key " <>
-                                                                      (show k) <> "): " <> (show e)))
-                                                    (cmp)
-                                                let e = cmp !! 0
-                                                return (Just $ BlockInfo (fst e) (snd $ snd e))
-                    else return Nothing
-    return retn
+           return $ processingIncomplete ++ recvTimedOut ++ recvNotStarted
+    let fetchFromCache = map (\i -> mkBlkInf i) ffc
+                     -- allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
+                -- let perPeerFetchWindow = getFetchWindowSize (blocksFetchWindow $ nodeConfig bp2pEnv) (fromIntegral ht)
+    if L.length fetchFromCache > 32
+        then return ()
+        else do
+            (hash, ht) <- fetchBestSyncedBlock
+            let !bks = map (\x -> ht + (fromIntegral x)) [1 .. 64]
+            let qstr :: Q.QueryString Q.R (Identity [Int32]) ((Int32, T.Text))
+                qstr = "SELECT block_height, block_hash from xoken.blocks_by_height where block_height in ?"
+                p = getSimpleQueryParam $ Identity (bks)
+            res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr p)
+            case res of
+                Left (e :: SomeException) -> do
+                    err lg $ LG.msg ("Error: fetchBlockCacheQueue: " ++ show e)
+                    return ()
+                Right (op) -> do
+                    if L.length op == 0
+                        then trace lg $ LG.msg $ val "Synced fully!"
+                        else do
+                            mapM_
+                                (\x ->
+                                     case (hexToBlockHash $ snd x) of
+                                         Just h -> do
+                                             __ <-
+                                                 liftIO $
+                                                 TSH.getOrCreate
+                                                     (blockSyncStatusMap bp2pEnv)
+                                                     h
+                                                     (return (RequestCached, fromIntegral $ fst x))
+                                             liftIO $
+                                                 catch
+                                                     (liftIO $
+                                                      TSH.new 32 >>= \pie ->
+                                                          liftIO $
+                                                          TSH.insert
+                                                              (protocolInfo bp2pEnv)
+                                                              (fromJust $ hexToBlockHash $ snd x)
+                                                              pie)
+                                                     (\(e :: SomeException) ->
+                                                          err lg $
+                                                          LG.msg $
+                                                          "Error: Failed to insert into protocolInfo TSH (key " <>
+                                                          (show $ snd x) <> "): " <> (show e))
+                                             return ()
+                                         Nothing -> return ())
+                                (op)
+    updatedSyncList <- liftIO $ TSH.toList (blockSyncStatusMap bp2pEnv)
+    let cached =
+            L.filter
+                (\x ->
+                     case fst $ snd x of
+                         RequestCached -> True
+                         otherwise -> False)
+                updatedSyncList
+    let sortCached = L.sortBy (\(_, (_, h)) (_, (_, h')) -> compare h h') cached
+        sortCachedBinf = map (\i -> mkBlkInf i) sortCached
+    let shortListed = L.take (fromIntegral $ gdSize) $ catMaybes (fetchFromCache ++ sortCachedBinf)
+    if L.null shortListed
+        then return []
+        else do
+            let leader = head shortListed
+            liftIO $
+                TSH.insert
+                    (blockSyncStatusMap bp2pEnv)
+                    (biBlockHash leader)
+                    (RequestSent tm, fromIntegral $ biBlockHeight leader)
+            let dependents = tail shortListed
+            mapM_
+                (\(dep, parent) -> do
+                     liftIO $
+                         TSH.insert
+                             (blockSyncStatusMap bp2pEnv)
+                             (biBlockHash dep)
+                             (RequestQueuedFW $ biBlockHash parent, fromIntegral $ biBlockHeight dep))
+                (zip dependents shortListed)
+            return shortListed
   where
-    getHead l = head $ L.sortOn (snd . snd) (l)
     mkBlkInf h = Just $ BlockInfo (fst h) (snd $ snd h)
 
 commitBlockCacheQueue :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
@@ -383,7 +403,6 @@ commitBlockCacheQueue = do
                          else return ()
                  Nothing -> return ())
         (syt)
-     --
     trace lg $ LG.msg $ ("blockSyncStatusMap (list): " ++ (show syt))
     syncList <- liftIO $ TSH.toList (blockSyncStatusMap bp2pEnv)
     let sortedList = L.sortOn (snd . snd) syncList
@@ -448,6 +467,26 @@ commitBlockCacheQueue = do
                 compl
             return ()
         else return ()
+             --
+    mapM_
+        (\(bsh, (syncst, ht)) -> do
+             case syncst of
+                 RequestQueuedFW parentHash -> do
+                     x <- liftIO $ TSH.lookup (blockSyncStatusMap bp2pEnv) (parentHash)
+                     case x of
+                         Just _ -- parent is still being processed, so do nothing yet
+                          -> do
+                             return ()
+                         Nothing -- presume parent just got processed so, set timeout for the child
+                          -> do
+                             let seconds :: NominalDiffTime = (fromIntegral $ getDataResponseTimeout nc)
+                             let timeout = addUTCTime seconds tm
+                             liftIO $
+                                 TSH.insert (blockSyncStatusMap bp2pEnv) (bsh) (RequestSent timeout, fromIntegral $ ht)
+                 otherwise -> return ())
+        (syt)
+    return ()
+ --
 
 commitScriptHashOutputs ::
        (HasXokenNodeEnv env m, MonadIO m)

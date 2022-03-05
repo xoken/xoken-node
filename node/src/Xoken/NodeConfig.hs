@@ -61,10 +61,20 @@ data NodeConfig =
         , maxTxProcessingThreads :: Int
         , maxTxProcessingBuffer :: Int
         , maxInsertsProtocol :: Int
-        , blocksFetchWindow :: Int
+        , blocksFetchWindow :: [BlockFetchWindow]
         , staticPeerList :: [String]
         }
     deriving (Show, Generic)
+
+data BlockFetchWindow =
+    BlockFetchWindow
+        { heightBegin :: Int
+        , heightEnd :: Int
+        , windowSize :: Int8
+        }
+    deriving (Show, Generic)
+
+instance FromJSON BlockFetchWindow
 
 instance FromJSON ByteString where
     parseJSON = withText "ByteString" $ \t -> pure $ fromJust (decodeHex t)

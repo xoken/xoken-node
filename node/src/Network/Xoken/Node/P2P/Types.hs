@@ -81,6 +81,7 @@ data BitcoinPeer =
         , bpConnected :: !Bool --  peer is connected and ready
         , bpVersion :: !(Maybe Version) -- protocol version
         , bpNonce :: !Word64 -- random nonce sent during handshake
+        , bpPendingRequests :: !(TSH.TSHashTable BlockHash ())
         }
 
 instance Show BitcoinPeer where
@@ -144,7 +145,9 @@ data BlockIngestState =
     deriving (Show)
 
 data BlockSyncStatus
-    = RequestSent !UTCTime
+    = RequestCached
+    | RequestSent !UTCTime
+    | RequestQueuedFW !BlockHash -- predecessor block hash
     | RecentTxReceiveTime !(UTCTime, Int)
     | BlockReceiveComplete !UTCTime
     | BlockProcessingComplete
