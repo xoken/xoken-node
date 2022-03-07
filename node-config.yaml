@@ -76,3 +76,5 @@ blocksFetchWindow:
   - heightBegin: 100000
     heightEnd: 300000
     windowSize: 4
+
+parallelBlockProcessing: 4

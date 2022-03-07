@@ -56,6 +56,7 @@ import Network.Xoken.Crypto.Hash
 import Network.Xoken.Network.Common -- (GetData(..), MessageCommand(..), NetworkAddress(..))
 import Network.Xoken.Network.Message
 import Network.Xoken.Node.Data
+import qualified Network.Xoken.Node.Data.ThreadSafeHashTable as TSH
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.GraphDB
 import qualified Network.Xoken.Node.P2P.BlockSync as NXB (markBestSyncedBlock)
@@ -125,6 +126,7 @@ sendRequestMessages msg = do
                                  Left (e :: SomeException) -> do
                                      err lg $ LG.msg ("Error CS, sending out data: " ++ show e)
                                      liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
+                                     -- liftIO $ TSH.delete (parallelBlockProcessingMap bp2pEnv) (show $ bpAddress pr)
                                      liftIO $ Network.Socket.close q
                                      throw e
                          Nothing -> debug lg $ LG.msg $ val "Error sending, no connections available")

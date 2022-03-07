@@ -62,6 +62,7 @@ data NodeConfig =
         , maxTxProcessingBuffer :: Int
         , maxInsertsProtocol :: Int
         , blocksFetchWindow :: [BlockFetchWindow]
+        , parallelBlockProcessing :: Int
         , staticPeerList :: [String]
         }
     deriving (Show, Generic)

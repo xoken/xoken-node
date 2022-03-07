@@ -135,24 +135,25 @@ runBlockSync =
                         do if L.length isPeerConnected == 0
                                then return [] -- stale peer, removing implicitly
                                else do
+                                   debug lg $ LG.msg $ "ABCD - aaa" ++ (show pr)
                                    res <- LE.try $ produceGetDataMessages pr
                                    case res of
                                        Right mm -> do
                                            if L.null mm
                                                then do
+                                                   debug lg $ LG.msg $ "ABCD - ccc" ++ (show pr)
                                                    liftIO $ atomically $ unGetTQueue (peerFetchQueue bp2pEnv) pr
                                                    liftIO $ threadDelay (100000) -- 0.1 sec
                                                    return []
                                                else do
-                                                   debug lg $ msg $ (val "Got enlisted peer: ") +++ (show pr)
+                                                   debug lg $ msg $ (val "ABCD - Got enlisted peer: ") +++ (show pr)
                                                    return mm
                                        Left (e :: SomeException) -> do
                                            liftIO $ atomically $ unGetTQueue (peerFetchQueue bp2pEnv) pr
                                            liftIO $
                                                err lg $ msg ("Error: while runBlockSync:produceGetData: " ++ show e)
                                            return []
-                    mapM_ (\m -> sendRequestMessages pr m) msg
-                    commitBlockCacheQueue)
+                    mapM_ (\m -> sendRequestMessages pr m) msg)
         case res of
             Right (a) -> return ()
             Left (e :: SomeException) -> do
@@ -454,7 +455,7 @@ resilientRead sock !blin = do
     case runGetLazyState (getConfirmedTxBatch) txbyt of
         Left e -> do
             trace lg $ msg $ "1st attempt|" ++ show e
-            let chunkSizeFB = 200 * 1000 * 1000 -- 200 MB
+            let chunkSizeFB = 50 * 1000 * 1000 -- 0 MB
                 !deltaNew =
                     if binTxPayloadLeft blin > chunkSizeFB
                         then chunkSizeFB - ((LC.length $ binUnspentBytes blin) + delta)
@@ -833,27 +834,30 @@ readNextMessage net sock ingss = do
                                     (binBlockSize blin)
                                     (binTxTotalCount blin)
                                     (txns !! 0)
-                                return mtq
+                                return $ Just mtq
                             else do
                                 valx <- liftIO $ TSH.lookup (merkleQueueMap p2pEnv) (biBlockHash $ bf)
                                 case valx of
-                                    Just q -> return q
-                                    Nothing -> throw MerkleQueueNotFoundException
+                                    Just q -> return $ Just q
+                                    Nothing -> return Nothing -- throw MerkleQueueNotFoundException
                     Nothing -> throw MessageParsingException
             let isLastBatch = ((binTxTotalCount blin) == ((L.length txns) + binTxIngested blin))
             let txct = L.length txns
-            liftIO $
-                mapM_
-                    (\(tx, ct) -> do
-                         let isLast =
-                                 if isLastBatch
-                                     then txct == ct
-                                     else False
-                         atomically $ writeTQueue (mTxQueue mqe) ((txHash tx), isLast)
-                         if isLast
-                             then liftIO $ takeMVar (mTxQueueSem mqe) --blocked until the Tx queue is processed
-                             else return ())
-                    (zip txns [1 ..])
+            case mqe of
+                Nothing -> return ()
+                Just mq -> do
+                    liftIO $
+                        mapM_
+                            (\(tx, ct) -> do
+                                 let isLast =
+                                         if isLastBatch
+                                             then txct == ct
+                                             else False
+                                 atomically $ writeTQueue (mTxQueue mq) ((txHash tx), isLast)
+                                 if isLast
+                                     then liftIO $ takeMVar (mTxQueueSem mq) --blocked until the Tx queue is processed
+                                     else return ())
+                            (zip txns [1 ..])
             let bio =
                     BlockIngestState
                         { binUnspentBytes = unused
@@ -1001,6 +1005,7 @@ messageHandler peer (mm, ingss) = do
                                     modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress peer))
                                     modifyTVar' (blacklistedPeers bp2pEnv) (M.insert (bpAddress peer) peer)
                             liftIO $ putMVar (headersWriteLock bp2pEnv) True
+                            -- liftIO $ TSH.delete (parallelBlockProcessingMap bp2pEnv) (show $ bpAddress peer)
                             throw InvalidBlocksException
                         Left KeyValueDBInsertException -> do
                             err lg $ LG.msg $ LG.val ("[ERROR] Insert failed. KeyValueDBInsertException")
@@ -1046,6 +1051,7 @@ messageHandler peer (mm, ingss) = do
                         Just iss -> do
                             debug lg $ LG.msg $ ("Processing Tx-batch, size :" ++ (show $ L.length txns))
                             processTxBatch txns iss
+                            debug lg $ LG.msg $ ("DONE_Processing Tx-batch, size :" ++ (show $ L.length txns))
                         Nothing -> do
                             err lg $ LG.msg $ val ("[???] Unconfirmed Tx ")
                     return $ msgType msg
@@ -1095,7 +1101,7 @@ processTxBatch txns iss = do
                     Just lfa -> do
                         y <- liftIO $ TSH.lookup (fst lfa) (txHash $ head txns)
                         case y of
-                            Just c -> return True
+                            Just c -> return True -- TODO: return True
                             Nothing -> return False
                     Nothing -> return False
             if skip
@@ -1187,26 +1193,20 @@ readNextMessage' peer readLock = do
                             case issBlockInfo iss of
                                 Just bi -> do
                                     tm <- liftIO $ getCurrentTime
+                                    liftIO $ TSH.insert (bpPendingRequests peer) (biBlockHash bi) (tm) -- update the time
+                                    liftIO $
+                                        TSH.insert
+                                            (blockSyncStatusMap bp2pEnv)
+                                            (biBlockHash bi)
+                                            ( RecentTxReceiveTime tm
+                                            , biBlockHeight bi -- track receive progress
+                                             )
                                     if binTxTotalCount ingst == binTxIngested ingst
                                         then do
-                                            liftIO $ TSH.delete (bpPendingRequests peer) (biBlockHash bi)
-                                            liftIO $ atomically $ writeTQueue (peerFetchQueue bp2pEnv) peer
-                                            liftIO $
-                                                TSH.insert
-                                                    (blockSyncStatusMap bp2pEnv)
-                                                    (biBlockHash bi)
-                                                    (BlockReceiveComplete tm, biBlockHeight bi)
-                                            debug lg $
-                                                LG.msg $ ("putMVar readLock Nothing - " ++ (show $ bpAddress peer))
+                                            debug lg $ LG.msg $ ("Ingested block fully - " ++ (show $ bpAddress peer))
                                             liftIO $ putMVar readLock Nothing
                                         else do
-                                            liftIO $
-                                                TSH.insert
-                                                    (blockSyncStatusMap bp2pEnv)
-                                                    (biBlockHash bi)
-                                                    ( RecentTxReceiveTime (tm, binTxIngested ingst)
-                                                    , biBlockHeight bi -- track receive progress
-                                                     )
+                                            debug lg $ LG.msg $ ("Ingested  ConfTx chunk - " ++ (show $ bpAddress peer))
                                             liftIO $ putMVar readLock ingressState
                                 Nothing -> throw InvalidBlockInfoException
                         otherwise -> throw $ UnexpectedDuringBlockProcException "_1_"
@@ -1225,12 +1225,12 @@ handleIncomingMessages pr = do
     res <-
         LE.try $
         S.drain $
-        S.asyncly $
+        S.aheadly $
         S.repeatM (readNextMessage' pr rlk) & -- read next msgs
         S.mapM (messageHandler pr) & -- handle read msgs
         S.mapM (logMessage pr) & -- log msgs & collect stats
-        S.maxBuffer 2 &
-        S.maxThreads 2
+        S.maxBuffer 5 &
+        S.maxThreads 5
     case res of
         Right (a) -> return ()
         Left (e :: SomeException)
@@ -1241,6 +1241,7 @@ handleIncomingMessages pr = do
                 Just sock -> liftIO $ Network.Socket.close sock
                 Nothing -> return ()
             liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
+            -- liftIO $ TSH.delete (parallelBlockProcessingMap bp2pEnv) (show $ bpAddress pr)
             return ()
 
 logMessage :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BitcoinPeer -> MessageCommand -> m (Bool)

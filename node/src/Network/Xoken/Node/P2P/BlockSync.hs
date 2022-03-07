@@ -104,6 +104,7 @@ produceGetDataMessages peer = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
     trace lg $ LG.msg $ "Block - produceGetDataMessages - called." ++ (show peer)
+    !tm <- liftIO $ getCurrentTime
     pendingReqs <- liftIO $ TSH.toList (bpPendingRequests peer)
     let pend = L.length pendingReqs
     (blkhash, blkht) <- fetchBestSyncedBlock
@@ -112,13 +113,27 @@ produceGetDataMessages peer = do
     gds <-
         mapM
             (\bi -> do
-                 liftIO $ TSH.insert (bpPendingRequests peer) (biBlockHash bi) ()
-                 return $ MGetData $ GetData $ [InvVector InvBlock $ getBlockHash $ biBlockHash bi])
+                 va <- liftIO $ TSH.lookup (bpPendingRequests peer) (biBlockHash bi)
+                 case va of
+                     Just _ -> do
+                         debug lg $
+                             LG.msg $
+                             " produceGetDataMessages: pending request FOUND: " ++
+                             (show $ biBlockHash bi) ++ ", peer: " ++ (show peer)
+                         return Nothing -- wasting the dequeued msg now, but next time a new peer is expected to dequeue
+                     Nothing -> do
+                         debug lg $
+                             LG.msg $
+                             " produceGetDataMessages: pending request NOT-FOUND: " ++
+                             (show $ biBlockHash bi) ++ ", peer: " ++ (show peer)
+                         liftIO $ TSH.insert (fetchBlockPeerMap bp2pEnv) (biBlockHash bi) peer
+                         liftIO $ TSH.insert (bpPendingRequests peer) (biBlockHash bi) (tm)
+                         return $ Just $ MGetData $ GetData $ [InvVector InvBlock $ getBlockHash $ biBlockHash bi])
             blkinfo
     if L.null gds
         then return ()
-        else debug lg $ LG.msg $ "GetData reqs: " ++ show gds
-    return gds
+        else debug lg $ LG.msg $ "GetData reqs: " ++ (show $ catMaybes gds)
+    return $ catMaybes gds
 
 sendRequestMessages :: (HasXokenNodeEnv env m, MonadIO m) => BitcoinPeer -> Message -> m ()
 sendRequestMessages pr msg = do
@@ -138,6 +153,7 @@ sendRequestMessages pr msg = do
                         otherwise -> do
                             err lg $ LG.msg ("Error BS, sending out data: " ++ show e)
                             liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
+                            -- liftIO $ TSH.delete (parallelBlockProcessingMap bp2pEnv) (show $ bpAddress pr)
                             liftIO $ Network.Socket.close s
                             throw e
             debug lg $ LG.msg $ "sending out GetData: " ++ show (bpAddress pr)
@@ -169,9 +185,34 @@ runPeerSync =
                                              liftIO $
                                                  atomically $
                                                  modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
+                                            --  liftIO $
+                                            --      TSH.delete (parallelBlockProcessingMap bp2pEnv) (show $ bpAddress pr)
                                  Nothing -> err lg $ LG.msg $ val "Error sending, no connections available")
                         (connPeers)
-            else liftIO $ threadDelay (60 * 1000000)
+            else return ()
+        !ct <- liftIO $ getCurrentTime
+        mapM_
+            (\(_, pr) -> do
+                 pendingReqs <- liftIO $ TSH.toList (bpPendingRequests pr)
+                 let val =
+                         catMaybes $
+                         map
+                             (\(blk, stm) ->
+                                  if (diffUTCTime ct stm >
+                                      (fromIntegral $ unresponsivePeerConnTimeoutSecs $ nodeConfig bp2pEnv))
+                                      then Nothing -- req has timed-out
+                                      else Just ())
+                             pendingReqs
+                 if (L.null val == True) && (L.null pendingReqs == False) -- all pending requests have timed-out
+                     then do
+                         err lg $ LG.msg ("Error: Closing stale peer: " ++ show pr)
+                         case (bpSocket pr) of
+                             Just sock -> liftIO $ Network.Socket.close sock
+                             Nothing -> return ()
+                         liftIO $ atomically $ do modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
+                     else return ())
+            connPeers
+        liftIO $ threadDelay (15 * 1000000)
 
 markBestSyncedBlock :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BlockHash -> Int32 -> XCqlClientState -> m ()
 markBestSyncedBlock hash height conn = do
@@ -259,53 +300,74 @@ fetchBlockCacheQueue gdSize = do
     let syt = L.sortBy (\(_, (_, h)) (_, (_, h')) -> compare h h') syt'
         sysz = fromIntegral $ L.length syt
     fullySynced <- liftIO $ readTVarIO $ indexUnconfirmedTx bp2pEnv
-        -- check any retries
+    -- check any retries
     ffc <-
         do trace lg $ LG.msg $ val "Checking for retries"
-           let sent =
+           let queuedAndRecving =
                    L.filter
                        (\x ->
                             case fst $ snd x of
-                                RequestSent _ -> True
-                                otherwise -> False)
-                       syt
-           let recvNotStarted =
-                   L.filter
-                       (\(_, ((RequestSent t), _)) -> (diffUTCTime tm t > (fromIntegral $ getDataResponseTimeout nc)))
-                       sent
-           let receiveInProgress =
-                   L.filter
-                       (\x ->
-                            case fst $ snd x of
+                                RequestQueuedFW _ -> True
                                 RecentTxReceiveTime _ -> True
                                 otherwise -> False)
                        syt
-           let recvTimedOut =
-                   L.filter
-                       (\(_, ((RecentTxReceiveTime (t, c)), _)) ->
-                            (diffUTCTime tm t > (fromIntegral $ recentTxReceiveTimeout nc)))
-                       receiveInProgress
-           let recvComplete =
-                   L.filter
-                       (\x ->
-                            case fst $ snd x of
-                                BlockReceiveComplete _ -> True
-                                otherwise -> False)
-                       syt
-           let processingIncomplete =
-                   L.filter
-                       (\(_, ((BlockReceiveComplete t), _)) ->
-                            (diffUTCTime tm t > (fromIntegral $ blockProcessingTimeout nc)))
-                       recvComplete
-           return $ processingIncomplete ++ recvTimedOut ++ recvNotStarted
+            -- check if any peers were prematurely lost and needs preemt re-fetching of block
+           fxv <-
+               mapM
+                   (\(blkhash, x) -> do
+                        peer <- liftIO $ TSH.lookup (fetchBlockPeerMap bp2pEnv) (blkhash) --  peer that was fetching block
+                        case peer of
+                            Just pr -> do
+                                if bpConnected pr
+                                    then return Nothing -- block is hopefully still being received by some peer
+                                    else return $ Just (blkhash, x) -- old peer was lost, assign new peer for this block 
+                            Nothing -> return $ Nothing)
+                   (queuedAndRecving)
+           let preemptBlk = catMaybes fxv
+            --
+           if not (L.null preemptBlk)
+               then return preemptBlk
+               else do
+                   if L.length syt == 0
+                       then return []
+                       else do
+                           let leaderBlock = head syt
+                               remainingBlocks = L.tail syt
+                           let cached =
+                                   L.filter
+                                       (\x ->
+                                            case fst $ snd x of
+                                                RequestCached -> True
+                                                otherwise -> False)
+                                       remainingBlocks
+                           let finalCacheList =
+                                   case (fst $ snd leaderBlock) of
+                                       RequestQueuedFW t ->
+                                           if (diffUTCTime tm t > (fromIntegral $ recentTxReceiveTimeout nc))
+                                               then [leaderBlock] ++ cached
+                                               else [] -- leader recv not started, dont get the rest yet, peers could get tied up!
+                                       RecentTxReceiveTime t ->
+                                           if (diffUTCTime tm t > (fromIntegral $ recentTxReceiveTimeout nc))
+                                               then [leaderBlock] ++ cached
+                                               else cached
+                                       otherwise -> [leaderBlock] ++ cached
+                           return $ finalCacheList
     let fetchFromCache = map (\i -> mkBlkInf i) ffc
-                     -- allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
-                -- let perPeerFetchWindow = getFetchWindowSize (blocksFetchWindow $ nodeConfig bp2pEnv) (fromIntegral ht)
-    if L.length fetchFromCache > 32
-        then return ()
+    if L.length syt > 0
+        then do
+            let shortListed = L.take (fromIntegral $ gdSize) $ catMaybes (fetchFromCache)
+            mapM_
+                (\(bi) -> do
+                     liftIO $
+                         TSH.insert
+                             (blockSyncStatusMap bp2pEnv)
+                             (biBlockHash bi)
+                             (RequestQueuedFW tm, fromIntegral $ biBlockHeight bi))
+                (shortListed)
+            return shortListed
         else do
             (hash, ht) <- fetchBestSyncedBlock
-            let !bks = map (\x -> ht + (fromIntegral x)) [1 .. 64]
+            let !bks = map (\x -> ht + (fromIntegral x)) [1 .. (parallelBlockProcessing nc)]
             let qstr :: Q.QueryString Q.R (Identity [Int32]) ((Int32, T.Text))
                 qstr = "SELECT block_height, block_hash from xoken.blocks_by_height where block_height in ?"
                 p = getSimpleQueryParam $ Identity (bks)
@@ -345,148 +407,138 @@ fetchBlockCacheQueue gdSize = do
                                              return ()
                                          Nothing -> return ())
                                 (op)
-    updatedSyncList <- liftIO $ TSH.toList (blockSyncStatusMap bp2pEnv)
-    let cached =
-            L.filter
-                (\x ->
-                     case fst $ snd x of
-                         RequestCached -> True
-                         otherwise -> False)
-                updatedSyncList
-    let sortCached = L.sortBy (\(_, (_, h)) (_, (_, h')) -> compare h h') cached
-        sortCachedBinf = map (\i -> mkBlkInf i) sortCached
-    let shortListed = L.take (fromIntegral $ gdSize) $ catMaybes (fetchFromCache ++ sortCachedBinf)
-    if L.null shortListed
-        then return []
-        else do
-            let leader = head shortListed
-            liftIO $
-                TSH.insert
-                    (blockSyncStatusMap bp2pEnv)
-                    (biBlockHash leader)
-                    (RequestSent tm, fromIntegral $ biBlockHeight leader)
-            let dependents = tail shortListed
+            updatedSyncList <- liftIO $ TSH.toList (blockSyncStatusMap bp2pEnv)
+            let cached =
+                    L.filter
+                        (\x ->
+                             case fst $ snd x of
+                                 RequestCached -> True
+                                 otherwise -> False)
+                        updatedSyncList
+            let sortCached = L.sortBy (\(_, (_, h)) (_, (_, h')) -> compare h h') cached
+                sortCachedBinf = map (\i -> mkBlkInf i) sortCached
+            let shortListed = L.take (fromIntegral $ gdSize) $ catMaybes (sortCachedBinf)
             mapM_
-                (\(dep, parent) -> do
+                (\(bi) -> do
                      liftIO $
                          TSH.insert
                              (blockSyncStatusMap bp2pEnv)
-                             (biBlockHash dep)
-                             (RequestQueuedFW $ biBlockHash parent, fromIntegral $ biBlockHeight dep))
-                (zip dependents shortListed)
+                             (biBlockHash bi)
+                             (RequestQueuedFW tm, fromIntegral $ biBlockHeight bi))
+                (shortListed)
             return shortListed
   where
     mkBlkInf h = Just $ BlockInfo (fst h) (snd $ snd h)
 
 commitBlockCacheQueue :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
-commitBlockCacheQueue = do
-    lg <- getLogger
-    bp2pEnv <- getBitcoinP2P
-    dbe <- getDB
-    !tm <- liftIO $ getCurrentTime
-    debug lg $ LG.msg $ val "commitBlockCacheQueue loop..."
-    let nc = nodeConfig bp2pEnv
-        net = bitcoinNetwork $ nc
-        conn = xCqlClientState dbe
-    syt' <- liftIO $ TSH.toList (blockSyncStatusMap bp2pEnv)
-    let syt = L.sortBy (\(_, (_, h)) (_, (_, h')) -> compare h h') syt'
+commitBlockCacheQueue =
+    forever $ do
+        liftIO $ threadDelay (100000) -- 0.1 sec
+        lg <- getLogger
+        bp2pEnv <- getBitcoinP2P
+        dbe <- getDB
+        !tm <- liftIO $ getCurrentTime
+        debug lg $ LG.msg $ val "commitBlockCacheQueue loop..."
+        let nc = nodeConfig bp2pEnv
+            net = bitcoinNetwork $ nc
+            conn = xCqlClientState dbe
+        syt' <- liftIO $ TSH.toList (blockSyncStatusMap bp2pEnv)
+        let syt = L.sortBy (\(_, (_, h)) (_, (_, h')) -> compare h h') syt'
     --
-    mapM_
-        (\(bsh, (_, ht)) -> do
-             valx <- liftIO $ TSH.lookup (blockTxProcessingLeftMap bp2pEnv) (bsh)
-             case valx of
-                 Just xv -> do
-                     siza <- liftIO $ TSH.toList (fst xv)
-                     if ((sum $ snd $ unzip siza) == snd xv)
-                         then do
-                             liftIO $ TSH.insert (blockSyncStatusMap bp2pEnv) (bsh) (BlockProcessingComplete, ht)
-                         else return ()
-                 Nothing -> return ())
-        (syt)
-    trace lg $ LG.msg $ ("blockSyncStatusMap (list): " ++ (show syt))
-    syncList <- liftIO $ TSH.toList (blockSyncStatusMap bp2pEnv)
-    let sortedList = L.sortOn (snd . snd) syncList
-    trace lg $ LG.msg $ ("sorted blockSyncStatusMap (list): " ++ (show sortedList))
-    let compl = L.takeWhile (\x -> (fst $ snd x) == BlockProcessingComplete) sortedList
-    if not $ L.null compl
-        then do
-            let lelm = last $ compl
-            debug lg $ LG.msg $ "Marking best synced block: " <> show lelm
-            markBestSyncedBlock (fst $ lelm) (fromIntegral $ snd $ snd $ lelm) conn
-            mapM
-                (\(bsh, (_, ht)) -> do
-                     trace lg $ LG.msg $ "deleting from blockSyncStatusMap: " <> show bsh
-                     liftIO $ TSH.delete (blockSyncStatusMap bp2pEnv) bsh
-                     liftIO $ TSH.delete (blockTxProcessingLeftMap bp2pEnv) bsh
-                      --
-                     LA.async $
-                         liftIO $
-                         catch
-                             (do v <- liftIO $ TSH.lookup (protocolInfo bp2pEnv) bsh
-                                 case v of
-                                     Just v' -> do
-                                         pi <- liftIO $ TSH.toList v'
+        mapM_
+            (\(bsh, (_, ht)) -> do
+                 valx <- liftIO $ TSH.lookup (blockTxProcessingLeftMap bp2pEnv) (bsh)
+                 debug lg $ LG.msg $ val "blockTxProcessingLeftMap : "
+                 case valx of
+                     Just xv -> do
+                         siza <- liftIO $ TSH.toList (fst xv)
+                         debug lg $
+                             LG.msg $
+                             "blockTxProcessingLeftMap lhs: " ++
+                             (show siza) ++ " sum: " ++ (show $ (sum $ snd $ unzip siza)) ++ " rhs: " ++ (show $ snd xv)
+                         if ((sum $ snd $ unzip siza) == snd xv)
+                             then do
+                                 debug lg $ LG.msg $ "inserting BlockProcessingComplete : " ++ (show bsh)
+                                 liftIO $ TSH.insert (blockSyncStatusMap bp2pEnv) (bsh) (BlockProcessingComplete, ht)
+                                 peer <- liftIO $ TSH.lookup (fetchBlockPeerMap bp2pEnv) (bsh)
+                                 case peer of
+                                     Just pr -> do
                                          debug lg $
-                                             LG.msg $
-                                             "Number of protocols for block: " <>
-                                             show (Prelude.length pi) <> " height: " <> show ht
-                                         pres <-
-                                             liftIO $
-                                             try $ do
-                                                 runInBatch
-                                                     (\(protocol, (props, blockInf)) -> do
-                                                          TSH.delete v' protocol
-                                                          withResource'
-                                                              (pool $ graphDB dbe)
-                                                              (`BT.run` insertProtocolWithBlockInfo
-                                                                            protocol
-                                                                            props
-                                                                            blockInf))
-                                                     pi
-                                                     (maxInsertsProtocol $ nodeConfig bp2pEnv)
-                                                 TSH.delete (protocolInfo bp2pEnv) bsh
-                                         case pres of
-                                             Right rt -> return ()
-                                             Left (e :: SomeException) -> do
-                                                 err lg $
-                                                     LG.msg $
-                                                     "Error: Failed to insert protocol with blockInfo:" <>
-                                                     (show (bsh, ht)) <> ": " <> (show e)
-                                                 throw MerkleSubTreeDBInsertException
-                                     Nothing -> do
-                                         debug lg $
-                                             LG.msg $ "Debug: No Information available for block hash " ++ show bsh
-                                         return ()
-                                 return ())
-                             (\(e :: SomeException) ->
-                                  err lg $
-                                  LG.msg $
-                                  "Error: Failed to insert into graph DB block " <> (show (bsh, ht)) <> ": " <> (show e))
+                                             LG.msg $ "ABCD - commitBlockCacheQueue, clearing maps" ++ (show (bsh, pr))
+                                         liftIO $ TSH.delete (bpPendingRequests pr) (bsh)
+                                         liftIO $ atomically $ unGetTQueue (peerFetchQueue bp2pEnv) pr -- queueing at the front, for recency!
+                                         -- liftIO $ atomically $ writeTQueue (peerFetchQueue bp2pEnv) pr
+                                         liftIO $ TSH.delete (fetchBlockPeerMap bp2pEnv) (bsh)
+                                     Nothing -> return ()
+                             else return ()
+                     Nothing -> return ())
+            (syt)
+        trace lg $ LG.msg $ ("blockSyncStatusMap (list): " ++ (show syt))
+        syncList <- liftIO $ TSH.toList (blockSyncStatusMap bp2pEnv)
+        let sortedList = L.sortOn (snd . snd) syncList
+        debug lg $ LG.msg $ ("sorted blockSyncStatusMap (list): " ++ (show sortedList))
+        let compl = L.takeWhile (\x -> (fst $ snd x) == BlockProcessingComplete) sortedList
+        if not $ L.null compl
+            then do
+                let lelm = last $ compl
+                debug lg $ LG.msg $ "Marking best synced block: " <> show lelm
+                markBestSyncedBlock (fst $ lelm) (fromIntegral $ snd $ snd $ lelm) conn
+                mapM
+                    (\(bsh, (_, ht)) -> do
+                         trace lg $ LG.msg $ "deleting from blockSyncStatusMap: " <> show bsh
+                         liftIO $ TSH.delete (blockSyncStatusMap bp2pEnv) bsh
+                         liftIO $ TSH.delete (blockTxProcessingLeftMap bp2pEnv) bsh
                       --
-                 )
-                compl
-            return ()
-        else return ()
-             --
-    mapM_
-        (\(bsh, (syncst, ht)) -> do
-             case syncst of
-                 RequestQueuedFW parentHash -> do
-                     x <- liftIO $ TSH.lookup (blockSyncStatusMap bp2pEnv) (parentHash)
-                     case x of
-                         Just _ -- parent is still being processed, so do nothing yet
-                          -> do
-                             return ()
-                         Nothing -- presume parent just got processed so, set timeout for the child
-                          -> do
-                             let seconds :: NominalDiffTime = (fromIntegral $ getDataResponseTimeout nc)
-                             let timeout = addUTCTime seconds tm
+                         LA.async $
                              liftIO $
-                                 TSH.insert (blockSyncStatusMap bp2pEnv) (bsh) (RequestSent timeout, fromIntegral $ ht)
-                 otherwise -> return ())
-        (syt)
-    return ()
- --
+                             catch
+                                 (do v <- liftIO $ TSH.lookup (protocolInfo bp2pEnv) bsh
+                                     case v of
+                                         Just v' -> do
+                                             pi <- liftIO $ TSH.toList v'
+                                             debug lg $
+                                                 LG.msg $
+                                                 "Number of protocols for block: " <>
+                                                 show (Prelude.length pi) <> " height: " <> show ht
+                                             pres <-
+                                                 liftIO $
+                                                 try $ do
+                                                     runInBatch
+                                                         (\(protocol, (props, blockInf)) -> do
+                                                              TSH.delete v' protocol
+                                                              withResource'
+                                                                  (pool $ graphDB dbe)
+                                                                  (`BT.run` insertProtocolWithBlockInfo
+                                                                                protocol
+                                                                                props
+                                                                                blockInf))
+                                                         pi
+                                                         (maxInsertsProtocol $ nodeConfig bp2pEnv)
+                                                     TSH.delete (protocolInfo bp2pEnv) bsh
+                                             case pres of
+                                                 Right rt -> return ()
+                                                 Left (e :: SomeException) -> do
+                                                     err lg $
+                                                         LG.msg $
+                                                         "Error: Failed to insert protocol with blockInfo:" <>
+                                                         (show (bsh, ht)) <> ": " <> (show e)
+                                                     throw MerkleSubTreeDBInsertException
+                                         Nothing -> do
+                                             debug lg $
+                                                 LG.msg $ "Debug: No Information available for block hash " ++ show bsh
+                                             return ()
+                                     return ())
+                                 (\(e :: SomeException) ->
+                                      err lg $
+                                      LG.msg $
+                                      "Error: Failed to insert into graph DB block " <>
+                                      (show (bsh, ht)) <> ": " <> (show e))
+                      --
+                     )
+                    compl
+                return ()
+            else return ()
+        return ()
 
 commitScriptHashOutputs ::
        (HasXokenNodeEnv env m, MonadIO m)
