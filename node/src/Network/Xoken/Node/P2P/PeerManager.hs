@@ -1101,7 +1101,7 @@ processTxBatch txns iss = do
                     Just lfa -> do
                         y <- liftIO $ TSH.lookup (fst lfa) (txHash $ head txns)
                         case y of
-                            Just c -> return True -- TODO: return True
+                            Just c -> return False -- TODO: return True
                             Nothing -> return False
                     Nothing -> return False
             if skip
@@ -1204,6 +1204,8 @@ readNextMessage' peer readLock = do
                                     if binTxTotalCount ingst == binTxIngested ingst
                                         then do
                                             debug lg $ LG.msg $ ("Ingested block fully - " ++ (show $ bpAddress peer))
+                                            liftIO $ TSH.delete (bpPendingRequests peer) (biBlockHash bi)
+                                            liftIO $ atomically $ unGetTQueue (peerFetchQueue bp2pEnv) peer -- queueing at the front, for recency!
                                             liftIO $ putMVar readLock Nothing
                                         else do
                                             debug lg $ LG.msg $ ("Ingested  ConfTx chunk - " ++ (show $ bpAddress peer))
@@ -1225,12 +1227,12 @@ handleIncomingMessages pr = do
     res <-
         LE.try $
         S.drain $
-        S.aheadly $
+        S.asyncly $
         S.repeatM (readNextMessage' pr rlk) & -- read next msgs
         S.mapM (messageHandler pr) & -- handle read msgs
         S.mapM (logMessage pr) & -- log msgs & collect stats
-        S.maxBuffer 5 &
-        S.maxThreads 5
+        S.maxBuffer 500 &
+        S.maxThreads 500
     case res of
         Right (a) -> return ()
         Left (e :: SomeException)

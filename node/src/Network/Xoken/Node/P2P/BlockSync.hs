@@ -191,6 +191,7 @@ runPeerSync =
                         (connPeers)
             else return ()
         !ct <- liftIO $ getCurrentTime
+        isemp <- liftIO $ atomically $ isEmptyTQueue (peerFetchQueue bp2pEnv)
         mapM_
             (\(_, pr) -> do
                  pendingReqs <- liftIO $ TSH.toList (bpPendingRequests pr)
@@ -210,9 +211,12 @@ runPeerSync =
                              Just sock -> liftIO $ Network.Socket.close sock
                              Nothing -> return ()
                          liftIO $ atomically $ do modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
-                     else return ())
+                     else if (L.null pendingReqs && isemp) -- no pending reqs on peer and main queue is empty
+                              then do
+                                  liftIO $ atomically $ writeTQueue (peerFetchQueue bp2pEnv) pr
+                              else return ())
             connPeers
-        liftIO $ threadDelay (15 * 1000000)
+        liftIO $ threadDelay (5 * 1000000)
 
 markBestSyncedBlock :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BlockHash -> Int32 -> XCqlClientState -> m ()
 markBestSyncedBlock hash height conn = do
@@ -345,12 +349,13 @@ fetchBlockCacheQueue gdSize = do
                                        RequestQueuedFW t ->
                                            if (diffUTCTime tm t > (fromIntegral $ recentTxReceiveTimeout nc))
                                                then [leaderBlock] ++ cached
-                                               else [] -- leader recv not started, dont get the rest yet, peers could get tied up!
+                                               else cached -- leader recv not started, dont get the rest yet, peers could get tied up!
                                        RecentTxReceiveTime t ->
                                            if (diffUTCTime tm t > (fromIntegral $ recentTxReceiveTimeout nc))
                                                then [leaderBlock] ++ cached
                                                else cached
-                                       otherwise -> [leaderBlock] ++ cached
+                                       RequestCached -> [leaderBlock] ++ cached
+                                       otherwise -> cached
                            return $ finalCacheList
     let fetchFromCache = map (\i -> mkBlkInf i) ffc
     if L.length syt > 0
@@ -465,8 +470,8 @@ commitBlockCacheQueue =
                                      Just pr -> do
                                          debug lg $
                                              LG.msg $ "ABCD - commitBlockCacheQueue, clearing maps" ++ (show (bsh, pr))
-                                         liftIO $ TSH.delete (bpPendingRequests pr) (bsh)
-                                         liftIO $ atomically $ unGetTQueue (peerFetchQueue bp2pEnv) pr -- queueing at the front, for recency!
+                                        --  liftIO $ TSH.delete (bpPendingRequests pr) (bsh)
+                                        --  liftIO $ atomically $ unGetTQueue (peerFetchQueue bp2pEnv) pr -- queueing at the front, for recency!
                                          -- liftIO $ atomically $ writeTQueue (peerFetchQueue bp2pEnv) pr
                                          liftIO $ TSH.delete (fetchBlockPeerMap bp2pEnv) (bsh)
                                      Nothing -> return ()
@@ -650,13 +655,14 @@ processConfTransaction bis tx bhash blkht txind = do
         conn = xCqlClientState dbe'
     debug lg $ LG.msg $ "(Wrapper) Processing lock begin :" ++ show txhs
     -- lock begin
-    lockv <- liftIO $ TSH.getOrCreate (txSynchronizer bp2pEnv) (txhs, ParentTxProcessing) (liftIO $ newMVar ())
-    liftIO $ takeMVar lockv
+    -- lockv <- liftIO $ TSH.getOrCreate (txSynchronizer bp2pEnv) (txhs, ParentTxProcessing) (liftIO $ newMVar ())
+    -- liftIO $ takeMVar lockv
     --
     res <- LE.try $ processConfTransaction' bis tx bhash blkht txind -- get the Inv message 
     case res of
-        Right mm -> do
-            liftIO $ putMVar lockv () -- lock end/1
+        Right mm
+            -- liftIO $ putMVar lockv () -- lock end/1
+         -> do
             debug lg $ LG.msg $ "(Wrapper) Processing lock ends :" ++ show txhs
             --
             vall <- liftIO $ TSH.lookup (txSynchronizer bp2pEnv) (txhs, ChildTxWaiting)
@@ -666,8 +672,9 @@ processConfTransaction bis tx bhash blkht txind = do
                     return ()
                 Nothing -> return ()
             --
-        Left (e :: SomeException) -> do
-            liftIO $ putMVar lockv () -- lock end/2
+        Left (e :: SomeException)
+            -- liftIO $ putMVar lockv () -- lock end/2
+         -> do
             liftIO $ err lg $ LG.msg ("Error: while processConfTransaction: " ++ show e)
             throw e
     --
@@ -696,6 +703,24 @@ processConfTransaction' bis tx bhash blkht txind = do
                 (txOut tx)
                 [0 :: Int32 ..]
     --
+    -- update outputs and scripthash tables
+    mapM_
+        (\(a, o, i) -> do
+             let sh = txHashToHex $ TxHash $ sha256 (scriptOutput o)
+             let script =
+                     if a == ""
+                         then (scriptOutput o)
+                         else ""
+             let bi = (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
+             let output = (txHashToHex txhs, i)
+             let bsh = B16.encode $ scriptOutput o
+             let (op, rem) = B.splitAt 2 bsh
+             let (op_false, op_return, remD) =
+                     if op == "6a"
+                         then ("00", op, rem)
+                         else (\(a, b) -> (op, a, b)) $ B.splitAt 2 rem
+             insertTxIdOutputs output a (T.pack $ C.unpack script) (fromIntegral $ outValue o))
+        outAddrs
     -- lookup into tx outputs value cache if cache-miss, fetch from DB
     !inputs <-
         mapM
@@ -791,26 +816,6 @@ processConfTransaction' bis tx bhash blkht txind = do
         serbs = runPutLazy $ putLazyByteString $ S.encodeLazy tx
         count = BSL.length serbs
     --
-    debug lg $ LG.msg $ "Processing confirmed transaction <fetched inputs> :" ++ show txhs
-    trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": calculated fees"
-    trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": fetched input(s): " ++ show inputs
-    -- handle allegory
-    eres <- LE.try $ handleIfAllegoryTx tx True True
-    case eres of
-        Right (flg) -> return ()
-        Left (e :: SomeException) -> err lg $ LG.msg ("Error: " ++ show e)
-    --
-    -- cache compile output values
-    -- imp: order is (address, scriptHash, value)
-    let ovs =
-            map
-                (\(a, o, i) ->
-                     ( fromIntegral $ i
-                     , (a, (txHashToHex $ TxHash $ sha256 (scriptOutput o)), fromIntegral $ outValue o)))
-                outAddrs
-    trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": compiled output value(s): " ++ (show ovs)
-    trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": added outputvals to cache"
-    -- update outputs and scripthash tables
     mapM_
         (\(a, o, i) -> do
              let sh = txHashToHex $ TxHash $ sha256 (scriptOutput o)
@@ -902,9 +907,30 @@ processConfTransaction' bis tx bhash blkht txind = do
                          v <- liftIO $ TSH.lookup (protocolInfo bp2pEnv) bhash
                          case v of
                              Just v' -> liftIO $ TSH.mutate v' (T.intercalate "_" protocol) fn
-                             Nothing -> debug lg $ LG.msg $ "No ProtocolInfo Available for: " ++ show bhash
-             insertTxIdOutputs output a (T.pack $ C.unpack script) (fromIntegral $ outValue o))
+                             Nothing -> debug lg $ LG.msg $ "No ProtocolInfo Available for: " ++ show bhash)
         outAddrs
+    --
+    debug lg $ LG.msg $ "Processing confirmed transaction <fetched inputs> :" ++ show txhs
+    trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": calculated fees"
+    trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": fetched input(s): " ++ show inputs
+    -- handle allegory
+    eres <- LE.try $ handleIfAllegoryTx tx True True
+    case eres of
+        Right (flg) -> return ()
+        Left (e :: SomeException) -> err lg $ LG.msg ("Error: " ++ show e)
+    --
+    -- cache compile output values
+    -- imp: order is (address, scriptHash, value)
+    let ovs =
+            map
+                (\(a, o, i) ->
+                     ( fromIntegral $ i
+                     , (a, (txHashToHex $ TxHash $ sha256 (scriptOutput o)), fromIntegral $ outValue o)))
+                outAddrs
+    trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": compiled output value(s): " ++ (show ovs)
+    trace lg $ LG.msg $ "processing Tx " ++ show txhs ++ ": added outputvals to cache"
+    -- <<
+    -- >>
     debug lg $ LG.msg $ "Processing confirmed transaction <committed outputs> :" ++ show txhs
     mapM_
         (\((o, i), (a, sh)) -> do
@@ -988,13 +1014,14 @@ getSatsValueFromOutpoint conn txSync lg net outPoint maxWait = do
         qstr = "SELECT address, script, value FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
         par = getSimpleQueryParam (txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint)
     -- parent lock begin
-    lockp <- liftIO $ TSH.getOrCreate txSync ((outPointHash outPoint), ParentTxProcessing) (liftIO $ newMVar ())
-    liftIO $ takeMVar lockp
+    -- lockp <- liftIO $ TSH.getOrCreate txSync ((outPointHash outPoint), ParentTxProcessing) (liftIO $ newMVar ())
+    -- liftIO $ takeMVar lockp
     --
     res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
     case res of
-        Right results -> do
-            liftIO $ putMVar lockp () -- parent lock ends/1
+        Right results
+            -- liftIO $ putMVar lockp () -- parent lock ends/1
+         -> do
             if (L.length results == 0)
                 then do
                     debug lg $
@@ -1009,27 +1036,22 @@ getSatsValueFromOutpoint conn txSync lg net outPoint maxWait = do
                         liftIO $
                         TSH.getOrCreate txSync ((outPointHash outPoint), ChildTxWaiting) (liftIO $ newEmptyMVar)
                     --
-                    tofl <- liftIO $ race (readMVar lockc) (do threadDelay (1000000 * (fromIntegral maxWait)))
+                    tofl <- liftIO $ race (readMVar lockc) (do threadDelay (1000000 * 10)) --(fromIntegral maxWait)))
                     case tofl of
                         Left _ -> do
                             debug lg $
                                 LG.msg $ "event received _available_: " ++ (show $ txHashToHex $ outPointHash outPoint)
                             getSatsValueFromOutpoint conn txSync lg net outPoint maxWait
                         Right _ -> do
-                            liftIO $ TSH.delete txSync ((outPointHash outPoint), ChildTxWaiting)
                             debug lg $
-                                LG.msg $
-                                "TxIDNotFoundException: While querying txid_outputs for (TxID, Index): " ++
-                                (show $ txHashToHex $ outPointHash outPoint) ++
-                                ", " ++ show (outPointIndex outPoint) ++ ")"
-                            throw $
-                                TxIDNotFoundException
-                                    (show $ txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint)
+                                LG.msg $ "event received _timeout_: " ++ (show $ txHashToHex $ outPointHash outPoint)
+                            getSatsValueFromOutpoint conn txSync lg net outPoint maxWait
                 else do
                     let (addr, scriptHash, val) = head $ results
                     return $ (addr, scriptHash, val)
-        Left (e :: SomeException) -> do
-            liftIO $ putMVar lockp () -- parent lock ends/2
+        Left (e :: SomeException)
+            --liftIO $ putMVar lockp () -- parent lock ends/2
+         -> do
             err lg $ LG.msg $ "Error: getSatsValueFromOutpoint: " ++ show e
             throw e
 
