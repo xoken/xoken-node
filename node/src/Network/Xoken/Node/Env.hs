@@ -95,6 +95,8 @@ data BitcoinP2P =
         , protocolInfo :: !(TSH.TSHashTable BlockHash (TSH.TSHashTable Text ([(Text, Text)], BlockPInfo)))
         , blockCacheLock :: !(MVar ())
         , peerFetchQueue :: !(TQueue BitcoinPeer)
+        -- , parallelBlockProcessingMap :: !(TSH.TSHashTable String ()) -- Peer sockAddr
+        , fetchBlockPeerMap :: !(TSH.TSHashTable BlockHash BitcoinPeer)
         }
 
 class HasBitcoinP2P m where

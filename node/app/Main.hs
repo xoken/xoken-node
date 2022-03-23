@@ -228,12 +228,13 @@ runThreads config nodeConf bp2p conn lg certPaths = do
                     withAsync setupSeedPeerConnection $ \_ -> do
                         withAsync runEgressChainSync $ \_ -> do
                             withAsync runBlockSync $ \_ -> do
-                                withAsync (handleNewConnectionRequest epHandler) $ \_ -> do
-                                    withAsync runPeerSync $ \_ -> do
-                                        withAsync runSyncStatusChecker $ \_ -> do
-                                            withAsync runWatchDog $ \z -> do
-                                                _ <- LA.wait z
-                                                return ())
+                                withAsync commitBlockCacheQueue $ \_ -> do
+                                    withAsync (handleNewConnectionRequest epHandler) $ \_ -> do
+                                        withAsync runPeerSync $ \_ -> do
+                                            withAsync runSyncStatusChecker $ \_ -> do
+                                                withAsync runWatchDog $ \z -> do
+                                                    _ <- LA.wait z
+                                                    return ())
     liftIO $ destroyAllResources $ pool gdbState
     liftIO $ putStrLn $ "node recovering from fatal DB connection failure!"
     return ()
@@ -361,6 +362,7 @@ defBitcoinP2P nodeCnf ept = do
     protocolInfo <- TSH.new 4
     blockCacheLock <- newMVar ()
     peerFetchQueue <- liftIO $ newTQueueIO
+    blockPeerMap <- TSH.new 1
     --
     return $
         BitcoinP2P
@@ -385,6 +387,7 @@ defBitcoinP2P nodeCnf ept = do
             protocolInfo
             blockCacheLock
             peerFetchQueue
+            blockPeerMap
     -- 
 
 initNexa :: IO ()
