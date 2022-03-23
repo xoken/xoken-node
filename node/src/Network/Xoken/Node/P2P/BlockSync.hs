@@ -347,7 +347,7 @@ fetchBlockCacheQueue gdSize = do
                            let finalCacheList =
                                    case (fst $ snd leaderBlock) of
                                        RequestQueuedFW t ->
-                                           if (diffUTCTime tm t > (fromIntegral $ recentTxReceiveTimeout nc))
+                                           if (diffUTCTime tm t > (fromIntegral $ getDataResponseTimeout nc))
                                                then [leaderBlock] ++ cached
                                                else cached -- leader recv not started, dont get the rest yet, peers could get tied up!
                                        RecentTxReceiveTime t ->
