@@ -643,7 +643,11 @@ processTMTSubTrees blkHash txCount = do
                 mapM
                     (\pg -> do
                          xx <- liftIO $ TSH.lookup tmtState pg
-                         return $ fromJust xx)
+			 case xx of
+			     Just x -> return x
+			     Nothing -> do
+                                          err lg $ LG.msg $ "Error while inserting pages/tmtState: " ++ show pg ++ " block: " ++ show blkHash
+					  throw InvalidMetaDataException) 
                     [1 .. (fromIntegral pages)]
             let txct = L.length interimNodes
                 finalIntermediateMerkleNodes =
@@ -742,6 +746,7 @@ runTMTDaemon =
                                                         return ()
                                                     Left (e :: SomeException) -> do
                                                         err lg $ LG.msg $ "Error while persistTMT: " ++ show e
+                                                        liftIO $ threadDelay (60 * 1000000) 
                                             else err lg $ LG.msg $ val "Potential Chain reorg occured?!"
                                     Left err -> do
                                         liftIO $ print $ "Decode failed with error: " <> show err
@@ -821,7 +826,6 @@ readNextMessage net sock ingss = do
                                                 (blockTxProcessingLeftMap p2pEnv)
                                                 (biBlockHash $ bf)
                                                 (ar, (binTxTotalCount blin))
-                                            return ()
                                 qq <- liftIO $ atomically $ newTQueue
                                 qs <- liftIO $ newEmptyMVar
                                 let mtq = MerkleTxQueue qq qs
@@ -1101,7 +1105,7 @@ processTxBatch txns iss = do
                     Just lfa -> do
                         y <- liftIO $ TSH.lookup (fst lfa) (txHash $ head txns)
                         case y of
-                            Just c -> return False -- TODO: return True
+                            Just c -> return True -- TODO: return True
                             Nothing -> return False
                     Nothing -> return False
             if skip
@@ -1112,7 +1116,7 @@ processTxBatch txns iss = do
                          (show $ biBlockHash bf) ++ ", tx-index: " ++ show (binTxIngested bi))
                 else do
                     S.drain $
-                        aheadly $
+                        aheadly$
                         (do let start = (binTxIngested bi) - (L.length txns)
                                 end = (binTxIngested bi) - 1
                             S.fromList $ zip [start .. end] [0 ..]) &
@@ -1227,12 +1231,12 @@ handleIncomingMessages pr = do
     res <-
         LE.try $
         S.drain $
-        S.asyncly $
+        S.serially $
         S.repeatM (readNextMessage' pr rlk) & -- read next msgs
         S.mapM (messageHandler pr) & -- handle read msgs
         S.mapM (logMessage pr) & -- log msgs & collect stats
-        S.maxBuffer 500 &
-        S.maxThreads 500
+        S.maxBuffer 5 &
+        S.maxThreads 5
     case res of
         Right (a) -> return ()
         Left (e :: SomeException)
