@@ -442,33 +442,39 @@ resilientRead ::
        (HasLogger m, MonadBaseControl IO m, MonadIO m) => Socket -> BlockIngestState -> m (([Tx], LC.ByteString), Int64)
 resilientRead sock !blin = do
     lg <- getLogger
-    let chunkSize = 1000 * 1000 -- 1MB
-        !delta =
+    let !unspentBytesLen = LC.length $ binUnspentBytes blin
+    let chunkSize = 2 * 1000 * 1000 -- 2MB
+        !dlt =
             if binTxPayloadLeft blin > chunkSize
-                then chunkSize - ((LC.length $ binUnspentBytes blin))
-                else (binTxPayloadLeft blin) - (LC.length $ binUnspentBytes blin)
+                then chunkSize - (unspentBytesLen)
+                else (binTxPayloadLeft blin) - (unspentBytesLen)
     trace lg $ msg (" | Tx payload left " ++ show (binTxPayloadLeft blin))
-    trace lg $ msg (" | Bytes prev unspent " ++ show (LC.length $ binUnspentBytes blin))
+    trace lg $ msg (" | Bytes prev unspent " ++ show unspentBytesLen)
+    let !delta = if dlt > 0
+                      then dlt
+		      else 0
     trace lg $ msg (" | Bytes to read " ++ show delta)
     nbyt <- recvAll sock delta
     let !txbyt = (binUnspentBytes blin) `LC.append` (nbyt)
+    let !txbytLen = unspentBytesLen + delta
     case runGetLazyState (getConfirmedTxBatch) txbyt of
         Left e -> do
             trace lg $ msg $ "1st attempt|" ++ show e
-            let chunkSizeFB = 50 * 1000 * 1000 -- 0 MB
+            let chunkSizeFB = 50 * 1000 * 1000 -- 50 MB
                 !deltaNew =
                     if binTxPayloadLeft blin > chunkSizeFB
-                        then chunkSizeFB - ((LC.length $ binUnspentBytes blin) + delta)
-                        else (binTxPayloadLeft blin) - ((LC.length $ binUnspentBytes blin) + delta)
+                        then chunkSizeFB - txbytLen
+                        else (binTxPayloadLeft blin) - txbytLen
             nbyt2 <- recvAll sock deltaNew
             let !txbyt2 = txbyt `LC.append` (nbyt2)
+            let !txbytLen2 = txbytLen + deltaNew
             case runGetLazyState (getConfirmedTxBatch) txbyt2 of
                 Left e -> do
                     err lg $ msg $ "2nd attempt|" ++ show e
                     throw ConfirmedTxParseException
                 Right res -> do
-                    return (res, LC.length txbyt2)
-        Right res -> return (res, LC.length txbyt)
+                    return (res, txbytLen2)
+        Right res -> return (res, txbytLen)
 
 persistTxListByPage ::
        (HasBitcoinP2P m, HasLogger m, HasDatabaseHandles m, MonadBaseControl IO m, MonadIO m)
