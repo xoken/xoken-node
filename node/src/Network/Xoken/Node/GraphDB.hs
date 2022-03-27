@@ -541,14 +541,16 @@ insertMerkleSubTree leaves inodes = do
             then Data.Text.pack " TRUE "
             else Data.Text.pack " FALSE "
 
+
 deleteMerkleSubTree :: [MerkleNode] -> BoltActionT IO ()
 deleteMerkleSubTree inodes = do
     BT.query cypher
     return ()
   where
     nodes = Prelude.map (node) inodes
-    matchTemplate = " MATCH (re:mnode)-[:PARENT*0..8]->(:mnode)<-[:PARENT*0..]-(st:mnode) WHERE re.v IN [ "
-    deleteTemplate = " ] DETACH DELETE st"
+    -- matchTemplate = " MATCH (re:mnode)-[:PARENT*0..12]->(:mnode)<-[:PARENT*0..]-(st:mnode) WHERE re.v IN [ "
+    matchTemplate = " MATCH (re:mnode)-[:PARENT*0..]->(st:mnode) WHERE re.v IN [ "
+    deleteTemplate = " ] DETACH DELETE st "
     inMatch =
         Data.Text.intercalate (" , ") $
         Prelude.map (\repl -> replace ("<h>") (repl) (pack " \'<h>\' ")) (Prelude.map (\z -> txtTx z) nodes)

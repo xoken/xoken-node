@@ -622,15 +622,36 @@ processTMTSubTrees blkHash txCount = do
                 then fst dpx
                 else fst dpx + 1
     tmtState <- liftIO $ TSH.new 4
+
+    xx <-
+        LE.try $
+        S.drain $
+        aheadly $
+        (do S.fromList [1 .. pages]) &
+        S.mapM
+            (\pageNum -> do
+                 if pages == 1
+                     then loadTxIDPagesTMT blkHash pageNum True
+                     else loadTxIDPagesTMT blkHash pageNum False) &
+        S.mapM (\z -> do
+	           let nodes = fst $ unzip $ fst z
+                   liftIO $ withResource' (pool $ graphDB dbe) (`BT.run` deleteMerkleSubTree nodes )) & -- fixed tree height of 8 corresponding to max 256 leaf nodes
+        S.maxBuffer (maxTMTBuilderThreads $ nodeConfig p2pEnv) &
+        S.maxThreads (maxTMTBuilderThreads $ nodeConfig p2pEnv)
+
+    case xx of
+       Right _ -> return ()
+       Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error while deleteMerkleSubTree: " ++ show e
+	    throw e
+
     yy <-
         LE.try $
         S.drain $
         aheadly $
         (do S.fromList [1 .. pages]) &
         S.mapM
-            (\pageNum
-                 -- liftIO $ threadDelay (1000000 * 5) -- TODO remove this, only for testing
-              -> do
+            (\pageNum -> do
                  if pages == 1
                      then loadTxIDPagesTMT blkHash pageNum True
                      else loadTxIDPagesTMT blkHash pageNum False) &
@@ -638,14 +659,11 @@ processTMTSubTrees blkHash txCount = do
         S.maxBuffer (maxTMTBuilderThreads $ nodeConfig p2pEnv) &
         S.maxThreads (maxTMTBuilderThreads $ nodeConfig p2pEnv)
     case yy of
-        Right _ -> return ()
-        Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error while processTMTSubTrees: " ++ show e
-    --
-    if pages == 1
-        then return ()
-        else do
-            interimNodes <-
+       Right _ -> do
+         if pages == 1
+           then return ()
+           else do
+             interimNodes <-
                 mapM
                     (\pg -> do
                          xx <- liftIO $ TSH.lookup tmtState pg
@@ -655,15 +673,20 @@ processTMTSubTrees blkHash txCount = do
                                           err lg $ LG.msg $ "Error while inserting pages/tmtState: " ++ show pg ++ " block: " ++ show blkHash
 					  throw InvalidMetaDataException) 
                     [1 .. (fromIntegral pages)]
-            let txct = L.length interimNodes
-                finalIntermediateMerkleNodes =
+             let txct = L.length interimNodes
+                 finalIntermediateMerkleNodes =
                     map
                         (\(mn, indx) -> do
                              if indx == txct
                                  then (mn, True)
                                  else (mn, False))
                         (zip interimNodes ([1 .. txct]))
-            persistTMT blkHash Nothing tmtState (finalIntermediateMerkleNodes, (-1, True))
+             persistTMT blkHash Nothing tmtState (finalIntermediateMerkleNodes, (-1, True))
+
+    
+       Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error while processTMTSubTrees: " ++ show e
+	    throw e
 
 runTMTDaemon :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
 runTMTDaemon =
