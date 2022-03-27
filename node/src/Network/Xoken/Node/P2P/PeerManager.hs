@@ -443,7 +443,7 @@ resilientRead ::
 resilientRead sock !blin = do
     lg <- getLogger
     let !unspentBytesLen = LC.length $ binUnspentBytes blin
-    let chunkSize = 2 * 1000 * 1000 -- 2MB
+    let chunkSize = 5 * 1000 * 1000 -- 5MB
         !dlt =
             if binTxPayloadLeft blin > chunkSize
                 then chunkSize - (unspentBytesLen)
@@ -460,7 +460,7 @@ resilientRead sock !blin = do
     case runGetLazyState (getConfirmedTxBatch) txbyt of
         Left e -> do
             trace lg $ msg $ "1st attempt|" ++ show e
-            let chunkSizeFB = 50 * 1000 * 1000 -- 50 MB
+            let chunkSizeFB = 20 * 1000 * 1000 -- 20 MB
                 !deltaNew =
                     if binTxPayloadLeft blin > chunkSizeFB
                         then chunkSizeFB - txbytLen
