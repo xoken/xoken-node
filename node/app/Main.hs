@@ -1,19 +1,19 @@
 {-# LANGUAGE ApplicativeDo #-}
+{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE TemplateHaskell #-}
-{-# OPTIONS_GHC -fno-warn-orphans #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 
 import Arivi.Crypto.Utils.PublicKey.Signature as ACUPS
 import Arivi.Crypto.Utils.PublicKey.Utils
@@ -28,10 +28,10 @@ import Arivi.P2P.PubSub.Types
 import Arivi.P2P.RPC.Types
 import Arivi.P2P.ServiceRegistry
 import Control.Arrow
-import Control.Concurrent (threadDelay)
 import Control.Concurrent
+import Control.Concurrent (threadDelay)
 import qualified Control.Concurrent.Async as A (async, uninterruptibleCancel)
-import Control.Concurrent.Async.Lifted as LA (async, race, wait, withAsync)
+import Control.Concurrent.Async.Lifted as LA (async, race, wait, waitAnyCancel, withAsync)
 import Control.Concurrent.Event as EV
 import Control.Concurrent.MSem as MS
 import Control.Concurrent.MVar
@@ -39,7 +39,6 @@ import Control.Concurrent.QSem
 import Control.Concurrent.STM.TQueue as TB
 import Control.Concurrent.STM.TVar
 import Control.Exception (throw)
-import Control.Monad
 import Control.Monad
 import Control.Monad.Base
 import Control.Monad.Catch
@@ -61,7 +60,6 @@ import qualified Data.ByteString.Lazy as L
 import qualified Data.ByteString.Lazy.Char8 as CL
 import Data.Char
 import Data.Default
-import Data.Default
 import Data.Function
 import Data.Functor.Identity
 import qualified Data.HashTable as CHT
@@ -71,10 +69,9 @@ import Data.Int
 import Data.List
 import Data.Map.Strict as M
 import Data.Maybe
-import Data.Maybe
 import Data.Pool
-import Data.Serialize as Serialize
 import Data.Serialize as S
+import Data.Serialize as Serialize
 import Data.String.Conv
 import Data.String.Conversions
 import qualified Data.Text as DT
@@ -86,8 +83,8 @@ import Data.Time.Clock
 import Data.Time.Clock.POSIX
 import Data.Typeable
 import Data.Version
-import Data.Word (Word32)
 import Data.Word
+import Data.Word (Word32)
 import qualified Database.Bolt as BT
 import qualified Database.XCQL.Protocol as Q
 import Network.Simple.TCP
@@ -107,7 +104,6 @@ import Network.Xoken.Node.P2P.UnconfTxSync
 import Network.Xoken.Node.TLSServer
 import Options.Applicative
 import Paths_xoken_node as P
-import Prelude as P
 import qualified Snap as Snap
 import StmContainers.Map as SM
 import System.Directory (doesDirectoryExist, doesFileExist)
@@ -123,9 +119,10 @@ import Text.Read (readMaybe)
 import Xoken
 import Xoken.Node
 import Xoken.NodeConfig as NC
+import Prelude as P
 
-newtype AppM a =
-    AppM (ReaderT (ServiceEnv) (IO) a)
+newtype AppM a
+    = AppM (ReaderT (ServiceEnv) (IO) a)
     deriving (Functor, Applicative, Monad, MonadReader (ServiceEnv), MonadIO, MonadThrow, MonadCatch)
 
 deriving instance MonadBase IO AppM
@@ -161,8 +158,9 @@ defaultConfig = do
     (sk, _) <- ACUPS.generateKeyPair
     let bootstrapPeer =
             Peer
-                ((fst . B16.decode)
-                     "a07b8847dc19d77f8ef966ba5a954dac2270779fb028b77829f8ba551fd2f7ab0c73441456b402792c731d8d39c116cb1b4eb3a18a98f4b099a5f9bdffee965c")
+                ( (fst . B16.decode)
+                    "a07b8847dc19d77f8ef966ba5a954dac2270779fb028b77829f8ba551fd2f7ab0c73441456b402792c731d8d39c116cb1b4eb3a18a98f4b099a5f9bdffee965c"
+                )
                 (NodeEndPoint "51.89.40.95" 5678 5678)
     let config =
             Config.Config 5678 5678 sk [bootstrapPeer] (generateNodeId sk) "127.0.0.1" (T.pack "./arivi.log") 20 5 3
@@ -170,7 +168,7 @@ defaultConfig = do
 
 makeGraphDBResPool :: T.Text -> T.Text -> IO (ServerState)
 makeGraphDBResPool uname pwd = do
-    let gdbConfig = def {BT.user = uname, BT.password = pwd}
+    let gdbConfig = def{BT.user = uname, BT.password = pwd}
     gdbState <- constructState gdbConfig
     a <- withResource' (pool gdbState) (`BT.run` queryGraphDBVersion)
     putStrLn $ "Connected to Neo4j database, version " ++ show (a !! 0)
@@ -178,21 +176,22 @@ makeGraphDBResPool uname pwd = do
 
 initXCql :: NC.NodeConfig -> IO (XCqlClientState)
 initXCql nodeConf = do
-    let hints = defaultHints {addrFlags = [AI_NUMERICHOST, AI_NUMERICSERV], addrSocketType = Stream}
+    let hints = defaultHints{addrFlags = [AI_NUMERICHOST, AI_NUMERICSERV], addrSocketType = Stream}
         startCql :: Q.Request k () ()
         startCql = Q.RqStartup $ Q.Startup Q.Cqlv300 (Q.algorithm Q.noCompression) --(Q.CqlVersion "3.4.4") Q.None
     mapM
-        (\cn -> do
-             (addr:_) <- getAddrInfo (Just hints) (Just "127.0.0.1") (Just "9042")
-             s <- socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)
-             Network.Socket.connect s (addrAddress addr)
-             connHandshake s startCql
-             t <- TSH.new 1
-             l <- newMVar (1 :: Int16)
-             sk <- newIORef $ Just s
-             let xcqlc = XCQLConnection t l sk
-             A.async (readResponse xcqlc)
-             return xcqlc)
+        ( \cn -> do
+            (addr : _) <- getAddrInfo (Just hints) (Just "127.0.0.1") (Just "9042")
+            s <- socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)
+            Network.Socket.connect s (addrAddress addr)
+            connHandshake s startCql
+            t <- TSH.new 1
+            l <- newMVar (1 :: Int16)
+            sk <- newIORef $ Just s
+            let xcqlc = XCQLConnection t l sk
+            A.async (readResponse xcqlc)
+            return xcqlc
+        )
         [1 .. (maxConnectionsXCql nodeConf)]
 
 runThreads :: Config.Config -> NC.NodeConfig -> BitcoinP2P -> XCqlClientState -> LG.Logger -> [FilePath] -> IO ()
@@ -207,11 +206,11 @@ runThreads config nodeConf bp2p conn lg certPaths = do
     async $ startTLSEndpoint epHandler (endPointTLSListenIP nodeConf) (endPointTLSListenPort nodeConf) certPaths
     -- start HTTP endpoint
     let snapConfig =
-            Snap.defaultConfig & Snap.setSSLBind (DTE.encodeUtf8 $ DT.pack $ endPointHTTPSListenIP nodeConf) &
-            Snap.setSSLPort (fromEnum $ endPointHTTPSListenPort nodeConf) &
-            Snap.setSSLKey (certPaths !! 1) &
-            Snap.setSSLCert (head certPaths) &
-            Snap.setSSLChainCert False
+            Snap.defaultConfig & Snap.setSSLBind (DTE.encodeUtf8 $ DT.pack $ endPointHTTPSListenIP nodeConf)
+                & Snap.setSSLPort (fromEnum $ endPointHTTPSListenPort nodeConf)
+                & Snap.setSSLKey (certPaths !! 1)
+                & Snap.setSSLCert (head certPaths)
+                & Snap.setSSLChainCert False
     async $ Snap.serveSnaplet snapConfig (appInit xknEnv)
     catch (withResource' (pool $ graphDB dbh) (`BT.run` initAllegoryRoot genesisTx)) $ \(e :: SomeException) ->
         if "ConstraintValidationFailed" `isInfixOf` (show e)
@@ -222,19 +221,20 @@ runThreads config nodeConf bp2p conn lg certPaths = do
     -- run main workers
     runAppM
         serviceEnv
-        (do bp2pEnv <- getBitcoinP2P
-            withAsync runTMTDaemon $ \_ -> do
-                withAsync runEpochSwitcher $ \_ -> do
-                    withAsync setupSeedPeerConnection $ \_ -> do
-                        withAsync runEgressChainSync $ \_ -> do
-                            withAsync runBlockSync $ \_ -> do
-                                withAsync commitBlockCacheQueue $ \_ -> do
-                                    withAsync (handleNewConnectionRequest epHandler) $ \_ -> do
-                                        withAsync runPeerSync $ \_ -> do
-                                            withAsync runSyncStatusChecker $ \_ -> do
-                                                withAsync runWatchDog $ \z -> do
-                                                    _ <- LA.wait z
-                                                    return ())
+        ( do
+            bp2pEnv <- getBitcoinP2P
+            withAsync setupSeedPeerConnection $ \a -> do
+                withAsync runEgressChainSync $ \b -> do
+                    withAsync runBlockSync $ \c -> do
+                        withAsync commitBlockCacheQueue $ \d -> do
+                            withAsync (handleNewConnectionRequest epHandler) $ \e -> do
+                                withAsync runPeerSync $ \f -> do
+                                    withAsync runSyncStatusChecker $ \g -> do
+                                        withAsync runWatchDog $ \h -> do
+                                            withAsync runTMTDaemon $ \i -> do
+                                                _ <- LA.waitAnyCancel [a, b, c, d, e, f, g, h, i]
+                                                return ()
+        )
     liftIO $ destroyAllResources $ pool gdbState
     liftIO $ putStrLn $ "node recovering from fatal DB connection failure!"
     return ()
@@ -248,7 +248,7 @@ runSyncStatusChecker = do
     forever $ do
         isSynced <- checkBlocksFullySynced conn
         liftIO $ CMS.atomically $ writeTVar (indexUnconfirmedTx bp2pEnv) isSynced
-        liftIO $ threadDelay (10 * 1000000)
+        liftIO $ threadDelay (60 * 1000000)
 
 runWatchDog :: (HasXokenNodeEnv env m, MonadIO m) => m ()
 runWatchDog = do
@@ -291,17 +291,17 @@ runNode :: Config.Config -> NC.NodeConfig -> XCqlClientState -> BitcoinP2P -> [F
 runNode config nodeConf conn bp2p certPaths = do
     lg <-
         LG.new
-            (LG.setOutput
-                 (LG.Path $ T.unpack $ NC.logFileName nodeConf)
-                 (LG.setLogLevel (logLevel nodeConf) LG.defSettings))
+            ( LG.setOutput
+                (LG.Path $ T.unpack $ NC.logFileName nodeConf)
+                (LG.setLogLevel (logLevel nodeConf) LG.defSettings)
+            )
     runThreads config nodeConf bp2p conn lg certPaths
 
-data Config =
-    Config
-        { configNetwork :: !Network
-        , configDebug :: !Bool
-        , configUnconfirmedTx :: !Bool
-        }
+data Config = Config
+    { configNetwork :: !Network
+    , configDebug :: !Bool
+    , configUnconfirmedTx :: !Bool
+    }
 
 defPort :: Int
 defPort = 3000
@@ -388,7 +388,8 @@ defBitcoinP2P nodeCnf ept = do
             blockCacheLock
             peerFetchQueue
             blockPeerMap
-    -- 
+
+--
 
 initNexa :: IO ()
 initNexa = do

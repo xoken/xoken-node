@@ -8,15 +8,16 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
 
-module Network.Xoken.Node.P2P.PeerManager
-    ( createSocket
-    , setupSeedPeerConnection
-    , runTMTDaemon
-    , runBlockSync
-    ) where
+module Network.Xoken.Node.P2P.PeerManager (
+    createSocket,
+    setupSeedPeerConnection,
+    runTMTDaemon,
+    runBlockSync,
+) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (mapConcurrently)
+
 import Control.Concurrent.Async.Lifted as LA (async, cancel, concurrently_, race, wait, waitAnyCatch, withAsync)
 import qualified Control.Concurrent.MSem as MS
 import qualified Control.Concurrent.MSemN as MSN
@@ -83,7 +84,7 @@ import Network.Xoken.Util
 import StmContainers.Map as SM
 import StmContainers.Set as SS
 import Streamly as S
-import Streamly.Prelude ((|:), drain, each, nil)
+import Streamly.Prelude (drain, each, nil, (|:))
 import qualified Streamly.Prelude as S
 import System.Logger as LG
 import System.Logger.Message
@@ -127,37 +128,41 @@ runBlockSync =
         allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
         res <-
             LE.try
-                (do let isPeerConnected =
+                ( do
+                    let isPeerConnected =
                             L.filter
                                 (\x -> (bpConnected (snd x)) && ((bpAddress pr) == (bpAddress $ snd x)))
                                 (M.toList allPeers)
                     msg <-
-                        do if L.length isPeerConnected == 0
-                               then return [] -- stale peer, removing implicitly
-                               else do
-                                   debug lg $ LG.msg $ "ABCD - aaa" ++ (show pr)
-                                   res <- LE.try $ produceGetDataMessages pr
-                                   case res of
-                                       Right mm -> do
-                                           if L.null mm
-                                               then do
-                                                   debug lg $ LG.msg $ "ABCD - ccc" ++ (show pr)
-                                                   liftIO $ atomically $ unGetTQueue (peerFetchQueue bp2pEnv) pr
-                                                   liftIO $ threadDelay (100000) -- 0.1 sec
-                                                   return []
-                                               else do
-                                                   debug lg $ msg $ (val "ABCD - Got enlisted peer: ") +++ (show pr)
-                                                   return mm
-                                       Left (e :: SomeException) -> do
-                                           liftIO $ atomically $ unGetTQueue (peerFetchQueue bp2pEnv) pr
-                                           liftIO $
-                                               err lg $ msg ("Error: while runBlockSync:produceGetData: " ++ show e)
-                                           return []
-                    mapM_ (\m -> sendRequestMessages pr m) msg)
+                        do
+                            if L.length isPeerConnected == 0
+                                then return [] -- stale peer, removing implicitly
+                                else do
+                                    debug lg $ LG.msg $ "ABCD - aaa" ++ (show pr)
+                                    res <- LE.try $ produceGetDataMessages pr
+                                    case res of
+                                        Right mm -> do
+                                            if L.null mm
+                                                then do
+                                                    debug lg $ LG.msg $ "ABCD - ccc" ++ (show pr)
+                                                    liftIO $ atomically $ unGetTQueue (peerFetchQueue bp2pEnv) pr
+                                                    liftIO $ threadDelay (100000) -- 0.1 sec
+                                                    return []
+                                                else do
+                                                    debug lg $ msg $ (val "ABCD - Got enlisted peer: ") +++ (show pr)
+                                                    return mm
+                                        Left (e :: SomeException) -> do
+                                            liftIO $ atomically $ unGetTQueue (peerFetchQueue bp2pEnv) pr
+                                            liftIO $
+                                                err lg $ msg ("Error: while runBlockSync:produceGetData: " ++ show e)
+                                            return []
+                    mapM_ (\m -> sendRequestMessages pr m) msg
+                )
         case res of
             Right (a) -> return ()
             Left (e :: SomeException) -> do
                 err lg $ msg $ (val "[ERROR] FATAL error in runBlockSync ") +++ (show e)
+		throw e
 
 setupSeedPeerConnection :: (HasXokenNodeEnv env m, MonadIO m) => m ()
 setupSeedPeerConnection =
@@ -166,83 +171,88 @@ setupSeedPeerConnection =
         lg <- getLogger
         let net = bitcoinNetwork $ nodeConfig bp2pEnv
             seeds = (staticPeerList $ nodeConfig bp2pEnv) ++ getSeeds net
-            hints = defaultHints {addrSocketType = Stream}
+            hints = defaultHints{addrSocketType = Stream}
             port = getDefaultPort net
         debug lg $ msg $ show seeds
         --let sd = map (\x -> Just (x :: HostName)) seeds
         !addrs <- liftIO $ mapConcurrently (\x -> head <$> getAddrInfo (Just hints) (Just x) (Just (show port))) seeds
         mapM_
-            (\y -> do
-                 debug lg $ msg ("Peer.. " ++ show (addrAddress y))
-                 LA.async $
-                     (do blockedpr <- liftIO $ readTVarIO (blacklistedPeers bp2pEnv)
-                         allpr <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
-                             -- this can be optimized
-                         let connPeers =
-                                 L.foldl'
-                                     (\c x ->
-                                          if bpConnected (snd x)
-                                              then c + 1
-                                              else c)
-                                     0
-                                     (M.toList allpr)
-                         if connPeers > (maxBitcoinPeerCount $ nodeConfig bp2pEnv)
-                             then liftIO $ threadDelay (10 * 1000000)
-                             else do
-                                 let toConn =
-                                         case M.lookup (addrAddress y) allpr of
-                                             Just pr ->
-                                                 if bpConnected pr
-                                                     then False
-                                                     else True
-                                             Nothing -> True
-                                     isBlacklisted = M.member (addrAddress y) blockedpr
-                                 if toConn == False
-                                     then do
-                                         debug lg $
-                                             msg ("Seed peer already connected, ignoring.. " ++ show (addrAddress y))
-                                     else if isBlacklisted
-                                              then do
-                                                  debug lg $
-                                                      msg ("Seed peer blacklisted, ignoring.. " ++ show (addrAddress y))
-                                              else do
-                                                  rl <- liftIO $ newMVar True
-                                                  wl <- liftIO $ newMVar ()
-                                                  ss <- liftIO $ newTVarIO Nothing
-                                                  imc <- liftIO $ newTVarIO 0
-                                                  rc <- liftIO $ newTVarIO Nothing
-                                                  st <- liftIO $ newTVarIO Nothing
-                                                  fw <- liftIO $ newTVarIO 0
-                                                  res <- LE.try $ liftIO $ createSocket y
-                                                  cfq <- liftIO $ newEmptyMVar
-                                                  nfq <- liftIO $ newEmptyMVar
-                                                  pdr <- liftIO $ TSH.new 1
-                                                  case res of
-                                                      Right (sock) -> do
-                                                          case sock of
-                                                              Just sx -> do
-                                                                  fl <- doVersionHandshake net sx $ addrAddress y
-                                                                  let bp =
-                                                                          BitcoinPeer
-                                                                              (addrAddress y)
-                                                                              sock
-                                                                              wl
-                                                                              fl
-                                                                              Nothing
-                                                                              99999
-                                                                              pdr
-                                                                  liftIO $
-                                                                      atomically $
-                                                                      modifyTVar'
-                                                                          (bitcoinPeers bp2pEnv)
-                                                                          (M.insert (addrAddress y) bp)
-                                                                  liftIO $
-                                                                      atomically $
-                                                                      writeTQueue (peerFetchQueue bp2pEnv) bp
-                                                                  handleIncomingMessages bp -- must be the last step, as blocking
-                                                              Nothing -> return ()
-                                                      Left (SocketConnectException addr) ->
-                                                          warn lg $ msg ("SocketConnectException: " ++ show addr)))
+            ( \y -> do
+                debug lg $ msg ("Peer.. " ++ show (addrAddress y))
+                LA.async $
+                    ( do
+                        blockedpr <- liftIO $ readTVarIO (blacklistedPeers bp2pEnv)
+                        allpr <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
+                        -- this can be optimized
+                        let connPeers =
+                                L.foldl'
+                                    ( \c x ->
+                                        if bpConnected (snd x)
+                                            then c + 1
+                                            else c
+                                    )
+                                    0
+                                    (M.toList allpr)
+                        if connPeers > (maxBitcoinPeerCount $ nodeConfig bp2pEnv)
+                            then liftIO $ threadDelay (10 * 1000000)
+                            else do
+                                let toConn =
+                                        case M.lookup (addrAddress y) allpr of
+                                            Just pr ->
+                                                if bpConnected pr
+                                                    then False
+                                                    else True
+                                            Nothing -> True
+                                    isBlacklisted = M.member (addrAddress y) blockedpr
+                                if toConn == False
+                                    then do
+                                        debug lg $
+                                            msg ("Seed peer already connected, ignoring.. " ++ show (addrAddress y))
+                                    else
+                                        if isBlacklisted
+                                            then do
+                                                debug lg $
+                                                    msg ("Seed peer blacklisted, ignoring.. " ++ show (addrAddress y))
+                                            else do
+                                                rl <- liftIO $ newMVar True
+                                                wl <- liftIO $ newMVar ()
+                                                ss <- liftIO $ newTVarIO Nothing
+                                                imc <- liftIO $ newTVarIO 0
+                                                rc <- liftIO $ newTVarIO Nothing
+                                                st <- liftIO $ newTVarIO Nothing
+                                                fw <- liftIO $ newTVarIO 0
+                                                res <- LE.try $ liftIO $ createSocket y
+                                                cfq <- liftIO $ newEmptyMVar
+                                                nfq <- liftIO $ newEmptyMVar
+                                                pdr <- liftIO $ TSH.new 1
+                                                case res of
+                                                    Right (sock) -> do
+                                                        case sock of
+                                                            Just sx -> do
+                                                                fl <- doVersionHandshake net sx $ addrAddress y
+                                                                let bp =
+                                                                        BitcoinPeer
+                                                                            (addrAddress y)
+                                                                            sock
+                                                                            wl
+                                                                            fl
+                                                                            Nothing
+                                                                            99999
+                                                                            pdr
+                                                                liftIO $
+                                                                    atomically $
+                                                                        modifyTVar'
+                                                                            (bitcoinPeers bp2pEnv)
+                                                                            (M.insert (addrAddress y) bp)
+                                                                liftIO $
+                                                                    atomically $
+                                                                        writeTQueue (peerFetchQueue bp2pEnv) bp
+                                                                handleIncomingMessages bp -- must be the last step, as blocking
+                                                            Nothing -> return ()
+                                                    Left (SocketConnectException addr) ->
+                                                        warn lg $ msg ("SocketConnectException: " ++ show addr)
+                    )
+            )
             (addrs)
         liftIO $ threadDelay (30 * 1000000)
 
@@ -255,10 +265,11 @@ setupPeerConnection saddr = do
     allpr <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
     let connPeers =
             L.foldl'
-                (\c x ->
-                     if bpConnected (snd x)
-                         then c + 1
-                         else c)
+                ( \c x ->
+                    if bpConnected (snd x)
+                        then c + 1
+                        else c
+                )
                 0
                 (M.toList allpr)
     if connPeers > (maxBitcoinPeerCount $ nodeConfig bp2pEnv)
@@ -276,36 +287,37 @@ setupPeerConnection saddr = do
                 then do
                     debug lg $ msg ("Peer already connected, ignoring.. " ++ show saddr)
                     return Nothing
-                else if isBlacklisted
-                         then do
-                             debug lg $ msg ("Peer blacklisted, ignoring.. " ++ show saddr)
-                             return Nothing
-                         else do
-                             res <- LE.try $ liftIO $ createSocketFromSockAddr saddr
-                             case res of
-                                 Right (sock) -> do
-                                     rl <- liftIO $ newMVar True
-                                     wl <- liftIO $ newMVar ()
-                                     ss <- liftIO $ newTVarIO Nothing
-                                     imc <- liftIO $ newTVarIO 0
-                                     rc <- liftIO $ newTVarIO Nothing
-                                     st <- liftIO $ newTVarIO Nothing
-                                     fw <- liftIO $ newTVarIO 0
-                                     cfq <- liftIO $ newEmptyMVar
-                                     nfq <- liftIO $ newEmptyMVar
-                                     pdr <- liftIO $ TSH.new 1
-                                     case sock of
-                                         Just sx -> do
-                                             debug lg $ LG.msg ("Discovered Net-Address: " ++ (show $ saddr))
-                                             fl <- doVersionHandshake net sx $ saddr
-                                             let bp = BitcoinPeer (saddr) sock wl fl Nothing 99999 pdr
-                                             liftIO $
-                                                 atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.insert (saddr) bp)
-                                             return $ Just bp
-                                         Nothing -> return (Nothing)
-                                 Left (SocketConnectException addr) -> do
-                                     warn lg $ msg ("SocketConnectException: " ++ show addr)
-                                     return Nothing
+                else
+                    if isBlacklisted
+                        then do
+                            debug lg $ msg ("Peer blacklisted, ignoring.. " ++ show saddr)
+                            return Nothing
+                        else do
+                            res <- LE.try $ liftIO $ createSocketFromSockAddr saddr
+                            case res of
+                                Right (sock) -> do
+                                    rl <- liftIO $ newMVar True
+                                    wl <- liftIO $ newMVar ()
+                                    ss <- liftIO $ newTVarIO Nothing
+                                    imc <- liftIO $ newTVarIO 0
+                                    rc <- liftIO $ newTVarIO Nothing
+                                    st <- liftIO $ newTVarIO Nothing
+                                    fw <- liftIO $ newTVarIO 0
+                                    cfq <- liftIO $ newEmptyMVar
+                                    nfq <- liftIO $ newEmptyMVar
+                                    pdr <- liftIO $ TSH.new 1
+                                    case sock of
+                                        Just sx -> do
+                                            debug lg $ LG.msg ("Discovered Net-Address: " ++ (show $ saddr))
+                                            fl <- doVersionHandshake net sx $ saddr
+                                            let bp = BitcoinPeer (saddr) sock wl fl Nothing 99999 pdr
+                                            liftIO $
+                                                atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.insert (saddr) bp)
+                                            return $ Just bp
+                                        Nothing -> return (Nothing)
+                                Left (SocketConnectException addr) -> do
+                                    warn lg $ msg ("SocketConnectException: " ++ show addr)
+                                    return Nothing
 
 hashPair :: Hash256 -> Hash256 -> Hash256
 hashPair a b = doubleSHA256 $ encode a `B.append` encode b
@@ -315,34 +327,39 @@ pushHash (stateMap, res) nhash left right ht ind final =
     case node prev of
         Just pv ->
             if ind < ht
-                then pushHash
-                         ( (M.insert ind emptyMerkleNode stateMap)
-                         , (insertSpecial
+                then
+                    pushHash
+                        ( (M.insert ind emptyMerkleNode stateMap)
+                        , ( insertSpecial
                                 (Just pv)
                                 (left)
                                 (right)
                                 True
-                                (insertSpecial (Just nhash) (leftChild prev) (rightChild prev) False res)))
-                         (hashPair pv nhash)
-                         (Just pv)
-                         (Just nhash)
-                         ht
-                         (ind + 1)
-                         final
+                                (insertSpecial (Just nhash) (leftChild prev) (rightChild prev) False res)
+                          )
+                        )
+                        (hashPair pv nhash)
+                        (Just pv)
+                        (Just nhash)
+                        ht
+                        (ind + 1)
+                        final
                 else throw MerkleTreeInvalidException -- Fatal error, can only happen in case of invalid leaf nodes
         Nothing ->
             if ht == ind
                 then (stateMap, (insertSpecial (Just nhash) left right True res))
-                else if final
-                         then pushHash
-                                  (updateState, (insertSpecial (Just nhash) left right True res))
-                                  (hashPair nhash nhash)
-                                  (Just nhash)
-                                  (Just nhash)
-                                  ht
-                                  (ind + 1)
-                                  final
-                         else (updateState, res)
+                else
+                    if final
+                        then
+                            pushHash
+                                (updateState, (insertSpecial (Just nhash) left right True res))
+                                (hashPair nhash nhash)
+                                (Just nhash)
+                                (Just nhash)
+                                ht
+                                (ind + 1)
+                                final
+                        else (updateState, res)
   where
     insertSpecial sib lft rht flg lst = [(MerkleNode sib lft rht flg)] ++ lst
     updateState = M.insert ind (MerkleNode (Just nhash) left right True) stateMap
@@ -352,19 +369,19 @@ pushHash (stateMap, res) nhash left right ht ind final =
             Nothing -> emptyMerkleNode
 
 updateMerkleSubTrees ::
-       DatabaseHandles
-    -> (TSH.TSHashTable Int MerkleNode)
-    -> Logger
-    -> HashCompute
-    -> Hash256
-    -> Maybe Hash256
-    -> Maybe Hash256
-    -> Int8
-    -> Int8
-    -> Bool
-    -> Bool
-    -> Int32
-    -> IO (HashCompute)
+    DatabaseHandles ->
+    (TSH.TSHashTable Int MerkleNode) ->
+    Logger ->
+    HashCompute ->
+    Hash256 ->
+    Maybe Hash256 ->
+    Maybe Hash256 ->
+    Int8 ->
+    Int8 ->
+    Bool ->
+    Bool ->
+    Int32 ->
+    IO (HashCompute)
 updateMerkleSubTrees dbe tmtState lg hashComp newhash left right ht ind final onlySubTree pageNum = do
     eres <- try $ return $ pushHash hashComp newhash left right ht ind final
     case eres of
@@ -384,35 +401,42 @@ updateMerkleSubTrees dbe tmtState lg hashComp newhash left right ht ind final on
                             else do
                                 trace lg $
                                     LG.msg $
-                                    "tmtState, txhash : " <> (show newhash) ++
-                                    " final: " ++ (show final) ++ " res: " ++ show res
+                                        "tmtState, txhash : " <> (show newhash)
+                                            ++ " final: "
+                                            ++ (show final)
+                                            ++ " res: "
+                                            ++ show res
                                 return res
                     let (create, match) =
                             L.partition
-                                (\x ->
-                                     case x of
-                                         (MerkleNode sib lft rht _) ->
-                                             if isJust sib && isJust lft && isJust rht
-                                                 then False
-                                                 else if isJust sib
-                                                          then True
-                                                          else throw MerkleTreeComputeException)
+                                ( \x ->
+                                    case x of
+                                        (MerkleNode sib lft rht _) ->
+                                            if isJust sib && isJust lft && isJust rht
+                                                then False
+                                                else
+                                                    if isJust sib
+                                                        then True
+                                                        else throw MerkleTreeComputeException
+                                )
                                 (nres)
                     let finMatch =
                             L.sortBy
-                                (\x y ->
-                                     if (leftChild x == node y) || (rightChild x == node y)
-                                         then GT
-                                         else LT)
+                                ( \x y ->
+                                    if (leftChild x == node y) || (rightChild x == node y)
+                                        then GT
+                                        else LT
+                                )
                                 match
                     if L.length create == 1 && L.null finMatch
                         then return (state, [])
                         else do
                             ores <-
                                 LA.race
-                                    (liftIO $
-                                     try $
-                                     withResource' (pool $ graphDB dbe) (`BT.run` insertMerkleSubTree create finMatch))
+                                    ( liftIO $
+                                        try $
+                                            withResource' (pool $ graphDB dbe) (`BT.run` insertMerkleSubTree create finMatch)
+                                    )
                                     (liftIO $ threadDelay (30 * 1000000))
                             case ores of
                                 Right () -> do
@@ -422,12 +446,12 @@ updateMerkleSubTrees dbe tmtState lg hashComp newhash left right ht ind final on
                                         Right rt -> return (state, [])
                                         Left (e :: SomeException) -> do
                                             if T.isInfixOf (T.pack "ConstraintValidationFailed") (T.pack $ show e)
-                                            -- could be a previously aborted block being reprocessed
-                                            -- or a chain-reorg with repeat Txs, so handle TMT subtree accordingly.
-                                                then do
+                                                then -- could be a previously aborted block being reprocessed
+                                                -- or a chain-reorg with repeat Txs, so handle TMT subtree accordingly.
+                                                do
                                                     warn lg $
                                                         LG.msg $
-                                                        "Warning (Ignore): likely due to reprocessing." <> (show e)
+                                                            "Warning (Ignore): likely due to reprocessing." <> (show e)
                                                     return (state, [])
                                                 else do
                                                     err lg $
@@ -436,10 +460,11 @@ updateMerkleSubTrees dbe tmtState lg hashComp newhash left right ht ind final on
                 else do
                     trace lg $ LG.msg $ "tmtState, else : " <> (show pageNum)
                     return (state, res)
-                    -- else block --
+
+-- else block --
 
 resilientRead ::
-       (HasLogger m, MonadBaseControl IO m, MonadIO m) => Socket -> BlockIngestState -> m (([Tx], LC.ByteString), Int64)
+    (HasLogger m, MonadBaseControl IO m, MonadIO m) => Socket -> BlockIngestState -> m (([Tx], LC.ByteString), Int64)
 resilientRead sock !blin = do
     lg <- getLogger
     let !unspentBytesLen = LC.length $ binUnspentBytes blin
@@ -450,37 +475,57 @@ resilientRead sock !blin = do
                 else (binTxPayloadLeft blin) - (unspentBytesLen)
     trace lg $ msg (" | Tx payload left " ++ show (binTxPayloadLeft blin))
     trace lg $ msg (" | Bytes prev unspent " ++ show unspentBytesLen)
-    let !delta = if dlt > 0
-                      then dlt
-		      else 0
+    let !delta =
+            if dlt > 0
+                then dlt
+                else 0
     trace lg $ msg (" | Bytes to read " ++ show delta)
     nbyt <- recvAll sock delta
     let !txbyt = (binUnspentBytes blin) `LC.append` (nbyt)
     let !txbytLen = unspentBytesLen + delta
     case runGetLazyState (getConfirmedTxBatch) txbyt of
         Left e -> do
-            trace lg $ msg $ "1st attempt|" ++ show e
+            trace lg $ msg $ "2nd attempt|" ++ show e
             let chunkSizeFB = 20 * 1000 * 1000 -- 20 MB
-                !deltaNew =
+                !dltNew =
                     if binTxPayloadLeft blin > chunkSizeFB
                         then chunkSizeFB - txbytLen
                         else (binTxPayloadLeft blin) - txbytLen
+            let !deltaNew =
+                    if dltNew > 0
+                        then dltNew
+                        else 0
             nbyt2 <- recvAll sock deltaNew
             let !txbyt2 = txbyt `LC.append` (nbyt2)
             let !txbytLen2 = txbytLen + deltaNew
             case runGetLazyState (getConfirmedTxBatch) txbyt2 of
                 Left e -> do
-                    err lg $ msg $ "2nd attempt|" ++ show e
-                    throw ConfirmedTxParseException
-                Right res -> do
-                    return (res, txbytLen2)
-        Right res -> return (res, txbytLen)
+                    trace lg $ msg $ "3rd attempt|" ++ show e
+                    let chunkSizeXXB = 100 * 1000 * 1000 -- 100 MB
+                        dltXXNew =
+                            if binTxPayloadLeft blin > chunkSizeXXB
+                                then chunkSizeXXB - txbytLen2
+                                else (binTxPayloadLeft blin) - txbytLen2
+                        deltaXXNew =
+                            if dltXXNew > 0
+                                then dltXXNew
+                                else 0
+                    nbyt3 <- recvAll sock deltaXXNew
+                    let !txbyt3 = txbyt2 `LC.append` (nbyt3)
+                    let !txbytLen3 = txbytLen2 + deltaXXNew
+                    case runGetLazyState (getConfirmedTxBatch) txbyt3 of
+                        Left e -> do
+                            err lg $ msg $ "3rd attempt|" ++ show e
+                            throw ConfirmedTxParseException
+                        Right res3 -> return (res3, txbytLen3)
+                Right res2 -> return (res2, txbytLen2)
+        Right res1 -> return (res1, txbytLen)
 
 persistTxListByPage ::
-       (HasBitcoinP2P m, HasLogger m, HasDatabaseHandles m, MonadBaseControl IO m, MonadIO m)
-    => MerkleTxQueue
-    -> BlockHash
-    -> m ()
+    (HasBitcoinP2P m, HasLogger m, HasDatabaseHandles m, MonadBaseControl IO m, MonadIO m) =>
+    MerkleTxQueue ->
+    BlockHash ->
+    m ()
 persistTxListByPage mtque blockHash = do
     p2pEnv <- getBitcoinP2P
     lg <- getLogger
@@ -491,11 +536,11 @@ persistTxListByPage mtque blockHash = do
     whileM_ (liftIO $ readIORef continue) $ do
         ores <- LA.race (liftIO $ threadDelay (1000000 * 60 * 10)) (liftIO $ atomically $ readTQueue $ mTxQueue mtque)
         case ores of
-            Left ()
+            Left () ->
                 -- likely the peer conn terminated, just end this thread
                 -- do NOT delete queue as another peer connection could have establised meanwhile
-             -> do
-                liftIO $ writeIORef continue False
+                do
+                    liftIO $ writeIORef continue False
             Right (txh, isLast) -> do
                 pg <- liftIO $ readIORef txPage
                 if (fromIntegral $ L.length pg) == 256 -- 100
@@ -519,11 +564,11 @@ persistTxListByPage mtque blockHash = do
                     liftIO $ TSH.delete (merkleQueueMap p2pEnv) blockHash
 
 loadTxIDPagesTMT ::
-       (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
-    => BlockHash
-    -> Int32
-    -> Bool
-    -> m ([(MerkleNode, Bool)], (Int32, Bool))
+    (HasXokenNodeEnv env m, HasLogger m, MonadIO m) =>
+    BlockHash ->
+    Int32 ->
+    Bool ->
+    m ([(MerkleNode, Bool)], (Int32, Bool))
 loadTxIDPagesTMT blkHash pageNum onlySubTree = do
     p2pEnv <- getBitcoinP2P
     lg <- getLogger
@@ -549,22 +594,23 @@ loadTxIDPagesTMT blkHash pageNum onlySubTree = do
                         txct = L.length txList
                         mklNodeList =
                             map
-                                (\(hs, indx) -> do
-                                     let txhs = fromJust $ hexToTxHash hs
-                                     let mn = MerkleNode (Just $ getTxHash txhs) Nothing Nothing False
-                                     if indx == txct
-                                         then (mn, True)
-                                         else (mn, False))
+                                ( \(hs, indx) -> do
+                                    let txhs = fromJust $ hexToTxHash hs
+                                    let mn = MerkleNode (Just $ getTxHash txhs) Nothing Nothing False
+                                    if indx == txct
+                                        then (mn, True)
+                                        else (mn, False)
+                                )
                                 (zip txList [1 .. txct])
                     return (mklNodeList, (pageNum, onlySubTree))
 
 persistTMT ::
-       (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
-    => BlockHash
-    -> Maybe Int8
-    -> (TSH.TSHashTable Int MerkleNode)
-    -> ([(MerkleNode, Bool)], (Int32, Bool))
-    -> m ()
+    (HasXokenNodeEnv env m, HasLogger m, MonadIO m) =>
+    BlockHash ->
+    Maybe Int8 ->
+    (TSH.TSHashTable Int MerkleNode) ->
+    ([(MerkleNode, Bool)], (Int32, Bool)) ->
+    m ()
 persistTMT blockHash isFixedTreeHeight tmtState (mklNodes, (pageNum, onlySubTree)) = do
     p2pEnv <- getBitcoinP2P
     lg <- getLogger
@@ -576,36 +622,44 @@ persistTMT blockHash isFixedTreeHeight tmtState (mklNodes, (pageNum, onlySubTree
                 Nothing -> computeTreeHeight (fromIntegral $ L.length mklNodes)
     trace lg $
         LG.msg
-            ("persistTMT | blockhash " ++
-             show blockHash ++ " (pageNum,onlyST): " ++ show (pageNum, onlySubTree) ++ (show $ L.length mklNodes))
+            ( "persistTMT | blockhash "
+                ++ show blockHash
+                ++ " (pageNum,onlyST): "
+                ++ show (pageNum, onlySubTree)
+                ++ (show $ L.length mklNodes)
+            )
     mapM_
-        (\(mn, isLast) -> do
-             hcstate <- liftIO $ readIORef tv
-             res <-
-                 LE.try $
-                 liftIO $
-                 updateMerkleSubTrees
-                     dbe
-                     tmtState
-                     lg
-                     hcstate
-                     (fromJust $ node mn)
-                     (leftChild mn)
-                     (rightChild mn)
-                     treeHt
-                     0
-                     isLast
-                     onlySubTree
-                     pageNum
-             case res of
-                 Right (hcs) -> do
-                     liftIO $ writeIORef tv hcs
-                 Left (ee :: SomeException) -> do
-                     err lg $
-                         LG.msg
-                             ("[ERROR] Quit building TMT. FATAL error!" ++
-                              (show ee) ++ " | " ++ show (fromJust $ node mn))
-                     throw ee)
+        ( \(mn, isLast) -> do
+            hcstate <- liftIO $ readIORef tv
+            res <-
+                LE.try $
+                    liftIO $
+                        updateMerkleSubTrees
+                            dbe
+                            tmtState
+                            lg
+                            hcstate
+                            (fromJust $ node mn)
+                            (leftChild mn)
+                            (rightChild mn)
+                            treeHt
+                            0
+                            isLast
+                            onlySubTree
+                            pageNum
+            case res of
+                Right (hcs) -> do
+                    liftIO $ writeIORef tv hcs
+                Left (ee :: SomeException) -> do
+                    err lg $
+                        LG.msg
+                            ( "[ERROR] Quit building TMT. FATAL error!"
+                                ++ (show ee)
+                                ++ " | "
+                                ++ show (fromJust $ node mn)
+                            )
+                    throw ee
+        )
         (mklNodes)
 
 processTMTSubTrees :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BlockHash -> Int32 -> m ()
@@ -625,72 +679,77 @@ processTMTSubTrees blkHash txCount = do
 
     xx <-
         LE.try $
-        S.drain $
-        aheadly $
-        (do S.fromList [1 .. pages]) &
-        S.mapM
-            (\pageNum -> do
-                 if pages == 1
-                     then loadTxIDPagesTMT blkHash pageNum True
-                     else loadTxIDPagesTMT blkHash pageNum False) &
-        S.mapM (\z -> do
-	           let nodes = fst $ unzip $ fst z
-                   liftIO $ withResource' (pool $ graphDB dbe) (`BT.run` deleteMerkleSubTree nodes )) & -- fixed tree height of 8 corresponding to max 256 leaf nodes
-        S.maxBuffer (maxTMTBuilderThreads $ nodeConfig p2pEnv) &
-        S.maxThreads (maxTMTBuilderThreads $ nodeConfig p2pEnv)
+            S.drain $
+                aheadly $
+                    (do S.fromList [1 .. pages])
+                        & S.mapM
+                            ( \pageNum -> do
+                                if pages == 1
+                                    then loadTxIDPagesTMT blkHash pageNum True
+                                    else loadTxIDPagesTMT blkHash pageNum False
+                            )
+                        & S.mapM
+                            ( \z -> do
+                                let nodes = fst $ unzip $ fst z
+                                liftIO $ withResource' (pool $ graphDB dbe) (`BT.run` deleteMerkleSubTree nodes)
+                            )
+                        & S.maxBuffer (maxTMTBuilderThreads $ nodeConfig p2pEnv) -- fixed tree height of 8 corresponding to max 256 leaf nodes
+                        & S.maxThreads (maxTMTBuilderThreads $ nodeConfig p2pEnv)
 
     case xx of
-       Right _ -> return ()
-       Left (e :: SomeException) -> do
+        Right _ -> return ()
+        Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error while deleteMerkleSubTree: " ++ show e
-	    throw e
+            throw e
 
     yy <-
         LE.try $
-        S.drain $
-        aheadly $
-        (do S.fromList [1 .. pages]) &
-        S.mapM
-            (\pageNum -> do
-                 if pages == 1
-                     then loadTxIDPagesTMT blkHash pageNum True
-                     else loadTxIDPagesTMT blkHash pageNum False) &
-        S.mapM (persistTMT blkHash (Just 8) tmtState) & -- fixed tree height of 8 corresponding to max 256 leaf nodes
-        S.maxBuffer (maxTMTBuilderThreads $ nodeConfig p2pEnv) &
-        S.maxThreads (maxTMTBuilderThreads $ nodeConfig p2pEnv)
+            S.drain $
+                aheadly $
+                    (do S.fromList [1 .. pages])
+                        & S.mapM
+                            ( \pageNum -> do
+                                if pages == 1
+                                    then loadTxIDPagesTMT blkHash pageNum True
+                                    else loadTxIDPagesTMT blkHash pageNum False
+                            )
+                        & S.mapM (persistTMT blkHash (Just 8) tmtState)
+                        & S.maxBuffer (maxTMTBuilderThreads $ nodeConfig p2pEnv) -- fixed tree height of 8 corresponding to max 256 leaf nodes
+                        & S.maxThreads (maxTMTBuilderThreads $ nodeConfig p2pEnv)
     case yy of
-       Right _ -> do
-         if pages == 1
-           then return ()
-           else do
-             interimNodes <-
-                mapM
-                    (\pg -> do
-                         xx <- liftIO $ TSH.lookup tmtState pg
-			 case xx of
-			     Just x -> return x
-			     Nothing -> do
-                                          err lg $ LG.msg $ "Error while inserting pages/tmtState: " ++ show pg ++ " block: " ++ show blkHash
-					  throw InvalidMetaDataException) 
-                    [1 .. (fromIntegral pages)]
-             let txct = L.length interimNodes
-                 finalIntermediateMerkleNodes =
-                    map
-                        (\(mn, indx) -> do
-                             if indx == txct
-                                 then (mn, True)
-                                 else (mn, False))
-                        (zip interimNodes ([1 .. txct]))
-             persistTMT blkHash Nothing tmtState (finalIntermediateMerkleNodes, (-1, True))
-
-    
-       Left (e :: SomeException) -> do
+        Right _ -> do
+            if pages == 1
+                then return ()
+                else do
+                    interimNodes <-
+                        mapM
+                            ( \pg -> do
+                                xx <- liftIO $ TSH.lookup tmtState pg
+                                case xx of
+                                    Just x -> return x
+                                    Nothing -> do
+                                        err lg $ LG.msg $ "Error while inserting pages/tmtState: " ++ show pg ++ " block: " ++ show blkHash
+                                        throw InvalidMetaDataException
+                            )
+                            [1 .. (fromIntegral pages)]
+                    let txct = L.length interimNodes
+                        finalIntermediateMerkleNodes =
+                            map
+                                ( \(mn, indx) -> do
+                                    if indx == txct
+                                        then (mn, True)
+                                        else (mn, False)
+                                )
+                                (zip interimNodes ([1 .. txct]))
+                    persistTMT blkHash Nothing tmtState (finalIntermediateMerkleNodes, (-1, True))
+        Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error while processTMTSubTrees: " ++ show e
-	    throw e
+            throw e
 
 runTMTDaemon :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
-runTMTDaemon =
-    forever $ do
+runTMTDaemon = do
+    continue <- liftIO $ newIORef True
+    whileM_ (liftIO $ readIORef continue) $ do
         p2pEnv <- getBitcoinP2P
         lg <- getLogger
         dbe <- getDB
@@ -723,7 +782,7 @@ runTMTDaemon =
                                         Nothing -> throw InvalidBlockHashException
                                 Nothing -> throw InvalidMetaDataException
                 Left (e :: SomeException) -> throw InvalidMetaDataException
-        let str = "SELECT block_hash, tx_count, block_header from xoken.blocks_by_height where block_height = ?"
+        let str = "SELECT block_hash, tx_count, block_header from xoken.blocks_by_height where block_height = ?  "
             qstr = str :: Q.QueryString Q.R (Identity Int32) (T.Text, Maybe Int32, T.Text)
             p = getSimpleQueryParam $ Identity (height + 1)
         res1 <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr p)
@@ -743,39 +802,51 @@ runTMTDaemon =
                                             then do
                                                 yy <-
                                                     LE.try $ processTMTSubTrees (fromJust $ hexToBlockHash nbhs) txCount
-                                                        --
+                                                --
                                                 case yy of
                                                     Right y -> do
-                                                        let q :: Q.QueryString Q.W ( T.Text
-                                                                                   , ( Maybe Bool
-                                                                                     , Int32
-                                                                                     , Maybe Int64
-                                                                                     , T.Text)) ()
+                                                        let q ::
+                                                                Q.QueryString
+                                                                    Q.W
+                                                                    ( T.Text
+                                                                    , ( Maybe Bool
+                                                                      , Int32
+                                                                      , Maybe Int64
+                                                                      , T.Text
+                                                                      )
+                                                                    )
+                                                                    ()
                                                             q =
                                                                 Q.QueryString
                                                                     "insert INTO xoken.misc_store (key,value) values (?,?)"
-                                                            p :: Q.QueryParams ( T.Text
-                                                                               , ( Maybe Bool
-                                                                                 , Int32
-                                                                                 , Maybe Int64
-                                                                                 , T.Text))
+                                                            p ::
+                                                                Q.QueryParams
+                                                                    ( T.Text
+                                                                    , ( Maybe Bool
+                                                                      , Int32
+                                                                      , Maybe Int64
+                                                                      , T.Text
+                                                                      )
+                                                                    )
                                                             p =
                                                                 getSimpleQueryParam
                                                                     ( "transpose_merkle_tree"
-                                                                    , (Nothing, height + 1, Nothing, nbhs))
+                                                                    , (Nothing, height + 1, Nothing, nbhs)
+                                                                    )
                                                         res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query q p)
                                                         case res of
                                                             Right _ -> return ()
                                                             Left (e :: SomeException) -> do
                                                                 err lg $
                                                                     LG.msg
-                                                                        ("Error: Marking [transpose_merkle_tree] failed: " ++
-                                                                         show e)
+                                                                        ( "Error: Marking [transpose_merkle_tree] failed: "
+                                                                            ++ show e
+                                                                        )
                                                                 throw KeyValueDBInsertException
                                                         return ()
                                                     Left (e :: SomeException) -> do
                                                         err lg $ LG.msg $ "Error while persistTMT: " ++ show e
-                                                        liftIO $ threadDelay (60 * 1000000) 
+                                                        liftIO $ writeIORef continue False
                                             else err lg $ LG.msg $ val "Potential Chain reorg occured?!"
                                     Left err -> do
                                         liftIO $ print $ "Decode failed with error: " <> show err
@@ -801,13 +872,15 @@ updateBlocks bhash blkht bsize txcount cbase = do
                 ( blockHashToHex bhash
                 , fromIntegral bsize
                 , fromIntegral txcount
-                , Blob $ runPutLazy $ putLazyByteString $ encodeLazy $ cbase)
+                , Blob $ runPutLazy $ putLazyByteString $ encodeLazy $ cbase
+                )
         p2 =
             getSimpleQueryParam
                 ( fromIntegral blkht
                 , fromIntegral bsize
                 , fromIntegral txcount
-                , Blob $ runPutLazy $ putLazyByteString $ encodeLazy $ cbase)
+                , Blob $ runPutLazy $ putLazyByteString $ encodeLazy $ cbase
+                )
     res1 <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query q1 p1)
     case res1 of
         Right _ -> do
@@ -826,11 +899,11 @@ updateBlocks bhash blkht bsize txcount cbase = do
             throw KeyValueDBInsertException
 
 readNextMessage ::
-       (HasBitcoinP2P m, HasLogger m, HasDatabaseHandles m, MonadBaseControl IO m, MonadIO m)
-    => Network
-    -> Socket
-    -> Maybe IngressStreamState
-    -> m ((Maybe Message, Maybe IngressStreamState))
+    (HasBitcoinP2P m, HasLogger m, HasDatabaseHandles m, MonadBaseControl IO m, MonadIO m) =>
+    Network ->
+    Socket ->
+    Maybe IngressStreamState ->
+    m ((Maybe Message, Maybe IngressStreamState))
 readNextMessage net sock ingss = do
     p2pEnv <- getBitcoinP2P
     lg <- getLogger
@@ -858,7 +931,7 @@ readNextMessage net sock ingss = do
                                 qq <- liftIO $ atomically $ newTQueue
                                 qs <- liftIO $ newEmptyMVar
                                 let mtq = MerkleTxQueue qq qs
-                                        -- wait for TMT threads alloc
+                                -- wait for TMT threads alloc
                                 liftIO $ TSH.insert (merkleQueueMap p2pEnv) (biBlockHash $ bf) mtq
                                 LA.async $ persistTxListByPage mtq (biBlockHash $ bf)
                                 updateBlocks
@@ -881,15 +954,16 @@ readNextMessage net sock ingss = do
                 Just mq -> do
                     liftIO $
                         mapM_
-                            (\(tx, ct) -> do
-                                 let isLast =
-                                         if isLastBatch
-                                             then txct == ct
-                                             else False
-                                 atomically $ writeTQueue (mTxQueue mq) ((txHash tx), isLast)
-                                 if isLast
-                                     then liftIO $ takeMVar (mTxQueueSem mq) --blocked until the Tx queue is processed
-                                     else return ())
+                            ( \(tx, ct) -> do
+                                let isLast =
+                                        if isLastBatch
+                                            then txct == ct
+                                            else False
+                                atomically $ writeTQueue (mTxQueue mq) ((txHash tx), isLast)
+                                if isLast
+                                    then liftIO $ takeMVar (mTxQueueSem mq) --blocked until the Tx queue is processed
+                                    else return ()
+                            )
                             (zip txns [1 ..])
             let bio =
                     BlockIngestState
@@ -923,13 +997,16 @@ readNextMessage net sock ingss = do
                                                 Just b -> do
                                                     trace lg $
                                                         msg
-                                                            ("DefBlock: " ++
-                                                             show blk ++ " unused: " ++ show (LC.length unused))
+                                                            ( "DefBlock: "
+                                                                ++ show blk
+                                                                ++ " unused: "
+                                                                ++ show (LC.length unused)
+                                                            )
                                                     let bi =
                                                             BlockIngestState
                                                                 { binUnspentBytes = unused
                                                                 , binTxPayloadLeft =
-                                                                      fromIntegral (extlen) - (88 - LC.length unused)
+                                                                    fromIntegral (extlen) - (88 - LC.length unused)
                                                                 , binTxTotalCount = fromIntegral $ txnCount b
                                                                 , binTxIngested = 0
                                                                 , binBlockSize = fromIntegral $ extlen
@@ -958,11 +1035,11 @@ readNextMessage net sock ingss = do
 
 --
 doVersionHandshake ::
-       (HasBitcoinP2P m, HasLogger m, HasDatabaseHandles m, MonadBaseControl IO m, MonadIO m)
-    => Network
-    -> Socket
-    -> SockAddr
-    -> m (Bool)
+    (HasBitcoinP2P m, HasLogger m, HasDatabaseHandles m, MonadBaseControl IO m, MonadIO m) =>
+    Network ->
+    Socket ->
+    SockAddr ->
+    m (Bool)
 doVersionHandshake net sock sa = do
     p2pEnv <- getBitcoinP2P
     lg <- getLogger
@@ -970,7 +1047,7 @@ doVersionHandshake net sock sa = do
     now <- round <$> liftIO getPOSIXTime
     let ip = bitcoinNodeListenIP $ nodeConfig p2pEnv
         port = toInteger $ bitcoinNodeListenPort $ nodeConfig p2pEnv
-    myaddr <- liftIO $ head <$> getAddrInfo (Just defaultHints {addrSocketType = Stream}) (Just ip) (Just $ show port)
+    myaddr <- liftIO $ head <$> getAddrInfo (Just defaultHints{addrSocketType = Stream}) (Just ip) (Just $ show port)
     let nonce = fst (random g :: (Word64, StdGen))
         ad = NetworkAddress 0 $ addrAddress myaddr
         bb = 1 :: Word32 -- ### TODO: getBestBlock ###
@@ -1010,10 +1087,10 @@ doVersionHandshake net sock sa = do
             return False
 
 messageHandler ::
-       (HasXokenNodeEnv env m, HasLogger m, MonadIO m)
-    => BitcoinPeer
-    -> (Maybe Message, Maybe IngressStreamState)
-    -> m (MessageCommand)
+    (HasXokenNodeEnv env m, HasLogger m, MonadIO m) =>
+    BitcoinPeer ->
+    (Maybe Message, Maybe IngressStreamState) ->
+    m (MessageCommand)
 messageHandler peer (mm, ingss) = do
     bp2pEnv <- getBitcoinP2P
     dbe <- getDB
@@ -1052,31 +1129,35 @@ messageHandler peer (mm, ingss) = do
                     return $ msgType msg
                 MInv inv -> do
                     mapM_
-                        (\x ->
-                             if (invType x) == InvBlock
-                                 then do
-                                     trace lg $ LG.msg ("INV - new Block: " ++ (show $ invHash x))
-                                     liftIO $ putMVar (bestBlockUpdated bp2pEnv) True -- will trigger a GetHeaders to peers
-                                 else if (invType x == InvTx)
-                                          then do
-                                              indexUnconfirmedTx <- liftIO $ readTVarIO $ indexUnconfirmedTx bp2pEnv
-                                              trace lg $ LG.msg ("INV - new Tx: " ++ (show $ invHash x))
-                                              if indexUnconfirmedTx == True
-                                                  then processTxGetData peer $ invHash x
-                                                  else return ()
-                                          else return ())
+                        ( \x ->
+                            if (invType x) == InvBlock
+                                then do
+                                    trace lg $ LG.msg ("INV - new Block: " ++ (show $ invHash x))
+                                    liftIO $ putMVar (bestBlockUpdated bp2pEnv) True -- will trigger a GetHeaders to peers
+                                else
+                                    if (invType x == InvTx)
+                                        then do
+                                            indexUnconfirmedTx <- liftIO $ readTVarIO $ indexUnconfirmedTx bp2pEnv
+                                            trace lg $ LG.msg ("INV - new Tx: " ++ (show $ invHash x))
+                                            if indexUnconfirmedTx == True
+                                                then processTxGetData peer $ invHash x
+                                                else return ()
+                                        else return ()
+                        )
                         (invList inv)
                     return $ msgType msg
                 MAddr addrs -> do
                     mapM_
-                        (\(t, x) -> do
-                             bp <- setupPeerConnection $ naAddress x
-                             LA.async $
-                                 (case bp of
-                                      Just p -> do
-                                          liftIO $ atomically $ writeTQueue (peerFetchQueue bp2pEnv) p
-                                          handleIncomingMessages p -- must be the last step, as blocking loop
-                                      Nothing -> return ()))
+                        ( \(t, x) -> do
+                            bp <- setupPeerConnection $ naAddress x
+                            LA.async $
+                                ( case bp of
+                                    Just p -> do
+                                        liftIO $ atomically $ writeTQueue (peerFetchQueue bp2pEnv) p
+                                        handleIncomingMessages p -- must be the last step, as blocking loop
+                                    Nothing -> return ()
+                                )
+                        )
                         (addrList addrs)
                     return $ msgType msg
                 MConfTx txns -> do
@@ -1141,23 +1222,29 @@ processTxBatch txns iss = do
                 then do
                     debug lg $
                         LG.msg $
-                        ("Tx already processed, block: " ++
-                         (show $ biBlockHash bf) ++ ", tx-index: " ++ show (binTxIngested bi))
+                            ( "Tx already processed, block: "
+                                ++ (show $ biBlockHash bf)
+                                ++ ", tx-index: "
+                                ++ show (binTxIngested bi)
+                            )
                 else do
                     S.drain $
-                        aheadly$
-                        (do let start = (binTxIngested bi) - (L.length txns)
-                                end = (binTxIngested bi) - 1
-                            S.fromList $ zip [start .. end] [0 ..]) &
-                        S.mapM
-                            (\(cidx, idx) -> do
-                                 if (idx >= (L.length txns))
-                                     then debug lg $ LG.msg $ (" (error) Tx__index: " ++ show idx ++ show bf)
-                                     else debug lg $ LG.msg $ ("Tx__index: " ++ show idx)
-                                 return ((txns !! idx), bf, cidx)) &
-                        S.mapM (processTxStream bi) &
-                        S.maxBuffer (maxTxProcessingBuffer $ nodeConfig bp2pEnv) &
-                        S.maxThreads (maxTxProcessingThreads $ nodeConfig bp2pEnv)
+                        aheadly $
+                            ( do
+                                let start = (binTxIngested bi) - (L.length txns)
+                                    end = (binTxIngested bi) - 1
+                                S.fromList $ zip [start .. end] [0 ..]
+                            )
+                                & S.mapM
+                                    ( \(cidx, idx) -> do
+                                        if (idx >= (L.length txns))
+                                            then debug lg $ LG.msg $ (" (error) Tx__index: " ++ show idx ++ show bf)
+                                            else debug lg $ LG.msg $ ("Tx__index: " ++ show idx)
+                                        return ((txns !! idx), bf, cidx)
+                                    )
+                                & S.mapM (processTxStream bi)
+                                & S.maxBuffer (maxTxProcessingBuffer $ nodeConfig bp2pEnv)
+                                & S.maxThreads (maxTxProcessingThreads $ nodeConfig bp2pEnv)
                     valy <- liftIO $ TSH.lookup (blockTxProcessingLeftMap bp2pEnv) (biBlockHash bf)
                     case valy of
                         Just lefta -> do
@@ -1188,10 +1275,10 @@ processTxStream bi (tx, binfo, txIndex) = do
             throw e
 
 readNextMessage' ::
-       (HasXokenNodeEnv env m, MonadIO m)
-    => BitcoinPeer
-    -> MVar (Maybe IngressStreamState)
-    -> m ((Maybe Message, Maybe IngressStreamState))
+    (HasXokenNodeEnv env m, MonadIO m) =>
+    BitcoinPeer ->
+    MVar (Maybe IngressStreamState) ->
+    m ((Maybe Message, Maybe IngressStreamState))
 readNextMessage' peer readLock = do
     bp2pEnv <- getBitcoinP2P
     lg <- getLogger
@@ -1211,17 +1298,18 @@ readNextMessage' peer readLock = do
                 Just iss -> do
                     let ingst = issBlockIngest iss
                     case msg of
-                        Just (MBlock blk) -- setup state
-                         -> do
-                            let hh = headerHash $ defBlockHeader blk
-                            mht <- liftIO $ TSH.lookup (blockSyncStatusMap bp2pEnv) (hh)
-                            case (mht) of
-                                Just x -> return ()
-                                Nothing -> do
-                                    err lg $ LG.msg $ ("InvalidBlockSyncStatusMapException - " ++ show hh)
-                                    throw InvalidBlockSyncStatusMapException
-                            let iz = Just (IngressStreamState ingst (Just $ BlockInfo hh (snd $ fromJust mht)))
-                            liftIO $ putMVar readLock iz
+                        Just (MBlock blk) ->
+                            -- setup state
+                            do
+                                let hh = headerHash $ defBlockHeader blk
+                                mht <- liftIO $ TSH.lookup (blockSyncStatusMap bp2pEnv) (hh)
+                                case (mht) of
+                                    Just x -> return ()
+                                    Nothing -> do
+                                        err lg $ LG.msg $ ("InvalidBlockSyncStatusMapException - " ++ show hh)
+                                        throw InvalidBlockSyncStatusMapException
+                                let iz = Just (IngressStreamState ingst (Just $ BlockInfo hh (snd $ fromJust mht)))
+                                liftIO $ putMVar readLock iz
                         Just (MConfTx ctx) -> do
                             case issBlockInfo iss of
                                 Just bi -> do
@@ -1233,7 +1321,7 @@ readNextMessage' peer readLock = do
                                             (biBlockHash bi)
                                             ( RecentTxReceiveTime tm
                                             , biBlockHeight bi -- track receive progress
-                                             )
+                                            )
                                     if binTxTotalCount ingst == binTxIngested ingst
                                         then do
                                             debug lg $ LG.msg $ ("Ingested block fully - " ++ (show $ bpAddress peer))
@@ -1259,25 +1347,25 @@ handleIncomingMessages pr = do
     rlk <- liftIO $ newMVar Nothing
     res <-
         LE.try $
-        S.drain $
-        S.serially $
-        S.repeatM (readNextMessage' pr rlk) & -- read next msgs
-        S.mapM (messageHandler pr) & -- handle read msgs
-        S.mapM (logMessage pr) & -- log msgs & collect stats
-        S.maxBuffer 5 &
-        S.maxThreads 5
+            S.drain $
+                S.serially $
+                    S.repeatM (readNextMessage' pr rlk)
+                        & S.mapM (messageHandler pr) -- read next msgs
+                        & S.mapM (logMessage pr) -- handle read msgs
+                        & S.maxBuffer 5 -- log msgs & collect stats
+                        & S.maxThreads 5
     case res of
         Right (a) -> return ()
-        Left (e :: SomeException)
+        Left (e :: SomeException) ->
             -- liftIO $ atomicModifyIORef' (ptBlockFetchWindow tracker) (\x -> (0, ())) -- safety border case
-         -> do
-            err lg $ msg $ (val "[ERROR] Closing peer connection ") +++ (show e)
-            case (bpSocket pr) of
-                Just sock -> liftIO $ Network.Socket.close sock
-                Nothing -> return ()
-            liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
-            -- liftIO $ TSH.delete (parallelBlockProcessingMap bp2pEnv) (show $ bpAddress pr)
-            return ()
+            do
+                err lg $ msg $ (val "[ERROR] Closing peer connection ") +++ (show e)
+                case (bpSocket pr) of
+                    Just sock -> liftIO $ Network.Socket.close sock
+                    Nothing -> return ()
+                liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
+                -- liftIO $ TSH.delete (parallelBlockProcessingMap bp2pEnv) (show $ bpAddress pr)
+                return ()
 
 logMessage :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BitcoinPeer -> MessageCommand -> m (Bool)
 logMessage peer mg = do

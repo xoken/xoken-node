@@ -1,17 +1,17 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE BangPatterns #-}
 
-module Network.Xoken.Node.P2P.ChainSync
-    ( runEgressChainSync
-    , processHeaders
-    ) where
+module Network.Xoken.Node.P2P.ChainSync (
+    runEgressChainSync,
+    processHeaders,
+) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (mapConcurrently_)
@@ -64,7 +64,7 @@ import Network.Xoken.Node.P2P.Common
 import Network.Xoken.Node.P2P.Types
 import Network.Xoken.Node.Service.Block
 import Streamly
-import Streamly.Prelude ((|:), nil)
+import Streamly.Prelude (nil, (|:))
 import qualified Streamly.Prelude as S
 import System.Logger as LG
 import System.Logger.Message
@@ -102,34 +102,22 @@ sendRequestMessages msg = do
         MGetHeaders hdr -> do
             allPeers <- liftIO $ readTVarIO (bitcoinPeers bp2pEnv)
             let connPeers = L.filter (\x -> bpConnected (snd x)) (M.toList allPeers)
-            -- let fbh = getHash256 $ getBlockHash $ (getHeadersBL hdr) !! 0
-            --     md = BSS.index fbh $ (BSS.length fbh) - 1
-            --     pds =
-            --         map
-            --             (\p -> (fromIntegral (md + p) `mod` L.length connPeers))
-            --             [1 .. fromIntegral (L.length connPeers)]
-            --     indices =
-            --         case L.length (getHeadersBL hdr) of
-            --             x
-            --                 | x >= 19 -> take 4 pds -- 2^19 = blk ht 524288
-            --                 | x < 19 -> take 1 pds
             mapM_
-                (\(_, pr)
-                     -- let pr = snd $ connPeers !! z
-                  -> do
-                     case (bpSocket pr) of
-                         Just q -> do
-                             let em = runPut . putMessage net $ msg
-                             res <- liftIO $ try $ sendEncMessage (bpWriteMsgLock pr) q (BSL.fromStrict em)
-                             case res of
-                                 Right () -> debug lg $ LG.msg ("sending out GetHeaders: " ++ show (bpAddress pr))
-                                 Left (e :: SomeException) -> do
-                                     err lg $ LG.msg ("Error CS, sending out data: " ++ show e)
-                                     liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
-                                     -- liftIO $ TSH.delete (parallelBlockProcessingMap bp2pEnv) (show $ bpAddress pr)
-                                     liftIO $ Network.Socket.close q
-                                     throw e
-                         Nothing -> debug lg $ LG.msg $ val "Error sending, no connections available")
+                ( \(_, pr) ->
+                    -- let pr = snd $ connPeers !! z
+                    do
+                        case (bpSocket pr) of
+                            Just q -> do
+                                let em = runPut . putMessage net $ msg
+                                res <- liftIO $ try $ sendEncMessage (bpWriteMsgLock pr) q (BSL.fromStrict em)
+                                case res of
+                                    Right () -> debug lg $ LG.msg ("sending out GetHeaders: " ++ show (bpAddress pr))
+                                    Left (e :: SomeException) -> do
+                                        err lg $ LG.msg ("Error CS, sending out data: " ++ show e)
+                                        liftIO $ atomically $ modifyTVar' (bitcoinPeers bp2pEnv) (M.delete (bpAddress pr))
+                                        liftIO $ Network.Socket.close q
+                            Nothing -> debug lg $ LG.msg $ val "Error sending, no connections available"
+                )
                 connPeers
         ___ -> undefined
 
@@ -147,7 +135,9 @@ runEgressChainSync = do
         res <- LE.try $ sendRequestMessages gethdr
         case res of
             Right () -> return ()
-            Left (e :: SomeException) -> err lg $ LG.msg $ "[ERROR] runEgressChainSync (sendRequestMessages) " ++ show e
+            Left (e :: SomeException) -> do
+                err lg $ LG.msg $ "[ERROR] runEgressChainSync (sendRequestMessages) " ++ show e
+                throw e
 
 validateChainedBlockHeaders :: Headers -> Bool
 validateChainedBlockHeaders hdrs = do
@@ -238,61 +228,64 @@ processHeaders hdrs = do
                     then do
                         debug lg $ LG.msg $ val "First Headers set from genesis"
                         return $ zip [((snd bb) + 1) ..] (headersList hdrs)
-                    else if (blockHashToHex $ fst bb) == headPrevHash
-                             then do
-                                 unless (validate (snd bb)) $
-                                     ((err lg $ LG.msg $ "Invalid block (snd bb): " <> (show $ snd bb)) >>
-                                      throw InvalidBlocksException)
-                                 debug lg $ LG.msg $ val "Building on current Best block"
-                                 return $ zip [((snd bb) + 1) ..] (headersList hdrs)
-                             else do
-                                 if ((fst bb) == (headerHash $ fst $ last $ headersList hdrs))
-                                     then do
-                                         debug lg $ LG.msg $ LG.val ("Does not match best-block, redundant Headers msg")
-                                         return [] -- already synced
-                                     else do
-                                         res <- fetchMatchBlockOffset conn net headPrevHash
-                                         case res of
-                                             Just (matchBHash, matchBHt) -> do
-                                                 unless (validate matchBHt) $
-                                                     ((err lg $ LG.msg $ "Invalid block (matchBHt): " <> (show matchBHt)) >>
-                                                      throw InvalidBlocksException)
-                                                 if ((snd bb) >
-                                                     (matchBHt + fromIntegral (L.length $ headersList hdrs) + 12) -- reorg limit of 12 blocks
-                                                     )
-                                                     then do
-                                                         debug lg $
-                                                             LG.msg $
-                                                             LG.val
-                                                                 ("Does not match best-block, assuming stale Headers msg")
-                                                         return [] -- assuming its stale/redundant and ignore
-                                                     else do
-                                                         debug lg $
-                                                             LG.msg $
-                                                             LG.val
-                                                                 ("Does not match best-block, potential block re-org...")
-                                                         let reOrgDiff = zip [(matchBHt + 1) ..] (headersList hdrs) -- potential re-org
-                                                         bestSynced <- fetchBestSyncedBlock
-                                                         if snd bestSynced >= matchBHt
-                                                             then do
-                                                                 debug lg $
-                                                                     LG.msg $
-                                                                     "Have synced blocks beyond point of re-org: synced @ " <>
-                                                                     (show bestSynced) <>
-                                                                     " versus point of re-org: " <>
-                                                                     (show $ (matchBHash, matchBHt))
-                                                                 debug lg $
-                                                                     LG.msg $
-                                                                     "Setting new best-synced to " <>
-                                                                     (show $ (matchBHash, matchBHt)) <>
-                                                                     ", re-syncing from thereon"
-                                                                 NXB.markBestSyncedBlock
-                                                                     (fromJust $ hexToBlockHash matchBHash)
-                                                                     matchBHt
-                                                                     conn
-                                                                 return reOrgDiff
-                                                             else return reOrgDiff
-                                             Nothing -> throw BlockHashNotFoundException
+                    else
+                        if (blockHashToHex $ fst bb) == headPrevHash
+                            then do
+                                unless (validate (snd bb)) $
+                                    ( (err lg $ LG.msg $ "Invalid block (snd bb): " <> (show $ snd bb))
+                                        >> throw InvalidBlocksException
+                                    )
+                                debug lg $ LG.msg $ val "Building on current Best block"
+                                return $ zip [((snd bb) + 1) ..] (headersList hdrs)
+                            else do
+                                if ((fst bb) == (headerHash $ fst $ last $ headersList hdrs))
+                                    then do
+                                        debug lg $ LG.msg $ LG.val ("Does not match best-block, redundant Headers msg")
+                                        return [] -- already synced
+                                    else do
+                                        res <- fetchMatchBlockOffset conn net headPrevHash
+                                        case res of
+                                            Just (matchBHash, matchBHt) -> do
+                                                unless (validate matchBHt) $
+                                                    ( (err lg $ LG.msg $ "Invalid block (matchBHt): " <> (show matchBHt))
+                                                        >> throw InvalidBlocksException
+                                                    )
+                                                if ( (snd bb)
+                                                        > (matchBHt + fromIntegral (L.length $ headersList hdrs) + 12) -- reorg limit of 12 blocks
+                                                   )
+                                                    then do
+                                                        debug lg $
+                                                            LG.msg $
+                                                                LG.val
+                                                                    ("Does not match best-block, assuming stale Headers msg")
+                                                        return [] -- assuming its stale/redundant and ignore
+                                                    else do
+                                                        debug lg $
+                                                            LG.msg $
+                                                                LG.val
+                                                                    ("Does not match best-block, potential block re-org...")
+                                                        let reOrgDiff = zip [(matchBHt + 1) ..] (headersList hdrs) -- potential re-org
+                                                        bestSynced <- fetchBestSyncedBlock
+                                                        if snd bestSynced >= matchBHt
+                                                            then do
+                                                                debug lg $
+                                                                    LG.msg $
+                                                                        "Have synced blocks beyond point of re-org: synced @ "
+                                                                            <> (show bestSynced)
+                                                                            <> " versus point of re-org: "
+                                                                            <> (show $ (matchBHash, matchBHt))
+                                                                debug lg $
+                                                                    LG.msg $
+                                                                        "Setting new best-synced to "
+                                                                            <> (show $ (matchBHash, matchBHt))
+                                                                            <> ", re-syncing from thereon"
+                                                                NXB.markBestSyncedBlock
+                                                                    (fromJust $ hexToBlockHash matchBHash)
+                                                                    matchBHt
+                                                                    conn
+                                                                return reOrgDiff
+                                                            else return reOrgDiff
+                                            Nothing -> throw BlockHashNotFoundException
             let q1 :: Q.QueryString Q.W (Text, Text, Int32, Text) ()
                 q1 =
                     Q.QueryString
@@ -309,28 +302,29 @@ processHeaders hdrs = do
             debug lg $ LG.msg $ "indexed " ++ show (lenIndexed)
             liftIO $
                 mapConcurrently_
-                    (\(ind, y) -> do
-                         let hdrHash = blockHashToHex $ headerHash $ fst $ snd y
-                             nextHdrHash =
-                                 if ind == (lenIndexed - 1)
-                                     then ""
-                                     else blockHashToHex $ headerHash $ fst $ snd $ (indexed !! (ind + 1))
-                             hdrJson = T.pack $ LC.unpack $ A.encode $ fst $ snd y
-                         let p1 = getSimpleQueryParam (hdrHash, hdrJson, fst y, nextHdrHash)
-                             p2 = getSimpleQueryParam (fst y, hdrHash, hdrJson, nextHdrHash)
-                         res1 <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query q1 p1)
-                         case res1 of
-                             Right _ -> return ()
-                             Left (e :: SomeException) ->
-                                 liftIO $ do
-                                     err lg $ LG.msg ("Error: INSERT into 'blocks_hash' failed: " ++ show e)
-                                     throw KeyValueDBInsertException
-                         res2 <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query q2 p2)
-                         case res2 of
-                             Right _ -> return ()
-                             Left (e :: SomeException) -> do
-                                 err lg $ LG.msg ("Error: INSERT into 'blocks_by_height' failed: " ++ show e)
-                                 throw KeyValueDBInsertException)
+                    ( \(ind, y) -> do
+                        let hdrHash = blockHashToHex $ headerHash $ fst $ snd y
+                            nextHdrHash =
+                                if ind == (lenIndexed - 1)
+                                    then ""
+                                    else blockHashToHex $ headerHash $ fst $ snd $ (indexed !! (ind + 1))
+                            hdrJson = T.pack $ LC.unpack $ A.encode $ fst $ snd y
+                        let p1 = getSimpleQueryParam (hdrHash, hdrJson, fst y, nextHdrHash)
+                            p2 = getSimpleQueryParam (fst y, hdrHash, hdrJson, nextHdrHash)
+                        res1 <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query q1 p1)
+                        case res1 of
+                            Right _ -> return ()
+                            Left (e :: SomeException) ->
+                                liftIO $ do
+                                    err lg $ LG.msg ("Error: INSERT into 'blocks_hash' failed: " ++ show e)
+                                    throw KeyValueDBInsertException
+                        res2 <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query q2 p2)
+                        case res2 of
+                            Right _ -> return ()
+                            Left (e :: SomeException) -> do
+                                err lg $ LG.msg ("Error: INSERT into 'blocks_by_height' failed: " ++ show e)
+                                throw KeyValueDBInsertException
+                    )
                     (zip [0 ..] indexed)
             unless (L.null indexed) $ do
                 let height = (fst $ head indexed) - 1
@@ -395,9 +389,9 @@ updateChainWork indexed conn = do
                 lenInd = L.length indexed
                 lenOffset =
                     fromIntegral $
-                    if lenInd <= 10
-                        then (10 - lenInd)
-                        else 0
+                        if lenInd <= 10
+                            then (10 - lenInd)
+                            else 0
                 lagIndexed = take (lenInd - 10) indexed
                 indexedCW = foldr (\x y -> y + (convertBitsToBlockWork $ blockBits $ fst $ snd $ x)) 0 lagIndexed
             res <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr par)
@@ -413,8 +407,8 @@ updateChainWork indexed conn = do
                             then do
                                 if L.null lagIndexed -- both lag and lagIndexed are null
                                     then return (chainWork, height)
-                                            -- only lag is null
-                                    else do
+                                    else -- only lag is null
+                                    do
                                         let updatedBlock = fst $ last lagIndexed
                                             updatedChainwork = T.pack $ show $ indexedCW + (read . T.unpack $ chainWork)
                                         return (updatedChainwork, updatedBlock)
