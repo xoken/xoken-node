@@ -17,7 +17,6 @@ module Network.Xoken.Node.P2P.PeerManager (
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (mapConcurrently)
-
 import Control.Concurrent.Async.Lifted as LA (async, cancel, concurrently_, race, wait, waitAnyCatch, withAsync)
 import qualified Control.Concurrent.MSem as MS
 import qualified Control.Concurrent.MSemN as MSN
@@ -162,7 +161,7 @@ runBlockSync =
             Right (a) -> return ()
             Left (e :: SomeException) -> do
                 err lg $ msg $ (val "[ERROR] FATAL error in runBlockSync ") +++ (show e)
-		throw e
+                throw e
 
 setupSeedPeerConnection :: (HasXokenNodeEnv env m, MonadIO m) => m ()
 setupSeedPeerConnection =
