@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE Rank2Types #-}
+{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
 
 module Network.Xoken.Node.HTTP.Handler where
@@ -9,7 +9,7 @@ module Network.Xoken.Node.HTTP.Handler where
 import Arivi.P2P.Config (decodeHex, encodeHex)
 import Control.Applicative ((<|>))
 import qualified Control.Error.Util as Extra
-import Control.Exception (SomeException(..), throw, try)
+import Control.Exception (SomeException (..), throw, try)
 import qualified Control.Exception.Lifted as LE (try)
 import Control.Monad
 import Control.Monad.IO.Class
@@ -35,31 +35,34 @@ import Data.Time.Clock
 import Data.Time.Clock.POSIX
 import Database.XCQL.Protocol as Q
 import Network.Xoken.Crypto.Hash
-import Network.Xoken.Node.Data
-    ( AddUserResp(..)
-    , BlockRecord(..)
-    , RPCReqParams(..)
-    , RPCReqParams'(..)
-    , RPCResponseBody(..)
-    , RawTxRecord(..)
-    , TxRecord(..)
-    , UpdateUserByUsername'(..)
-    , coinbaseTxToMessage
-    , encodeResp
-    , fromResultWithCursor
-    , txToTx'
-    )
+import Network.Xoken.Node.Data (
+    AddUserResp (..),
+    BlockRecord (..),
+    MapiPolicy (..),
+    MapiPolicyPatch (..),
+    RPCReqParams (..),
+    RPCReqParams' (..),
+    RPCResponseBody (..),
+    RawTxRecord (..),
+    TxRecord (..),
+    UpdateUserByUsername' (..),
+    User (..),
+    coinbaseTxToMessage,
+    encodeResp,
+    fromResultWithCursor,
+    txToTx',
+ )
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.HTTP.Types
-import Network.Xoken.Node.P2P.Common
-    ( BlockSyncException(..)
-    , addNewUser
-    , generateSessionKey
-    , getSimpleQueryParam
-    , indexMaybe
-    , query
-    , write
-    )
+import Network.Xoken.Node.P2P.Common (
+    BlockSyncException (..),
+    addNewUser,
+    generateSessionKey,
+    getSimpleQueryParam,
+    indexMaybe,
+    query,
+    write,
+ )
 import Network.Xoken.Node.P2P.Types
 import Network.Xoken.Node.Service
 import Snap
@@ -68,7 +71,7 @@ import Text.Read (readMaybe)
 import qualified Xoken.NodeConfig as NC
 
 authClient :: RPCReqParams -> Handler App App ()
-authClient AuthenticateReq {..} = do
+authClient AuthenticateReq{..} = do
     pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     resp <- LE.try $ login (DT.pack username) (BC.pack password)
     case resp of
@@ -79,22 +82,22 @@ authClient AuthenticateReq {..} = do
 authClient _ = throwBadRequest
 
 addUser :: RPCReqParams' -> Handler App App ()
-addUser AddUser {..} = do
+addUser AddUser{..} = do
     dbe <- getDB
     pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     let conn = xCqlClientState dbe
     resp <-
         LE.try $
-        return $
-        addNewUser
-            conn
-            (DT.pack auUsername)
-            (DT.pack auFirstName)
-            (DT.pack auLastName)
-            (DT.pack auEmail)
-            auRoles
-            auApiQuota
-            auApiExpiryTime
+            return $
+                addNewUser
+                    conn
+                    (DT.pack auUsername)
+                    (DT.pack auFirstName)
+                    (DT.pack auLastName)
+                    (DT.pack auEmail)
+                    auRoles
+                    auApiQuota
+                    auApiExpiryTime
     case resp of
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
@@ -225,20 +228,21 @@ getTxById = do
             err lg $ LG.msg $ "Error: xGetTxHash: " ++ show e
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
-        Right (Just RawTxRecord {..}) -> do
+        Right (Just RawTxRecord{..}) -> do
             case S.decodeLazy txSerialized of
                 Right rt ->
                     writeBS $
-                    BSL.toStrict $
-                    encodeResp pretty $
-                    RespTransactionByTxID
-                        (TxRecord
-                             txId
-                             size
-                             txBlockInfo
-                             (txToTx' rt (fromMaybe [] txOutputs) txInputs)
-                             fees
-                             txMerkleBranch)
+                        BSL.toStrict $
+                            encodeResp pretty $
+                                RespTransactionByTxID
+                                    ( TxRecord
+                                        txId
+                                        size
+                                        txBlockInfo
+                                        (txToTx' rt (fromMaybe [] txOutputs) txInputs)
+                                        fees
+                                        txMerkleBranch
+                                    )
                 Left err -> do
                     modifyResponse $ setResponseStatus 400 "Bad Request"
                     writeBS "400 error"
@@ -257,13 +261,16 @@ getTxByIds = do
             writeBS "INTERNAL_SERVER_ERROR"
         Right txs -> do
             let rawTxs =
-                    (\RawTxRecord {..} ->
-                         (TxRecord txId size txBlockInfo <$>
-                          (txToTx' <$> (Extra.hush $ S.decodeLazy txSerialized) <*> (pure $ fromMaybe [] txOutputs) <*>
-                           (pure txInputs)) <*>
-                          (pure fees) <*>
-                          (pure txMerkleBranch))) <$>
-                    txs
+                    ( \RawTxRecord{..} ->
+                        ( TxRecord txId size txBlockInfo
+                            <$> ( txToTx' <$> (Extra.hush $ S.decodeLazy txSerialized) <*> (pure $ fromMaybe [] txOutputs)
+                                    <*> (pure txInputs)
+                                )
+                            <*> (pure fees)
+                            <*> (pure txMerkleBranch)
+                        )
+                    )
+                        <$> txs
             writeBS $ BSL.toStrict $ encodeResp pretty $ RespTransactionsByTxIDs $ catMaybes rawTxs
 
 getTxIDsByBlockHash :: Handler App App ()
@@ -314,7 +321,7 @@ getOutputsByAddr = do
         Right ops -> do
             writeBS $
                 BSL.toStrict $
-                encodeResp pretty $ RespOutputsByAddress (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
+                    encodeResp pretty $ RespOutputsByAddress (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
 
 getOutputsByAddrs :: Handler App App ()
 getOutputsByAddrs = do
@@ -337,8 +344,8 @@ getOutputsByAddrs = do
                 Right ops -> do
                     writeBS $
                         BSL.toStrict $
-                        encodeResp pretty $
-                        RespOutputsByAddresses (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
+                            encodeResp pretty $
+                                RespOutputsByAddresses (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
         Nothing -> throwBadRequest
 
 getOutputsByScriptHash :: Handler App App ()
@@ -359,8 +366,8 @@ getOutputsByScriptHash = do
         Right ops -> do
             writeBS $
                 BSL.toStrict $
-                encodeResp pretty $
-                RespOutputsByScriptHash (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
+                    encodeResp pretty $
+                        RespOutputsByScriptHash (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
 
 getOutputsByScriptHashes :: Handler App App ()
 getOutputsByScriptHashes = do
@@ -382,8 +389,8 @@ getOutputsByScriptHashes = do
                 Right ops -> do
                     writeBS $
                         BSL.toStrict $
-                        encodeResp pretty $
-                        RespOutputsByScriptHashes (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
+                            encodeResp pretty $
+                                RespOutputsByScriptHashes (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
         Nothing -> throwBadRequest
 
 getUTXOsByAddr :: Handler App App ()
@@ -405,7 +412,7 @@ getUTXOsByAddr = do
         Right ops -> do
             writeBS $
                 BSL.toStrict $
-                encodeResp pretty $ RespUTXOsByAddress (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
+                    encodeResp pretty $ RespUTXOsByAddress (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
 
 getUTXOsByAddrs :: Handler App App ()
 getUTXOsByAddrs = do
@@ -428,8 +435,8 @@ getUTXOsByAddrs = do
                 Right ops -> do
                     writeBS $
                         BSL.toStrict $
-                        encodeResp pretty $
-                        RespUTXOsByAddresses (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
+                            encodeResp pretty $
+                                RespUTXOsByAddresses (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
         Nothing -> throwBadRequest
 
 getUTXOsByScriptHash :: Handler App App ()
@@ -450,7 +457,7 @@ getUTXOsByScriptHash = do
         Right ops -> do
             writeBS $
                 BSL.toStrict $
-                encodeResp pretty $ RespUTXOsByScriptHash (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
+                    encodeResp pretty $ RespUTXOsByScriptHash (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
 
 getUTXOsByScriptHashes :: Handler App App ()
 getUTXOsByScriptHashes = do
@@ -472,8 +479,8 @@ getUTXOsByScriptHashes = do
                 Right ops -> do
                     writeBS $
                         BSL.toStrict $
-                        encodeResp pretty $
-                        RespUTXOsByScriptHashes (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
+                            encodeResp pretty $
+                                RespUTXOsByScriptHashes (encodeNTI $ getNextCursor ops) (fromResultWithCursor <$> ops)
         Nothing -> throwBadRequest
 
 getMNodesByTxID :: Handler App App ()
@@ -501,7 +508,7 @@ getOutpointsByName = do
         Right ops -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespAllegoryNameBranch ops
 
 relayTx :: RPCReqParams' -> Handler App App ()
-relayTx RelayTx {..} = do
+relayTx RelayTx{..} = do
     pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     res <- LE.try $ xRelayTx rTx
     case res of
@@ -523,7 +530,7 @@ relayTx RelayTx {..} = do
 relayTx _ = throwBadRequest
 
 relayMultipleTx :: RPCReqParams' -> Handler App App ()
-relayMultipleTx RelayMultipleTx {..} = do
+relayMultipleTx RelayMultipleTx{..} = do
     pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     res <- LE.try $ xRelayMultipleTx rTxns
     case res of
@@ -543,8 +550,8 @@ getOutpointByName (AllegoryNameQuery nameArray isProducer) = do
             writeBS (S.pack $ show e)
         Right (forName, outpoint, script, confirmed, isProducer) ->
             writeBS $
-            BSL.toStrict $
-            encodeResp pretty $ RespOutpointByName forName outpoint (DT.unpack script) confirmed isProducer
+                BSL.toStrict $
+                    encodeResp pretty $ RespOutpointByName forName outpoint (DT.unpack script) confirmed isProducer
 getOutpointByName _ = throwBadRequest
 
 findNameReseller :: RPCReqParams' -> Handler App App ()
@@ -621,6 +628,77 @@ updateUserByUsername updates = do
             writeBS $ "User updated"
         Right False -> throwNotFound
 
+addDefaultMapiPolicy :: RPCReqParams' -> Handler App App ()
+addDefaultMapiPolicy (DefaultMapiPolicy (MapiPolicy a b c d e f g h i j)) = do
+    dbe <- getDB
+    res <- LE.try $ xUpdatePolicyByUsername (DT.pack "default") (MapiPolicyPatch (Just a) (Just b) (Just c) (Just d) (Just e) (Just f) (Just g) (Just h) (Just i) (Just j))
+    case res of
+        Left (e :: SomeException) -> do
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+        Right True -> do
+            modifyResponse $ setResponseStatus 200 "Updated"
+            writeBS $ "User updated"
+        Right False -> throwNotFound
+
+getPolicyCurrentUser :: Handler App App ()
+getPolicyCurrentUser = do
+    sk <- (fmap $ DTE.decodeUtf8) <$> (getParam "sessionKey")
+    pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    res <- LE.try $ xGetUserBySessionKey (fromJust sk)
+    case res of
+        Left (e :: SomeException) -> do
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+        Right (Just user) -> do
+            res' <- LE.try $ xGetPolicyByUsername (DT.pack $ uUsername user)
+            case res' of
+                Left (e :: SomeException) -> do
+                    modifyResponse $ setResponseStatus 500 "Internal Server Error"
+                    writeBS "INTERNAL_SERVER_ERROR"
+                Right u@(Just us) -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespMapiPolicy u
+                Right Nothing -> throwNotFound
+        Right Nothing -> throwNotFound
+
+getPolicyByUsername :: Handler App App ()
+getPolicyByUsername = do
+    uname <- (fmap $ DTE.decodeUtf8) <$> (getParam "username")
+    pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    res <- LE.try $ xGetPolicyByUsername (fromJust uname)
+    case res of
+        Left (e :: SomeException) -> do
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+        Right u@(Just us) -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespMapiPolicy u
+        Right Nothing -> throwNotFound
+
+deletePolicyByUsername :: Handler App App ()
+deletePolicyByUsername = do
+    uname <- (fmap $ DTE.decodeUtf8) <$> (getParam "username")
+    pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    res <- LE.try $ xDeletePolicyByUsername (fromJust uname)
+    case res of
+        Left (e :: SomeException) -> do
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+        Right () -> do
+            modifyResponse $ setResponseStatus 200 "Deleted"
+            writeBS $ "User deleted"
+
+updatePolicyByUsername :: MapiPolicyPatch -> Handler App App ()
+updatePolicyByUsername updates = do
+    uname <- (fmap $ DTE.decodeUtf8) <$> (getParam "username")
+    pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    res <- LE.try $ xUpdatePolicyByUsername (fromJust uname) updates
+    case res of
+        Left (e :: SomeException) -> do
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+        Right True -> do
+            modifyResponse $ setResponseStatus 200 "Updated"
+            writeBS $ "User updated"
+        Right False -> throwNotFound
+
 getTxByProtocol :: Handler App App ()
 getTxByProtocol = do
     proto <- getParam "protocol"
@@ -631,8 +709,8 @@ getTxByProtocol = do
     props <- getQueryProps
     res <-
         LE.try $
-        xGetTxIDByProtocol (DTE.decodeUtf8 $ fromJust proto) props pgSize (decodeNTI cursor) >>=
-        (\c -> (encodeNTI $ getNextCursor c, ) <$> xGetTxHashes (fromResultWithCursor <$> c))
+            xGetTxIDByProtocol (DTE.decodeUtf8 $ fromJust proto) props pgSize (decodeNTI cursor)
+                >>= (\c -> (encodeNTI $ getNextCursor c,) <$> xGetTxHashes (fromResultWithCursor <$> c))
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetTxProtocol: " ++ show e
@@ -640,13 +718,16 @@ getTxByProtocol = do
             writeBS "INTERNAL_SERVER_ERROR"
         Right (nt, txs) -> do
             let rawTxs =
-                    (\RawTxRecord {..} ->
-                         (TxRecord txId size txBlockInfo <$>
-                          (txToTx' <$> (Extra.hush $ S.decodeLazy txSerialized) <*> (pure $ fromMaybe [] txOutputs) <*>
-                           (pure txInputs)) <*>
-                          (pure fees) <*>
-                          (pure txMerkleBranch))) <$>
-                    txs
+                    ( \RawTxRecord{..} ->
+                        ( TxRecord txId size txBlockInfo
+                            <$> ( txToTx' <$> (Extra.hush $ S.decodeLazy txSerialized) <*> (pure $ fromMaybe [] txOutputs)
+                                    <*> (pure txInputs)
+                                )
+                            <*> (pure fees)
+                            <*> (pure txMerkleBranch)
+                        )
+                    )
+                        <$> txs
             writeBS $ BSL.toStrict $ encodeResp pretty $ RespTransactionsByProtocol nt (catMaybes rawTxs)
   where
     getQueryProps = do
@@ -667,10 +748,10 @@ getTxByProtocols = do
     let props = getQueryProps allMap
     res <-
         LE.try $
-        traverse
-            (\(proto, ind) -> xGetTxIDByProtocol proto (fromMaybe [] $ indexMaybe props ind) pgSize (decodeNTI cursor))
-            (zip protocols [0 ..]) >>=
-        ((\c -> (encodeNTI $ getNextCursor c, ) <$> xGetTxHashes (fromResultWithCursor <$> c)) . concat)
+            traverse
+                (\(proto, ind) -> xGetTxIDByProtocol proto (fromMaybe [] $ indexMaybe props ind) pgSize (decodeNTI cursor))
+                (zip protocols [0 ..])
+                >>= ((\c -> (encodeNTI $ getNextCursor c,) <$> xGetTxHashes (fromResultWithCursor <$> c)) . concat)
     case res of
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetTxProtocol: " ++ show e
@@ -679,13 +760,16 @@ getTxByProtocols = do
             writeBS "INTERNAL_SERVER_ERROR"
         Right (nt, txs) -> do
             let rawTxs =
-                    (\RawTxRecord {..} ->
-                         (TxRecord txId size txBlockInfo <$>
-                          (txToTx' <$> (Extra.hush $ S.decodeLazy txSerialized) <*> (pure $ fromMaybe [] txOutputs) <*>
-                           (pure txInputs)) <*>
-                          (pure fees) <*>
-                          (pure txMerkleBranch))) <$>
-                    txs
+                    ( \RawTxRecord{..} ->
+                        ( TxRecord txId size txBlockInfo
+                            <$> ( txToTx' <$> (Extra.hush $ S.decodeLazy txSerialized) <*> (pure $ fromMaybe [] txOutputs)
+                                    <*> (pure txInputs)
+                                )
+                            <*> (pure fees)
+                            <*> (pure txMerkleBranch)
+                        )
+                    )
+                        <$> txs
             writeBS $ BSL.toStrict $ encodeResp pretty $ RespTransactionsByProtocols nt (catMaybes rawTxs)
   where
     getQueryProps allMap = do
@@ -714,8 +798,8 @@ withAuth onSuccess = do
     if uok
         then onSuccess
         else case h of
-                 Nothing -> throwChallenge
-                 Just _ -> throwDenied
+            Nothing -> throwChallenge
+            Just _ -> throwDenied
 
 withAuthAs :: DT.Text -> Handler App App () -> Handler App App ()
 withAuthAs role onSuccess = do
@@ -731,8 +815,8 @@ withAuthAs role onSuccess = do
     if uok
         then onSuccess
         else case h of
-                 Nothing -> throwChallenge
-                 Just _ -> throwDenied
+            Nothing -> throwChallenge
+            Just _ -> throwDenied
 
 withReq :: Aeson.FromJSON a => (a -> Handler App App ()) -> Handler App App ()
 withReq handler = do
@@ -761,7 +845,7 @@ parseAuthorizationHeader bs =
         Nothing -> Nothing
         Just x ->
             case (S.split ' ' x) of
-                ("Bearer":y) ->
+                ("Bearer" : y) ->
                     if S.length (S.intercalate "" y) > 0
                         then Just $ S.intercalate "" y
                         else Nothing

@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -5,10 +6,9 @@
 {-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE TupleSections #-}
 
 module Network.Xoken.Node.Service.User where
 
@@ -31,7 +31,6 @@ import Control.Concurrent.MVar
 import Control.Concurrent.STM
 import Control.Concurrent.STM.TVar
 import qualified Control.Error.Util as Extra
-import Control.Exception
 import Control.Exception
 import qualified Control.Exception.Lifted as LE (try)
 import Control.Monad
@@ -62,9 +61,9 @@ import qualified Data.List as L
 import Data.Map.Strict as M
 import Data.Maybe
 import Data.Pool
-import qualified Data.Serialize as S
 import Data.Serialize
 import qualified Data.Serialize as DS (decode, encode)
+import qualified Data.Serialize as S
 import qualified Data.Set as S
 import Data.String (IsString, fromString)
 import qualified Data.Text as DT
@@ -106,17 +105,22 @@ xGetUserByUsername name = do
         str =
             "SELECT username,password,first_name,last_name,emailid,permissions,api_quota,api_used,api_expiry_time,session_key,session_key_expiry_time from xoken.user_permission where username = ?"
         qstr =
-            str :: Q.QueryString Q.R (Identity DT.Text) ( DT.Text
-                                                        , DT.Text
-                                                        , DT.Text
-                                                        , DT.Text
-                                                        , DT.Text
-                                                        , Set DT.Text
-                                                        , Int32
-                                                        , Int32
-                                                        , UTCTime
-                                                        , DT.Text
-                                                        , UTCTime)
+            str ::
+                Q.QueryString
+                    Q.R
+                    (Identity DT.Text)
+                    ( DT.Text
+                    , DT.Text
+                    , DT.Text
+                    , DT.Text
+                    , DT.Text
+                    , Set DT.Text
+                    , Int32
+                    , Int32
+                    , UTCTime
+                    , DT.Text
+                    , UTCTime
+                    )
         p = getSimpleQueryParam $ Identity name
     res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr p)
     case res of
@@ -129,34 +133,34 @@ xGetUserByUsername name = do
                     case userData of
                         Just (_, _, used, _, _) ->
                             return $
-                            Just $
-                            User
-                                (DT.unpack uname)
-                                (DT.unpack pwd)
-                                (DT.unpack fname)
-                                (DT.unpack lname)
-                                (DT.unpack email)
-                                (DT.unpack <$> (Q.fromSet roles))
-                                (fromIntegral apiQ)
-                                (fromIntegral used)
-                                apiE
-                                (maskAfter 10 $ DT.unpack sk)
-                                skE
+                                Just $
+                                    User
+                                        (DT.unpack uname)
+                                        (DT.unpack pwd)
+                                        (DT.unpack fname)
+                                        (DT.unpack lname)
+                                        (DT.unpack email)
+                                        (DT.unpack <$> (Q.fromSet roles))
+                                        (fromIntegral apiQ)
+                                        (fromIntegral used)
+                                        apiE
+                                        (maskAfter 10 $ DT.unpack sk)
+                                        skE
                         Nothing ->
                             return $
-                            Just $
-                            User
-                                (DT.unpack uname)
-                                (DT.unpack pwd)
-                                (DT.unpack fname)
-                                (DT.unpack lname)
-                                (DT.unpack email)
-                                (DT.unpack <$> (Q.fromSet roles))
-                                (fromIntegral apiQ)
-                                (fromIntegral apiU)
-                                apiE
-                                (maskAfter 10 $ DT.unpack sk)
-                                skE
+                                Just $
+                                    User
+                                        (DT.unpack uname)
+                                        (DT.unpack pwd)
+                                        (DT.unpack fname)
+                                        (DT.unpack lname)
+                                        (DT.unpack email)
+                                        (DT.unpack <$> (Q.fromSet roles))
+                                        (fromIntegral apiQ)
+                                        (fromIntegral apiU)
+                                        apiE
+                                        (maskAfter 10 $ DT.unpack sk)
+                                        skE
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetUserByUsername: " ++ show e
             throw KeyValueDBLookupException
@@ -176,23 +180,24 @@ xDeleteUserByUsername name = do
             cacheList <- liftIO $ (H.toList $ userDataCache bp2pEnv)
             liftIO $
                 mapM_
-                    (\(k, (n, _, _, _, _)) ->
-                         if n == name
-                             then H.delete (userDataCache bp2pEnv) k
-                             else return ())
+                    ( \(k, (n, _, _, _, _)) ->
+                        if n == name
+                            then H.delete (userDataCache bp2pEnv) k
+                            else return ()
+                    )
                     cacheList
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xDeleteUserByUsername: " ++ show e
             throw e
 
 xUpdateUserByUsername :: (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> UpdateUserByUsername' -> m Bool
-xUpdateUserByUsername name (UpdateUserByUsername' {..}) = do
+xUpdateUserByUsername name (UpdateUserByUsername'{..}) = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
     res <- LE.try $ xGetUserByUsername name
     case res of
-        Right (Just (User {..})) -> do
+        Right (Just (User{..})) -> do
             let conn = xCqlClientState dbe
                 str =
                     "UPDATE xoken.user_permission SET password=?,first_name=?,last_name=?,emailid=?,api_quota=?,permissions=?,api_expiry_time=? WHERE username=?"
@@ -207,7 +212,8 @@ xUpdateUserByUsername name (UpdateUserByUsername' {..}) = do
                         , fromMaybe (fromIntegral uApiQuota) uuApiQuota
                         , Q.Set $ fmap DT.pack $ fromMaybe uRoles uuRoles
                         , fromMaybe uApiExpiryTime uuApiExpiryTime
-                        , name)
+                        , name
+                        )
             res' <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr par)
             case res' of
                 Right _ -> do
@@ -226,20 +232,22 @@ xUpdateUserByUsername name (UpdateUserByUsername' {..}) = do
                                     cacheList <- liftIO $ (H.toList $ userDataCache bp2pEnv)
                                     liftIO $
                                         mapM_
-                                            (\(k, (n, q, u, e, r)) ->
-                                                 if n == name
-                                                     then do
-                                                         H.delete (userDataCache bp2pEnv) k
-                                                         liftIO $
-                                                             H.insert
-                                                                 (userDataCache bp2pEnv)
-                                                                 (newSessionKey)
-                                                                 ( n
-                                                                 , fromMaybe (fromIntegral uApiQuota) uuApiQuota
-                                                                 , u
-                                                                 , skTime
-                                                                 , r)
-                                                     else return ())
+                                            ( \(k, (n, q, u, e, r)) ->
+                                                if n == name
+                                                    then do
+                                                        H.delete (userDataCache bp2pEnv) k
+                                                        liftIO $
+                                                            H.insert
+                                                                (userDataCache bp2pEnv)
+                                                                (newSessionKey)
+                                                                ( n
+                                                                , fromMaybe (fromIntegral uApiQuota) uuApiQuota
+                                                                , u
+                                                                , skTime
+                                                                , r
+                                                                )
+                                                    else return ()
+                                            )
                                             cacheList
                                     return True
                                 Left (e :: SomeException) -> do
@@ -250,11 +258,14 @@ xUpdateUserByUsername name (UpdateUserByUsername' {..}) = do
                                 H.mutate
                                     (userDataCache bp2pEnv)
                                     (DT.pack uSessionKey)
-                                    (\v ->
-                                         ( (\(n, _, u, e, r) ->
-                                                (n, fromMaybe (fromIntegral uApiQuota) uuApiQuota, u, e, r)) <$>
-                                           v
-                                         , True))
+                                    ( \v ->
+                                        ( ( \(n, _, u, e, r) ->
+                                                (n, fromMaybe (fromIntegral uApiQuota) uuApiQuota, u, e, r)
+                                          )
+                                            <$> v
+                                        , True
+                                        )
+                                    )
                 Left (e :: SomeException) -> do
                     err lg $ LG.msg $ "Error: xUpdateUserByUsername (updating data): " ++ show e
                     throw e
@@ -272,16 +283,21 @@ xGetUserBySessionKey skey = do
         str =
             "SELECT username,first_name,last_name,emailid,permissions,api_quota,api_used,api_expiry_time,session_key,session_key_expiry_time from xoken.user_permission where session_key = ? ALLOW FILTERING "
         qstr =
-            str :: Q.QueryString Q.R (Identity DT.Text) ( DT.Text
-                                                        , DT.Text
-                                                        , DT.Text
-                                                        , DT.Text
-                                                        , Set DT.Text
-                                                        , Int32
-                                                        , Int32
-                                                        , UTCTime
-                                                        , DT.Text
-                                                        , UTCTime)
+            str ::
+                Q.QueryString
+                    Q.R
+                    (Identity DT.Text)
+                    ( DT.Text
+                    , DT.Text
+                    , DT.Text
+                    , DT.Text
+                    , Set DT.Text
+                    , Int32
+                    , Int32
+                    , UTCTime
+                    , DT.Text
+                    , UTCTime
+                    )
         p = getSimpleQueryParam $ Identity skey
     res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr p)
     case res of
@@ -294,34 +310,34 @@ xGetUserBySessionKey skey = do
                     case userData of
                         Just (_, _, used, _, _) ->
                             return $
-                            Just $
-                            User
-                                (DT.unpack uname)
-                                (DT.unpack "")
-                                (DT.unpack fname)
-                                (DT.unpack lname)
-                                (DT.unpack email)
-                                (DT.unpack <$> (Q.fromSet roles))
-                                (fromIntegral apiQ)
-                                (fromIntegral used)
-                                apiE
-                                (maskAfter 10 $ DT.unpack sk)
-                                skE
+                                Just $
+                                    User
+                                        (DT.unpack uname)
+                                        (DT.unpack "")
+                                        (DT.unpack fname)
+                                        (DT.unpack lname)
+                                        (DT.unpack email)
+                                        (DT.unpack <$> (Q.fromSet roles))
+                                        (fromIntegral apiQ)
+                                        (fromIntegral used)
+                                        apiE
+                                        (maskAfter 10 $ DT.unpack sk)
+                                        skE
                         Nothing ->
                             return $
-                            Just $
-                            User
-                                (DT.unpack uname)
-                                (DT.unpack "")
-                                (DT.unpack fname)
-                                (DT.unpack lname)
-                                (DT.unpack email)
-                                (DT.unpack <$> (Q.fromSet roles))
-                                (fromIntegral apiQ)
-                                (fromIntegral apiU)
-                                apiE
-                                (maskAfter 10 $ DT.unpack sk)
-                                skE
+                                Just $
+                                    User
+                                        (DT.unpack uname)
+                                        (DT.unpack "")
+                                        (DT.unpack fname)
+                                        (DT.unpack lname)
+                                        (DT.unpack email)
+                                        (DT.unpack <$> (Q.fromSet roles))
+                                        (fromIntegral apiQ)
+                                        (fromIntegral apiU)
+                                        apiE
+                                        (maskAfter 10 $ DT.unpack sk)
+                                        skE
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xGetUserBySessionKey: " ++ show e
             throw KeyValueDBLookupException
@@ -384,7 +400,8 @@ login user pass = do
                                                             , quota
                                                             , used
                                                             , (addUTCTime (nominalDay * 30) tm)
-                                                            , Q.fromSet roles)
+                                                            , Q.fromSet roles
+                                                            )
                                                     return $
                                                         AuthResp
                                                             (Just $ DT.unpack newSessionKey)

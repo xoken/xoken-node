@@ -363,6 +363,9 @@ defBitcoinP2P nodeCnf ept = do
     blockCacheLock <- newMVar ()
     peerFetchQueue <- liftIO $ newTQueueIO
     blockPeerMap <- TSH.new 1
+    userPolicies <- H.new
+    defaultPolicy <- newIORef Nothing
+    let policyDataCache = PolicyCache defaultPolicy userPolicies
     --
     return $
         BitcoinP2P
@@ -388,6 +391,7 @@ defBitcoinP2P nodeCnf ept = do
             blockCacheLock
             peerFetchQueue
             blockPeerMap
+            policyDataCache
 
 --
 

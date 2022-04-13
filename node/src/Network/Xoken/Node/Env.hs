@@ -1,8 +1,7 @@
 {-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE ConstraintKinds #-}
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE MonoLocalBinds #-}
 
 module Network.Xoken.Node.Env where
@@ -44,60 +43,60 @@ import Xoken.NodeConfig
 
 type HashTable k v = H.BasicHashTable k v
 
-type HasXokenNodeEnv env m
-     = ( HasBitcoinP2P m
-       , HasDatabaseHandles m
-       , HasLogger m
-       , HasAllegoryEnv m
-       , MonadReader env m
-       , MonadBaseControl IO m
-       , MonadThrow m)
+type HasXokenNodeEnv env m =
+    ( HasBitcoinP2P m
+    , HasDatabaseHandles m
+    , HasLogger m
+    , HasAllegoryEnv m
+    , MonadReader env m
+    , MonadBaseControl IO m
+    , MonadThrow m
+    )
 
-data XokenNodeEnv =
-    XokenNodeEnv
-        { bitcoinP2PEnv :: !BitcoinP2P
-        , dbHandles :: !DatabaseHandles
-        , loggerEnv :: !Logger
-        , allegoryEnv :: !AllegoryEnv
-        }
+data XokenNodeEnv = XokenNodeEnv
+    { bitcoinP2PEnv :: !BitcoinP2P
+    , dbHandles :: !DatabaseHandles
+    , loggerEnv :: !Logger
+    , allegoryEnv :: !AllegoryEnv
+    }
 
-data AllegoryEnv =
-    AllegoryEnv
-        { allegorySecretKey :: !SecKey
-        }
+data AllegoryEnv = AllegoryEnv
+    { allegorySecretKey :: !SecKey
+    }
 
-data MerkleTxQueue =
-    MerkleTxQueue
-        { mTxQueue :: !(TQueue (TxHash, Bool))
-        , mTxQueueSem :: !(MVar ())
-        }
-
-data BitcoinP2P =
-    BitcoinP2P
-        { nodeConfig :: !NodeConfig
-        , bitcoinPeers :: !(TVar (M.Map SockAddr BitcoinPeer))
-        , blacklistedPeers :: !(TVar (M.Map SockAddr BitcoinPeer))
-        , bestBlockUpdated :: !(MVar Bool)
-        , headersWriteLock :: !(MVar Bool)
-        , blockSyncStatusMap :: !(TSH.TSHashTable BlockHash (BlockSyncStatus, BlockHeight))
-        , blockTxProcessingLeftMap :: !(TSH.TSHashTable BlockHash ((TSH.TSHashTable TxHash Int), Int))
-        , epochType :: !(TVar Bool)
-        , epochTimestamp :: !(TVar Int64)
-        , unconfirmedTxCache :: !(TSH.TSHashTable TxShortHash (Bool, TxHash))
-        , peerReset :: !(MVar Bool, TVar Int)
-        , merkleQueueMap :: !(TSH.TSHashTable BlockHash MerkleTxQueue)
-        , txSynchronizer :: !(TSH.TSHashTable (TxHash, DependentTxStatus) (MVar ()))
-        , maxTMTBuilderThreadLock :: !(MSem Int)
-        , indexUnconfirmedTx :: !(TVar Bool)
-        , userDataCache :: !(HashTable Text (Text, Int32, Int32, UTCTime, [Text])) -- (name, quota, used, expiry time, roles)
-        , txProcFailAttempts :: !(TVar Int)
-        , bestSyncedBlock :: !(TVar (Maybe BlockInfo))
-        , protocolInfo :: !(TSH.TSHashTable BlockHash (TSH.TSHashTable Text ([(Text, Text)], BlockPInfo)))
-        , blockCacheLock :: !(MVar ())
-        , peerFetchQueue :: !(TQueue BitcoinPeer)
-        -- , parallelBlockProcessingMap :: !(TSH.TSHashTable String ()) -- Peer sockAddr
-        , fetchBlockPeerMap :: !(TSH.TSHashTable BlockHash BitcoinPeer)
-        }
+data MerkleTxQueue = MerkleTxQueue
+    { mTxQueue :: !(TQueue (TxHash, Bool))
+    , mTxQueueSem :: !(MVar ())
+    }
+data PolicyCache = PolicyCache
+    { defaultPolicy :: !(IORef (Maybe MapiPolicy))
+    , userPolicies :: !(HashTable Text MapiPolicyPatch)
+    }
+data BitcoinP2P = BitcoinP2P
+    { nodeConfig :: !NodeConfig
+    , bitcoinPeers :: !(TVar (M.Map SockAddr BitcoinPeer))
+    , blacklistedPeers :: !(TVar (M.Map SockAddr BitcoinPeer))
+    , bestBlockUpdated :: !(MVar Bool)
+    , headersWriteLock :: !(MVar Bool)
+    , blockSyncStatusMap :: !(TSH.TSHashTable BlockHash (BlockSyncStatus, BlockHeight))
+    , blockTxProcessingLeftMap :: !(TSH.TSHashTable BlockHash ((TSH.TSHashTable TxHash Int), Int))
+    , epochType :: !(TVar Bool)
+    , epochTimestamp :: !(TVar Int64)
+    , unconfirmedTxCache :: !(TSH.TSHashTable TxShortHash (Bool, TxHash))
+    , peerReset :: !(MVar Bool, TVar Int)
+    , merkleQueueMap :: !(TSH.TSHashTable BlockHash MerkleTxQueue)
+    , txSynchronizer :: !(TSH.TSHashTable (TxHash, DependentTxStatus) (MVar ()))
+    , maxTMTBuilderThreadLock :: !(MSem Int)
+    , indexUnconfirmedTx :: !(TVar Bool)
+    , userDataCache :: !(HashTable Text (Text, Int32, Int32, UTCTime, [Text])) -- (name, quota, used, expiry time, roles)
+    , txProcFailAttempts :: !(TVar Int)
+    , bestSyncedBlock :: !(TVar (Maybe BlockInfo))
+    , protocolInfo :: !(TSH.TSHashTable BlockHash (TSH.TSHashTable Text ([(Text, Text)], BlockPInfo)))
+    , blockCacheLock :: !(MVar ())
+    , peerFetchQueue :: !(TQueue BitcoinPeer)
+    , fetchBlockPeerMap :: !(TSH.TSHashTable BlockHash BitcoinPeer)
+    , policyDataCache :: !(PolicyCache)
+    }
 
 class HasBitcoinP2P m where
     getBitcoinP2P :: m (BitcoinP2P)
@@ -111,16 +110,14 @@ class HasDatabaseHandles m where
 class HasAllegoryEnv m where
     getAllegory :: m (AllegoryEnv)
 
-data ServiceEnv =
-    ServiceEnv
-        { xokenNodeEnv :: !XokenNodeEnv
-        -- , p2pEnv :: !(P2PEnv m r t rmsg pmsg)
-        }
+data ServiceEnv = ServiceEnv
+    { xokenNodeEnv :: !XokenNodeEnv
+    -- , p2pEnv :: !(P2PEnv m r t rmsg pmsg)
+    }
 
-data ServiceResource =
-    AriviService
-        {
-        }
+data ServiceResource = AriviService
+    {
+    }
     deriving (Eq, Ord, Show, Generic)
 
 type ServiceTopic = String
@@ -129,8 +126,9 @@ instance Serialise ServiceResource
 
 instance Hashable ServiceResource
 
-type HasService env m
-     = ( HasXokenNodeEnv env m
-       , HasP2PEnv env m ServiceResource ServiceTopic RPCMessage PubNotifyMessage
-       , MonadReader env m
-       , MonadBaseControl IO m)
+type HasService env m =
+    ( HasXokenNodeEnv env m
+    , HasP2PEnv env m ServiceResource ServiceTopic RPCMessage PubNotifyMessage
+    , MonadReader env m
+    , MonadBaseControl IO m
+    )
