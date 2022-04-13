@@ -581,7 +581,8 @@ insertTxIdOutputs (txid, outputIndex) address script value = do
                                                                                                                                      , Text
                                                                                                                                      , Text
                                                                                                                                      , Int64) ()
-    let queryPar = getSimpleQueryParam (txid, outputIndex, address, script, value)
+    let scriptPrefix = T.take 100000 script -- 100kb
+    let queryPar = getSimpleQueryParam (txid, outputIndex, address, scriptPrefix, value)
     res <-
         liftIO $
         queryPrepared conn (Q.RqPrepare (Q.Prepare queryStr)) >>= \queryId ->
