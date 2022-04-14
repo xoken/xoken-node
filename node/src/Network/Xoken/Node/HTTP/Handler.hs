@@ -38,6 +38,7 @@ import Network.Xoken.Crypto.Hash
 import Network.Xoken.Node.Data (
     AddUserResp (..),
     BlockRecord (..),
+    CallbackAuth (..),
     MapiPolicy (..),
     MapiPolicyPatch (..),
     RPCReqParams (..),
@@ -638,7 +639,7 @@ addDefaultMapiPolicy (DefaultMapiPolicy (MapiPolicy a b c d e f g h i j)) = do
             writeBS "INTERNAL_SERVER_ERROR"
         Right True -> do
             modifyResponse $ setResponseStatus 200 "Updated"
-            writeBS $ "User updated"
+            writeBS $ "Policy updated"
         Right False -> throwNotFound
 
 getPolicyCurrentUser :: Handler App App ()
@@ -698,6 +699,75 @@ updatePolicyByUsername updates = do
             modifyResponse $ setResponseStatus 200 "Updated"
             writeBS $ "User updated"
         Right False -> throwNotFound
+
+addMapiCallback :: RPCReqParams' -> Handler App App ()
+addMapiCallback AddMapiCallback{..} = do
+    dbe <- getDB
+    sk <- (fmap $ DTE.decodeUtf8) <$> (getParam "sessionKey")
+    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    let conn = xCqlClientState dbe
+    res <- LE.try $ xGetUserBySessionKey (fromJust sk)
+    case res of
+        Left (e :: SomeException) -> do
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+        Right (Just user) -> do
+            let auth = case callBackAuth of
+                    CallbackBasicAuth ty usr psswd -> (ty, (usr ++ ":" ++ psswd))
+                    CallbackBearerToken ty token -> (ty, token)
+            res' <- LE.try $ xUpdateCallbackByUsername (DT.pack $ uUsername user) callbackName callbackUrl (DT.pack $ fst auth) (DT.pack $ snd auth) events
+            case res' of
+                Left (e :: SomeException) -> do
+                    modifyResponse $ setResponseStatus 500 "Internal Server Error"
+                    writeBS "INTERNAL_SERVER_ERROR"
+                Right u@(Just us) -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespMapiCallback u
+                Right Nothing -> throwNotFound
+        Right Nothing -> throwNotFound
+addMapiCallback _ = throwBadRequest
+
+getCallback :: Handler App App ()
+getCallback = do
+    dbe <- getDB
+    sk <- (fmap $ DTE.decodeUtf8) <$> (getParam "sessionKey")
+    callbackName <- (fmap $ DTE.decodeUtf8) <$> (getParam "callback")
+    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    let conn = xCqlClientState dbe
+    res <- LE.try $ xGetUserBySessionKey (fromJust sk)
+    case res of
+        Left (e :: SomeException) -> do
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+        Right (Just user) -> do
+            res <- LE.try $ xGetCallbackByUsername (DT.pack $ uUsername user) (fromJust callbackName)
+            case res of
+                Left (e :: SomeException) -> do
+                    modifyResponse $ setResponseStatus 500 "Internal Server Error"
+                    writeBS "INTERNAL_SERVER_ERROR"
+                Right u@(Just us) -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespMapiCallback u
+                Right Nothing -> throwNotFound
+        Right Nothing -> throwNotFound
+
+deleteCallback :: Handler App App ()
+deleteCallback = do
+    dbe <- getDB
+    sk <- (fmap $ DTE.decodeUtf8) <$> (getParam "sessionKey")
+    callbackName <- (fmap $ DTE.decodeUtf8) <$> (getParam "callback")
+    pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    let conn = xCqlClientState dbe
+    res <- LE.try $ xGetUserBySessionKey (fromJust sk)
+    case res of
+        Left (e :: SomeException) -> do
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+        Right (Just user) -> do
+            res <- LE.try $ xDeleteCallbackByUsername (DT.pack $ uUsername user) (fromJust callbackName)
+            case res of
+                Left (e :: SomeException) -> do
+                    modifyResponse $ setResponseStatus 500 "Internal Server Error"
+                    writeBS "INTERNAL_SERVER_ERROR"
+                Right () -> do
+                    modifyResponse $ setResponseStatus 200 "Deleted"
+                    writeBS $ "Callback deleted"
 
 getTxByProtocol :: Handler App App ()
 getTxByProtocol = do

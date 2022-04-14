@@ -9,3 +9,4 @@ import Network.Xoken.Node.Service.Chain as X
 import Network.Xoken.Node.Service.Transaction as X
 import Network.Xoken.Node.Service.User as X
 import Network.Xoken.Node.Service.Policy as X
+import Network.Xoken.Node.Service.Callbacks as X

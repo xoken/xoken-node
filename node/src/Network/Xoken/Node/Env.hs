@@ -96,6 +96,7 @@ data BitcoinP2P = BitcoinP2P
     , peerFetchQueue :: !(TQueue BitcoinPeer)
     , fetchBlockPeerMap :: !(TSH.TSHashTable BlockHash BitcoinPeer)
     , policyDataCache :: !(PolicyCache)
+    , callbacksDataCache :: !(HashTable Text MapiCallback)
     }
 
 class HasBitcoinP2P m where

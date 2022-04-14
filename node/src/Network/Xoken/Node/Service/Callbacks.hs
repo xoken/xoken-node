@@ -10,7 +10,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
 
-module Network.Xoken.Node.Service.Policy where
+module Network.Xoken.Node.Service.Callbacks where
 
 import Arivi.P2P.MessageHandler.HandlerTypes (HasNetworkConfig, networkConfig)
 import Arivi.P2P.P2PEnv
@@ -96,104 +96,87 @@ import Text.Read
 import Xoken
 import qualified Xoken.NodeConfig as NC
 
-applyPolicyPatch :: (Maybe MapiPolicyPatch) -> Maybe MapiPolicy -> Maybe MapiPolicy
-applyPolicyPatch patch defaultPolicy = do
-    undefined
-
-xGetPolicyByUsername :: (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> m (Maybe MapiPolicy)
-xGetPolicyByUsername name = do
-    dbe <- getDB
-    lg <- getLogger
-    bp2pEnv <- getBitcoinP2P
-    mpp <- xGetPolicyPatchByUsername name
-    dp <- liftIO $ readIORef $ defaultPolicy $ policyDataCache bp2pEnv
-    let patchedPolicy = applyPolicyPatch mpp dp
-    return patchedPolicy
-
-xGetPolicyPatchByUsername :: (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> m (Maybe MapiPolicyPatch)
-xGetPolicyPatchByUsername name = do
+xGetCallbackByUsername :: (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> DT.Text -> m (Maybe MapiCallback)
+xGetCallbackByUsername name cbName = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
     let conn = xCqlClientState dbe
         context = DT.append (DT.pack "USER/") name
-    cachedPolicy <- liftIO $ H.lookup (userPolicies $ policyDataCache bp2pEnv) (context)
-    case cachedPolicy of
-        Just cp -> return cachedPolicy
+        key = DT.append cbName context
+    cachedCallback <- liftIO $ H.lookup (callbacksDataCache bp2pEnv) (context)
+    case cachedCallback of
+        Just cp -> return cachedCallback
         Nothing -> do
-            let str = "SELECT context, policy_name, value, created_time, policy_expiry_time from xoken.policies where context = ? AND policy_name = ? "
-                qstr =
+            let str = "SELECT context, callback_name, callback_url, auth_type, auth_key, created_time from xoken.callbacks where context = ? AND callback_group = ? AND callback_name = ? "
+            let qstr =
                     str ::
                         Q.QueryString
                             Q.R
-                            (DT.Text, DT.Text)
+                            (DT.Text, DT.Text, DT.Text)
                             ( DT.Text
                             , DT.Text
                             , DT.Text
-                            , UTCTime
+                            , DT.Text
+                            , DT.Text
                             , UTCTime
                             )
-                p = getSimpleQueryParam $ (context, DT.pack "mAPI")
+            let p = getSimpleQueryParam $ (context, DT.pack "mAPI", cbName)
             res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr p)
             case res of
                 Right iop -> do
                     if length iop == 0
                         then return Nothing
                         else do
-                            let (context, policyName, policyValue, createdTime, expiryTime) = iop !! 0
-                            let mpy = A.decode (C.pack $ DT.unpack policyValue) :: Maybe MapiPolicyPatch
-                            return mpy
+                            let (context, callbackName, callbackUrl, authType, authKey, createdTime) = iop !! 0
+                            let mp = Just $ MapiCallback context (DT.pack "mAPI") callbackName callbackUrl authType authKey createdTime
+                            return mp
                 Left (e :: SomeException) -> do
-                    err lg $ LG.msg $ "Error: xGetPolicyByUsername: " ++ show e
+                    err lg $ LG.msg $ "Error: xGetCallbackByUsername: " ++ show e
                     throw KeyValueDBLookupException
 
-xDeletePolicyByUsername :: (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> m ()
-xDeletePolicyByUsername name = do
+xDeleteCallbackByUsername :: (HasXokenNodeEnv env m, MonadIO m) =>  DT.Text -> DT.Text -> m ()
+xDeleteCallbackByUsername name cbName = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
     let conn = xCqlClientState dbe
         context = DT.append (DT.pack "USER/") name
-        str = "DELETE FROM xoken.policies WHERE context= ? and policy_name = ? "
+        key = DT.append cbName context
+        str = "DELETE FROM xoken.callbacks WHERE = ? and policy_name = ? "
         qstr = str :: Q.QueryString Q.W (DT.Text, DT.Text) ()
         par = getSimpleQueryParam (context, DT.pack "mAPI")
     res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr par)
     case res of
         Right _ -> do
-            liftIO $ (H.delete $ userPolicies $ policyDataCache bp2pEnv) context
+            liftIO $ (H.delete $ userPolicies $ policyDataCache bp2pEnv) key
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xDeletePolicyByUsername: " ++ show e
             throw e
 
-xUpdatePolicyByUsername :: (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> MapiPolicyPatch -> m Bool
-xUpdatePolicyByUsername name mapiPolicy = do
+xUpdateCallbackByUsername :: (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> DT.Text -> DT.Text -> DT.Text -> DT.Text -> [DT.Text] -> m (Maybe MapiCallback)
+xUpdateCallbackByUsername name cbName cbUrl authType authToken events = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    res <- LE.try $ xGetPolicyByUsername name
-    case res of
+    tm <- liftIO $ getCurrentTime
+    let str = "INSERT INTO xoken.callbacks ( context, callback_group, callback_name, callback_url, auth_type, auth_key, created_time) VALUES (?,?,?,?,?,?,?)"
+        context = DT.append (DT.pack "USER/") name
+        key = DT.append cbName context
+        qstr = str :: Q.QueryString Q.W (DT.Text, DT.Text, DT.Text, DT.Text, DT.Text, DT.Text, UTCTime) ()
+        skTime = (addUTCTime (nominalDay * 30) tm)
+        par = getSimpleQueryParam (context, DT.pack "mAPI", cbName, cbUrl, authType, authToken, skTime)
+    let conn = xCqlClientState dbe
+    res' <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr par)
+    case res' of
         Right _ -> do
-            tm <- liftIO $ getCurrentTime
-            let mapy = DT.pack $ C.unpack $ A.encode $ mapiPolicy
-            let str = "INSERT INTO xoken.policies ( context, policy_name,value,created_time,policy_expiry_time) VALUES (?,?,?,?,?,?)"
-                context = DT.append (DT.pack "USER/") name
-                qstr = str :: Q.QueryString Q.W (DT.Text, DT.Text, DT.Text, UTCTime, UTCTime) ()
-                skTime = (addUTCTime (nominalDay * 30) tm)
-                par = getSimpleQueryParam (context, DT.pack "mAPI", mapy, skTime, skTime)
-            let conn = xCqlClientState dbe
-            res' <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr par)
-            case res' of
-                Right _ -> do
-                    liftIO $ H.delete (userPolicies $ policyDataCache bp2pEnv) context
-                    liftIO $
-                        H.insert
-                            (userPolicies $ policyDataCache bp2pEnv)
-                            context
-                            mapiPolicy
-                    return True
-                Left (e :: SomeException) -> do
-                    err lg $ LG.msg $ "Error: xUpdatePolicyByUsername (updating data): " ++ show e
-                    throw e
+            liftIO $
+                H.insert
+                    (callbacksDataCache bp2pEnv)
+                    key
+                    (MapiCallback context (DT.pack "mAPI") cbName cbUrl authType authToken skTime)
+            cbRec <- xGetCallbackByUsername name cbName
+            return cbRec
         Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: xUpdatePolicyByUsername: " ++ show e
+            err lg $ LG.msg $ "Error: xUpdatePolicyByUsername (updating data): " ++ show e
             throw e

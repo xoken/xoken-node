@@ -59,6 +59,9 @@ apiRoutes =
     , ("/v1/policy/:username", method GET (withAuthAs "admin" getPolicyByUsername))
     , ("/v1/policy/:username", method DELETE (withAuthAs "admin" deletePolicyByUsername))
     , ("/v1/policy/:username", method PUT (withAuthAs "admin" $ withReq updatePolicyByUsername))
+    , ("/v1/callback", method POST (withAuth  $ withReq addMapiCallback))
+    , ("/v1/callback/:callback", method GET (withAuth getCallback))
+    , ("/v1/callback/:callback", method DELETE (withAuth deleteCallback))
     ]
 
 queryRoutes :: [(B.ByteString, Handler App App ())]

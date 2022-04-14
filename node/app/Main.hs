@@ -366,6 +366,7 @@ defBitcoinP2P nodeCnf ept = do
     userPolicies <- H.new
     defaultPolicy <- newIORef Nothing
     let policyDataCache = PolicyCache defaultPolicy userPolicies
+    callbacksDataCache <- H.new
     --
     return $
         BitcoinP2P
@@ -392,6 +393,7 @@ defBitcoinP2P nodeCnf ept = do
             peerFetchQueue
             blockPeerMap
             policyDataCache
+            callbacksDataCache
 
 --
 

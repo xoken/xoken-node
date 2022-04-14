@@ -276,6 +276,12 @@ data RPCReqParams'
     | DefaultMapiPolicy
         { policy :: MapiPolicy
         }
+    | AddMapiCallback
+        { callbackName :: T.Text
+        , callbackUrl :: T.Text
+        , callBackAuth :: CallbackAuth
+        , events :: [T.Text]
+        }
     deriving (Generic, Show, Hashable, Eq, Serialise, ToJSON)
 
 instance FromJSON RPCReqParams' where
@@ -446,7 +452,9 @@ data RPCResponseBody
     | RespMapiPolicyPatch
         { policyPatch :: Maybe MapiPolicyPatch
         }
-
+    | RespMapiCallback
+        { callback :: Maybe MapiCallback
+        }
     deriving (Generic, Show, Hashable, Eq, Serialise)
 
 instance ToJSON RPCResponseBody where
@@ -559,6 +567,29 @@ instance ToJSON User where
             , "sessionKey" .= sKey
             , "sessionKeyExpiry" .= sKeyExp
             ]
+            
+data CallbackAuth
+    = CallbackBasicAuth
+        { cbAuthType :: String
+        , cbUserName :: String
+        , cbPassword :: String
+        }
+    | CallbackBearerToken
+        { ctAuthType :: String
+        , ctAuthToken :: String
+        }
+    deriving (Generic, Show, Hashable, Eq, Serialise, ToJSON)
+
+data MapiCallback = MapiCallback
+    { mcContext :: T.Text
+    , mcCallbackGroup :: T.Text
+    , mcCallbackName :: T.Text
+    , mcCallbackUrl :: T.Text
+    , mcAuthType :: T.Text
+    , mcAuthKey :: T.Text
+    , mcCreatedTime :: UTCTime
+    }
+    deriving (Generic, Show, Hashable, Eq, Serialise)
 
 data MapiPolicy = MapiPolicy
     { mpMaxTxSize :: Int
