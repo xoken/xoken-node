@@ -253,6 +253,10 @@ data RPCReqParams'
     | RelayMultipleTx
         { rTxns :: [ByteString]
         }
+     | SubmitTx
+        { sRawTx :: ByteString
+        , sCallbackName :: String
+        }
     | AllegoryNameQuery
         { anqName :: [Int]
         , anqIsProducer :: Bool
@@ -425,6 +429,16 @@ data RPCResponseBody
         }
     | RespRelayMultipleTx
         { rrMultipleTx :: [Bool]
+        }
+     | RespSubmitTx
+        { stApiVersion :: String
+        , stTimestamp :: UTCTime
+        , stMinerID :: String
+        , stCurrentHighestBlockHash :: String
+        , stCurrentHighestBlockHeight :: Int
+        , stTxid :: String
+        , stErrorCode :: Int
+        , stErrorDescription :: String
         }
     | RespOutpointByName
         { roName :: [Int]

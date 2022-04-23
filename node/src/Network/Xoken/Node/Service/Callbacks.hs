@@ -108,7 +108,7 @@ xGetCallbackByUsername name cbName = do
     case cachedCallback of
         Just cp -> return cachedCallback
         Nothing -> do
-            let str = "SELECT context, callback_name, callback_url, auth_type, auth_key, created_time from xoken.callbacks where context = ? AND callback_group = ? AND callback_name = ? "
+            let str = "SELECT context, callback_name, callback_url, auth_type, auth_key, events, created_time from xoken.callbacks where context = ? AND callback_group = ? AND callback_name = ? "
             let qstr =
                     str ::
                         Q.QueryString
@@ -119,6 +119,7 @@ xGetCallbackByUsername name cbName = do
                             , DT.Text
                             , DT.Text
                             , DT.Text
+                            , [DT.Text]
                             , UTCTime
                             )
             let p = getSimpleQueryParam $ (context, DT.pack "mAPI", cbName)
@@ -128,14 +129,14 @@ xGetCallbackByUsername name cbName = do
                     if length iop == 0
                         then return Nothing
                         else do
-                            let (context, callbackName, callbackUrl, authType, authKey, createdTime) = iop !! 0
+                            let (context, callbackName, callbackUrl, authType, authKey, events, createdTime) = iop !! 0
                             let mp = Just $ MapiCallback context (DT.pack "mAPI") callbackName callbackUrl authType authKey createdTime
                             return mp
                 Left (e :: SomeException) -> do
                     err lg $ LG.msg $ "Error: xGetCallbackByUsername: " ++ show e
                     throw KeyValueDBLookupException
 
-xDeleteCallbackByUsername :: (HasXokenNodeEnv env m, MonadIO m) =>  DT.Text -> DT.Text -> m ()
+xDeleteCallbackByUsername :: (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> DT.Text -> m ()
 xDeleteCallbackByUsername name cbName = do
     dbe <- getDB
     lg <- getLogger
@@ -160,12 +161,24 @@ xUpdateCallbackByUsername name cbName cbUrl authType authToken events = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
     tm <- liftIO $ getCurrentTime
-    let str = "INSERT INTO xoken.callbacks ( context, callback_group, callback_name, callback_url, auth_type, auth_key, created_time) VALUES (?,?,?,?,?,?,?)"
+    mapM_
+        ( \ev -> do
+            let evs = DT.unpack ev
+            case evs of
+                "merkleProofSingle" -> return ()
+                "merkleProofComposite" -> return ()
+                "doubleSpendingCheck" -> return ()
+                "ancestorsDiscovered" -> return ()
+                _ -> throw InvalidMessageTypeException
+        )
+        events
+
+    let str = "INSERT INTO xoken.callbacks ( context, callback_group, callback_name, callback_url, auth_type, auth_key, events, created_time) VALUES (?,?,?,?,?,?,?,?)"
         context = DT.append (DT.pack "USER/") name
         key = DT.append cbName context
-        qstr = str :: Q.QueryString Q.W (DT.Text, DT.Text, DT.Text, DT.Text, DT.Text, DT.Text, UTCTime) ()
+        qstr = str :: Q.QueryString Q.W (DT.Text, DT.Text, DT.Text, DT.Text, DT.Text, DT.Text, [DT.Text], UTCTime) ()
         skTime = (addUTCTime (nominalDay * 30) tm)
-        par = getSimpleQueryParam (context, DT.pack "mAPI", cbName, cbUrl, authType, authToken, skTime)
+        par = getSimpleQueryParam (context, DT.pack "mAPI", cbName, cbUrl, authType, authToken, events, skTime)
     let conn = xCqlClientState dbe
     res' <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr par)
     case res' of

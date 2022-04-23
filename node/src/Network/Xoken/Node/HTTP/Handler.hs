@@ -508,6 +508,38 @@ getOutpointsByName = do
             writeBS "INTERNAL_SERVER_ERROR"
         Right ops -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespAllegoryNameBranch ops
 
+submitTx :: RPCReqParams' -> Handler App App ()
+submitTx SubmitTx{..} = do
+    pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    sk <- (fmap $ DTE.decodeUtf8) <$> (getParam "sessionKey")
+    res' <- LE.try $ xGetUserBySessionKey (fromJust sk)
+    case res' of
+        Left (e :: SomeException) -> do
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+        Right (Just user) -> do
+            res <- LE.try $ xSubmitTx sRawTx (DT.pack $ uUsername user) (DT.pack sCallbackName)
+            case res of
+                Left (e :: BlockSyncException) -> do
+                    case e of
+                        ParentProcessingException e -> do
+                            modifyResponse $ setResponseStatus 400 "Bad Request"
+                            writeBS $ "Rejected relay: exception while processing parent(s) of transaction: " <> S.pack e
+                        RelayFailureException -> do
+                            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+                            writeBS "Failed to relay transaction to any peer"
+                        DoubleSpendException ins -> do
+                            modifyResponse $ setResponseStatus 400 "Bad Request"
+                            writeBS $ BC.pack $ "Invalid inputs, double spending at indices: " <> (show ins)
+                        _ -> do
+                            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+                            writeBS "INTERNAL_SERVER_ERROR"
+                Right ops -> do
+                    curtm <- liftIO $ getCurrentTime
+                    writeBS $ BSL.toStrict $ encodeResp pretty $ RespSubmitTx "apiversion" curtm "minerid" "highestblockhash" 740123 "txid" 0 "errordesc"
+        Right Nothing -> throwNotFound
+submitTx _ = throwBadRequest
+
 relayTx :: RPCReqParams' -> Handler App App ()
 relayTx RelayTx{..} = do
     pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")

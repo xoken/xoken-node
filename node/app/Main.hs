@@ -237,6 +237,7 @@ runThreads config nodeConf bp2p conn lg certPaths = do
         )
     liftIO $ destroyAllResources $ pool gdbState
     liftIO $ putStrLn $ "node recovering from fatal DB connection failure!"
+    liftIO $ threadDelay (10 * 1000000)
     return ()
 
 runSyncStatusChecker :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()

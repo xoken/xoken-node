@@ -109,7 +109,7 @@ data BlockSyncException
     | BlockAlreadySyncedException
     | ParentProcessingException String
     | RelayFailureException
-    | DoubleSpendException [Int]
+    | DoubleSpendException OutPoint
     | UnexpectedDeadlockException
     deriving (Show)
 
@@ -169,7 +169,7 @@ buildVersion net nonce height loc rmt time =
 
 -- | Our protocol version.
 myVersion :: Word32
-myVersion = 70015
+myVersion = 70016
 
 msgOrder :: Message -> Message -> Ordering
 msgOrder m1 m2 = do

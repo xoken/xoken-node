@@ -852,6 +852,7 @@ runTMTDaemon = do
                             Nothing -> return ()
             Left (e :: SomeException) -> do
                 err lg $ LG.msg $ "Error invalid while querying DB: " ++ show e
+                throw e
 
 updateBlocks :: (HasLogger m, HasDatabaseHandles m, MonadIO m) => BlockHash -> BlockHeight -> Int -> Int -> Tx -> m ()
 updateBlocks bhash blkht bsize txcount cbase = do
