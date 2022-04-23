@@ -162,7 +162,7 @@ runBlockSync =
             Right (a) -> return ()
             Left (e :: SomeException) -> do
                 err lg $ msg $ (val "[ERROR] FATAL error in runBlockSync ") +++ (show e)
-		throw e
+                throw e
 
 setupSeedPeerConnection :: (HasXokenNodeEnv env m, MonadIO m) => m ()
 setupSeedPeerConnection =

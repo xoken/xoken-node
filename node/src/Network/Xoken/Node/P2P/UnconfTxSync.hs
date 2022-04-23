@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -5,15 +6,14 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TupleSections #-}
-{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE TypeFamilies #-}
 
-module Network.Xoken.Node.P2P.UnconfTxSync
-    ( processUnconfTransaction
-    , processTxGetData
-    , runEpochSwitcher
-    ) where
+module Network.Xoken.Node.P2P.UnconfTxSync (
+    processUnconfTransaction,
+    processTxGetData,
+    runEpochSwitcher,
+) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (mapConcurrently, race, race_)
@@ -54,9 +54,8 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as DTE
 import Data.Time.Clock
-import Data.Time.Clock
-import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
 import Data.Time.Clock.POSIX
+import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
 import Data.Time.LocalTime
 import Data.Word
 import Database.XCQL.Protocol as Q
@@ -84,7 +83,7 @@ import Network.Xoken.Transaction.Common
 import Network.Xoken.Util
 import StmContainers.Map as SM
 import Streamly
-import Streamly.Prelude ((|:), nil)
+import Streamly.Prelude (nil, (|:))
 import qualified Streamly.Prelude as S
 import System.Logger as LG
 import System.Logger.Message
@@ -104,9 +103,9 @@ processTxGetData pr txHash = do
             bp2pEnv <- getBitcoinP2P
             tuple <-
                 liftIO $
-                TSH.lookup
-                    (unconfirmedTxCache bp2pEnv)
-                    (getTxShortHash (TxHash txHash) (unconfirmedTxCacheKeyBits $ nodeConfig bp2pEnv))
+                    TSH.lookup
+                        (unconfirmedTxCache bp2pEnv)
+                        (getTxShortHash (TxHash txHash) (unconfirmedTxCacheKeyBits $ nodeConfig bp2pEnv))
             case tuple of
                 Just (st, fh) ->
                     if st == False
@@ -114,9 +113,9 @@ processTxGetData pr txHash = do
                             liftIO $ threadDelay (1000000 * 30)
                             tuple2 <-
                                 liftIO $
-                                TSH.lookup
-                                    (unconfirmedTxCache bp2pEnv)
-                                    (getTxShortHash (TxHash txHash) (unconfirmedTxCacheKeyBits $ nodeConfig bp2pEnv))
+                                    TSH.lookup
+                                        (unconfirmedTxCache bp2pEnv)
+                                        (getTxShortHash (TxHash txHash) (unconfirmedTxCacheKeyBits $ nodeConfig bp2pEnv))
                             case tuple2 of
                                 Just (st2, fh2) ->
                                     if st2 == False
@@ -196,12 +195,12 @@ runEpochSwitcher =
         return ()
 -}
 commitEpochScriptHashOutputs ::
-       (HasLogger m, HasBitcoinP2P m, MonadIO m)
-    => XCqlClientState
-    -> Bool -- epoch
-    -> Text -- scriptHash
-    -> (Text, Int32) -- output (txid, index)
-    -> m ()
+    (HasLogger m, HasBitcoinP2P m, MonadIO m) =>
+    XCqlClientState ->
+    Bool -> -- epoch
+    Text -> -- scriptHash
+    (Text, Int32) -> -- output (txid, index)
+    m ()
 commitEpochScriptHashOutputs conn epoch sh output = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
@@ -219,29 +218,34 @@ commitEpochScriptHashOutputs conn epoch sh output = do
             throw KeyValueDBInsertException
 
 insertEpochTxIdOutputs ::
-       (HasLogger m, MonadIO m)
-    => XCqlClientState
-    -> Bool
-    -> (Text, Int32)
-    -> Text
-    -> Text
-    -> Bool
-    -> [((Text, Int32), Int32, (Text, Int64))]
-    -> Int64
-    -> m ()
+    (HasLogger m, MonadIO m) =>
+    XCqlClientState ->
+    Bool ->
+    (Text, Int32) ->
+    Text ->
+    Text ->
+    Bool ->
+    [((Text, Int32), Int32, (Text, Int64))] ->
+    Int64 ->
+    m ()
 insertEpochTxIdOutputs conn epoch (txid, outputIndex) address scriptHash isRecv other value = do
     lg <- getLogger
     let str =
             "INSERT INTO xoken.ep_txid_outputs (epoch,txid,output_index,address,script_hash,is_recv,other,value) VALUES (?,?,?,?,?,?,?,?)"
         qstr =
-            str :: Q.QueryString Q.W ( Bool
-                                     , Text
-                                     , Int32
-                                     , Text
-                                     , Text
-                                     , Bool
-                                     , [((Text, Int32), Int32, (Text, Int64))]
-                                     , Int64) ()
+            str ::
+                Q.QueryString
+                    Q.W
+                    ( Bool
+                    , Text
+                    , Int32
+                    , Text
+                    , Text
+                    , Bool
+                    , [((Text, Int32), Int32, (Text, Int64))]
+                    , Int64
+                    )
+                    ()
         par = getSimpleQueryParam (epoch, txid, outputIndex, address, scriptHash, isRecv, other, value)
     res <- liftIO $ try $ write conn $ (Q.RqQuery $ Q.Query qstr par)
     case res of
@@ -251,14 +255,14 @@ insertEpochTxIdOutputs conn epoch (txid, outputIndex) address scriptHash isRecv 
             throw KeyValueDBInsertException
 
 commitUnconfirmedScriptOutputProtocol ::
-       (HasBitcoinP2P m, HasLogger m, MonadIO m)
-    => XCqlClientState
-    -> Bool
-    -> Text
-    -> (Text, Int32)
-    -> Int64
-    -> Int32
-    -> m ()
+    (HasBitcoinP2P m, HasLogger m, MonadIO m) =>
+    XCqlClientState ->
+    Bool ->
+    Text ->
+    (Text, Int32) ->
+    Int64 ->
+    Int32 ->
+    m ()
 commitUnconfirmedScriptOutputProtocol conn epoch protocol (txid, output_index) fees size = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
@@ -290,65 +294,88 @@ processUnconfTransaction tx = do
     let inAddrs = zip (txIn tx) [0 :: Int32 ..]
     let outAddrs =
             zip3
-                (map (\y ->
-                          case scriptToAddressBS $ scriptOutput y of
-                              Left e -> ""
-                              Right os ->
-                                  case addrToString net os of
-                                      Nothing -> ""
-                                      Just addr -> addr)
-                     (txOut tx))
+                ( map
+                    ( \y ->
+                        case scriptToAddressBS $ scriptOutput y of
+                            Left e -> ""
+                            Right os ->
+                                case addrToString net os of
+                                    Nothing -> ""
+                                    Just addr -> addr
+                    )
+                    (txOut tx)
+                )
                 (txOut tx)
                 [0 :: Int32 ..]
+
+    mapM_
+        ( \(a, o, i) -> do
+            let sh = txHashToHex $ TxHash $ sha256 (scriptOutput o)
+            let output = (txHashToHex $ txHash tx, i)
+            let bsh = B16.encode $ scriptOutput o
+            let (op, rem) = B.splitAt 2 bsh
+            let (op_false, op_return, remD) =
+                    if op == "6a"
+                        then ("00", op, rem)
+                        else (\(a, b) -> (op, a, b)) $ B.splitAt 2 rem
+            insertTxIdOutputs output a sh (fromIntegral $ outValue o)
+        )
+        outAddrs
+
+    debug lg $ LG.msg $ "Processing unconfirmed transaction <committed outputs> :" ++ show txhs
+    
     !inputs <-
         mapM
-            (\(b, j) -> do
-                 tuple <- return Nothing
-                    --  liftIO $
-                    --  TSH.lookup
-                    --      (txOutputValuesCache bp2pEnv)
-                    --      (getTxShortHash (txHash tx) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
-                 val <-
-                     case tuple of
-                         Just (ftxh, indexvals) ->
-                             if ftxh == (outPointHash $ prevOutput b)
-                                 then do
-                                     let rr =
-                                             head $
-                                             filter
-                                                 (\x -> fst x == (fromIntegral $ outPointIndex $ prevOutput b))
-                                                 indexvals
-                                     return $ snd $ rr
-                                 else do
-                                     valFromDB <-
-                                         liftIO $
-                                         getSatsValueFromOutpoint
-                                             conn
-                                             (txSynchronizer bp2pEnv)
-                                             lg
-                                             net
-                                             (prevOutput b)
-                                             (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
-                                     return valFromDB
-                         Nothing -> do
-                             valFromDB <-
-                                 liftIO $
-                                 getSatsValueFromOutpoint
-                                     conn
-                                     (txSynchronizer bp2pEnv)
-                                     lg
-                                     net
-                                     (prevOutput b)
-                                     (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
-                             return valFromDB
-                 return
-                     ((txHashToHex $ outPointHash $ prevOutput b, fromIntegral $ outPointIndex $ prevOutput b), j, val))
+            ( \(b, j) -> do
+                tuple <- return Nothing
+                --  liftIO $
+                --  TSH.lookup
+                --      (txOutputValuesCache bp2pEnv)
+                --      (getTxShortHash (txHash tx) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
+                val <-
+                    case tuple of
+                        Just (ftxh, indexvals) ->
+                            if ftxh == (outPointHash $ prevOutput b)
+                                then do
+                                    let rr =
+                                            head $
+                                                filter
+                                                    (\x -> fst x == (fromIntegral $ outPointIndex $ prevOutput b))
+                                                    indexvals
+                                    return $ snd $ rr
+                                else do
+                                    valFromDB <-
+                                        liftIO $
+                                            getSatsValueFromOutpoint
+                                                conn
+                                                (txSynchronizer bp2pEnv)
+                                                lg
+                                                net
+                                                (prevOutput b)
+                                                (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
+                                    return valFromDB
+                        Nothing -> do
+                            valFromDB <-
+                                liftIO $
+                                    getSatsValueFromOutpoint
+                                        conn
+                                        (txSynchronizer bp2pEnv)
+                                        lg
+                                        net
+                                        (prevOutput b)
+                                        (txProcInputDependenciesWait $ nodeConfig bp2pEnv)
+                            return valFromDB
+                return
+                    ((txHashToHex $ outPointHash $ prevOutput b, fromIntegral $ outPointIndex $ prevOutput b), j, val)
+            )
             inAddrs
     let ovs =
             map
-                (\(a, o, i) ->
-                     ( fromIntegral $ i
-                     , (a, (txHashToHex $ TxHash $ sha256 (scriptOutput o)), fromIntegral $ outValue o)))
+                ( \(a, o, i) ->
+                    ( fromIntegral $ i
+                    , (a, (txHashToHex $ TxHash $ sha256 (scriptOutput o)), fromIntegral $ outValue o)
+                    )
+                )
                 outAddrs
     --
     let ipSum = foldl (+) 0 $ (\(_, _, (_, _, val)) -> val) <$> inputs
@@ -364,55 +391,59 @@ processUnconfTransaction tx = do
     --         (getTxShortHash (txHash tx) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
     --         (txHash tx, ovs)
     --
+
     mapM_
-        (\(a, o, i) -> do
-             let sh = txHashToHex $ TxHash $ sha256 (scriptOutput o)
-             let output = (txHashToHex $ txHash tx, i)
-             let bsh = B16.encode $ scriptOutput o
-             let (op, rem) = B.splitAt 2 bsh
-             let (op_false, op_return, remD) =
-                     if op == "6a"
-                         then ("00", op, rem)
-                         else (\(a, b) -> (op, a, b)) $ B.splitAt 2 rem
-             outputsExist <- checkOutputDataExists output
-             unless outputsExist $ do
-                 commitScriptHashOutputs conn sh output Nothing
-                 case decodeOutputBS $ scriptOutput o of
-                     Right so ->
-                         if isPayPK so
-                             then commitScriptHashOutputs conn a output Nothing
-                             else return ()
-                     Left e -> return ()
-                 when (op_false == "00" && op_return == "6a") $ do
-                     props <-
-                         case runGet (getPropsG 3) (fst $ B16.decode remD) of
-                             Right p -> return p
-                             Left str -> do
-                                 liftIO $ err lg $ LG.msg ("Error: Getting protocol name " ++ show str)
-                                 return []
-                     when (isJust (headMaybe props)) $ do
-                         let protocol = snd <$> props
-                             prot = tail $ L.inits protocol
-                         mapM_
-                             (\p ->
-                                  commitScriptOutputProtocol
-                                      conn
-                                      (T.intercalate "." p)
-                                      output
-                                      Nothing
-                                      fees
-                                      (fromIntegral count))
-                             prot
-             insertTxIdOutputs output a sh (fromIntegral $ outValue o))
+        ( \(a, o, i) -> do
+            let sh = txHashToHex $ TxHash $ sha256 (scriptOutput o)
+            let output = (txHashToHex $ txHash tx, i)
+            let bsh = B16.encode $ scriptOutput o
+            let (op, rem) = B.splitAt 2 bsh
+            let (op_false, op_return, remD) =
+                    if op == "6a"
+                        then ("00", op, rem)
+                        else (\(a, b) -> (op, a, b)) $ B.splitAt 2 rem
+            -- outputsExist <- checkOutputDataExists output
+            -- unless outputsExist $ do
+            commitScriptHashOutputs conn sh output Nothing
+            case decodeOutputBS $ scriptOutput o of
+                Right so ->
+                    if isPayPK so
+                        then commitScriptHashOutputs conn a output Nothing
+                        else return ()
+                Left e -> return ()
+            when (op_false == "00" && op_return == "6a") $ do
+                props <-
+                    case runGet (getPropsG 3) (fst $ B16.decode remD) of
+                        Right p -> return p
+                        Left str -> do
+                            liftIO $ err lg $ LG.msg ("Error: Getting protocol name " ++ show str)
+                            return []
+                when (isJust (headMaybe props)) $ do
+                    let protocol = snd <$> props
+                        prot = tail $ L.inits protocol
+                    mapM_
+                        ( \p ->
+                            commitScriptOutputProtocol
+                                conn
+                                (T.intercalate "." p)
+                                output
+                                Nothing
+                                fees
+                                (fromIntegral count)
+                        )
+                        prot
+        )
         outAddrs
-    debug lg $ LG.msg $ "Processing unconfirmed transaction <committed outputs> :" ++ show txhs
+
+
     mapM_
-        (\((o, i), (a, sh)) -> do
-             let prevOutpoint = (txHashToHex $ outPointHash $ prevOutput o, fromIntegral $ outPointIndex $ prevOutput o)
-             let output = (txHashToHex $ txHash tx, i)
-             let spendInfo = (\ov -> ((txHashToHex $ txHash tx, fromIntegral $ fst ov), i, snd $ ov)) <$> ovs
-             -- this will fail to update for coinbase txns, its cool
-             updateSpendInfoOutputs (fst prevOutpoint) (snd prevOutpoint) (txHashToHex txhs, i))
+        ( \((o, i), (a, sh)) -> do
+            let prevOutpoint = (txHashToHex $ outPointHash $ prevOutput o, fromIntegral $ outPointIndex $ prevOutput o)
+            let output = (txHashToHex $ txHash tx, i)
+            let spendInfo = (\ov -> ((txHashToHex $ txHash tx, fromIntegral $ fst ov), i, snd $ ov)) <$> ovs
+            -- this will fail to update for coinbase txns, its cool
+            updateSpendInfoOutputs (fst prevOutpoint) (snd prevOutpoint) (txHashToHex txhs, i)
+        )
         (zip inAddrs (map (\x -> (fst3 $ thd3 x, snd3 $ thd3 x)) inputs))
     debug lg $ LG.msg $ "Processing unconfirmed transaction <updated inputs> :" ++ show txhs
     let str = "UPDATE xoken.transactions SET tx_serialized=?, inputs=?, fees=? WHERE tx_id=?"
@@ -422,10 +453,11 @@ processUnconfTransaction tx = do
         smb a = a * 16 * 1000 * 1000
         segments =
             let (d, m) = divMod count (smb 1)
-             in d +
-                (if m == 0
-                     then 0
-                     else 1)
+             in d
+                    + ( if m == 0
+                            then 0
+                            else 1
+                      )
         fst =
             if segments > 1
                 then (LC.replicate 32 'f') <> (BSL.fromStrict $ DTE.encodeUtf8 $ T.pack $ show $ segments)
@@ -441,23 +473,25 @@ processUnconfTransaction tx = do
     when (segments > 1) $ do
         let segmentsData = chunksOf (smb 1) serbs
         mapM_
-            (\(seg, i) -> do
-                 let par = getSimpleQueryParam (Blob seg, [], fees, (txHashToHex $ txHash tx) <> (T.pack $ show i))
-                 queryI <- liftIO $ queryPrepared conn (Q.RqPrepare $ Q.Prepare qstr)
-                 res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryI par)
-                 case res of
-                     Right _ -> return ()
-                     Left (e :: SomeException) -> do
-                         liftIO $ err lg $ LG.msg ("Error: INSERTing into 'xoken.ep_transactions': " ++ show e)
-                         throw KeyValueDBInsertException)
+            ( \(seg, i) -> do
+                let par = getSimpleQueryParam (Blob seg, [], fees, (txHashToHex $ txHash tx) <> (T.pack $ show i))
+                queryI <- liftIO $ queryPrepared conn (Q.RqPrepare $ Q.Prepare qstr)
+                res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryI par)
+                case res of
+                    Right _ -> return ()
+                    Left (e :: SomeException) -> do
+                        liftIO $ err lg $ LG.msg ("Error: INSERTing into 'xoken.ep_transactions': " ++ show e)
+                        throw KeyValueDBInsertException
+            )
             (zip segmentsData [1 ..])
     --
     debug lg $ LG.msg $ "Processing unconfirmed transaction <end> :" ++ show txhs
-    -- vall <- liftIO $ TSH.lookup (txSynchronizer bp2pEnv) (txHash tx)
-    -- case vall of
-    --     Just ev -> liftIO $ putMVar ev () --EV.set ev
-    --     Nothing -> return ()
-    --
+
+-- vall <- liftIO $ TSH.lookup (txSynchronizer bp2pEnv) (txHash tx)
+-- case vall of
+--     Just ev -> liftIO $ putMVar ev () --EV.set ev
+--     Nothing -> return ()
+--
 
 convertToScriptHash :: Network -> String -> Maybe String
 convertToScriptHash net s = do
