@@ -90,6 +90,7 @@ import Network.Xoken.Node.P2P.BlockSync
 import Network.Xoken.Node.P2P.Common
 import Network.Xoken.Node.P2P.Types
 import Network.Xoken.Node.P2P.UnconfTxSync
+import Network.Xoken.Node.Service.Policy
 import Network.Xoken.Util (bsToInteger, integerToBS)
 import Numeric (showHex)
 import System.Logger as LG
@@ -474,7 +475,7 @@ xRelayTx rawTx = do
                                                         let cout =
                                                                 (txOut txn)
                                                                     !! fromIntegral (outPointIndex $ prevOutput x)
-                                                        case (decodeOutputBS $ scriptOutput cout) of
+                                                        case (decodeOutputScript $ scriptOutput cout) of
                                                             Right (so) -> do
                                                                 return $ Just (so, outValue cout, prevOutput x)
                                                             Left (e) -> do
@@ -499,7 +500,7 @@ xRelayTx rawTx = do
                         (prevOutput <$> txIn tx)
                     -- unless (L.null spentInputs) $ throw $ DoubleSpendException spentInputs
                     debug lg $ LG.msg $ val $ "transaction verified - broadcasting tx"
-                    ingestRes <- LE.try $ processUnconfTransaction tx
+                    ingestRes <- LE.try $ processUnconfTransaction tx (100) -- TODO: a dummy min fee for now
                     case ingestRes of
                         Left (e :: SomeException) -> do
                             err lg $
@@ -564,9 +565,57 @@ xSubmitTx rawTx userId callbackName = do
                                             True -> throw $ DoubleSpendException outpoint
                         )
                         (prevOutput <$> txIn tx)
+                    -- verify against users fee policy
+                    userPolicy <- xGetPolicyByUsername userId
+                    feeReq <-
+                        case userPolicy of
+                            Just upol -> do
+                                let feemap = getOpcodeFeeMap (pfOpcodes $ mpFees upol)
+                                ife <-
+                                    mapM
+                                        ( \inp -> do
+                                            let scrp = scriptInput inp
+                                            case (decodeOutputScript scrp) of
+                                                Right (so) -> do
+                                                    let ff =
+                                                            L.map
+                                                                ( \scrop -> do
+                                                                    case M.lookup scrop feemap of
+                                                                        Just v -> v
+                                                                        Nothing -> 0
+                                                                )
+                                                                (scriptOps so)
+                                                    return $ sum ff
+                                                Left (e) -> do
+                                                    err lg $ LG.msg $ "error decoding output:" ++ show e
+                                                    return 0
+                                        )
+                                        (txIn tx)
+                                ofe <-
+                                    mapM
+                                        ( \out -> do
+                                            let scrp = scriptOutput out
+                                            case (decodeOutputScript scrp) of
+                                                Right (so) -> do
+                                                    let ff =
+                                                            L.map
+                                                                ( \scrop -> do
+                                                                    case M.lookup scrop feemap of
+                                                                        Just v -> v
+                                                                        Nothing -> 0
+                                                                )
+                                                                (scriptOps so)
+                                                    return $ sum ff
+                                                Left (e) -> do
+                                                    err lg $ LG.msg $ "error decoding output:" ++ show e
+                                                    return 0
+                                        )
+                                        (txOut tx)
+                                return $ (sum ife) + (sum ofe)
+
                     -- unless (L.null spentInputs) $ throw $ DoubleSpendException spentInputs
                     debug lg $ LG.msg $ val $ "transaction verified - broadcasting tx"
-                    ingestRes <- LE.try $ processUnconfTransaction tx
+                    ingestRes <- LE.try $ processUnconfTransaction tx (fromIntegral feeReq)
                     case ingestRes of
                         Left (e :: SomeException) -> do
                             err lg $
@@ -606,6 +655,119 @@ xSubmitTx rawTx userId callbackName = do
                 Nothing -> do
                     err lg $ LG.msg $ val $ "error decoding rawTx (2)"
                     return $ False
+
+getOpcodeFeeMap :: FeeOpcodes -> M.Map ScriptOp Int
+getOpcodeFeeMap fo = do
+    M.fromList
+        [ (OP_0, fsSatoshis $ op0 fo)
+        , (OP_1NEGATE, fsSatoshis $ op1negate fo)
+        , (OP_RESERVED, fsSatoshis $ opReserved fo)
+        , (OP_1, fsSatoshis $ op1 fo)
+        , (OP_2, fsSatoshis $ op2 fo)
+        , (OP_3, fsSatoshis $ op3 fo)
+        , (OP_4, fsSatoshis $ op4 fo)
+        , (OP_5, fsSatoshis $ op5 fo)
+        , (OP_6, fsSatoshis $ op6 fo)
+        , (OP_7, fsSatoshis $ op7 fo)
+        , (OP_8, fsSatoshis $ op8 fo)
+        , (OP_9, fsSatoshis $ op9 fo)
+        , (OP_10, fsSatoshis $ op10 fo)
+        , (OP_11, fsSatoshis $ op11 fo)
+        , (OP_12, fsSatoshis $ op12 fo)
+        , (OP_13, fsSatoshis $ op13 fo)
+        , (OP_14, fsSatoshis $ op14 fo)
+        , (OP_15, fsSatoshis $ op15 fo)
+        , (OP_16, fsSatoshis $ op16 fo)
+        , -- Flow control
+          (OP_NOP, fsSatoshis $ opNop fo)
+        , (OP_VER, fsSatoshis $ opVer fo) -- reserved
+        , (OP_IF, fsSatoshis $ opIf fo)
+        , (OP_NOTIF, fsSatoshis $ opNotif fo)
+        , (OP_VERIF, fsSatoshis $ opVerif fo) -- resreved
+        , (OP_VERNOTIF, fsSatoshis $ opVerNotif fo) -- reserved
+        , (OP_ELSE, fsSatoshis $ opElse fo)
+        , (OP_ENDIF, fsSatoshis $ opEndif fo)
+        , (OP_VERIFY, fsSatoshis $ opVerify fo)
+        , (OP_RETURN, fsSatoshis $ opReturn fo)
+        , -- Stack operations
+          (OP_TOALTSTACK, fsSatoshis $ opToAltStack fo)
+        , (OP_FROMALTSTACK, fsSatoshis $ opFromAltStack fo)
+        , (OP_IFDUP, fsSatoshis $ opIfDup fo)
+        , (OP_DEPTH, fsSatoshis $ opDepth fo)
+        , (OP_DROP, fsSatoshis $ opDrop fo)
+        , (OP_DUP, fsSatoshis $ opDup fo)
+        , (OP_NIP, fsSatoshis $ opNip fo)
+        , (OP_OVER, fsSatoshis $ opOver fo)
+        , (OP_PICK, fsSatoshis $ opPick fo)
+        , (OP_ROLL, fsSatoshis $ opRoll fo)
+        , (OP_ROT, fsSatoshis $ opRot fo)
+        , (OP_SWAP, fsSatoshis $ opSwap fo)
+        , (OP_TUCK, fsSatoshis $ opTuck fo)
+        , (OP_2DROP, fsSatoshis $ op2Drop fo)
+        , (OP_2DUP, fsSatoshis $ op2Dup fo)
+        , (OP_3DUP, fsSatoshis $ op3Dup fo)
+        , (OP_2OVER, fsSatoshis $ op2Over fo)
+        , (OP_2ROT, fsSatoshis $ op2Rot fo)
+        , (OP_2SWAP, fsSatoshis $ op2Swap fo)
+        , -- Splice
+          (OP_CAT, fsSatoshis $ opCat fo)
+        , (OP_SUBSTR, fsSatoshis $ opSubstr fo)
+        , (OP_LEFT, fsSatoshis $ opLeft fo)
+        , (OP_RIGHT, fsSatoshis $ opRight fo)
+        , (OP_SIZE, fsSatoshis $ opSize fo)
+        , -- Bitwise logic
+          (OP_INVERT, fsSatoshis $ opInvert fo)
+        , (OP_AND, fsSatoshis $ opAnd fo)
+        , (OP_OR, fsSatoshis $ opOr fo)
+        , (OP_XOR, fsSatoshis $ opXor fo)
+        , (OP_EQUAL, fsSatoshis $ opEqual fo)
+        , (OP_EQUALVERIFY, fsSatoshis $ opEqualVerify fo)
+        , (OP_RESERVED1, fsSatoshis $ opReserved1 fo)
+        , (OP_RESERVED2, fsSatoshis $ opReserved2 fo)
+        , -- Arithmetic
+          (OP_1ADD, fsSatoshis $ op1Add fo)
+        , (OP_1SUB, fsSatoshis $ op1Sub fo)
+        , (OP_2MUL, fsSatoshis $ op2Mul fo)
+        , (OP_2DIV, fsSatoshis $ op2Div fo)
+        , (OP_NEGATE, fsSatoshis $ opNegate fo)
+        , (OP_ABS, fsSatoshis $ opAbs fo)
+        , (OP_NOT, fsSatoshis $ opNot fo)
+        , (OP_0NOTEQUAL, fsSatoshis $ op0NotEqual fo)
+        , (OP_ADD, fsSatoshis $ opAdd fo)
+        , (OP_SUB, fsSatoshis $ opSub fo)
+        , (OP_MUL, fsSatoshis $ opMul fo)
+        , (OP_DIV, fsSatoshis $ opDiv fo)
+        , (OP_MOD, fsSatoshis $ opMod fo)
+        , (OP_LSHIFT, fsSatoshis $ opLShift fo)
+        , (OP_RSHIFT, fsSatoshis $ opRShift fo)
+        , (OP_BOOLAND, fsSatoshis $ opBoolAnd fo)
+        , (OP_BOOLOR, fsSatoshis $ opBoolOr fo)
+        , (OP_NUMEQUAL, fsSatoshis $ opNumEqual fo)
+        , (OP_NUMEQUALVERIFY, fsSatoshis $ opNumEqualVefify fo)
+        , (OP_NUMNOTEQUAL, fsSatoshis $ opNumNotEqual fo)
+        , (OP_LESSTHAN, fsSatoshis $ opLessThan fo)
+        , (OP_GREATERTHAN, fsSatoshis $ opGreaterThan fo)
+        , (OP_LESSTHANOREQUAL, fsSatoshis $ opLessThanOrEqual fo)
+        , (OP_GREATERTHANOREQUAL, fsSatoshis $ opGreaterThanOrEqual fo)
+        , (OP_MIN, fsSatoshis $ opMin fo)
+        , (OP_MAX, fsSatoshis $ opMax fo)
+        , (OP_WITHIN, fsSatoshis $ opWithin fo)
+        , -- Crypto
+          (OP_RIPEMD160, fsSatoshis $ opRipemd160 fo)
+        , (OP_SHA1, fsSatoshis $ opSha1 fo)
+        , (OP_SHA256, fsSatoshis $ opSha256 fo)
+        , (OP_HASH160, fsSatoshis $ opHash160 fo)
+        , (OP_HASH256, fsSatoshis $ opHash256 fo)
+        , (OP_CODESEPARATOR, fsSatoshis $ opCodeSeperator fo)
+        , (OP_CHECKSIG, fsSatoshis $ opCheckSig fo)
+        , (OP_CHECKSIGVERIFY, fsSatoshis $ opCheckSigVefify fo)
+        , (OP_CHECKMULTISIG, fsSatoshis $ opCheckMultiSig fo)
+        , (OP_CHECKMULTISIGVERIFY, fsSatoshis $ opCheckMultiSigVerify fo)
+        , -- Expansion
+          -- Other
+          (OP_PUBKEYHASH, fsSatoshis $ opPubKeyHash fo)
+        , (OP_PUBKEY, fsSatoshis $ opPubKey fo)
+        ]
 
 deleteDuplicates ::
     (ResultWithCursor r a -> ResultWithCursor r a -> Bool) ->

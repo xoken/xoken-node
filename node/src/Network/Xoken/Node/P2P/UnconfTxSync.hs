@@ -280,8 +280,8 @@ commitUnconfirmedScriptOutputProtocol conn epoch protocol (txid, output_index) f
             err lg $ LG.msg $ "Error: INSERTing into 'ep_script_output_protocol: " ++ show e
             throw KeyValueDBInsertException
 
-processUnconfTransaction :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Tx -> m ()
-processUnconfTransaction tx = do
+processUnconfTransaction :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Tx -> Int64 -> m ()
+processUnconfTransaction tx feeReq = do
     dbe' <- getDB
     bp2pEnv <- getBitcoinP2P
     lg <- getLogger
@@ -308,21 +308,21 @@ processUnconfTransaction tx = do
                 (txOut tx)
                 [0 :: Int32 ..]
 
-    mapM_
-        ( \(a, o, i) -> do
-            let sh = txHashToHex $ TxHash $ sha256 (scriptOutput o)
-            let output = (txHashToHex $ txHash tx, i)
-            let bsh = B16.encode $ scriptOutput o
-            let (op, rem) = B.splitAt 2 bsh
-            let (op_false, op_return, remD) =
-                    if op == "6a"
-                        then ("00", op, rem)
-                        else (\(a, b) -> (op, a, b)) $ B.splitAt 2 rem
-            insertTxIdOutputs output a sh (fromIntegral $ outValue o)
-        )
-        outAddrs
+    -- mapM_
+    --     ( \(a, o, i) -> do
+    --         let sh = txHashToHex $ TxHash $ sha256 (scriptOutput o)
+    --         let output = (txHashToHex $ txHash tx, i)
+    --         let bsh = B16.encode $ scriptOutput o
+    --         let (op, rem) = B.splitAt 2 bsh
+    --         let (op_false, op_return, remD) =
+    --                 if op == "6a"
+    --                     then ("00", op, rem)
+    --                     else (\(a, b) -> (op, a, b)) $ B.splitAt 2 rem
+    --         insertTxIdOutputs output a sh (fromIntegral $ outValue o)
+    --     )
+    --     outAddrs
 
-    debug lg $ LG.msg $ "Processing unconfirmed transaction <committed outputs> :" ++ show txhs
+    -- debug lg $ LG.msg $ "Processing unconfirmed transaction <committed outputs> :" ++ show txhs
     
     !inputs <-
         mapM
@@ -384,6 +384,10 @@ processUnconfTransaction tx = do
         serbs = runPutLazy $ putLazyByteString $ S.encodeLazy tx
         count = BSL.length serbs
     debug lg $ LG.msg $ "Processing unconfirmed transaction <fetched inputs> :" ++ show txhs
+
+    if fees < feeReq
+      then throw FeePolicyNotMetException
+      else return ()
     --
     -- liftIO $
     --     TSH.insert
@@ -432,9 +436,11 @@ processUnconfTransaction tx = do
                                 (fromIntegral count)
                         )
                         prot
+            insertTxIdOutputs output a sh (fromIntegral $ outValue o)
         )
         outAddrs
 
+    debug lg $ LG.msg $ "Processing unconfirmed transaction <committed outputs> :" ++ show txhs
 
     mapM_
         ( \((o, i), (a, sh)) -> do

@@ -111,6 +111,7 @@ data BlockSyncException
     | RelayFailureException
     | DoubleSpendException OutPoint
     | UnexpectedDeadlockException
+    | FeePolicyNotMetException
     deriving (Show)
 
 instance Exception BlockSyncException

@@ -1170,7 +1170,7 @@ messageHandler peer (mm, ingss) = do
                             err lg $ LG.msg $ val ("[???] Unconfirmed Tx ")
                     return $ msgType msg
                 MTx tx -> do
-                    res <- LE.try $ processUnconfTransaction tx
+                    res <- LE.try $ processUnconfTransaction tx 100 -- TODO: setting min fee for now
                     case res of
                         Right () -> return ()
                         Left (TxIDNotFoundException _) -> return ()

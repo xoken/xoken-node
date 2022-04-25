@@ -253,7 +253,7 @@ data RPCReqParams'
     | RelayMultipleTx
         { rTxns :: [ByteString]
         }
-     | SubmitTx
+    | SubmitTx
         { sRawTx :: ByteString
         , sCallbackName :: String
         }
@@ -430,7 +430,7 @@ data RPCResponseBody
     | RespRelayMultipleTx
         { rrMultipleTx :: [Bool]
         }
-     | RespSubmitTx
+    | RespSubmitTx
         { stApiVersion :: String
         , stTimestamp :: UTCTime
         , stMinerID :: String
@@ -581,7 +581,7 @@ instance ToJSON User where
             , "sessionKey" .= sKey
             , "sessionKeyExpiry" .= sKeyExp
             ]
-            
+
 data CallbackAuth
     = CallbackBasicAuth
         { cbAuthType :: String
@@ -694,6 +694,106 @@ data FeeOpcodes = FeeOpcodes
     , opPushData1 :: FeeSats
     , opPushData2 :: FeeSats
     , opPushData4 :: FeeSats
+    , op0 :: FeeSats
+    , op1negate :: FeeSats
+    , opReserved :: FeeSats
+    , op1 :: FeeSats
+    , op2 :: FeeSats
+    , op3 :: FeeSats
+    , op4 :: FeeSats
+    , op5 :: FeeSats
+    , op6 :: FeeSats
+    , op7 :: FeeSats
+    , op8 :: FeeSats
+    , op9 :: FeeSats
+    , op10 :: FeeSats
+    , op11 :: FeeSats
+    , op12 :: FeeSats
+    , op13 :: FeeSats
+    , op14 :: FeeSats
+    , op15 :: FeeSats
+    , op16 :: FeeSats
+    , opNop :: FeeSats
+    , opVer :: FeeSats -- reserved
+    , opIf :: FeeSats
+    , opNotif :: FeeSats
+    , opVerif :: FeeSats -- resreved
+    , opVerNotif :: FeeSats -- reserved
+    , opElse :: FeeSats
+    , opEndif :: FeeSats
+    , opVerify :: FeeSats
+    , opReturn :: FeeSats
+    , opToAltStack :: FeeSats
+    , opFromAltStack :: FeeSats
+    , opIfDup :: FeeSats
+    , opDepth :: FeeSats
+    , opDrop :: FeeSats
+    , opDup :: FeeSats
+    , opNip :: FeeSats
+    , opOver :: FeeSats
+    , opPick :: FeeSats
+    , opRoll :: FeeSats
+    , opRot :: FeeSats
+    , opSwap :: FeeSats
+    , opTuck :: FeeSats
+    , op2Drop :: FeeSats
+    , op2Dup :: FeeSats
+    , op3Dup :: FeeSats
+    , op2Over :: FeeSats
+    , op2Rot :: FeeSats
+    , op2Swap :: FeeSats
+    , opCat :: FeeSats
+    , opSubstr :: FeeSats
+    , opLeft :: FeeSats
+    , opRight :: FeeSats
+    , opSize :: FeeSats
+    , opInvert :: FeeSats
+    , opAnd :: FeeSats
+    , opOr :: FeeSats
+    , opXor :: FeeSats
+    , opEqual :: FeeSats
+    , opEqualVerify :: FeeSats
+    , opReserved1 :: FeeSats
+    , opReserved2 :: FeeSats
+    , op1Add :: FeeSats
+    , op1Sub :: FeeSats
+    , op2Mul :: FeeSats
+    , op2Div :: FeeSats
+    , opNegate :: FeeSats
+    , opAbs :: FeeSats
+    , opNot :: FeeSats
+    , op0NotEqual :: FeeSats
+    , opAdd :: FeeSats
+    , opSub :: FeeSats
+    , opMul :: FeeSats
+    , opDiv :: FeeSats
+    , opMod :: FeeSats
+    , opLShift :: FeeSats
+    , opRShift :: FeeSats
+    , opBoolAnd :: FeeSats
+    , opBoolOr :: FeeSats
+    , opNumEqual :: FeeSats
+    , opNumEqualVefify :: FeeSats
+    , opNumNotEqual :: FeeSats
+    , opLessThan :: FeeSats
+    , opGreaterThan :: FeeSats
+    , opLessThanOrEqual :: FeeSats
+    , opGreaterThanOrEqual :: FeeSats
+    , opMin :: FeeSats
+    , opMax :: FeeSats
+    , opWithin :: FeeSats
+    , opRipemd160 :: FeeSats
+    , opSha1 :: FeeSats
+    , opSha256 :: FeeSats
+    , opHash160 :: FeeSats
+    , opHash256 :: FeeSats
+    , opCodeSeperator :: FeeSats
+    , opCheckSig :: FeeSats
+    , opCheckSigVefify :: FeeSats
+    , opCheckMultiSig :: FeeSats
+    , opCheckMultiSigVerify :: FeeSats
+    , opPubKeyHash :: FeeSats
+    , opPubKey :: FeeSats
     }
     deriving (Generic, Show, Hashable, Eq, Serialise)
 
