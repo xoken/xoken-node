@@ -120,3 +120,40 @@ CREATE TABLE xoken.ep_script_output_protocol (
     nominal_tx_index bigint,
     PRIMARY KEY (epoch, proto_str, nominal_tx_index)
 ) WITH CLUSTERING ORDER BY (proto_str ASC, nominal_tx_index DESC);
+
+CREATE TABLE xoken.callback_registrations (
+    user_id text,
+    txid text,
+    block_hash text,
+    block_height int,
+    callback_name text,
+    flags_bitmask int,
+    state text,
+    PRIMARY KEY (user_id, txid)
+) WITH CLUSTERING ORDER BY (txid ASC);
+
+
+CREATE TABLE xoken.callbacks (
+    context text,
+    callback_group text,
+    callback_name text,
+    auth_key text,
+    auth_type text,
+    callback_url text,
+    created_time timestamp,
+    events set<text>,
+    PRIMARY KEY ((context, callback_group, callback_name))
+);
+
+
+CREATE TABLE xoken.policies (
+    context text,
+    policy_group text,
+    policy_name text,
+    created_time timestamp,
+    permissions set<text>,
+    policy_expiry_time timestamp,
+    value frozen<tuple<boolean, int, bigint, text>>,
+    PRIMARY KEY ((context, policy_group, policy_name))
+);
+
