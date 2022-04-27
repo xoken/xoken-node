@@ -95,6 +95,7 @@ import System.Random
 import Text.Read
 import Xoken
 import qualified Xoken.NodeConfig as NC
+import qualified Network.Xoken.Node.Data.ThreadSafeHashTable as TSH
 
 applyPolicyPatch :: (Maybe MapiPolicyPatch) -> Maybe MapiPolicy -> Maybe MapiPolicy
 applyPolicyPatch patch defaultPolicy = do
@@ -117,7 +118,7 @@ xGetPolicyPatchByUsername name = do
     bp2pEnv <- getBitcoinP2P
     let conn = xCqlClientState dbe
         context = DT.append (DT.pack "USER/") name
-    cachedPolicy <- liftIO $ H.lookup (userPolicies $ policyDataCache bp2pEnv) (context)
+    cachedPolicy <- liftIO $ TSH.lookup (userPolicies $ policyDataCache bp2pEnv) (context)
     case cachedPolicy of
         Just cp -> return cachedPolicy
         Nothing -> do
@@ -160,7 +161,7 @@ xDeletePolicyByUsername name = do
     res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr par)
     case res of
         Right _ -> do
-            liftIO $ (H.delete $ userPolicies $ policyDataCache bp2pEnv) context
+            liftIO $ (TSH.delete $ userPolicies $ policyDataCache bp2pEnv) context
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: xDeletePolicyByUsername: " ++ show e
             throw e
@@ -184,9 +185,9 @@ xUpdatePolicyByUsername name mapiPolicy = do
             res' <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr par)
             case res' of
                 Right _ -> do
-                    liftIO $ H.delete (userPolicies $ policyDataCache bp2pEnv) context
+                    liftIO $ TSH.delete (userPolicies $ policyDataCache bp2pEnv) context
                     liftIO $
-                        H.insert
+                        TSH.insert
                             (userPolicies $ policyDataCache bp2pEnv)
                             context
                             mapiPolicy

@@ -30,6 +30,7 @@ import Data.Char (ord)
 import Data.Default
 import Data.Foldable
 import Data.Functor.Identity
+import qualified Data.HashMap.Strict as H
 import Data.Hashable
 import Data.Hashable.Time
 import Data.Int
@@ -594,6 +595,13 @@ data CallbackAuth
         }
     deriving (Generic, Show, Hashable, Eq, Serialise, ToJSON)
 
+data CallbackEvent
+    = MerkleProofSingle
+    | MerkleProofComposite
+    | DoubleSpendingCheck
+    | AncestorsDiscovered
+    deriving (Show, Read, Generic, Hashable, Eq, Serialise, ToJSON)
+
 data MapiCallback = MapiCallback
     { mcContext :: T.Text
     , mcCallbackGroup :: T.Text
@@ -601,6 +609,7 @@ data MapiCallback = MapiCallback
     , mcCallbackUrl :: T.Text
     , mcAuthType :: T.Text
     , mcAuthKey :: T.Text
+    , mcEvents :: [CallbackEvent]
     , mcCreatedTime :: UTCTime
     }
     deriving (Generic, Show, Hashable, Eq, Serialise)
@@ -817,6 +826,56 @@ instance ToJSON PolicyFees where
 instance FromJSON PolicyFees where
     parseJSON (Object o) =
         (PolicyFees <$> o .: "data" <*> o .: "opcodes")
+
+data AVal = I Int | S String
+    deriving (Generic, Show, Hashable, Eq, Serialise)
+instance ToJSON AVal
+instance FromJSON AVal
+-- data ArbitraryState
+--     = AMapString (H.HashMap String String)
+--     | AMapInt (H.HashMap String Int)
+--     | AListString [String]
+--     | AListInt [Int]
+ 
+data AState
+    = AMap (H.HashMap String AState)
+    | AList [AVal]
+    | AString String
+    | AInt Int
+    deriving (Generic, Show, Hashable, Eq, Serialise)
+instance ToJSON AState
+instance FromJSON AState
+
+data CallbackSingleMerkleProof = CallbackSingleMerkleProof
+    { cbApiVersion :: String
+    , cbTimestamp :: UTCTime
+    , cbMinerID :: String
+    , cbBlockHash :: String
+    , cbBlockHeight :: Int
+    , cbTxid :: String
+    , cbCallBackType :: CallbackEvent
+    , cbMerkleRoot :: String
+    , cbTxIndex :: Int
+    , cbState :: AState
+    , cbMerkleBranch :: Maybe [MerkleBranchNode']
+    }
+    deriving (Generic, Show, Hashable, Eq, Serialise)
+
+instance ToJSON CallbackSingleMerkleProof where
+    toJSON (CallbackSingleMerkleProof av ts id hs ht tx bt mr dx st mb) =
+        object
+            [ "apiVersion" .= av
+            , "timestamp" .= ts
+            , "minerId" .= id
+            , "callBackType" .= bt
+            , "txId" .= tx
+            , "blockHash" .= hs
+            , "blockHeight" .= ht
+            , "merkleRoot" .= mr
+            , "txIndex" .= dx
+            , "state" .= st
+            , "merkleBranch" .= mb
+            ]
 
 data ChainInfo = ChainInfo
     { ciChain :: String

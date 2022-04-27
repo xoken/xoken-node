@@ -89,6 +89,7 @@ import System.Logger as LG
 import System.Logger.Message
 import System.Random
 import Xoken.NodeConfig
+import Network.Xoken.Node.Service.Callbacks as CB
 
 createSocket :: AddrInfo -> IO (Maybe Socket)
 createSocket = createSocketWithOptions []
@@ -834,7 +835,7 @@ runTMTDaemon = do
                                                                     )
                                                         res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query q p)
                                                         case res of
-                                                            Right _ -> return ()
+                                                            Right _ -> triggerCallbacks -- TODO: trigger callbacks jobs
                                                             Left (e :: SomeException) -> do
                                                                 err lg $
                                                                     LG.msg

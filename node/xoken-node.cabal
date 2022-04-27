@@ -139,6 +139,7 @@ executable xoken-nexa
     , list-t
     , xcql
     , concurrent-hashtable
+    , http-conduit
   default-language: Haskell2010
 
 test-suite xoken-node-test

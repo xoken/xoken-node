@@ -70,7 +70,7 @@ data MerkleTxQueue = MerkleTxQueue
     }
 data PolicyCache = PolicyCache
     { defaultPolicy :: !(IORef (Maybe MapiPolicy))
-    , userPolicies :: !(HashTable Text MapiPolicyPatch)
+    , userPolicies :: !(TSH.TSHashTable Text MapiPolicyPatch)
     }
 data BitcoinP2P = BitcoinP2P
     { nodeConfig :: !NodeConfig
@@ -96,7 +96,7 @@ data BitcoinP2P = BitcoinP2P
     , peerFetchQueue :: !(TQueue BitcoinPeer)
     , fetchBlockPeerMap :: !(TSH.TSHashTable BlockHash BitcoinPeer)
     , policyDataCache :: !(PolicyCache)
-    , callbacksDataCache :: !(HashTable Text MapiCallback)
+    , callbacksDataCache :: !(TSH.TSHashTable Text MapiCallback)
     }
 
 class HasBitcoinP2P m where
