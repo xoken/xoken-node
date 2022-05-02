@@ -12,7 +12,6 @@
 module Network.Xoken.Node.P2P.UnconfTxSync (
     processUnconfTransaction,
     processTxGetData,
-    runEpochSwitcher,
 ) where
 
 import Control.Concurrent (threadDelay)
@@ -151,135 +150,6 @@ sendTxGetData pr txHash = do
             debug lg $ LG.msg $ "sending out GetData: " ++ show (bpAddress pr)
         Nothing -> err lg $ LG.msg $ val "Error sending, no connections available"
 
-runEpochSwitcher :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
-runEpochSwitcher = return ()
-
-{-
-runEpochSwitcher =
-    forever $ do
-        lg <- getLogger
-        bp2pEnv <- getBitcoinP2P
-        dbe' <- getDB
-        tm <- liftIO $ getCurrentTime
-        let conn = xCqlClientState $ dbe'
-        epoch <- liftIO $ readTVarIO (epochType bp2pEnv)
-        liftIO $ atomically $ writeTVar (epochType bp2pEnv) (not epoch)
-        let str = "DELETE from xoken.ep_transactions where epoch = ?"
-            qstr = str :: Q.QueryString Q.W (Identity Bool) ()
-            p = getSimpleQueryParam $ Identity (not epoch)
-        res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr p)
-        case res of
-            Right _ -> return ()
-            Left (e :: SomeException) -> do
-                err lg $ LG.msg ("Error: deleting stale epoch Txs: " ++ show e)
-                throw e
-        let str = "DELETE from xoken.ep_script_hash_outputs where epoch = ?"
-            qstr = str :: Q.QueryString Q.W (Identity Bool) ()
-            p = getSimpleQueryParam $ Identity (not epoch)
-        res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr p)
-        case res of
-            Right _ -> return ()
-            Left (e :: SomeException) -> do
-                err lg $ LG.msg ("Error: deleting stale epoch script_hash_outputs: " ++ show e)
-                throw e
-        let str = "DELETE from xoken.ep_txid_outputs where epoch = ?"
-            qstr = str :: Q.QueryString Q.W (Identity Bool) ()
-            p = getSimpleQueryParam $ Identity (not epoch)
-        res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr p)
-        case res of
-            Right _ -> return ()
-            Left (e :: SomeException) -> do
-                err lg $ LG.msg ("Error: deleting stale epoch txid_outputs: " ++ show e)
-                throw e
-        liftIO $ threadDelay (1000000 * 60 * 60)
-        return ()
--}
-commitEpochScriptHashOutputs ::
-    (HasLogger m, HasBitcoinP2P m, MonadIO m) =>
-    XCqlClientState ->
-    Bool -> -- epoch
-    Text -> -- scriptHash
-    (Text, Int32) -> -- output (txid, index)
-    m ()
-commitEpochScriptHashOutputs conn epoch sh output = do
-    lg <- getLogger
-    bp2pEnv <- getBitcoinP2P
-    tm <- liftIO getCurrentTime
-    let nominalTxIndex = (9000000 * 1000000000) + (floor $ utcTimeToPOSIXSeconds tm)
-    let strAddrOuts =
-            "INSERT INTO xoken.ep_script_hash_outputs (epoch, script_hash, nominal_tx_index, output) VALUES (?,?,?,?)"
-        qstrAddrOuts = strAddrOuts :: Q.QueryString Q.W (Bool, Text, Int64, (Text, Int32)) ()
-        parAddrOuts = getSimpleQueryParam (epoch, sh, nominalTxIndex, output)
-    resAddrOuts <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query (qstrAddrOuts) parAddrOuts)
-    case resAddrOuts of
-        Right _ -> return ()
-        Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: INSERTing into 'ep_script_hash_outputs': " ++ show e
-            throw KeyValueDBInsertException
-
-insertEpochTxIdOutputs ::
-    (HasLogger m, MonadIO m) =>
-    XCqlClientState ->
-    Bool ->
-    (Text, Int32) ->
-    Text ->
-    Text ->
-    Bool ->
-    [((Text, Int32), Int32, (Text, Int64))] ->
-    Int64 ->
-    m ()
-insertEpochTxIdOutputs conn epoch (txid, outputIndex) address scriptHash isRecv other value = do
-    lg <- getLogger
-    let str =
-            "INSERT INTO xoken.ep_txid_outputs (epoch,txid,output_index,address,script_hash,is_recv,other,value) VALUES (?,?,?,?,?,?,?,?)"
-        qstr =
-            str ::
-                Q.QueryString
-                    Q.W
-                    ( Bool
-                    , Text
-                    , Int32
-                    , Text
-                    , Text
-                    , Bool
-                    , [((Text, Int32), Int32, (Text, Int64))]
-                    , Int64
-                    )
-                    ()
-        par = getSimpleQueryParam (epoch, txid, outputIndex, address, scriptHash, isRecv, other, value)
-    res <- liftIO $ try $ write conn $ (Q.RqQuery $ Q.Query qstr par)
-    case res of
-        Right _ -> return ()
-        Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: INSERTing into ep_txid_outputs: " ++ show e
-            throw KeyValueDBInsertException
-
-commitUnconfirmedScriptOutputProtocol ::
-    (HasBitcoinP2P m, HasLogger m, MonadIO m) =>
-    XCqlClientState ->
-    Bool ->
-    Text ->
-    (Text, Int32) ->
-    Int64 ->
-    Int32 ->
-    m ()
-commitUnconfirmedScriptOutputProtocol conn epoch protocol (txid, output_index) fees size = do
-    lg <- getLogger
-    bp2pEnv <- getBitcoinP2P
-    tm <- liftIO getCurrentTime
-    let nominalTxIndex = (9000000 * 1000000000) + (floor $ utcTimeToPOSIXSeconds tm)
-        qstrAddrOuts :: Q.QueryString Q.W (Bool, Text, Text, Int64, Int32, Int32, Int64) ()
-        qstrAddrOuts =
-            "INSERT INTO xoken.ep_script_output_protocol (epoch, proto_str, txid, fees, size, output_index, nominal_tx_index) VALUES (?,?,?,?,?,?,?)"
-        parAddrOuts = getSimpleQueryParam (epoch, protocol, txid, fees, size, output_index, nominalTxIndex)
-    queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstrAddrOuts))
-    resAddrOuts <- liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryId parAddrOuts))
-    case resAddrOuts of
-        Right _ -> return ()
-        Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: INSERTing into 'ep_script_output_protocol: " ++ show e
-            throw KeyValueDBInsertException
-
 processUnconfTransaction :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => Tx -> Int64 -> m ()
 processUnconfTransaction tx feeReq = do
     dbe' <- getDB
@@ -308,22 +178,6 @@ processUnconfTransaction tx feeReq = do
                 (txOut tx)
                 [0 :: Int32 ..]
 
-    -- mapM_
-    --     ( \(a, o, i) -> do
-    --         let sh = txHashToHex $ TxHash $ sha256 (scriptOutput o)
-    --         let output = (txHashToHex $ txHash tx, i)
-    --         let bsh = B16.encode $ scriptOutput o
-    --         let (op, rem) = B.splitAt 2 bsh
-    --         let (op_false, op_return, remD) =
-    --                 if op == "6a"
-    --                     then ("00", op, rem)
-    --                     else (\(a, b) -> (op, a, b)) $ B.splitAt 2 rem
-    --         insertTxIdOutputs output a sh (fromIntegral $ outValue o)
-    --     )
-    --     outAddrs
-
-    -- debug lg $ LG.msg $ "Processing unconfirmed transaction <committed outputs> :" ++ show txhs
-    
     !inputs <-
         mapM
             ( \(b, j) -> do
@@ -386,14 +240,9 @@ processUnconfTransaction tx feeReq = do
     debug lg $ LG.msg $ "Processing unconfirmed transaction <fetched inputs> :" ++ show txhs
 
     if fees < feeReq
-      then throw FeePolicyNotMetException
-      else return ()
+        then throw FeePolicyNotMetException
+        else return ()
     --
-    -- liftIO $
-    --     TSH.insert
-    --         (txOutputValuesCache bp2pEnv)
-    --         (getTxShortHash (txHash tx) (txOutputValuesCacheKeyBits $ nodeConfig bp2pEnv))
-    --         (txHash tx, ovs)
     --
 
     mapM_
@@ -474,7 +323,7 @@ processUnconfTransaction tx feeReq = do
     case res of
         Right _ -> return ()
         Left (e :: SomeException) -> do
-            liftIO $ err lg $ LG.msg ("Error: INSERTing into 'xoken.ep_transactions': " ++ show e)
+            liftIO $ err lg $ LG.msg ("Error: INSERTing into 'xoken.transactions': " ++ show e)
             throw KeyValueDBInsertException
     when (segments > 1) $ do
         let segmentsData = chunksOf (smb 1) serbs
@@ -486,17 +335,20 @@ processUnconfTransaction tx feeReq = do
                 case res of
                     Right _ -> return ()
                     Left (e :: SomeException) -> do
-                        liftIO $ err lg $ LG.msg ("Error: INSERTing into 'xoken.ep_transactions': " ++ show e)
+                        liftIO $ err lg $ LG.msg ("Error: INSERTing into 'xoken.transactions': " ++ show e)
                         throw KeyValueDBInsertException
             )
             (zip segmentsData [1 ..])
     --
     debug lg $ LG.msg $ "Processing unconfirmed transaction <end> :" ++ show txhs
 
--- vall <- liftIO $ TSH.lookup (txSynchronizer bp2pEnv) (txHash tx)
--- case vall of
---     Just ev -> liftIO $ putMVar ev () --EV.set ev
---     Nothing -> return ()
+    vall <- liftIO $ TSH.lookup (txSynchronizer bp2pEnv) (txHash tx, ChildTxWaiting)
+    case vall of
+        Just ev -> do
+            liftIO $ tryPutMVar ev () --EV.set ev
+            return ()
+        Nothing -> return ()
+
 --
 
 convertToScriptHash :: Network -> String -> Maybe String

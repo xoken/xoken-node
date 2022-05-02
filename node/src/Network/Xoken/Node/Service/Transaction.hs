@@ -659,7 +659,8 @@ xSubmitTx rawTx userId callbackName = do
 getOpcodeFeeMap :: FeeOpcodes -> M.Map ScriptOp Int
 getOpcodeFeeMap fo = do
     M.fromList
-        [ (OP_0, fsSatoshis $ op0 fo)
+        [
+          (OP_0, fsSatoshis $ op0 fo)
         , (OP_1NEGATE, fsSatoshis $ op1negate fo)
         , (OP_RESERVED, fsSatoshis $ opReserved fo)
         , (OP_1, fsSatoshis $ op1 fo)

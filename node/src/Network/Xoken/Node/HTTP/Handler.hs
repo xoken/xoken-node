@@ -663,16 +663,16 @@ updateUserByUsername updates = do
 
 addDefaultMapiPolicy :: RPCReqParams' -> Handler App App ()
 addDefaultMapiPolicy (DefaultMapiPolicy (MapiPolicy a b c d e f g h i j)) = do
-    dbe <- getDB
-    res <- LE.try $ xUpdatePolicyByUsername (DT.pack "default") (MapiPolicyPatch (Just a) (Just b) (Just c) (Just d) (Just e) (Just f) (Just g) (Just h) (Just i) (Just j))
-    case res of
-        Left (e :: SomeException) -> do
-            modifyResponse $ setResponseStatus 500 "Internal Server Error"
-            writeBS "INTERNAL_SERVER_ERROR"
-        Right True -> do
-            modifyResponse $ setResponseStatus 200 "Updated"
-            writeBS $ "Policy updated"
-        Right False -> throwNotFound
+     dbe <- getDB
+     res <- LE.try $ xUpdatePolicyByUsername (DT.pack "default") (MapiPolicyPatch (Just a) (Just b) (Just c) (Just d) (Just e) (Just f) (Just g) (Just h) (Just i) (Just j))
+     case res of
+         Left (e :: SomeException) -> do
+             modifyResponse $ setResponseStatus 500 "Internal Server Error"
+             writeBS "INTERNAL_SERVER_ERROR"
+         Right True -> do
+             modifyResponse $ setResponseStatus 200 "Updated"
+             writeBS $ "Policy updated"
+         Right False -> throwNotFound
 
 getPolicyCurrentUser :: Handler App App ()
 getPolicyCurrentUser = do

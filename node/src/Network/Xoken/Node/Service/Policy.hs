@@ -176,7 +176,7 @@ xUpdatePolicyByUsername name mapiPolicy = do
         Right _ -> do
             tm <- liftIO $ getCurrentTime
             let mapy = DT.pack $ C.unpack $ A.encode $ mapiPolicy
-            let str = "INSERT INTO xoken.policies ( context, policy_name,value,created_time,policy_expiry_time) VALUES (?,?,?,?,?,?)"
+            let str = "INSERT INTO xoken.policies ( context, policy_name,value,created_time,policy_expiry_time) VALUES (?,?,?,?,?)"
                 context = DT.append (DT.pack "USER/") name
                 qstr = str :: Q.QueryString Q.W (DT.Text, DT.Text, DT.Text, UTCTime, UTCTime) ()
                 skTime = (addUTCTime (nominalDay * 30) tm)

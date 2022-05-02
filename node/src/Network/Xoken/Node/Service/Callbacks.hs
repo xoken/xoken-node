@@ -208,14 +208,7 @@ triggerCallbacks = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
 
-    compositeProofs <- liftIO $ TSH.new 4
     cbDataCache <- liftIO $ TSH.toList $ callbacksDataCache bp2pEnv
-    mapM
-        ( \(userid, mapicb) -> do
-            processCallbacks userid "0000" compositeProofs --dummy starting txid
-        )
-        cbDataCache
-    return ()
     xx <-
         LE.try $
             S.drain $
@@ -223,11 +216,12 @@ triggerCallbacks = do
                     (do S.fromList cbDataCache)
                         & S.mapM
                             ( \(userid, mapicb) -> do
+                                compositeProofs <- liftIO $ TSH.new 4
                                 processCallbacks userid "0000" compositeProofs --dummy starting txid
-                                return userid
+                                return (userid, compositeProofs)
                             )
                         & S.mapM
-                            ( \userid -> do
+                            ( \(userid, compositeProofs) -> do
                                 postCompositeMerkleCallbacks userid compositeProofs
                             )
                         & S.maxBuffer (5) --  nodeConfig p2pEnv)
@@ -237,12 +231,54 @@ triggerCallbacks = do
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error while triggerCallbacks: " ++ show e
             throw e
+type CompositeProofs = (TSH.TSHashTable DT.Text (DT.Text, MerkleBranchNode', AState))
 
-postCompositeMerkleCallbacks :: (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> (TSH.TSHashTable DT.Text (MerkleBranchNode', AState)) -> m ()
+postCompositeMerkleCallbacks :: (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> CompositeProofs -> m ()
 postCompositeMerkleCallbacks userid compProofs = do
-    undefined
+    cpList <- liftIO $ TSH.toList $ compProofs
+    let cbname = fst3 $ snd $ head cpList
+    branches <-
+        mapM
+            ( \(txid, (_, mb, state)) -> do
+                let txIndex = undefined -- TODO
+                    state = undefined
+                    merkleBranch = undefined
+                return $ CallbackMerkleBranches (DT.unpack txid) txIndex state merkleBranch
+            )
+            cpList
+    mapicb <- xGetCallbackByUsername userid cbname
+    let mpc = fromJust $ mapicb
+    let token = BC.pack $ DT.unpack $ mcAuthKey mpc
+        url = DT.unpack $ mcCallbackUrl mpc
+        req' = buildRequest url token $ BC.pack "POST"
+        cbApiVersion = "1.0"
+        cbTimestamp = undefined
+        cbMinerID = undefined -- TODO:
+        cbBlockHash = undefined
+        cbBlockHeight = undefined
+        cbCallBackType = MerkleProofComposite
+        cbMerkleRoot = undefined -- TODO
+        cbMerkleBranches = branches
+        mpr =
+            CallbackCompositeMerkleProof
+                cbApiVersion
+                cbTimestamp
+                cbMinerID
+                cbBlockHash
+                cbBlockHeight
+                cbCallBackType
+                cbMerkleRoot
+                cbMerkleBranches
 
-processCallbacks :: (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> DT.Text -> (TSH.TSHashTable DT.Text (MerkleBranchNode', AState)) -> m ()
+        req = setRequestBodyJSON (mpr) req'
+    response <- httpLBS req
+    let status = getResponseStatusCode response
+    if status == 200
+        then do
+            return ()
+        else do return ()
+
+processCallbacks :: (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> DT.Text -> CompositeProofs  -> m ()
 processCallbacks userid txid compProofs = do
     dbe <- getDB
     lg <- getLogger
@@ -257,54 +293,53 @@ processCallbacks userid txid compProofs = do
     case eResp of
         Right mb -> do
             let (_, cursor, _, _, _, _, _) = last mb
-            _ <-
-                mapM
-                    ( \(userid, txid, blkhash, blkht, cbname, flags, state) -> do
-                        mapicb <- xGetCallbackByUsername userid cbname
-                        case mapicb of
-                            Just mpc -> do
-                                if MerkleProofComposite `elem` (mcEvents mpc)
-                                    then do
-                                        let cbState = fromJust $ A.decode $ C.pack $ DT.unpack state
-                                        liftIO $ TSH.insert compProofs txid (undefined, cbState)
-                                    else do
-                                        let token = BC.pack $ DT.unpack $ mcAuthKey mpc
-                                            url = DT.unpack $ mcCallbackUrl mpc
-                                            req' = buildRequest url token $ BC.pack "POST"
-                                            cbApiVersion = "1.0"
-                                            cbTimestamp = undefined
-                                            cbMinerID = undefined -- TODO:
-                                            cbBlockHash = undefined
-                                            cbBlockHeight = undefined
-                                            cbTxid = DT.unpack txid
-                                            cbCallBackType = MerkleProofSingle
-                                            cbMerkleRoot = undefined -- TODO
-                                            cbTxIndex = 999 -- TODO
-                                            cbState = fromJust $ A.decode $ C.pack $ DT.unpack state
-                                            cbMerkleBranch = undefined
-                                            mpr =
-                                                CallbackSingleMerkleProof
-                                                    cbApiVersion
-                                                    cbTimestamp
-                                                    cbMinerID
-                                                    cbBlockHash
-                                                    cbBlockHeight
-                                                    cbTxid
-                                                    cbCallBackType
-                                                    cbMerkleRoot
-                                                    cbTxIndex
-                                                    cbState
-                                                    cbMerkleBranch
+            mapM_
+                ( \(userid, txid, blkhash, blkht, cbname, flags, state) -> do
+                    mapicb <- xGetCallbackByUsername userid cbname
+                    case mapicb of
+                        Just mpc -> do
+                            if MerkleProofComposite `elem` (mcEvents mpc)
+                                then do
+                                    let cbState = fromJust $ A.decode $ C.pack $ DT.unpack state
+                                    liftIO $ TSH.insert compProofs txid (cbname, undefined, cbState)
+                                else do
+                                    let token = BC.pack $ DT.unpack $ mcAuthKey mpc
+                                        url = DT.unpack $ mcCallbackUrl mpc
+                                        req' = buildRequest url token $ BC.pack "POST"
+                                        cbApiVersion = "1.0"
+                                        cbTimestamp = undefined
+                                        cbMinerID = undefined -- TODO:
+                                        cbBlockHash = undefined
+                                        cbBlockHeight = undefined
+                                        cbTxid = DT.unpack txid
+                                        cbCallBackType = MerkleProofSingle
+                                        cbMerkleRoot = undefined -- TODO
+                                        cbTxIndex = 999 -- TODO
+                                        cbState = fromJust $ A.decode $ C.pack $ DT.unpack state
+                                        cbMerkleBranch = undefined
+                                        mpr =
+                                            CallbackSingleMerkleProof
+                                                cbApiVersion
+                                                cbTimestamp
+                                                cbMinerID
+                                                cbBlockHash
+                                                cbBlockHeight
+                                                cbTxid
+                                                cbCallBackType
+                                                cbMerkleRoot
+                                                cbTxIndex
+                                                cbState
+                                                cbMerkleBranch
 
-                                            req = setRequestBodyJSON (mpr) req'
-                                        response <- httpLBS req
-                                        let status = getResponseStatusCode response
-                                        if status == 200
-                                            then do
-                                                return ()
-                                            else do return ()
-                    )
-                    mb
+                                        req = setRequestBodyJSON (mpr) req'
+                                    response <- httpLBS req
+                                    let status = getResponseStatusCode response
+                                    if status == 200
+                                        then do
+                                            return ()
+                                        else do return ()
+                )
+                mb
             if L.length mb < 100
                 then return ()
                 else processCallbacks userid cursor compProofs

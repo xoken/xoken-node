@@ -279,7 +279,7 @@ data RPCReqParams'
         , gacCursor :: Maybe Word64
         }
     | DefaultMapiPolicy
-        { policy :: MapiPolicy
+        { dmPolicy :: MapiPolicy
         }
     | AddMapiCallback
         { callbackName :: T.Text
@@ -328,6 +328,8 @@ instance FromJSON RPCReqParams' where
                     <*> o .: "lastName"
                     <*> o .: "email"
                     <*> o .:? "roles"
+                )
+            <|> ( DefaultMapiPolicy <$> o .: "policy"  
                 )
             <|> (GetTxOutputSpendStatus <$> o .: "txid" <*> o .: "index")
             <|> (UserByUsername <$> o .: "username")
@@ -831,12 +833,13 @@ data AVal = I Int | S String
     deriving (Generic, Show, Hashable, Eq, Serialise)
 instance ToJSON AVal
 instance FromJSON AVal
+
 -- data ArbitraryState
 --     = AMapString (H.HashMap String String)
 --     | AMapInt (H.HashMap String Int)
 --     | AListString [String]
 --     | AListInt [Int]
- 
+
 data AState
     = AMap (H.HashMap String AState)
     | AList [AVal]
@@ -875,6 +878,48 @@ instance ToJSON CallbackSingleMerkleProof where
             , "txIndex" .= dx
             , "state" .= st
             , "merkleBranch" .= mb
+            ]
+
+data CallbackMerkleBranches = CallbackMerkleBranches
+    { cbTxid :: String
+    , cbTxIndex :: Int
+    , cbState :: AState
+    , cbMerkleBranch :: Maybe [MerkleBranchNode']
+    }
+    deriving (Generic, Show, Hashable, Eq, Serialise)
+
+instance ToJSON CallbackMerkleBranches where
+    toJSON (CallbackMerkleBranches tx dx st mb) =
+        object
+            [ "txId" .= tx
+            , "txIndex" .= dx
+            , "state" .= st
+            , "merkleBranch" .= mb
+            ]
+
+data CallbackCompositeMerkleProof = CallbackCompositeMerkleProof
+    { cbApiVersion :: String
+    , cbTimestamp :: UTCTime
+    , cbMinerID :: String
+    , cbBlockHash :: String
+    , cbBlockHeight :: Int
+    , cbCallBackType :: CallbackEvent
+    , cbMerkleRoot :: String
+    , cbmerkleBranches :: [CallbackMerkleBranches]
+    }
+    deriving (Generic, Show, Hashable, Eq, Serialise)
+
+instance ToJSON CallbackCompositeMerkleProof where
+    toJSON (CallbackCompositeMerkleProof av ts id hs ht bt mr mb) =
+        object
+            [ "apiVersion" .= av
+            , "timestamp" .= ts
+            , "minerId" .= id
+            , "callBackType" .= bt
+            , "blockHash" .= hs
+            , "blockHeight" .= ht
+            , "merkleRoot" .= mr
+            , "merkleBranches" .= mb
             ]
 
 data ChainInfo = ChainInfo

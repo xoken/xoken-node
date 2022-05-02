@@ -711,26 +711,18 @@ processConfTransaction bis tx bhash blkht txind = do
     let net = bitcoinNetwork $ nodeConfig bp2pEnv
         conn = xCqlClientState dbe'
     debug lg $ LG.msg $ "(Wrapper) Processing lock begin :" ++ show txhs
-    -- lock begin
-    -- lockv <- liftIO $ TSH.getOrCreate (txSynchronizer bp2pEnv) (txhs, ParentTxProcessing) (liftIO $ newMVar ())
-    -- liftIO $ takeMVar lockv
-    --
     res <- LE.try $ processConfTransaction' bis tx bhash blkht txind -- get the Inv message
     case res of
         Right mm ->
-            -- liftIO $ putMVar lockv () -- lock end/1
             do
                 debug lg $ LG.msg $ "(Wrapper) Processing lock ends :" ++ show txhs
-                --
                 vall <- liftIO $ TSH.lookup (txSynchronizer bp2pEnv) (txhs, ChildTxWaiting)
                 case vall of
                     Just ev -> do
                         liftIO $ tryPutMVar ev ()
                         return ()
                     Nothing -> return ()
-        --
         Left (e :: SomeException) ->
-            -- liftIO $ putMVar lockv () -- lock end/2
             do
                 liftIO $ err lg $ LG.msg ("Error: while processConfTransaction: " ++ show e)
                 throw e
@@ -1096,7 +1088,7 @@ getSatsValueFromOutpoint ::
     Int ->
     IO ((Text, Text, Int64))
 getSatsValueFromOutpoint conn txSync lg net outPoint maxWait = do
-    return ((T.pack "16Rcy7RYM3xkPEJr4tvUtL485Fuobi8S7o"), (T.pack "1234123412341234"), 2147483647 )
+    return ((T.pack "16Rcy7RYM3xkPEJr4tvUtL485Fuobi8S7o"), (T.pack "1234123412341234"), 2147483647)
 
 --
 --

@@ -23,34 +23,6 @@ CREATE TABLE xoken.blocks_by_hash (
     coinbase_tx blob
 );
 
-CREATE TABLE xoken.ep_transactions (
-    epoch boolean,
-    tx_id text,
-    tx_serialized blob,
-    inputs set <frozen<tuple<frozen<tuple<text, int>>, int, frozen<tuple<text, bigint>>>>>,
-    fees bigint,
-    PRIMARY KEY (epoch, tx_id)
-);
-
-CREATE TABLE xoken.ep_script_hash_outputs (
-    epoch boolean,
-    script_hash text,
-    nominal_tx_index bigint,
-    output frozen<tuple<text, int>>,
-    PRIMARY KEY (epoch, script_hash, nominal_tx_index, output)
-) WITH CLUSTERING ORDER BY (script_hash ASC, nominal_tx_index DESC, output ASC);
-
-CREATE TABLE xoken.ep_txid_outputs (
-    epoch boolean,
-    txid text,
-    output_index int,
-    address text,
-    script text,
-    spend_info frozen<tuple<text, int>>,
-    value bigint,
-    PRIMARY KEY(epoch, txid, output_index)
- ) WITH CLUSTERING ORDER BY (txid ASC, output_index ASC);
-
 CREATE TABLE xoken.script_hash_outputs (
     script_hash text,
     nominal_tx_index bigint,
@@ -110,17 +82,6 @@ CREATE TABLE xoken.script_output_protocol (
     PRIMARY KEY (proto_str, nominal_tx_index)
 ) WITH CLUSTERING ORDER BY (nominal_tx_index ASC);
 
-CREATE TABLE xoken.ep_script_output_protocol (
-    epoch boolean,
-    proto_str text,
-    txid text,
-    fees bigint,
-    size int,
-    output_index int,
-    nominal_tx_index bigint,
-    PRIMARY KEY (epoch, proto_str, nominal_tx_index)
-) WITH CLUSTERING ORDER BY (proto_str ASC, nominal_tx_index DESC);
-
 CREATE TABLE xoken.callback_registrations (
     user_id text,
     txid text,
@@ -148,12 +109,10 @@ CREATE TABLE xoken.callbacks (
 
 CREATE TABLE xoken.policies (
     context text,
-    policy_group text,
     policy_name text,
     created_time timestamp,
-    permissions set<text>,
     policy_expiry_time timestamp,
     value frozen<tuple<boolean, int, bigint, text>>,
-    PRIMARY KEY ((context, policy_group, policy_name))
+    PRIMARY KEY ((context, policy_name))
 );
 
