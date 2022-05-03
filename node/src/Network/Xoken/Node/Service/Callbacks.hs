@@ -125,7 +125,7 @@ xGetCallbackByUsername name cbName = do
                             , DT.Text
                             , DT.Text
                             , DT.Text
-                            , [DT.Text]
+                            , Set (DT.Text)
                             , UTCTime
                             )
             let p = getSimpleQueryParam $ (context, DT.pack "mAPI", cbName)
@@ -136,7 +136,7 @@ xGetCallbackByUsername name cbName = do
                         then return Nothing
                         else do
                             let (context, callbackName, callbackUrl, authType, authKey, events, createdTime) = iop !! 0
-                            let eventsT = L.map (\ev -> read (DT.unpack ev) :: CallbackEvent) events
+                            let eventsT = L.map (\ev -> read (DT.unpack ev) :: CallbackEvent) (Q.fromSet events)
                             let mp = Just $ MapiCallback context (DT.pack "mAPI") callbackName callbackUrl authType authKey eventsT createdTime
                             return mp
                 Left (e :: SomeException) -> do
@@ -151,9 +151,9 @@ xDeleteCallbackByUsername name cbName = do
     let conn = xCqlClientState dbe
         context = DT.append (DT.pack "USER/") name
         key = DT.append cbName context
-        str = "DELETE FROM xoken.callbacks WHERE = ? and policy_name = ? "
-        qstr = str :: Q.QueryString Q.W (DT.Text, DT.Text) ()
-        par = getSimpleQueryParam (context, DT.pack "mAPI")
+        str = "DELETE FROM xoken.callbacks WHERE context = ? and callback_group = ? and callback_name = ? "
+        qstr = str :: Q.QueryString Q.W (DT.Text, DT.Text, DT.Text) ()
+        par = getSimpleQueryParam (context, DT.pack "mAPI", cbName)
     res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr par)
     case res of
         Right _ -> do
@@ -172,10 +172,10 @@ xUpdateCallbackByUsername name cbName cbUrl authType authToken events = do
         ( \ev -> do
             let evs = DT.unpack ev
             case evs of
-                "merkleProofSingle" -> return ()
-                "merkleProofComposite" -> return ()
-                "doubleSpendingCheck" -> return ()
-                "ancestorsDiscovered" -> return ()
+                "MerkleProofSingle" -> return ()
+                "MerkleProofComposite" -> return ()
+                "DoubleSpendingCheck" -> return ()
+                "AncestorsDiscovered" -> return ()
                 _ -> throw InvalidMessageTypeException
         )
         events

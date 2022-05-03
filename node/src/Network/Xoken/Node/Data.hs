@@ -281,10 +281,13 @@ data RPCReqParams'
     | DefaultMapiPolicy
         { dmPolicy :: MapiPolicy
         }
+    | UserMapiPolicy
+        { umPolicy :: MapiPolicyPatch
+        }
     | AddMapiCallback
         { callbackName :: T.Text
         , callbackUrl :: T.Text
-        , callBackAuth :: CallbackAuth
+        , callbackAuth :: CallbackAuth
         , events :: [T.Text]
         }
     deriving (Generic, Show, Hashable, Eq, Serialise, ToJSON)
@@ -329,7 +332,11 @@ instance FromJSON RPCReqParams' where
                     <*> o .: "email"
                     <*> o .:? "roles"
                 )
-            <|> ( DefaultMapiPolicy <$> o .: "policy"  
+            <|> ( DefaultMapiPolicy <$> o .: "policy"
+                )
+            <|> ( UserMapiPolicy <$> o .: "policyPatch"
+                )
+            <|> ( AddMapiCallback <$> o .: "callbackName" <*> o .: "callbackUrl" <*> o .: "callbackAuth" <*> o .: "events"
                 )
             <|> (GetTxOutputSpendStatus <$> o .: "txid" <*> o .: "index")
             <|> (UserByUsername <$> o .: "username")
@@ -509,6 +516,9 @@ instance ToJSON RPCResponseBody where
         object ["forName" .= n, "protocol" .= p, "uri" .= u, "isConfirmed" .= c, "isProducer" .= ip]
     toJSON (RespTxOutputSpendStatus ss) = object ["spendStatus" .= ss]
     toJSON (RespUser u) = object ["user" .= u]
+    toJSON (RespMapiPolicy p) = object ["policy" .= p]
+    toJSON (RespMapiPolicyPatch p) = object ["policyPatch" .= p]
+    toJSON (RespMapiCallback c) = object ["callback" .= c]
 
 data UpdateUserByUsername' = UpdateUserByUsername'
     { uuPassword :: Maybe String
@@ -597,6 +607,13 @@ data CallbackAuth
         }
     deriving (Generic, Show, Hashable, Eq, Serialise, ToJSON)
 
+instance FromJSON CallbackAuth where
+    parseJSON (Object o) =
+        ( CallbackBasicAuth <$> o .: "authType" <*> o .: "username" <*> o .: "password"
+        )
+            <|> ( CallbackBearerToken <$> o .: "authType" <*> o .: "authToken"
+                )
+
 data CallbackEvent
     = MerkleProofSingle
     | MerkleProofComposite
@@ -615,6 +632,19 @@ data MapiCallback = MapiCallback
     , mcCreatedTime :: UTCTime
     }
     deriving (Generic, Show, Hashable, Eq, Serialise)
+
+instance ToJSON MapiCallback where
+    toJSON (MapiCallback context group cbname url authtype authkey events created) =
+        object
+            [ "context" .= context
+            , "callbackGroup" .= group
+            , "callbackName" .= cbname
+            , "callbackUrl" .= url
+            , "authType" .= authtype
+            , "authKey" .= authkey
+            , "events" .= events
+            , "created" .= created
+            ]
 
 data MapiPolicy = MapiPolicy
     { mpMaxTxSize :: Int
@@ -640,7 +670,20 @@ instance FromJSON MapiPolicy where
             <*> o .: "maxTxFeesExceedLimit"
             <*> o .: "fees"
         )
-instance ToJSON MapiPolicy
+instance ToJSON MapiPolicy where
+    toJSON (MapiPolicy txsz scrsz opcodecount datasz anclim inpsats opsats consoltxns feesexceed fees) =
+        object
+            [ "maxTxSize" .= txsz
+            , "maxUnitScriptSize" .= scrsz
+            , "maxCumulativeOpCodeCount" .= opcodecount
+            , "maxCumulativeDataSize" .= datasz
+            , "txAncestorLimit" .= anclim
+            , "minUnitTxInputSatoshis" .= inpsats
+            , "minUnitTxOutputSatoshis" .= opsats
+            , "graceConsolidationTxnsQuota" .= consoltxns
+            , "maxTxFeesExceedLimit" .= feesexceed
+            , "fees" .= fees
+            ]
 
 data MapiPolicyPatch = MapiPolicyPatch
     { ppMaxTxSize :: Maybe Int
@@ -666,7 +709,21 @@ instance FromJSON MapiPolicyPatch where
             <*> o .:? "maxTxFeesExceedLimit"
             <*> o .:? "fees"
         )
-instance ToJSON MapiPolicyPatch
+
+instance ToJSON MapiPolicyPatch where
+    toJSON (MapiPolicyPatch txsz scrsz opcodecount datasz anclim inpsats opsats consoltxns feesexceed fees) =
+        object
+            [ "maxTxSize" .= txsz
+            , "maxUnitScriptSize" .= scrsz
+            , "maxCumulativeOpCodeCount" .= opcodecount
+            , "maxCumulativeDataSize" .= datasz
+            , "txAncestorLimit" .= anclim
+            , "minUnitTxInputSatoshis" .= inpsats
+            , "minUnitTxOutputSatoshis" .= opsats
+            , "graceConsolidationTxnsQuota" .= consoltxns
+            , "maxTxFeesExceedLimit" .= feesexceed
+            , "fees" .= fees
+            ]
 
 data FeeData = FeeData
     { fdBytes :: Int

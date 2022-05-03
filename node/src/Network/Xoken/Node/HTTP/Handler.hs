@@ -92,7 +92,7 @@ addUser AddUser{..} = do
             return $
                 addNewUser
                     conn
-                    (DT.pack auUsername)
+                    (DT.toLower $ DT.pack auUsername)
                     (DT.pack auFirstName)
                     (DT.pack auLastName)
                     (DT.pack auEmail)
@@ -626,7 +626,7 @@ getUserByUsername :: Handler App App ()
 getUserByUsername = do
     uname <- (fmap $ DTE.decodeUtf8) <$> (getParam "username")
     pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
-    res <- LE.try $ xGetUserByUsername (fromJust uname)
+    res <- LE.try $ xGetUserByUsername (DT.toLower $ fromJust uname)
     case res of
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
@@ -638,7 +638,7 @@ deleteUserByUsername :: Handler App App ()
 deleteUserByUsername = do
     uname <- (fmap $ DTE.decodeUtf8) <$> (getParam "username")
     pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
-    res <- LE.try $ xDeleteUserByUsername (fromJust uname)
+    res <- LE.try $ xDeleteUserByUsername (DT.toLower $ fromJust uname)
     case res of
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
@@ -651,7 +651,7 @@ updateUserByUsername :: UpdateUserByUsername' -> Handler App App ()
 updateUserByUsername updates = do
     uname <- (fmap $ DTE.decodeUtf8) <$> (getParam "username")
     pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
-    res <- LE.try $ xUpdateUserByUsername (fromJust uname) updates
+    res <- LE.try $ xUpdateUserByUsername (DT.toLower $ fromJust uname) updates
     case res of
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
@@ -663,16 +663,16 @@ updateUserByUsername updates = do
 
 addDefaultMapiPolicy :: RPCReqParams' -> Handler App App ()
 addDefaultMapiPolicy (DefaultMapiPolicy (MapiPolicy a b c d e f g h i j)) = do
-     dbe <- getDB
-     res <- LE.try $ xUpdatePolicyByUsername (DT.pack "default") (MapiPolicyPatch (Just a) (Just b) (Just c) (Just d) (Just e) (Just f) (Just g) (Just h) (Just i) (Just j))
-     case res of
-         Left (e :: SomeException) -> do
-             modifyResponse $ setResponseStatus 500 "Internal Server Error"
-             writeBS "INTERNAL_SERVER_ERROR"
-         Right True -> do
-             modifyResponse $ setResponseStatus 200 "Updated"
-             writeBS $ "Policy updated"
-         Right False -> throwNotFound
+    dbe <- getDB
+    res <- LE.try $ xUpdatePolicyByUsername (DT.empty) (MapiPolicyPatch (Just a) (Just b) (Just c) (Just d) (Just e) (Just f) (Just g) (Just h) (Just i) (Just j))
+    case res of
+        Left (e :: SomeException) -> do
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+        Right True -> do
+            modifyResponse $ setResponseStatus 200 "Updated"
+            writeBS $ "Policy updated"
+        Right False -> throwNotFound
 
 getPolicyCurrentUser :: Handler App App ()
 getPolicyCurrentUser = do
@@ -697,7 +697,7 @@ getPolicyByUsername :: Handler App App ()
 getPolicyByUsername = do
     uname <- (fmap $ DTE.decodeUtf8) <$> (getParam "username")
     pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
-    res <- LE.try $ xGetPolicyByUsername (fromJust uname)
+    res <- LE.try $ xGetPolicyByUsername (DT.toLower $ fromJust uname)
     case res of
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
@@ -709,7 +709,7 @@ deletePolicyByUsername :: Handler App App ()
 deletePolicyByUsername = do
     uname <- (fmap $ DTE.decodeUtf8) <$> (getParam "username")
     pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
-    res <- LE.try $ xDeletePolicyByUsername (fromJust uname)
+    res <- LE.try $ xDeletePolicyByUsername (DT.toLower $ fromJust uname)
     case res of
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
@@ -718,11 +718,13 @@ deletePolicyByUsername = do
             modifyResponse $ setResponseStatus 200 "Deleted"
             writeBS $ "User deleted"
 
-updatePolicyByUsername :: MapiPolicyPatch -> Handler App App ()
-updatePolicyByUsername updates = do
+updatePolicyByUsername :: RPCReqParams' -> Handler App App ()
+updatePolicyByUsername (UserMapiPolicy updates) = do
+    lg <- getLogger
     uname <- (fmap $ DTE.decodeUtf8) <$> (getParam "username")
+    debug lg $ LG.msg $ "updatePolicyByUsername Patch: " ++ show updates
     pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
-    res <- LE.try $ xUpdatePolicyByUsername (fromJust uname) updates
+    res <- LE.try $ xUpdatePolicyByUsername (DT.toLower $ fromJust uname) updates
     case res of
         Left (e :: SomeException) -> do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
@@ -735,6 +737,7 @@ updatePolicyByUsername updates = do
 addMapiCallback :: RPCReqParams' -> Handler App App ()
 addMapiCallback AddMapiCallback{..} = do
     dbe <- getDB
+    lg <- getLogger
     sk <- (fmap $ DTE.decodeUtf8) <$> (getParam "sessionKey")
     pretty <- (maybe True (read . DT.unpack . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     let conn = xCqlClientState dbe
@@ -744,15 +747,18 @@ addMapiCallback AddMapiCallback{..} = do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
         Right (Just user) -> do
-            let auth = case callBackAuth of
+            let auth = case callbackAuth of
                     CallbackBasicAuth ty usr psswd -> (ty, (usr ++ ":" ++ psswd))
                     CallbackBearerToken ty token -> (ty, token)
             res' <- LE.try $ xUpdateCallbackByUsername (DT.pack $ uUsername user) callbackName callbackUrl (DT.pack $ fst auth) (DT.pack $ snd auth) events
             case res' of
                 Left (e :: SomeException) -> do
+                    err lg $ LG.msg $ "Error: add MapiCallback: " ++ show e
                     modifyResponse $ setResponseStatus 500 "Internal Server Error"
                     writeBS "INTERNAL_SERVER_ERROR"
-                Right u@(Just us) -> writeBS $ BSL.toStrict $ encodeResp pretty $ RespMapiCallback u
+                Right u@(Just us) -> do
+                    debug lg $ LG.msg $ "Error: add MapiCallback: " ++ show u
+                    writeBS $ BSL.toStrict $ encodeResp pretty $ RespMapiCallback u
                 Right Nothing -> throwNotFound
         Right Nothing -> throwNotFound
 addMapiCallback _ = throwBadRequest

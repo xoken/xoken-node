@@ -82,6 +82,7 @@ import Network.Xoken.Block.Common
 import Network.Xoken.Crypto.Hash
 import Network.Xoken.Node.Data
 import Network.Xoken.Node.Data.Allegory
+import qualified Network.Xoken.Node.Data.ThreadSafeHashTable as TSH
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.GraphDB
 import Network.Xoken.Node.P2P.BlockSync
@@ -95,11 +96,55 @@ import System.Random
 import Text.Read
 import Xoken
 import qualified Xoken.NodeConfig as NC
-import qualified Network.Xoken.Node.Data.ThreadSafeHashTable as TSH
 
-applyPolicyPatch :: (Maybe MapiPolicyPatch) -> Maybe MapiPolicy -> Maybe MapiPolicy
+applyPolicyPatch ::  (HasXokenNodeEnv env m, MonadIO m) => (Maybe MapiPolicyPatch) -> Maybe MapiPolicy -> m(Maybe MapiPolicy)
 applyPolicyPatch patch defaultPolicy = do
-    undefined
+    lg <- getLogger
+    bp2pEnv <- getBitcoinP2P
+
+    case defaultPolicy of
+        Nothing -> do
+          debug lg $ LG.msg $ "here XXX: " ++ show defaultPolicy
+          return Nothing
+        Just dp -> do
+            case patch of
+                Just pp -> do
+                    debug lg $ LG.msg $ "here AAA dp : " ++ show defaultPolicy
+                    debug lg $ LG.msg $ "here AAA patch: " ++ show patch
+                    let txsz = case ppMaxTxSize pp of
+                            Just x -> x
+                            Nothing -> mpMaxTxSize dp
+                    let scrsz = case ppMaxUnitScriptSize pp of
+                            Just x -> x
+                            Nothing -> mpMaxUnitScriptSize dp
+                    let opcodecount = case ppMaxCumulativeOpCodeCount pp of
+                            Just x -> x
+                            Nothing -> mpMaxCumulativeOpCodeCount dp
+                    let datasz = case ppMaxCumulativeDataSize pp of
+                            Just x -> x
+                            Nothing -> mpMaxCumulativeDataSize dp
+                    let anclim = case ppTxAncestorLimit pp of
+                            Just x -> x
+                            Nothing -> mpTxAncestorLimit dp
+                    let inpsats = case ppMinUnitTxInputSatoshis pp of
+                            Just x -> x
+                            Nothing -> mpMinUnitTxInputSatoshis dp
+                    let opsats = case ppMinUnitTxOutputSatoshis pp of
+                            Just x -> x
+                            Nothing -> mpMinUnitTxOutputSatoshis dp
+                    let consoltxns = case ppGraceConsolidationTxnsQuota pp of
+                            Just x -> x
+                            Nothing -> mpGraceConsolidationTxnsQuota dp
+                    let feesexceed = case ppMaxTxFeesExceedLimit pp of
+                            Just x -> x
+                            Nothing -> mpMaxTxFeesExceedLimit dp
+                    let fees = case ppFees pp of
+                            Just x -> x
+                            Nothing -> mpFees dp
+                    return $ Just $ MapiPolicy txsz scrsz opcodecount datasz anclim inpsats opsats consoltxns feesexceed fees
+                Nothing -> do
+                  debug lg $ LG.msg $ "here : " ++ show defaultPolicy
+                  return defaultPolicy
 
 xGetPolicyByUsername :: (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> m (Maybe MapiPolicy)
 xGetPolicyByUsername name = do
@@ -108,45 +153,78 @@ xGetPolicyByUsername name = do
     bp2pEnv <- getBitcoinP2P
     mpp <- xGetPolicyPatchByUsername name
     dp <- liftIO $ readIORef $ defaultPolicy $ policyDataCache bp2pEnv
-    let patchedPolicy = applyPolicyPatch mpp dp
-    return patchedPolicy
+    case dp of
+        Just defpol -> do
+            patchedPolicy <- applyPolicyPatch mpp dp
+            debug lg $ LG.msg $ "here patched 111: " ++ show patchedPolicy
+            return patchedPolicy
+        Nothing -> do
+            policy <- xGetPolicyDefault
+            patchedPolicy <- applyPolicyPatch mpp policy
+            debug lg $ LG.msg $ "here patched 222: " ++ show patchedPolicy
+            return patchedPolicy
+
+xGetPolicyDefault :: (HasXokenNodeEnv env m, MonadIO m) => m (Maybe MapiPolicy)
+xGetPolicyDefault = do
+    defaultPolicyValue <- xGetPolicyPatch DT.empty
+    case defaultPolicyValue of
+        Just defpol -> do
+            let mpy = A.decode (C.pack $ DT.unpack defpol) :: Maybe MapiPolicy
+            return mpy
+        Nothing -> return Nothing
 
 xGetPolicyPatchByUsername :: (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> m (Maybe MapiPolicyPatch)
 xGetPolicyPatchByUsername name = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-    let conn = xCqlClientState dbe
-        context = DT.append (DT.pack "USER/") name
+    let context = DT.append (DT.pack "USER/") name
     cachedPolicy <- liftIO $ TSH.lookup (userPolicies $ policyDataCache bp2pEnv) (context)
     case cachedPolicy of
         Just cp -> return cachedPolicy
         Nothing -> do
-            let str = "SELECT context, policy_name, value, created_time, policy_expiry_time from xoken.policies where context = ? AND policy_name = ? "
-                qstr =
-                    str ::
-                        Q.QueryString
-                            Q.R
-                            (DT.Text, DT.Text)
-                            ( DT.Text
-                            , DT.Text
-                            , DT.Text
-                            , UTCTime
-                            , UTCTime
-                            )
-                p = getSimpleQueryParam $ (context, DT.pack "mAPI")
-            res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr p)
-            case res of
-                Right iop -> do
-                    if length iop == 0
-                        then return Nothing
-                        else do
-                            let (context, policyName, policyValue, createdTime, expiryTime) = iop !! 0
-                            let mpy = A.decode (C.pack $ DT.unpack policyValue) :: Maybe MapiPolicyPatch
-                            return mpy
-                Left (e :: SomeException) -> do
-                    err lg $ LG.msg $ "Error: xGetPolicyByUsername: " ++ show e
-                    throw KeyValueDBLookupException
+            policyValue <- xGetPolicyPatch name
+            case policyValue of
+                Just polval -> do
+                    let mpy = A.decode (C.pack $ DT.unpack polval) :: Maybe MapiPolicyPatch
+                    return mpy
+                Nothing -> return Nothing
+
+xGetPolicyPatch :: (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> m (Maybe DT.Text)
+xGetPolicyPatch name = do
+    dbe <- getDB
+    lg <- getLogger
+    bp2pEnv <- getBitcoinP2P
+    let conn = xCqlClientState dbe
+        context =
+            if DT.null name
+                then DT.pack "default"
+                else DT.append (DT.pack "USER/") name
+
+    let str = "SELECT context, policy_name, value, created_time, policy_expiry_time from xoken.policies where context = ? AND policy_name = ? "
+        qstr =
+            str ::
+                Q.QueryString
+                    Q.R
+                    (DT.Text, DT.Text)
+                    ( DT.Text
+                    , DT.Text
+                    , DT.Text
+                    , UTCTime
+                    , UTCTime
+                    )
+        p = getSimpleQueryParam $ (context, DT.pack "mAPI")
+    res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr p)
+    case res of
+        Right iop -> do
+            if length iop == 0
+                then return Nothing
+                else do
+                    let (context, policyName, policyValue, createdTime, expiryTime) = iop !! 0
+                    return $ Just policyValue
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: xGetPolicyByUsername: " ++ show e
+            throw KeyValueDBLookupException
 
 xDeletePolicyByUsername :: (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> m ()
 xDeletePolicyByUsername name = do
@@ -177,7 +255,10 @@ xUpdatePolicyByUsername name mapiPolicy = do
             tm <- liftIO $ getCurrentTime
             let mapy = DT.pack $ C.unpack $ A.encode $ mapiPolicy
             let str = "INSERT INTO xoken.policies ( context, policy_name,value,created_time,policy_expiry_time) VALUES (?,?,?,?,?)"
-                context = DT.append (DT.pack "USER/") name
+                context =
+                    if DT.null name
+                        then DT.pack "default"
+                        else DT.append (DT.pack "USER/") name
                 qstr = str :: Q.QueryString Q.W (DT.Text, DT.Text, DT.Text, UTCTime, UTCTime) ()
                 skTime = (addUTCTime (nominalDay * 30) tm)
                 par = getSimpleQueryParam (context, DT.pack "mAPI", mapy, skTime, skTime)
