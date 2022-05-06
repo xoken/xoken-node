@@ -258,6 +258,11 @@ data RPCReqParams'
         { sRawTx :: ByteString
         , sCallbackName :: String
         }
+    | SubscribeTx
+        { subTxId :: String
+        , subCallbackName :: String
+        , subState :: Maybe T.Text -- AState
+        }
     | AllegoryNameQuery
         { anqName :: [Int]
         , anqIsProducer :: Bool
@@ -337,6 +342,10 @@ instance FromJSON RPCReqParams' where
             <|> ( UserMapiPolicy <$> o .: "policyPatch"
                 )
             <|> ( AddMapiCallback <$> o .: "callbackName" <*> o .: "callbackUrl" <*> o .: "callbackAuth" <*> o .: "events"
+                )
+            <|> ( SubmitTx . B64.decodeLenient . T.encodeUtf8 <$> o .: "submitTx" <*> o .: "callbackName"
+                )
+            <|> ( SubscribeTx <$> o .: "subscribeTxId" <*> o .: "callbackName" <*> o .:? "state"
                 )
             <|> (GetTxOutputSpendStatus <$> o .: "txid" <*> o .: "index")
             <|> (UserByUsername <$> o .: "username")
@@ -440,6 +449,16 @@ data RPCResponseBody
     | RespRelayMultipleTx
         { rrMultipleTx :: [Bool]
         }
+    | RespSubscribeTx
+        { stApiVersion :: String
+        , stTimestamp :: UTCTime
+        , stMinerID :: String
+        , stCurrentHighestBlockHash :: String
+        , stCurrentHighestBlockHeight :: Int
+        , stTxid :: String
+        , stErrorCode :: Int
+        , stErrorDescription :: String
+        }
     | RespSubmitTx
         { stApiVersion :: String
         , stTimestamp :: UTCTime
@@ -519,6 +538,28 @@ instance ToJSON RPCResponseBody where
     toJSON (RespMapiPolicy p) = object ["policy" .= p]
     toJSON (RespMapiPolicyPatch p) = object ["policyPatch" .= p]
     toJSON (RespMapiCallback c) = object ["callback" .= c]
+    toJSON (RespSubmitTx v ts mid hs ht txid ec ed) =
+        object
+            [ "apiVersion" .= v
+            , "timestamp" .= ts
+            , "minerID" .= mid
+            , "currentHighestBlockHash" .= hs
+            , "currentHighestBlockHeight" .= ht
+            , "txid" .= txid
+            , "erorCode" .= ec
+            , "errorDescription" .= ed
+            ]
+    toJSON (RespSubscribeTx v ts mid hs ht txid ec ed) =
+        object
+            [ "apiVersion" .= v
+            , "timestamp" .= ts
+            , "minerID" .= mid
+            , "currentHighestBlockHash" .= hs
+            , "currentHighestBlockHeight" .= ht
+            , "txid" .= txid
+            , "erorCode" .= ec
+            , "errorDescription" .= ed
+            ]
 
 data UpdateUserByUsername' = UpdateUserByUsername'
     { uuPassword :: Maybe String
@@ -903,8 +944,10 @@ data AState
     | AString String
     | AInt Int
     deriving (Generic, Show, Hashable, Eq, Serialise)
+
 instance ToJSON AState
-instance FromJSON AState
+
+instance FromJSON AState 
 
 data CallbackSingleMerkleProof = CallbackSingleMerkleProof
     { cbApiVersion :: String

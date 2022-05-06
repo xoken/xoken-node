@@ -62,6 +62,8 @@ apiRoutes =
     , ("/v1/callback", method POST (withAuth  $ withReq addMapiCallback))
     , ("/v1/callback/:callback", method GET (withAuth getCallback))
     , ("/v1/callback/:callback", method DELETE (withAuth deleteCallback))
+    , ("/v1/submittx", method POST (withAuth $ withReq submitTx))
+    , ("/v1/subscribetx", method POST (withAuth $ withReq subscribeTx))
     ]
 
 queryRoutes :: [(B.ByteString, Handler App App ())]

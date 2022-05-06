@@ -238,6 +238,7 @@ processUnconfTransaction tx feeReq = do
         serbs = runPutLazy $ putLazyByteString $ S.encodeLazy tx
         count = BSL.length serbs
     debug lg $ LG.msg $ "Processing unconfirmed transaction <fetched inputs> :" ++ show txhs
+    debug lg $ LG.msg $ "Tx fees supplied: " ++ show fees
 
     if fees < feeReq
         then throw FeePolicyNotMetException

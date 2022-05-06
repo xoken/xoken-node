@@ -34,6 +34,8 @@ import Data.Time.Calendar
 import Data.Time.Clock
 import Data.Time.Clock.POSIX
 import Database.XCQL.Protocol as Q
+import Network.Xoken.Block.Common
+import Network.Xoken.Block.Headers
 import Network.Xoken.Crypto.Hash
 import Network.Xoken.Node.Data (
     AddUserResp (..),
@@ -58,6 +60,7 @@ import Network.Xoken.Node.HTTP.Types
 import Network.Xoken.Node.P2P.Common (
     BlockSyncException (..),
     addNewUser,
+    fetchBestSyncedBlock,
     generateSessionKey,
     getSimpleQueryParam,
     indexMaybe,
@@ -518,7 +521,7 @@ submitTx SubmitTx{..} = do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
         Right (Just user) -> do
-            res <- LE.try $ xSubmitTx sRawTx (DT.pack $ uUsername user) (DT.pack sCallbackName)
+            res <- LE.try $ xSubmitTx (sRawTx) (DT.pack $ uUsername user) (DT.pack sCallbackName)
             case res of
                 Left (e :: BlockSyncException) -> do
                     case e of
@@ -535,10 +538,43 @@ submitTx SubmitTx{..} = do
                             modifyResponse $ setResponseStatus 500 "Internal Server Error"
                             writeBS "INTERNAL_SERVER_ERROR"
                 Right ops -> do
-                    curtm <- liftIO $ getCurrentTime
-                    writeBS $ BSL.toStrict $ encodeResp pretty $ RespSubmitTx "apiversion" curtm "minerid" "highestblockhash" 740123 "txid" 0 "errordesc"
+                    case ops of
+                        Just txid -> do
+                            curtm <- liftIO $ getCurrentTime
+                            (bhash, bht) <- fetchBestSyncedBlock
+                            writeBS $ BSL.toStrict $ encodeResp pretty $ RespSubmitTx "1.0" curtm "" (DT.unpack $ blockHashToHex bhash) (fromIntegral bht) (DT.unpack txid) 0 ""
+                        Nothing -> do
+                            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+                            writeBS "Submit transaction failed for unknown reason"
         Right Nothing -> throwNotFound
 submitTx _ = throwBadRequest
+
+subscribeTx :: RPCReqParams' -> Handler App App ()
+subscribeTx SubscribeTx{..} = do
+    pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
+    sk <- (fmap $ DTE.decodeUtf8) <$> (getParam "sessionKey")
+    res' <- LE.try $ xGetUserBySessionKey (fromJust sk)
+    case res' of
+        Left (e :: SomeException) -> do
+            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+            writeBS "INTERNAL_SERVER_ERROR"
+        Right (Just user) -> do
+            res <- LE.try $ xSubscribeTx (DT.pack subTxId) (DT.pack $ uUsername user) (DT.pack subCallbackName) (subState)
+            case res of
+                Right txx -> do
+                    case txx of
+                        Just txid -> do
+                            curtm <- liftIO $ getCurrentTime
+                            (bhash, bht) <- fetchBestSyncedBlock
+                            writeBS $ BSL.toStrict $ encodeResp pretty $ RespSubscribeTx "1.0" curtm "" (DT.unpack $ blockHashToHex bhash) (fromIntegral bht) (DT.unpack txid) 0 ""
+                        Nothing -> do
+                            modifyResponse $ setResponseStatus 500 "Internal Server Error"
+                            writeBS "Subscribe transaction failed for unknown reason"
+                Left (e :: SomeException) -> do
+                    modifyResponse $ setResponseStatus 500 "Internal Server Error"
+                    writeBS "Failed subscribeTx"
+        Right Nothing -> throwNotFound
+subscribeTx _ = throwBadRequest
 
 relayTx :: RPCReqParams' -> Handler App App ()
 relayTx RelayTx{..} = do

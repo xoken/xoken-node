@@ -530,7 +530,7 @@ xRelayTx rawTx = do
                     err lg $ LG.msg $ val $ "error decoding rawTx (2)"
                     return $ False
 
-xSubmitTx :: (HasXokenNodeEnv env m, MonadIO m) => BC.ByteString -> DT.Text -> DT.Text -> m (Bool)
+xSubmitTx :: (HasXokenNodeEnv env m, MonadIO m) => BC.ByteString -> DT.Text -> DT.Text -> m (Maybe DT.Text)
 xSubmitTx rawTx userId callbackName = do
     dbe <- getDB
     lg <- getLogger
@@ -564,8 +564,8 @@ xSubmitTx rawTx userId callbackName = do
                                             False -> return ()
                                             True -> throw $ DoubleSpendException outpoint
                         )
-                        (prevOutput <$> txIn tx)
-                    -- verify against users fee policy
+                        [] --  (prevOutput <$> txIn tx)  TODO ######## commented out temporarily for empty list
+                        -- verify against users fee policy
                     userPolicy <- xGetPolicyByUsername userId
                     feeReq <-
                         case userPolicy of
@@ -614,7 +614,7 @@ xSubmitTx rawTx userId callbackName = do
                                 return $ (sum ife) + (sum ofe)
 
                     -- unless (L.null spentInputs) $ throw $ DoubleSpendException spentInputs
-                    debug lg $ LG.msg $ val $ "transaction verified - broadcasting tx"
+                    debug lg $ LG.msg $ " fee required :" ++ (show feeReq)
                     ingestRes <- LE.try $ processUnconfTransaction tx (fromIntegral feeReq)
                     case ingestRes of
                         Left (e :: SomeException) -> do
@@ -644,23 +644,49 @@ xSubmitTx rawTx userId callbackName = do
                                     connPeers
                             debug lg $ LG.msg $ "Broadcast result for " <> (DT.unpack txId) <> ": " <> (show broadcastResult)
                             if all (DE.isLeft) (snd <$> broadcastResult)
-                                then throw RelayFailureException
+                                then return () -- throw RelayFailureException -- TODO temporarily commenting out
                                 else return ()
                             eres <- LE.try $ handleIfAllegoryTx tx False False -- MUST be False
                             case eres of
-                                Right (flg) -> return True
+                                Right (flg) -> return $ Just txId
                                 Left (e :: SomeException) -> do
                                     err lg $ LG.msg $ "[ERROR] Failed to process Allegory metadata: " <> (show e)
-                                    return False
+                                    return Nothing
                 Nothing -> do
                     err lg $ LG.msg $ val $ "error decoding rawTx (2)"
-                    return $ False
+                    return Nothing
+
+xSubscribeTx :: (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> DT.Text -> DT.Text -> Maybe DT.Text -> m (Maybe DT.Text)
+xSubscribeTx txId userId callbackName state = do
+    dbe <- getDB
+    lg <- getLogger
+    bp2pEnv <- getBitcoinP2P
+    let conn = xCqlClientState dbe
+        bheight = 100000
+        bhash = hexToBlockHash "0000000000000000000000000000000000000000000000000000000000000000"
+    debug lg $ LG.msg $ "subscribeTx bhash " ++ show bhash
+    -- confirm tx is present in db
+    knownTx <- checkOutputDataExists (txId, 0) -- suffice to try for first output
+    if knownTx
+        then do
+            let qstr :: Q.QueryString Q.W (DT.Text, DT.Text, DT.Text, Int32, Maybe DT.Text) ()
+                qstr = "INSERT INTO xoken.callback_registrations (txid, user_id, callback_name, flags_bitmask, state) VALUES (?,?,?,?,?)"
+                par = getSimpleQueryParam (txId, userId, callbackName, 0, state)
+            queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstr))
+            resReg <- liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryId par))
+            case resReg of
+                Right _ -> return $ Just txId
+                Left (e :: SomeException) -> do
+                    err lg $ LG.msg $ "Error: INSERTing into 'script_output_protocol: " ++ show e
+                    throw KeyValueDBInsertException
+        else do
+            err lg $ LG.msg $ val $ "error decoding rawTx (2)"
+            return Nothing
 
 getOpcodeFeeMap :: FeeOpcodes -> M.Map ScriptOp Int
 getOpcodeFeeMap fo = do
     M.fromList
-        [
-          (OP_0, fsSatoshis $ op0 fo)
+        [ (OP_0, fsSatoshis $ op0 fo)
         , (OP_1NEGATE, fsSatoshis $ op1negate fo)
         , (OP_RESERVED, fsSatoshis $ opReserved fo)
         , (OP_1, fsSatoshis $ op1 fo)
