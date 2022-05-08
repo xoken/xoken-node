@@ -513,6 +513,7 @@ getOutpointsByName = do
 
 submitTx :: RPCReqParams' -> Handler App App ()
 submitTx SubmitTx{..} = do
+    bp2pEnv <- getBitcoinP2P
     pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     sk <- (fmap $ DTE.decodeUtf8) <$> (getParam "sessionKey")
     res' <- LE.try $ xGetUserBySessionKey (fromJust sk)
@@ -542,7 +543,7 @@ submitTx SubmitTx{..} = do
                         Just txid -> do
                             curtm <- liftIO $ getCurrentTime
                             (bhash, bht) <- fetchBestSyncedBlock
-                            writeBS $ BSL.toStrict $ encodeResp pretty $ RespSubmitTx "1.0" curtm "" (DT.unpack $ blockHashToHex bhash) (fromIntegral bht) (DT.unpack txid) 0 ""
+                            writeBS $ BSL.toStrict $ encodeResp pretty $ RespSubmitTx "1.0" curtm (NC.minerID $ nodeConfig bp2pEnv ) (DT.unpack $ blockHashToHex bhash) (fromIntegral bht) (DT.unpack txid) 0 ""
                         Nothing -> do
                             modifyResponse $ setResponseStatus 500 "Internal Server Error"
                             writeBS "Submit transaction failed for unknown reason"
@@ -551,6 +552,7 @@ submitTx _ = throwBadRequest
 
 subscribeTx :: RPCReqParams' -> Handler App App ()
 subscribeTx SubscribeTx{..} = do
+    bp2pEnv <- getBitcoinP2P
     pretty <- (maybe True (read . DT.unpack . DT.toTitle . DTE.decodeUtf8)) <$> (getQueryParam "pretty")
     sk <- (fmap $ DTE.decodeUtf8) <$> (getParam "sessionKey")
     res' <- LE.try $ xGetUserBySessionKey (fromJust sk)
@@ -566,7 +568,7 @@ subscribeTx SubscribeTx{..} = do
                         Just txid -> do
                             curtm <- liftIO $ getCurrentTime
                             (bhash, bht) <- fetchBestSyncedBlock
-                            writeBS $ BSL.toStrict $ encodeResp pretty $ RespSubscribeTx "1.0" curtm "" (DT.unpack $ blockHashToHex bhash) (fromIntegral bht) (DT.unpack txid) 0 ""
+                            writeBS $ BSL.toStrict $ encodeResp pretty $ RespSubscribeTx "1.0" curtm (NC.minerID $ nodeConfig bp2pEnv )(DT.unpack $ blockHashToHex bhash) (fromIntegral bht) (DT.unpack txid) 0 ""
                         Nothing -> do
                             modifyResponse $ setResponseStatus 500 "Internal Server Error"
                             writeBS "Subscribe transaction failed for unknown reason"

@@ -64,6 +64,8 @@ data NodeConfig =
         , blocksFetchWindow :: [BlockFetchWindow]
         , parallelBlockProcessing :: Int
         , staticPeerList :: [String]
+        , mAPICallbacksEnable :: Bool
+        , minerID :: String
         }
     deriving (Show, Generic)
 

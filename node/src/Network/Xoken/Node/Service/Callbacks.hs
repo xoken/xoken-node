@@ -208,6 +208,7 @@ triggerCallbacks = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
 
+    debug lg $ LG.msg $ "triggerCallbacks: inside : " ++ show ""
     cbDataCache <- liftIO $ TSH.toList $ callbacksDataCache bp2pEnv
     xx <-
         LE.try $
@@ -226,6 +227,7 @@ triggerCallbacks = do
                             )
                         & S.maxBuffer (5) --  nodeConfig p2pEnv)
                         & S.maxThreads (5) -- nodeConfig p2pEnv)
+    debug lg $ LG.msg $ "triggerCallbacks: done: " ++ show ""
     case xx of
         Right _ -> return ()
         Left (e :: SomeException) -> do
@@ -283,6 +285,7 @@ processCallbacks userid txid compProofs = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
+    debug lg $ LG.msg $ "processCallbacks: inside: " ++ (show txid) ++ " userid: " ++ (show userid)
     let conn = xCqlClientState dbe
         net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
         str =

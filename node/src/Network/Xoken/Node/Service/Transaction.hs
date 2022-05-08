@@ -82,7 +82,7 @@ import qualified Network.Simple.TCP.TLS as TLS
 import Network.Xoken.Address.Base58
 import Network.Xoken.Block.Common
 import Network.Xoken.Crypto.Hash
-import Network.Xoken.Node.Data
+import Network.Xoken.Node.Data as D
 import Network.Xoken.Node.Data.Allegory
 import Network.Xoken.Node.Env
 import Network.Xoken.Node.GraphDB
@@ -571,6 +571,8 @@ xSubmitTx rawTx userId callbackName = do
                         case userPolicy of
                             Just upol -> do
                                 let feemap = getOpcodeFeeMap (pfOpcodes $ mpFees upol)
+                                    pushDataChunk = fdBytes $ pfData $ mpFees upol
+                                    pushDataSats = fdSatoshis $ pfData $ mpFees upol
                                 ife <-
                                     mapM
                                         ( \inp -> do
@@ -579,10 +581,13 @@ xSubmitTx rawTx userId callbackName = do
                                                 Right (so) -> do
                                                     let ff =
                                                             L.map
-                                                                ( \scrop -> do
+                                                                ( \scrop' -> do
+                                                                    let (scrop, blen) = case scrop' of
+                                                                            OP_PUSHDATA byt typ -> (OP_PUSHDATA BC.empty typ, BC.length byt)
+                                                                            _ -> (scrop', 0)
                                                                     case M.lookup scrop feemap of
                                                                         Just v -> v
-                                                                        Nothing -> 0
+                                                                        Nothing -> pushDataSats * ((blen `div` pushDataChunk) + 1)
                                                                 )
                                                                 (scriptOps so)
                                                     return $ sum ff
@@ -599,10 +604,14 @@ xSubmitTx rawTx userId callbackName = do
                                                 Right (so) -> do
                                                     let ff =
                                                             L.map
-                                                                ( \scrop -> do
+                                                                ( \scrop' -> do
+                                                                    let (scrop, blen) = case scrop' of
+                                                                            OP_PUSHDATA byt typ -> (OP_PUSHDATA BC.empty typ, BC.length byt)
+                                                                            _ -> (scrop', 0)
+
                                                                     case M.lookup scrop feemap of
                                                                         Just v -> v
-                                                                        Nothing -> 0
+                                                                        Nothing -> pushDataSats * ((blen `div` pushDataChunk) + 1)
                                                                 )
                                                                 (scriptOps so)
                                                     return $ sum ff
@@ -686,7 +695,11 @@ xSubscribeTx txId userId callbackName state = do
 getOpcodeFeeMap :: FeeOpcodes -> M.Map ScriptOp Int
 getOpcodeFeeMap fo = do
     M.fromList
-        [ (OP_0, fsSatoshis $ op0 fo)
+        [ (OP_PUSHDATA BC.empty OPCODE, fsSatoshis $ D.opCode fo)
+        , (OP_PUSHDATA BC.empty OPDATA1, fsSatoshis $ opPushData1 fo)
+        , (OP_PUSHDATA BC.empty OPDATA2, fsSatoshis $ opPushData2 fo)
+        , (OP_PUSHDATA BC.empty OPDATA4, fsSatoshis $ opPushData4 fo)
+        , (OP_0, fsSatoshis $ op0 fo)
         , (OP_1NEGATE, fsSatoshis $ op1negate fo)
         , (OP_RESERVED, fsSatoshis $ opReserved fo)
         , (OP_1, fsSatoshis $ op1 fo)

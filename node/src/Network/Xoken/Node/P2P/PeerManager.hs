@@ -118,13 +118,13 @@ createSocketFromSockAddr saddr = do
             liftIO $ Network.Socket.close ss
             throw $ SocketConnectException (saddr)
 
-runBlockSync :: (HasXokenNodeEnv env m, MonadIO m) => m ()
-runBlockSync = forever $ do
-  liftIO $ threadDelay (99999990000) 
-  return ()
+-- runBlockSync :: (HasXokenNodeEnv env m, MonadIO m) => m ()
+-- runBlockSync = forever $ do
+--   liftIO $ threadDelay (99999990000) 
+--   return ()
   
-runBlockSync' :: (HasXokenNodeEnv env m, MonadIO m) => m ()
-runBlockSync' =
+runBlockSync :: (HasXokenNodeEnv env m, MonadIO m) => m ()
+runBlockSync =
     forever $ do
         lg <- getLogger
         bp2pEnv <- getBitcoinP2P
@@ -751,13 +751,13 @@ processTMTSubTrees blkHash txCount = do
             err lg $ LG.msg $ "Error while processTMTSubTrees: " ++ show e
             throw e
 
+--runTMTDaemon :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
+--runTMTDaemon = forever $ do
+--  liftIO $ threadDelay (99999990000) 
+  
+  
 runTMTDaemon :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
-runTMTDaemon = forever $ do
-  liftIO $ threadDelay (99999990000) 
-  
-  
-runTMTDaemon' :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
-runTMTDaemon' = do
+runTMTDaemon = do
     continue <- liftIO $ newIORef True
     whileM_ (liftIO $ readIORef continue) $ do
         p2pEnv <- getBitcoinP2P
@@ -845,7 +845,10 @@ runTMTDaemon' = do
                                                                     )
                                                         res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query q p)
                                                         case res of
-                                                            Right _ -> triggerCallbacks -- TODO: trigger callbacks jobs
+                                                            Right _ -> do
+                                                              if mAPICallbacksEnable $ nodeConfig p2pEnv
+                                                                then triggerCallbacks -- TODO: trigger callbacks jobs
+                                                                else return ()
                                                             Left (e :: SomeException) -> do
                                                                 err lg $
                                                                     LG.msg
