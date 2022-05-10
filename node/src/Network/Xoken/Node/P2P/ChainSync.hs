@@ -11,6 +11,7 @@
 module Network.Xoken.Node.P2P.ChainSync (
     runEgressChainSync,
     processHeaders,
+    fetchBestBlock,
 ) where
 
 import Control.Concurrent (threadDelay)

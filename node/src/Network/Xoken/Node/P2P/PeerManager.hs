@@ -78,6 +78,7 @@ import Network.Xoken.Node.P2P.ChainSync
 import Network.Xoken.Node.P2P.Common
 import Network.Xoken.Node.P2P.Types
 import Network.Xoken.Node.P2P.UnconfTxSync
+import Network.Xoken.Node.Service.Callbacks as CB
 import Network.Xoken.Transaction.Common
 import Network.Xoken.Util
 import StmContainers.Map as SM
@@ -89,7 +90,6 @@ import System.Logger as LG
 import System.Logger.Message
 import System.Random
 import Xoken.NodeConfig
-import Network.Xoken.Node.Service.Callbacks as CB
 
 createSocket :: AddrInfo -> IO (Maybe Socket)
 createSocket = createSocketWithOptions []
@@ -120,9 +120,9 @@ createSocketFromSockAddr saddr = do
 
 -- runBlockSync :: (HasXokenNodeEnv env m, MonadIO m) => m ()
 -- runBlockSync = forever $ do
---   liftIO $ threadDelay (99999990000) 
+--   liftIO $ threadDelay (99999990000)
 --   return ()
-  
+
 runBlockSync :: (HasXokenNodeEnv env m, MonadIO m) => m ()
 runBlockSync =
     forever $ do
@@ -753,9 +753,8 @@ processTMTSubTrees blkHash txCount = do
 
 --runTMTDaemon :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
 --runTMTDaemon = forever $ do
---  liftIO $ threadDelay (99999990000) 
-  
-  
+--  liftIO $ threadDelay (99999990000)
+
 runTMTDaemon :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
 runTMTDaemon = do
     continue <- liftIO $ newIORef True
@@ -846,9 +845,9 @@ runTMTDaemon = do
                                                         res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query q p)
                                                         case res of
                                                             Right _ -> do
-                                                              if mAPICallbacksEnable $ nodeConfig p2pEnv
-                                                                then triggerCallbacks -- TODO: trigger callbacks jobs
-                                                                else return ()
+                                                                if mAPICallbacksEnable $ nodeConfig p2pEnv
+                                                                    then triggerCallbacks -- TODO: trigger callbacks jobs
+                                                                    else return ()
                                                             Left (e :: SomeException) -> do
                                                                 err lg $
                                                                     LG.msg
@@ -1219,8 +1218,17 @@ processTxBatch :: (HasXokenNodeEnv env m, MonadIO m) => [Tx] -> IngressStreamSta
 processTxBatch txns iss = do
     bp2pEnv <- getBitcoinP2P
     lg <- getLogger
+    dbe <- getDB
+    let conn = xCqlClientState $ dbe
+    let net = bitcoinNetwork $ nodeConfig bp2pEnv
     let bi = issBlockIngest iss
-    let binfo = issBlockInfo iss
+        binfo = issBlockInfo iss
+    (_, chainTipHeight) <- fetchBestBlock conn net
+    (_, bestSynced) <- fetchBestSyncedBlock
+    let checkTxAlreadyProc =
+            if chainTipHeight > (bestSynced + 4)
+                then False
+                else True
     case binfo of
         Just bf -> do
             valx <- liftIO $ TSH.lookup (blockTxProcessingLeftMap bp2pEnv) (biBlockHash bf)
@@ -1256,7 +1264,7 @@ processTxBatch txns iss = do
                                             else debug lg $ LG.msg $ ("Tx__index: " ++ show idx)
                                         return ((txns !! idx), bf, cidx)
                                     )
-                                & S.mapM (processTxStream bi)
+                                & S.mapM (processTxStream bi checkTxAlreadyProc)
                                 & S.maxBuffer (maxTxProcessingBuffer $ nodeConfig bp2pEnv)
                                 & S.maxThreads (maxTxProcessingThreads $ nodeConfig bp2pEnv)
                     valy <- liftIO $ TSH.lookup (blockTxProcessingLeftMap bp2pEnv) (biBlockHash bf)
@@ -1270,13 +1278,13 @@ processTxBatch txns iss = do
 
 --
 --
-processTxStream :: (HasXokenNodeEnv env m, MonadIO m) => BlockIngestState -> (Tx, BlockInfo, Int) -> m ()
-processTxStream bi (tx, binfo, txIndex) = do
+processTxStream :: (HasXokenNodeEnv env m, MonadIO m) => BlockIngestState -> Bool -> (Tx, BlockInfo, Int) -> m ()
+processTxStream bi checkTxAlreadyProc (tx, binfo, txIndex) = do
     bp2pEnv <- getBitcoinP2P
     let bhash = biBlockHash binfo
         bheight = biBlockHeight binfo
     lg <- getLogger
-    res <- LE.try $ processConfTransaction bi (tx) bhash (fromIntegral bheight) txIndex
+    res <- LE.try $ processConfTransaction bi (tx) bhash (fromIntegral bheight) txIndex checkTxAlreadyProc
     case res of
         Right () -> return ()
         Left (TxIDNotFoundException (txid, index)) -> do

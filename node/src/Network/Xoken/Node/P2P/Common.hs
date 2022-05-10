@@ -3,9 +3,9 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 
 module Network.Xoken.Node.P2P.Common where
 
@@ -70,7 +70,7 @@ import Network.Xoken.Transaction.Common
 import Network.Xoken.Util
 import Numeric.Lens (base)
 import Streamly
-import Streamly.Prelude ((|:), nil)
+import Streamly.Prelude (nil, (|:))
 import qualified Streamly.Prelude as S
 import System.Logger as LG
 import System.Random
@@ -153,6 +153,7 @@ instance Exception XCqlException
 
 --
 --
+
 -- | Create version data structure.
 buildVersion :: Network -> Word64 -> BlockHeight -> NetworkAddress -> NetworkAddress -> Word64 -> Version
 buildVersion net nonce height loc rmt time =
@@ -183,8 +184,10 @@ sendEncMessage writeLock sock msg = withMVar writeLock (\x -> (LB.sendAll sock m
 
 -- | Computes the height of a Merkle tree.
 computeTreeHeight ::
-       Int -- ^ number of transactions (leaf nodes)
-    -> Int8 -- ^ height of the merkle tree
+    -- | number of transactions (leaf nodes)
+    Int ->
+    -- | height of the merkle tree
+    Int8
 computeTreeHeight ntx
     | ntx < 2 = 0
     | even ntx = 1 + computeTreeHeight (ntx `div` 2)
@@ -222,9 +225,10 @@ recvAll sock len = do
                 Right mesg ->
                     if BSL.length mesg == len
                         then return mesg
-                        else if BSL.length mesg == 0
-                                 then throw ZeroLengthSocketReadException
-                                 else BSL.append mesg <$> recvAll sock (len - BSL.length mesg)
+                        else
+                            if BSL.length mesg == 0
+                                then throw ZeroLengthSocketReadException
+                                else BSL.append mesg <$> recvAll sock (len - BSL.length mesg)
         else return (BSL.empty)
 
 -- OP_RETURN Allegory/AllPay
@@ -235,13 +239,16 @@ frameOpReturn opReturn = do
     let xx =
             if (len <= 0x4b)
                 then word8 $ fromIntegral len
-                else if (len <= 0xff)
-                         then mappend (word8 0x4c) (word8 $ fromIntegral len)
-                         else if (len <= 0xffff)
-                                  then mappend (word8 0x4d) (word16LE $ fromIntegral len)
-                                  else if (len <= 0x7fffffff)
-                                           then mappend (word8 0x4e) (word32LE $ fromIntegral len)
-                                           else word8 0x99 -- error scenario!!
+                else
+                    if (len <= 0xff)
+                        then mappend (word8 0x4c) (word8 $ fromIntegral len)
+                        else
+                            if (len <= 0xffff)
+                                then mappend (word8 0x4d) (word16LE $ fromIntegral len)
+                                else
+                                    if (len <= 0x7fffffff)
+                                        then mappend (word8 0x4e) (word32LE $ fromIntegral len)
+                                        else word8 0x99 -- error scenario!!
     let bs = LC.toStrict $ toLazyByteString xx
     C.append (C.append prefix bs) opReturn
 
@@ -256,15 +263,15 @@ maskAfter :: Int -> String -> String
 maskAfter n skey = (\x -> take n x ++ fmap (const '*') (drop n x)) skey
 
 addNewUser ::
-       XCqlClientState
-    -> T.Text
-    -> T.Text
-    -> T.Text
-    -> T.Text
-    -> Maybe [String]
-    -> Maybe Int32
-    -> Maybe UTCTime
-    -> IO (Maybe AddUserResp)
+    XCqlClientState ->
+    T.Text ->
+    T.Text ->
+    T.Text ->
+    T.Text ->
+    Maybe [String] ->
+    Maybe Int32 ->
+    Maybe UTCTime ->
+    IO (Maybe AddUserResp)
 addNewUser conn uname fname lname email roles api_quota api_expiry_time = do
     let qstr =
             " SELECT password from xoken.user_permission where username = ? " :: Q.QueryString Q.R (Identity T.Text) (Identity T.Text)
@@ -282,18 +289,23 @@ addNewUser conn uname fname lname email roles api_quota api_expiry_time = do
                 str =
                     "insert INTO xoken.user_permission ( username, password, first_name, last_name, emailid, created_time, permissions, api_quota, api_used, api_expiry_time, session_key, session_key_expiry_time) values (?, ?, ?, ?, ?, ? ,? ,? ,? ,? ,? ,? )"
                 qstr =
-                    str :: Q.QueryString Q.W ( T.Text
-                                             , T.Text
-                                             , T.Text
-                                             , T.Text
-                                             , T.Text
-                                             , UTCTime
-                                             , [T.Text]
-                                             , Int32
-                                             , Int32
-                                             , UTCTime
-                                             , T.Text
-                                             , UTCTime) ()
+                    str ::
+                        Q.QueryString
+                            Q.W
+                            ( T.Text
+                            , T.Text
+                            , T.Text
+                            , T.Text
+                            , T.Text
+                            , UTCTime
+                            , [T.Text]
+                            , Int32
+                            , Int32
+                            , UTCTime
+                            , T.Text
+                            , UTCTime
+                            )
+                            ()
                 par =
                     getSimpleQueryParam
                         ( uname
@@ -307,27 +319,29 @@ addNewUser conn uname fname lname email roles api_quota api_expiry_time = do
                         , 0
                         , (fromMaybe (addUTCTime (nominalDay * 365) tm) api_expiry_time)
                         , tempSessionKey
-                        , (addUTCTime (nominalDay * 30) tm))
+                        , (addUTCTime (nominalDay * 30) tm)
+                        )
             res1 <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query (qstr) par)
             case res1 of
                 Right _ -> do
                     putStrLn $ "Added user: " ++ (T.unpack uname)
                     return $
                         Just $
-                        AddUserResp
-                            (User
-                                 (T.unpack uname)
-                                 ""
-                                 (T.unpack fname)
-                                 (T.unpack lname)
-                                 (T.unpack email)
-                                 (fromMaybe ["read"] roles)
-                                 (fromIntegral $ fromMaybe 10000 api_quota)
-                                 0
-                                 (fromMaybe (addUTCTime (nominalDay * 365) tm) api_expiry_time)
-                                 (maskAfter 10 $ T.unpack tempSessionKey)
-                                 (addUTCTime (nominalDay * 30) tm))
-                            (C.unpack passwd)
+                            AddUserResp
+                                ( User
+                                    (T.unpack uname)
+                                    ""
+                                    (T.unpack fname)
+                                    (T.unpack lname)
+                                    (T.unpack email)
+                                    (fromMaybe ["read"] roles)
+                                    (fromIntegral $ fromMaybe 10000 api_quota)
+                                    0
+                                    (fromMaybe (addUTCTime (nominalDay * 365) tm) api_expiry_time)
+                                    (maskAfter 10 $ T.unpack tempSessionKey)
+                                    (addUTCTime (nominalDay * 30) tm)
+                                )
+                                (C.unpack passwd)
                 Left (SomeException e) -> do
                     putStrLn $ "Error: INSERTing into 'user_permission': " ++ show e
                     throw e
@@ -346,11 +360,12 @@ calculateChainWork blks conn = do
                 then return 0
                 else do
                     case traverse
-                             (\(ht, hdr) ->
-                                  case (A.eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 hdr) of
-                                      (Right bh) -> Right $ bh
-                                      Left err -> Left err)
-                             (iop) of
+                        ( \(ht, hdr) ->
+                            case (A.eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 hdr) of
+                                (Right bh) -> Right $ bh
+                                Left err -> Left err
+                        )
+                        (iop) of
                         Right hdrs -> return $ foldr (\x y -> y + (convertBitsToBlockWork $ blockBits $ x)) 0 hdrs
                         Left err -> do
                             liftIO $ print $ "decode failed for blockrecord: " <> show err
@@ -452,10 +467,11 @@ getConnectionStreamID xcs = do
             i <-
                 modifyMVar
                     lock
-                    (\a -> do
-                         if a == maxBound
-                             then return (1, 1)
-                             else return (a + 1, a + 1))
+                    ( \a -> do
+                        if a == maxBound
+                            then return (1, 1)
+                            else return (a + 1, a + 1)
+                    )
             return $ (vcs, i)
         Nothing -> do
             print "Hit a dud XCQL connection!"
@@ -565,14 +581,16 @@ getTx :: XCqlClientState -> Q.QueryString Q.R (Identity Text) (Identity Blob) ->
 getTx conn qstr hash segments = do
     queryI <- queryPrepared conn (Q.RqPrepare $ Q.Prepare qstr)
     foldM
-        (\acc s -> do
-             let p = getSimpleQueryParam $ Identity $ hash <> (T.pack $ show s)
-             resp <- query conn (Q.RqExecute $ Q.Execute queryI p)
-             return $
-                 if L.length resp == 0 -- TODO: this shouldn't be occurring
-                     then acc
-                     else let sz = runIdentity $ resp !! 0
-                           in acc <> fromBlob sz)
+        ( \acc s -> do
+            let p = getSimpleQueryParam $ Identity $ hash <> (T.pack $ show s)
+            resp <- query conn (Q.RqExecute $ Q.Execute queryI p)
+            return $
+                if L.length resp == 0 -- TODO: this shouldn't be occurring
+                    then acc
+                    else
+                        let sz = runIdentity $ resp !! 0
+                         in acc <> fromBlob sz
+        )
         BSL.empty
         [1 .. segments]
 
@@ -584,11 +602,15 @@ getProps = reverse . go mempty 5 -- name, 4 properties
         let (len, r) = B.splitAt 2 b
         let lenIntM = (T.unpack . DTE.decodeUtf8 $ len) ^? (base 16)
         if (not $ B.null r) && isJust lenIntM && lenIntM > Just 0 && lenIntM <= Just 252
-            then go (( "prop" <> (T.pack $ show (6 - n)) -- starts at prop1
-                     , (DTE.decodeUtf8 $ B.take (2 * (fromJust lenIntM)) r)) :
-                     acc)
-                     (n - 1)
-                     (B.drop (2 * (fromJust lenIntM)) r)
+            then
+                go
+                    ( ( "prop" <> (T.pack $ show (6 - n)) -- starts at prop1
+                      , (DTE.decodeUtf8 $ B.take (2 * (fromJust lenIntM)) r)
+                      ) :
+                      acc
+                    )
+                    (n - 1)
+                    (B.drop (2 * (fromJust lenIntM)) r)
             else acc
 
 getPropsG :: Int -> Get [(Text, Text)]
@@ -609,7 +631,7 @@ getPropsG n = go 1
 
 headMaybe :: [a] -> Maybe a
 headMaybe [] = Nothing
-headMaybe (x:xs) = Just x
+headMaybe (x : xs) = Just x
 
 indexMaybe :: [a] -> Int -> Maybe a
 indexMaybe xs n
@@ -641,6 +663,31 @@ getBlockInfo Nothing = Nothing
 getBlockInfo (Just ("", -1, -1)) = Nothing
 getBlockInfo (Just b) = Just b
 
+loadCallbacksCache :: (HasXokenNodeEnv env m, MonadIO m) => m ()
+loadCallbacksCache = do
+    lg <- getLogger
+    bp2pEnv <- getBitcoinP2P
+    conn <- xCqlClientState <$> getDB
+    let cbDataCache = callbacksDataCache bp2pEnv
+    let net = NC.bitcoinNetwork . nodeConfig $ bp2pEnv
+    let qstr :: Q.QueryString Q.R (Identity Text) (T.Text, T.Text, T.Text, T.Text, T.Text, Set T.Text, UTCTime)
+        qstr = "SELECT context, callback_name, auth_key, auth_type, callback_url, events , created_time from xoken.callbacks where callback_group = ? LIMIT 9999 "
+        p = getSimpleQueryParam $ Identity "mAPI"
+    iop <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr p)
+    case iop of
+        Right recs -> do
+            mapM_
+                ( \(ctx, cbname, authkey, authtype, cburl, events, cts) -> do
+                    let eventsT = L.map (\ev -> read (T.unpack ev) :: CallbackEvent) (Q.fromSet events)
+                    let cb = MapiCallback ctx (T.pack "mAPI") cbname authtype authkey cburl eventsT cts
+                    debug lg $ LG.msg $ "loading callback into cache: " ++ show cbname
+                    liftIO $ TSH.insert cbDataCache ctx cb --TODO: need to split context to get username??
+                )
+                recs
+        Left (e :: SomeException) -> do
+            err lg $ LG.msg $ "Error: getTxOutputsFromTxId: " ++ show e
+            throw KeyValueDBLookupException
+
 fetchBestSyncedBlock :: (HasXokenNodeEnv env m, MonadIO m) => m (BlockHash, Int32)
 fetchBestSyncedBlock = do
     lg <- getLogger
@@ -652,7 +699,7 @@ fetchBestSyncedBlock = do
         Just bi -> return $ (biBlockHash bi, fromIntegral $ biBlockHeight bi)
         Nothing -> do
             let qstr ::
-                       Q.QueryString Q.R (Identity Text) (Identity (Maybe Bool, Maybe Int32, Maybe Int64, Maybe T.Text))
+                    Q.QueryString Q.R (Identity Text) (Identity (Maybe Bool, Maybe Int32, Maybe Int64, Maybe T.Text))
                 qstr = "SELECT value from xoken.misc_store where key = ?"
                 p = getSimpleQueryParam $ Identity "best-synced"
             iop <- liftIO $ query conn (Q.RqQuery $ Q.Query qstr p)
@@ -678,16 +725,29 @@ generateNominalTxIndex Nothing outputIndex = do
     tm <- liftIO getCurrentTime
     (_, bestSyncedBlockHeight) <- fetchBestSyncedBlock
     return $
-        1000 *
-        ((1000000000 * ((fromIntegral bestSyncedBlockHeight :: Int64) + 1)) +
-         ((fromIntegral . floor $ utcTimeToPOSIXSeconds tm :: Int64) - 1600000000)) +
-        (fromIntegral $ outputIndex `mod` 1000 :: Int64)
+        1000
+            * ( (1000000000 * ((fromIntegral bestSyncedBlockHeight :: Int64) + 1))
+                    + ((fromIntegral . floor $ utcTimeToPOSIXSeconds tm :: Int64) - 1600000000)
+              )
+            + (fromIntegral $ outputIndex `mod` 1000 :: Int64)
 generateNominalTxIndex (Just (_, blockHeight, txIndex)) outputIndex =
     return $
-    1000 * ((1000000000 * (fromIntegral blockHeight :: Int64)) + 500000000 + (fromIntegral txIndex :: Int64)) +
-    (fromIntegral $ outputIndex `mod` 1000 :: Int64)
+        1000 * ((1000000000 * (fromIntegral blockHeight :: Int64)) + 500000000 + (fromIntegral txIndex :: Int64))
+            + (fromIntegral $ outputIndex `mod` 1000 :: Int64)
 
 mapBut1 :: (a -> a) -> [a] -> [a]
 mapBut1 f [] = []
 mapBut1 f [x] = [x]
-mapBut1 f (x:xs) = f x : mapBut1 f xs
+mapBut1 f (x : xs) = f x : mapBut1 f xs
+
+calcMerkleTreeTxIndex :: [Bool] -> Int32
+calcMerkleTreeTxIndex [] = -1
+calcMerkleTreeTxIndex flags = do
+    sum $
+        map
+            ( \(fl, wt) ->
+                if fl == True
+                    then wt
+                    else 0
+            )
+            (zip (init flags) (map (\x -> 2 ^ x) [0 ..]))

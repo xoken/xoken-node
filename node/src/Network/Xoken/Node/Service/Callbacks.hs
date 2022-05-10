@@ -90,6 +90,7 @@ import Network.Xoken.Node.GraphDB
 import Network.Xoken.Node.P2P.BlockSync
 import Network.Xoken.Node.P2P.Common
 import Network.Xoken.Node.P2P.Types
+import Network.Xoken.Node.Service.Transaction
 import Network.Xoken.Util (bsToInteger, integerToBS)
 import Numeric (showHex)
 import Streamly as S
@@ -207,7 +208,7 @@ triggerCallbacks = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
-
+    loadCallbacksCache -- TODO: this needs to be called when booting up, letting it remain here for now
     debug lg $ LG.msg $ "triggerCallbacks: inside : " ++ show ""
     cbDataCache <- liftIO $ TSH.toList $ callbacksDataCache bp2pEnv
     xx <-
@@ -217,13 +218,14 @@ triggerCallbacks = do
                     (do S.fromList cbDataCache)
                         & S.mapM
                             ( \(userid, mapicb) -> do
+                                merkleRootBlockInfoCache <- liftIO $ TSH.new 1
                                 compositeProofs <- liftIO $ TSH.new 4
-                                processCallbacks userid "0000" compositeProofs --dummy starting txid
-                                return (userid, compositeProofs)
+                                processCallbacks userid "0000" merkleRootBlockInfoCache compositeProofs --dummy starting txid
+                                return (userid, merkleRootBlockInfoCache, compositeProofs)
                             )
                         & S.mapM
-                            ( \(userid, compositeProofs) -> do
-                                postCompositeMerkleCallbacks userid compositeProofs
+                            ( \(userid, merkleRootBlockInfoCache, compositeProofs) -> do
+                                postCompositeMerkleCallbacks userid merkleRootBlockInfoCache compositeProofs
                             )
                         & S.maxBuffer (5) --  nodeConfig p2pEnv)
                         & S.maxThreads (5) -- nodeConfig p2pEnv)
@@ -233,55 +235,60 @@ triggerCallbacks = do
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error while triggerCallbacks: " ++ show e
             throw e
-type CompositeProofs = (TSH.TSHashTable DT.Text (DT.Text, MerkleBranchNode', AState))
+type MerkleRootBlockInfoCache = (TSH.TSHashTable DT.Text (DT.Text, Int32))
+type CompositeProofs = (TSH.TSHashTable DT.Text ((DT.Text, Int32, Int32), (DT.Text, Maybe [MerkleBranchNode'], AState)))
 
-postCompositeMerkleCallbacks :: (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> CompositeProofs -> m ()
-postCompositeMerkleCallbacks userid compProofs = do
+postCompositeMerkleCallbacks :: (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> MerkleRootBlockInfoCache -> CompositeProofs -> m ()
+postCompositeMerkleCallbacks userid mrbiCache compProofs = do
+    dbe <- getDB
+    lg <- getLogger
+    bp2pEnv <- getBitcoinP2P
     cpList <- liftIO $ TSH.toList $ compProofs
-    let cbname = fst3 $ snd $ head cpList
-    branches <-
-        mapM
-            ( \(txid, (_, mb, state)) -> do
-                let txIndex = undefined -- TODO
-                    state = undefined
-                    merkleBranch = undefined
-                return $ CallbackMerkleBranches (DT.unpack txid) txIndex state merkleBranch
-            )
-            cpList
-    mapicb <- xGetCallbackByUsername userid cbname
-    let mpc = fromJust $ mapicb
-    let token = BC.pack $ DT.unpack $ mcAuthKey mpc
-        url = DT.unpack $ mcCallbackUrl mpc
-        req' = buildRequest url token $ BC.pack "POST"
-        cbApiVersion = "1.0"
-        cbTimestamp = undefined
-        cbMinerID = undefined -- TODO:
-        cbBlockHash = undefined
-        cbBlockHeight = undefined
-        cbCallBackType = MerkleProofComposite
-        cbMerkleRoot = undefined -- TODO
-        cbMerkleBranches = branches
-        mpr =
-            CallbackCompositeMerkleProof
-                cbApiVersion
-                cbTimestamp
-                cbMinerID
-                cbBlockHash
-                cbBlockHeight
-                cbCallBackType
-                cbMerkleRoot
-                cbMerkleBranches
+    let cbname = fst3 $ snd $ snd $ head cpList
+    let callbacksGroups = L.groupBy (\a b -> (fst3 $ fst $ snd a) == (fst3 $ fst $ snd b)) cpList
+    mapM_
+        ( \cpSubL -> do
+            branches <-
+                mapM
+                    ( \(txid, ((bhash, bht, txindx), (_, merkleBranch, state))) -> do
+                        return $ CallbackMerkleBranches (DT.unpack txid) (fromIntegral txindx) state merkleBranch
+                    )
+                    cpSubL
+            mapicb <- xGetCallbackByUsername userid cbname
+            cbTimestamp <- liftIO getCurrentTime
+            let mpc = fromJust $ mapicb
+            let token = BC.pack $ DT.unpack $ mcAuthKey mpc
+                url = DT.unpack $ mcCallbackUrl mpc
+                req' = buildRequest url token $ BC.pack "POST"
+                cbApiVersion = "1.0"
+                cbMinerID = NC.minerID $ nodeConfig bp2pEnv
+                cbBlockHash = DT.unpack $ fst3 $ fst $ snd $ head $ cpSubL
+                cbBlockHeight = fromIntegral $ snd3 $ fst $ snd $ head $ cpSubL
+                cbCallBackType = MerkleProofComposite
+                cbMerkleRoot = "" -- TODO
+                cbMerkleBranches = branches
+                mpr =
+                    CallbackCompositeMerkleProof
+                        cbApiVersion
+                        cbTimestamp
+                        cbMinerID
+                        cbBlockHash
+                        cbBlockHeight
+                        cbCallBackType
+                        cbMerkleRoot
+                        cbMerkleBranches
 
-        req = setRequestBodyJSON (mpr) req'
-    response <- httpLBS req
-    let status = getResponseStatusCode response
-    if status == 200
-        then do
-            return ()
-        else do return ()
+                req = setRequestBodyJSON (mpr) req'
+            response <- httpLBS req
+            let status = getResponseStatusCode response
+            if status == 200
+                then return ()
+                else return ()
+        )
+        callbacksGroups
 
-processCallbacks :: (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> DT.Text -> CompositeProofs  -> m ()
-processCallbacks userid txid compProofs = do
+processCallbacks :: (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> DT.Text -> MerkleRootBlockInfoCache -> CompositeProofs -> m ()
+processCallbacks userid txid mrbiCache compProofs = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
@@ -301,25 +308,49 @@ processCallbacks userid txid compProofs = do
                     mapicb <- xGetCallbackByUsername userid cbname
                     case mapicb of
                         Just mpc -> do
+                            mb <- xGetMerkleBranch (DT.unpack txid)
+                            ce <- liftIO $ TSH.lookup mrbiCache $ DT.pack $ nodeValue $ last mb
+                            (bhash, bht, txindx) <- case ce of
+                                Just et -> do
+                                    let flags = L.map (isLeftNode) mb
+                                    return (fst et, snd et, calcMerkleTreeTxIndex flags) -- TODO: calculate Tx index with left/right flags
+                                Nothing -> do
+                                    let toStr = "SELECT block_info FROM xoken.transactions WHERE tx_id=?"
+                                        toQStr = toStr :: Q.QueryString Q.R (Identity DT.Text) (Identity (DT.Text, Int32, Int32))
+                                        par = getSimpleQueryParam (Identity txid)
+                                    res1 <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query toQStr par)
+                                    case res1 of
+                                        Right rx -> do
+                                            let (bhash', bht', txindx') = runIdentity $ rx !! 0
+                                            liftIO $ TSH.insert mrbiCache txid (bhash', bht')
+                                            return (bhash', bht', txindx')
+                                        Left (e :: SomeException) -> do
+                                            err lg $ LG.msg $ "Error: getTxOutputsFromTxId: " ++ show e
+                                            throw KeyValueDBLookupException
+
+                            let cbMerkleBranch =
+                                    if L.length mb > 0
+                                        then Just mb
+                                        else Nothing
+
                             if MerkleProofComposite `elem` (mcEvents mpc)
                                 then do
                                     let cbState = fromJust $ A.decode $ C.pack $ DT.unpack state
-                                    liftIO $ TSH.insert compProofs txid (cbname, undefined, cbState)
+                                    liftIO $ TSH.insert compProofs txid ((bhash, bht, txindx), (cbname, cbMerkleBranch, cbState))
                                 else do
+                                    cbTimestamp <- liftIO getCurrentTime
                                     let token = BC.pack $ DT.unpack $ mcAuthKey mpc
                                         url = DT.unpack $ mcCallbackUrl mpc
                                         req' = buildRequest url token $ BC.pack "POST"
                                         cbApiVersion = "1.0"
-                                        cbTimestamp = undefined
-                                        cbMinerID = undefined -- TODO:
-                                        cbBlockHash = undefined
-                                        cbBlockHeight = undefined
+                                        cbMinerID = NC.minerID $ nodeConfig bp2pEnv
+                                        cbBlockHash = DT.unpack bhash
+                                        cbBlockHeight = fromIntegral bht
                                         cbTxid = DT.unpack txid
                                         cbCallBackType = MerkleProofSingle
-                                        cbMerkleRoot = undefined -- TODO
-                                        cbTxIndex = 999 -- TODO
+                                        cbMerkleRoot = "" -- TODO
+                                        cbTxIndex = fromIntegral txindx
                                         cbState = fromJust $ A.decode $ C.pack $ DT.unpack state
-                                        cbMerkleBranch = undefined
                                         mpr =
                                             CallbackSingleMerkleProof
                                                 cbApiVersion
@@ -345,7 +376,7 @@ processCallbacks userid txid compProofs = do
                 mb
             if L.length mb < 100
                 then return ()
-                else processCallbacks userid cursor compProofs
+                else processCallbacks userid cursor mrbiCache compProofs
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: getTxIDByProtocol: " ++ show e
             throw KeyValueDBLookupException

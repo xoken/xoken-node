@@ -55,6 +55,7 @@ apiRoutes =
     , ("/v1/relaymultipletx", method POST (withAuth $ withReq relayMultipleTx))
     , ("/v1/transactions/protocol/:protocol", method GET (withAuth getTxByProtocol))
     , ("/v1/transactions/protocols", method GET (withAuth getTxByProtocols))
+    , ("/v1/policy", method GET (withAuth getPolicyCurrentUser))
     , ("/v1/policy", method POST (withAuthAs "admin" $ withReq addDefaultMapiPolicy))
     , ("/v1/policy/:username", method GET (withAuthAs "admin" getPolicyByUsername))
     , ("/v1/policy/:username", method DELETE (withAuthAs "admin" deletePolicyByUsername))

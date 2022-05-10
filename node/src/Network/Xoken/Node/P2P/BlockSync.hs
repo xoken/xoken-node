@@ -702,8 +702,8 @@ commitTxPage txhash bhash page = do
             throw KeyValueDBInsertException
 
 processConfTransaction ::
-    (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BlockIngestState -> Tx -> BlockHash -> Int -> Int -> m ()
-processConfTransaction bis tx bhash blkht txind = do
+    (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => BlockIngestState -> Tx -> BlockHash -> Int -> Int -> Bool -> m ()
+processConfTransaction bis tx bhash blkht txind checkTxAlreadyProc = do
     dbe' <- getDB
     bp2pEnv <- getBitcoinP2P
     lg <- getLogger
@@ -711,21 +711,54 @@ processConfTransaction bis tx bhash blkht txind = do
     let net = bitcoinNetwork $ nodeConfig bp2pEnv
         conn = xCqlClientState dbe'
     debug lg $ LG.msg $ "(Wrapper) Processing lock begin :" ++ show txhs
-    res <- LE.try $ processConfTransaction' bis tx bhash blkht txind -- get the Inv message
-    case res of
-        Right mm ->
-            do
-                debug lg $ LG.msg $ "(Wrapper) Processing lock ends :" ++ show txhs
-                vall <- liftIO $ TSH.lookup (txSynchronizer bp2pEnv) (txhs, ChildTxWaiting)
-                case vall of
-                    Just ev -> do
-                        liftIO $ tryPutMVar ev ()
-                        return ()
-                    Nothing -> return ()
-        Left (e :: SomeException) ->
-            do
-                liftIO $ err lg $ LG.msg ("Error: while processConfTransaction: " ++ show e)
-                throw e
+    rowExists <- do
+        if checkTxAlreadyProc
+            then do
+                let queryStr :: Q.QueryString Q.R (Identity Text) (Identity Int32)
+                    queryStr = "SELECT count(*) FROM xoken.transactions WHERE tx_id = ?"
+                    queryPar = getSimpleQueryParam $ Identity (txHashToHex txhs)
+                res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query queryStr queryPar)
+                case res of
+                    Left (e :: SomeException) -> do
+                        err lg $ LG.msg $ C.pack $ "[ERROR] Querying database while checking if output exists: " <> (show e)
+                        throw KeyValueDBLookupException
+                    Right res -> do
+                        let Identity (cnt) = res !! 0
+                        return (cnt == 1)
+            else return (False)
+    if rowExists
+        then do
+            debug lg $ LG.msg $ C.pack $ "updating block_info (tx present): " <> (show $ txHashToHex txhs)
+            let qstr :: Q.QueryString Q.W ((Text, Int32, Int32), Text) ()
+                qstr = "UPDATE xoken.transactions SET block_info=? WHERE tx_id=?"
+                par =
+                    getSimpleQueryParam
+                        ( (blockHashToHex bhash, fromIntegral blkht, fromIntegral txind)
+                        , txHashToHex txhs
+                        )
+            queryI <- liftIO $ queryPrepared conn (Q.RqPrepare $ Q.Prepare qstr)
+            res <- liftIO $ try $ write conn (Q.RqExecute $ Q.Execute queryI par)
+            case res of
+                Right _ -> return ()
+                Left (e :: SomeException) -> do
+                    liftIO $ err lg $ LG.msg ("Error: UPDATEing block_info of 'xoken.transactions': " ++ show e)
+                    throw KeyValueDBInsertException
+        else do
+            res <- LE.try $ processConfTransaction' bis tx bhash blkht txind -- get the Inv message
+            case res of
+                Right mm ->
+                    do
+                        debug lg $ LG.msg $ "(Wrapper) Processing lock ends :" ++ show txhs
+                        vall <- liftIO $ TSH.lookup (txSynchronizer bp2pEnv) (txhs, ChildTxWaiting)
+                        case vall of
+                            Just ev -> do
+                                liftIO $ tryPutMVar ev ()
+                                return ()
+                            Nothing -> return ()
+                Left (e :: SomeException) ->
+                    do
+                        liftIO $ err lg $ LG.msg ("Error: while processConfTransaction: " ++ show e)
+                        throw e
 
 --
 

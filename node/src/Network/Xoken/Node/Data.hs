@@ -947,7 +947,7 @@ data AState
 
 instance ToJSON AState
 
-instance FromJSON AState 
+instance FromJSON AState
 
 data CallbackSingleMerkleProof = CallbackSingleMerkleProof
     { cbApiVersion :: String
@@ -1288,7 +1288,14 @@ data MerkleBranchNode' = MerkleBranchNode'
     { nodeValue :: String
     , isLeftNode :: Bool
     }
-    deriving (Show, Generic, Hashable, Eq, Serialise, ToJSON)
+    deriving (Show, Generic, Hashable, Eq, Serialise)
+
+instance ToJSON MerkleBranchNode' where
+    toJSON (MerkleBranchNode' nv il) =
+        object
+            [ "hash" .= nv
+            , "isLeft" .= il
+            ]
 
 data PubNotifyMessage = PubNotifyMessage
     { psBody :: ByteString
