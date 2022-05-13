@@ -459,7 +459,7 @@ fetchBlockCacheQueue gdSize = do
 commitBlockCacheQueue :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
 commitBlockCacheQueue =
     forever $ do
-        liftIO $ threadDelay (100000) -- 0.1 sec
+        liftIO $ threadDelay (1000000) -- 1 sec
         lg <- getLogger
         bp2pEnv <- getBitcoinP2P
         dbe <- getDB
@@ -624,7 +624,8 @@ insertTxIdOutputs (txid, outputIndex) address script value = do
                     , Int64
                     )
                     ()
-    let queryPar = getSimpleQueryParam (txid, outputIndex, address, script, value)
+    let scriptPrefix = T.take 100000 script -- 100kb
+    let queryPar = getSimpleQueryParam (txid, outputIndex, address, scriptPrefix, value)
     res <-
         liftIO $
             queryPrepared conn (Q.RqPrepare (Q.Prepare queryStr)) >>= \queryId ->
@@ -714,13 +715,13 @@ processConfTransaction bis tx bhash blkht txind checkTxAlreadyProc = do
     rowExists <- do
         if checkTxAlreadyProc
             then do
-                let queryStr :: Q.QueryString Q.R (Identity Text) (Identity Int32)
+                let queryStr :: Q.QueryString Q.R (Identity Text) (Identity Int64)
                     queryStr = "SELECT count(*) FROM xoken.transactions WHERE tx_id = ?"
                     queryPar = getSimpleQueryParam $ Identity (txHashToHex txhs)
                 res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query queryStr queryPar)
                 case res of
                     Left (e :: SomeException) -> do
-                        err lg $ LG.msg $ C.pack $ "[ERROR] Querying database while checking if output exists: " <> (show e)
+                        err lg $ LG.msg $ C.pack $ "[ERROR] Querying database while checking if output exists(processConfTx): " <> (show (txHashToHex txhs)) <> ", err: " <> (show e)
                         throw KeyValueDBLookupException
                     Right res -> do
                         let Identity (cnt) = res !! 0
@@ -1110,8 +1111,8 @@ processConfTransaction' bis tx bhash blkht txind = do
     --
     debug lg $ LG.msg $ "Processing confirmed transaction <end> :" ++ show txhs
 
---
---
+
+
 getSatsValueFromOutpoint ::
     XCqlClientState ->
     TSH.TSHashTable (TxHash, DependentTxStatus) (MVar ()) -> -- EV.Event
@@ -1121,19 +1122,6 @@ getSatsValueFromOutpoint ::
     Int ->
     IO ((Text, Text, Int64))
 getSatsValueFromOutpoint conn txSync lg net outPoint maxWait = do
-    return ((T.pack "16Rcy7RYM3xkPEJr4tvUtL485Fuobi8S7o"), (T.pack "1234123412341234"), 2147483647)
-
---
---
-getSatsValueFromOutpoint'' ::
-    XCqlClientState ->
-    TSH.TSHashTable (TxHash, DependentTxStatus) (MVar ()) -> -- EV.Event
-    Logger ->
-    Network ->
-    OutPoint ->
-    Int ->
-    IO ((Text, Text, Int64))
-getSatsValueFromOutpoint'' conn txSync lg net outPoint maxWait = do
     let qstr :: Q.QueryString Q.R (Text, Int32) (Text, Text, Int64)
         qstr = "SELECT address, script, value FROM xoken.txid_outputs WHERE txid=? AND output_index=?"
         par = getSimpleQueryParam (txHashToHex $ outPointHash outPoint, fromIntegral $ outPointIndex outPoint)
@@ -1350,7 +1338,7 @@ checkOutputDataExists (txid, outputIndex) = do
     res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query queryStr queryPar)
     case res of
         Left (e :: SomeException) -> do
-            err lg $ LG.msg $ C.pack $ "[ERROR] Querying database while checking if output exists: " <> (show e)
+            err lg $ LG.msg $ C.pack $ "[ERROR] Querying database while checking if output exists(output_index): " <> (show (txid, outputIndex))<>", err: " <> (show e)
             throw KeyValueDBLookupException
         Right res -> return $ not . L.null $ res
 

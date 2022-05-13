@@ -313,12 +313,12 @@ getTxOutputsFromTxId txid = do
                                                     val
                                                     (BC.pack $ DT.unpack script)
                                         Left (e :: SomeException) -> do
-                                            err lg $ LG.msg $ "Error: getTxOutputsFromTxId: " ++ show e
+                                            err lg $ LG.msg $ "Error: getTxOutputsFromTxId:(1) " ++ show e
                                             throw KeyValueDBLookupException
                         )
                         t
         Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: getTxOutputsFromTxId: " ++ show e
+            err lg $ LG.msg $ "Error: getTxOutputsFromTxId:(2) " ++ show e
             throw KeyValueDBLookupException
 
 xGetTxIDsByBlockHash :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => String -> Int32 -> Int32 -> m [String]

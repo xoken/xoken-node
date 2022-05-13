@@ -143,18 +143,18 @@ runBlockSync =
                             if L.length isPeerConnected == 0
                                 then return [] -- stale peer, removing implicitly
                                 else do
-                                    debug lg $ LG.msg $ "ABCD - aaa" ++ (show pr)
+                                    -- debug lg $ LG.msg $ "ABCD - aaa" ++ (show pr)
                                     res <- LE.try $ produceGetDataMessages pr
                                     case res of
                                         Right mm -> do
                                             if L.null mm
                                                 then do
-                                                    debug lg $ LG.msg $ "ABCD - ccc" ++ (show pr)
+                                                    -- debug lg $ LG.msg $ "ABCD - ccc" ++ (show pr)
                                                     liftIO $ atomically $ unGetTQueue (peerFetchQueue bp2pEnv) pr
                                                     liftIO $ threadDelay (100000) -- 0.1 sec
                                                     return []
                                                 else do
-                                                    debug lg $ msg $ (val "ABCD - Got enlisted peer: ") +++ (show pr)
+                                                    -- debug lg $ msg $ (val "ABCD - Got enlisted peer: ") +++ (show pr)
                                                     return mm
                                         Left (e :: SomeException) -> do
                                             liftIO $ atomically $ unGetTQueue (peerFetchQueue bp2pEnv) pr
@@ -506,7 +506,7 @@ resilientRead sock !blin = do
             case runGetLazyState (getConfirmedTxBatch) txbyt2 of
                 Left e -> do
                     trace lg $ msg $ "3rd attempt|" ++ show e
-                    let chunkSizeXXB = 100 * 1000 * 1000 -- 100 MB
+                    let chunkSizeXXB = 200 * 1000 * 1000 -- 100 MB
                         dltXXNew =
                             if binTxPayloadLeft blin > chunkSizeXXB
                                 then chunkSizeXXB - txbytLen2
@@ -681,6 +681,7 @@ processTMTSubTrees blkHash txCount = do
                 then fst dpx
                 else fst dpx + 1
     tmtState <- liftIO $ TSH.new 4
+    debug lg $ LG.msg $ "processTMTSubTrees: " ++ (show blkHash) ++ ", txcount:" ++ (show txCount)
 
     xx <-
         LE.try $
@@ -759,6 +760,7 @@ runTMTDaemon :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
 runTMTDaemon = do
     continue <- liftIO $ newIORef True
     whileM_ (liftIO $ readIORef continue) $ do
+        liftIO $ threadDelay (1000000) -- 1 sec
         p2pEnv <- getBitcoinP2P
         lg <- getLogger
         dbe <- getDB
@@ -859,7 +861,7 @@ runTMTDaemon = do
                                                     Left (e :: SomeException) -> do
                                                         err lg $ LG.msg $ "Error while persistTMT: " ++ show e
                                                         liftIO $ writeIORef continue False
-                                            else err lg $ LG.msg $ val "Potential Chain reorg occured?!"
+                                            else err lg $ LG.msg $ "Potential Chain reorg occured, Prev-blk-hash: " ++ show (prevBlock bh) ++ ", Blk-hash: " ++ show bhash
                                     Left err -> do
                                         liftIO $ print $ "Decode failed with error: " <> show err
                             Nothing -> return ()
@@ -1151,7 +1153,7 @@ messageHandler peer (mm, ingss) = do
                                     if (invType x == InvTx)
                                         then do
                                             indexUnconfirmedTx <- liftIO $ readTVarIO $ indexUnconfirmedTx bp2pEnv
-                                            trace lg $ LG.msg ("INV - new Tx: " ++ (show $ invHash x))
+                                            debug lg $ LG.msg ("INV - new Tx: " ++ (show $ invHash x) ++ " , indexUnconfTx:" ++ (show indexUnconfirmedTx))
                                             if indexUnconfirmedTx == True
                                                 then processTxGetData peer $ invHash x
                                                 else return ()
@@ -1183,11 +1185,18 @@ messageHandler peer (mm, ingss) = do
                             err lg $ LG.msg $ val ("[???] Unconfirmed Tx ")
                     return $ msgType msg
                 MTx tx -> do
-                    res <- LE.try $ processUnconfTransaction tx 100 -- TODO: setting min fee for now
-                    case res of
-                        Right () -> return ()
-                        Left (TxIDNotFoundException _) -> return ()
-                        Left e -> throw e
+                    LA.async $
+                        ( do
+                            res <-
+                                LE.try $
+                                    processUnconfTransaction
+                                        tx
+                                        100 -- TODO: setting min fee for now
+                            case res of
+                                Right () -> return ()
+                                Left (TxIDNotFoundException _) -> return ()
+                                Left e -> throw e
+                        )
                     return $ msgType msg
                 MBlock blk -> do
                     res <- LE.try $ processBlock blk
@@ -1229,6 +1238,7 @@ processTxBatch txns iss = do
             if chainTipHeight > (bestSynced + 4)
                 then False
                 else True
+    debug lg $ LG.msg $ (" processTxBatch: " ++ (show $ txHash $ head txns) ++ " : " ++ (show $ L.length txns))
     case binfo of
         Just bf -> do
             valx <- liftIO $ TSH.lookup (blockTxProcessingLeftMap bp2pEnv) (biBlockHash bf)
@@ -1270,6 +1280,7 @@ processTxBatch txns iss = do
                     valy <- liftIO $ TSH.lookup (blockTxProcessingLeftMap bp2pEnv) (biBlockHash bf)
                     case valy of
                         Just lefta -> do
+                            debug lg $ LG.msg $ (" processTxBatch (inserting) " ++ (show $ txHash $ head txns) ++ " : " ++ (show $ L.length txns))
                             liftIO $ TSH.insert (fst lefta) (txHash $ head txns) (L.length txns)
                             return ()
                         Nothing -> return ()

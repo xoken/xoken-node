@@ -670,9 +670,9 @@ loadCallbacksCache = do
     conn <- xCqlClientState <$> getDB
     let cbDataCache = callbacksDataCache bp2pEnv
     let net = NC.bitcoinNetwork . nodeConfig $ bp2pEnv
-    let qstr :: Q.QueryString Q.R (Identity Text) (T.Text, T.Text, T.Text, T.Text, T.Text, Set T.Text, UTCTime)
-        qstr = "SELECT context, callback_name, auth_key, auth_type, callback_url, events , created_time from xoken.callbacks where callback_group = ? LIMIT 9999 "
-        p = getSimpleQueryParam $ Identity "mAPI"
+    let qstr :: Q.QueryString Q.R (Identity Int32) (T.Text, T.Text, T.Text, T.Text, T.Text, Set T.Text, UTCTime)
+        qstr = "SELECT context, callback_name, auth_key, auth_type, callback_url, events , created_time from xoken.callbacks LIMIT ? "
+        p = getSimpleQueryParam $ Identity 9999
     iop <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr p)
     case iop of
         Right recs -> do
@@ -685,7 +685,7 @@ loadCallbacksCache = do
                 )
                 recs
         Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: getTxOutputsFromTxId: " ++ show e
+            err lg $ LG.msg $ "Error: loadCallbacksCache: " ++ show e
             throw KeyValueDBLookupException
 
 fetchBestSyncedBlock :: (HasXokenNodeEnv env m, MonadIO m) => m (BlockHash, Int32)

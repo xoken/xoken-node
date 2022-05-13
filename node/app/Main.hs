@@ -245,7 +245,7 @@ runSyncStatusChecker = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
     conn <- xCqlClientState <$> getDB
-    liftIO $ threadDelay (300 * 1000000)
+    liftIO $ threadDelay (120 * 1000000)
     forever $ do
         isSynced <- checkBlocksFullySynced conn
         liftIO $ CMS.atomically $ writeTVar (indexUnconfirmedTx bp2pEnv) isSynced

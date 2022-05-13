@@ -296,10 +296,12 @@ processCallbacks userid txid mrbiCache compProofs = do
     let conn = xCqlClientState dbe
         net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
         str =
-            "SELECT userid, txid, block_hash, block_height, callback_name, flags_bitmask, state FROM xoken.callback_registrations WHERE user_id=? AND txid > ? ORDER BY txid ASC"
+            "SELECT userid, txid, block_hash, block_height, callback_name, flags_bitmask, state FROM xoken.callback_registrations WHERE user_id=? AND txid > ? ORDER BY txid ASC LIMIT 500"
         qstr = str :: Q.QueryString Q.R (DT.Text, DT.Text) (DT.Text, DT.Text, DT.Text, Int32, DT.Text, Int32, DT.Text)
         uqstr = getSimpleQueryParam $ (userid, txid)
-    eResp <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr (uqstr{pageSize = (Just 100)}))
+    queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstr))
+    eResp <- liftIO $ try $ query conn (Q.RqExecute (Q.Execute queryId uqstr{pageSize = (Just 100)}))
+    -- eResp <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr (uqstr{pageSize = (Just 100)}))
     case eResp of
         Right mb -> do
             let (_, cursor, _, _, _, _, _) = last mb
@@ -318,14 +320,16 @@ processCallbacks userid txid mrbiCache compProofs = do
                                     let toStr = "SELECT block_info FROM xoken.transactions WHERE tx_id=?"
                                         toQStr = toStr :: Q.QueryString Q.R (Identity DT.Text) (Identity (DT.Text, Int32, Int32))
                                         par = getSimpleQueryParam (Identity txid)
-                                    res1 <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query toQStr par)
+                                    queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare toQStr))
+                                    res1 <- liftIO $ try $ query conn (Q.RqExecute (Q.Execute queryId par))
+                                    -- res1 <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query toQStr par)
                                     case res1 of
                                         Right rx -> do
                                             let (bhash', bht', txindx') = runIdentity $ rx !! 0
                                             liftIO $ TSH.insert mrbiCache txid (bhash', bht')
                                             return (bhash', bht', txindx')
                                         Left (e :: SomeException) -> do
-                                            err lg $ LG.msg $ "Error: getTxOutputsFromTxId: " ++ show e
+                                            err lg $ LG.msg $ "Error: get block-info from xoken.transactions : " ++ show e
                                             throw KeyValueDBLookupException
 
                             let cbMerkleBranch =
@@ -372,11 +376,24 @@ processCallbacks userid txid mrbiCache compProofs = do
                                         then do
                                             return ()
                                         else do return ()
+
+                    let str = "DELETE FROM xoken.callback_registrations WHERE user_id = ? AND txid = ?  "
+                        qstr = str :: Q.QueryString Q.W (DT.Text, DT.Text) ()
+                        par = getSimpleQueryParam (userid, txid)
+                    queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstr))
+                    res <- liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryId par))
+                    -- res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr par)
+                    case res of
+                        Right _ -> return ()
+                        Left (e :: SomeException) -> do
+                            err lg $ LG.msg $ "Error: deleting from callback_registrations for user_id: " ++ (show userid) ++ ", txid: " ++ (show txid) ++ show e
+                            throw e
                 )
                 mb
             if L.length mb < 100
                 then return ()
-                else processCallbacks userid cursor mrbiCache compProofs
+                else do
+                    processCallbacks userid cursor mrbiCache compProofs
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error: getTxIDByProtocol: " ++ show e
             throw KeyValueDBLookupException
