@@ -809,18 +809,14 @@ runTMTDaemon'' = do
             qstr = str :: Q.QueryString Q.R (Identity Int32) (T.Text, Maybe Int32, T.Text)
             p = getSimpleQueryParam $ Identity (height + 1)
         res1 <- liftIO $ try $ query conn (Q.RqQuery $ Q.Query qstr p)
-        debug lg $ LG.msg $ "trigger: AAA 111: " ++ show 0
         case res1 of
             Right iop -> do
                 if L.length iop == 0
                     then return ()
                     else do
-                        debug lg $ LG.msg $ "trigger: AAA 222: " ++ show iop
                         let (nbhs, ntxc, nbhdr) = iop !! 0
                         case ntxc of
                             Just txCount -> do
-                                liftIO $ print $ "tx count AAA: " <> show txCount
-                                debug lg $ LG.msg $ "trigger: AAA 333: " ++ show txCount
                                 case (A.eitherDecode $ BSL.fromStrict $ DTE.encodeUtf8 nbhdr) of
                                     Right bh -> do
                                         debug lg $
@@ -865,10 +861,8 @@ runTMTDaemon'' = do
                                                             Right _ -> do
                                                                 if mAPICallbacksEnable $ nodeConfig p2pEnv
                                                                     then do
-                                                                        debug lg $ LG.msg $ "triggerCallbacks: AAA: " ++ show 0
                                                                         triggerCallbacks -- TODO: trigger callbacks jobs
-                                                                    else do
-                                                                        debug lg $ LG.msg $ "triggerCallbacks: BBB: " ++ show 0
+                                                                    else return ()
                                                             Left (e :: SomeException) -> do
                                                                 err lg $
                                                                     LG.msg
@@ -883,8 +877,7 @@ runTMTDaemon'' = do
                                             else err lg $ LG.msg $ "Potential Chain reorg occured, Prev-blk-hash: " ++ show (prevBlock bh) ++ ", Blk-hash: " ++ show bhash
                                     Left err -> do
                                         liftIO $ print $ "Decode failed with error: " <> show err
-                            Nothing -> do
-                                debug lg $ LG.msg $ "trigger: AAA zzz: " ++ show 0
+                            Nothing -> return ()
             Left (e :: SomeException) -> do
                 err lg $ LG.msg $ "Error invalid while querying DB: " ++ show e
                 throw e
