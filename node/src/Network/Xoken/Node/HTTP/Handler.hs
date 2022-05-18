@@ -522,7 +522,7 @@ submitTx SubmitTx{..} = do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
         Right (Just user) -> do
-            res <- LE.try $ xSubmitTx (sRawTx) (DT.pack $ uUsername user) (DT.pack sCallbackName)
+            res <- LE.try $ xSubmitTx (sRawTx) (DT.pack $ "USER/" ++ uUsername user) (DT.pack sCallbackName)
             case res of
                 Left (e :: BlockSyncException) -> do
                     case e of
@@ -561,7 +561,7 @@ subscribeTx SubscribeTx{..} = do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
         Right (Just user) -> do
-            res <- LE.try $ xSubscribeTx (DT.pack subTxId) (DT.pack $ uUsername user) (DT.pack subCallbackName) (subState)
+            res <- LE.try $ xSubscribeTx (DT.pack subTxId) (DT.pack $ "USER/" ++ (uUsername user)) (DT.pack subCallbackName) (subState)
             case res of
                 Right txx -> do
                     case txx of
@@ -795,7 +795,7 @@ addMapiCallback AddMapiCallback{..} = do
                     modifyResponse $ setResponseStatus 500 "Internal Server Error"
                     writeBS "INTERNAL_SERVER_ERROR"
                 Right u@(Just us) -> do
-                    debug lg $ LG.msg $ "Error: add MapiCallback: " ++ show u
+                    debug lg $ LG.msg $ "add MapiCallback: " ++ show u
                     writeBS $ BSL.toStrict $ encodeResp pretty $ RespMapiCallback u
                 Right Nothing -> throwNotFound
         Right Nothing -> throwNotFound

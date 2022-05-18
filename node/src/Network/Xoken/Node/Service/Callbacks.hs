@@ -113,7 +113,9 @@ xGetCallbackByUsername name cbName = do
         key = DT.append cbName context
     cachedCallback <- liftIO $ TSH.lookup (callbacksDataCache bp2pEnv) (context)
     case cachedCallback of
-        Just cp -> return cachedCallback
+        Just cp -> do
+            debug lg $ LG.msg $ "xGetCallbackByUsername: __ " ++ show cp
+            return cachedCallback
         Nothing -> do
             let str = "SELECT context, callback_name, callback_url, auth_type, auth_key, events, created_time from xoken.callbacks where context = ? AND callback_group = ? AND callback_name = ? "
             let qstr =
@@ -139,6 +141,7 @@ xGetCallbackByUsername name cbName = do
                             let (context, callbackName, callbackUrl, authType, authKey, events, createdTime) = iop !! 0
                             let eventsT = L.map (\ev -> read (DT.unpack ev) :: CallbackEvent) (Q.fromSet events)
                             let mp = Just $ MapiCallback context (DT.pack "mAPI") callbackName callbackUrl authType authKey eventsT createdTime
+                            debug lg $ LG.msg $ "xGetCallbackByUsername: " ++ show mp
                             return mp
                 Left (e :: SomeException) -> do
                     err lg $ LG.msg $ "Error: xGetCallbackByUsername: " ++ show e
@@ -209,12 +212,11 @@ triggerCallbacks = do
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
     loadCallbacksCache -- TODO: this needs to be called when booting up, letting it remain here for now
-    debug lg $ LG.msg $ "triggerCallbacks: inside : " ++ show ""
     cbDataCache <- liftIO $ TSH.toList $ callbacksDataCache bp2pEnv
     xx <-
         LE.try $
             S.drain $
-                aheadly $
+                serially $
                     (do S.fromList cbDataCache)
                         & S.mapM
                             ( \(userid, mapicb) -> do
@@ -229,14 +231,14 @@ triggerCallbacks = do
                             )
                         & S.maxBuffer (5) --  nodeConfig p2pEnv)
                         & S.maxThreads (5) -- nodeConfig p2pEnv)
-    debug lg $ LG.msg $ "triggerCallbacks: done: " ++ show ""
+    debug lg $ LG.msg $ "triggerCallbacks: done: " ++ show 0
     case xx of
         Right _ -> return ()
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error while triggerCallbacks: " ++ show e
             throw e
 type MerkleRootBlockInfoCache = (TSH.TSHashTable DT.Text (DT.Text, Int32))
-type CompositeProofs = (TSH.TSHashTable DT.Text ((DT.Text, Int32, Int32), (DT.Text, Maybe [MerkleBranchNode'], AState)))
+type CompositeProofs = (TSH.TSHashTable DT.Text ((DT.Text, Int32, Int32), (DT.Text, [MerkleBranchNode'], AState)))
 
 postCompositeMerkleCallbacks :: (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> MerkleRootBlockInfoCache -> CompositeProofs -> m ()
 postCompositeMerkleCallbacks userid mrbiCache compProofs = do
@@ -254,13 +256,13 @@ postCompositeMerkleCallbacks userid mrbiCache compProofs = do
                         return $ CallbackMerkleBranches (DT.unpack txid) (fromIntegral txindx) state merkleBranch
                     )
                     cpSubL
-            mapicb <- xGetCallbackByUsername userid cbname
+            mapicb <- xGetCallbackByUsername (DT.drop 5 userid) cbname
             cbTimestamp <- liftIO getCurrentTime
             let mpc = fromJust $ mapicb
-            let token = BC.pack $ DT.unpack $ mcAuthKey mpc
+            let token = [BC.pack $ (DT.unpack $ mcAuthType mpc) ++ " " ++ (DT.unpack $ mcAuthKey mpc)]
                 url = DT.unpack $ mcCallbackUrl mpc
-                req' = buildRequest url token $ BC.pack "POST"
-                cbApiVersion = "1.0"
+            let req' = buildRequest url token $ BC.pack "POST"
+            let cbApiVersion = "1.0"
                 cbMinerID = NC.minerID $ nodeConfig bp2pEnv
                 cbBlockHash = DT.unpack $ fst3 $ fst $ snd $ head $ cpSubL
                 cbBlockHeight = fromIntegral $ snd3 $ fst $ snd $ head $ cpSubL
@@ -279,11 +281,15 @@ postCompositeMerkleCallbacks userid mrbiCache compProofs = do
                         cbMerkleBranches
 
                 req = setRequestBodyJSON (mpr) req'
-            response <- httpLBS req
-            let status = getResponseStatusCode response
-            if status == 200
-                then return ()
-                else return ()
+            response <- LE.try $ httpLBS req
+            case response of
+                Right resp -> do
+                    let status = getResponseStatusCode resp
+                    if status == 200
+                        then return ()
+                        else return ()
+                Left (e :: SomeException) -> do
+                    err lg $ LG.msg $ "Error while composite callbacks: " ++ show e
         )
         callbacksGroups
 
@@ -295,113 +301,105 @@ processCallbacks userid txid mrbiCache compProofs = do
     debug lg $ LG.msg $ "processCallbacks: inside: " ++ (show txid) ++ " userid: " ++ (show userid)
     let conn = xCqlClientState dbe
         net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
-        str =
-            "SELECT userid, txid, block_hash, block_height, callback_name, flags_bitmask, state FROM xoken.callback_registrations WHERE user_id=? AND txid > ? ORDER BY txid ASC LIMIT 500"
-        qstr = str :: Q.QueryString Q.R (DT.Text, DT.Text) (DT.Text, DT.Text, DT.Text, Int32, DT.Text, Int32, DT.Text)
-        uqstr = getSimpleQueryParam $ (userid, txid)
-    queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstr))
-    eResp <- liftIO $ try $ query conn (Q.RqExecute (Q.Execute queryId uqstr{pageSize = (Just 100)}))
-    -- eResp <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr (uqstr{pageSize = (Just 100)}))
+        str = "SELECT user_id, txid, block_hash, block_height, callback_name, flags_bitmask, state FROM xoken.callback_registrations WHERE user_id=? LIMIT 1000 "
+        qstr = str :: Q.QueryString Q.R (Identity DT.Text) (DT.Text, DT.Text, Maybe DT.Text, Maybe Int32, DT.Text, Int32, DT.Text)
+        uqstr = getSimpleQueryParam $ (Identity userid)
+    eResp <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr uqstr)
     case eResp of
         Right mb -> do
             let (_, cursor, _, _, _, _, _) = last mb
             mapM_
                 ( \(userid, txid, blkhash, blkht, cbname, flags, state) -> do
-                    mapicb <- xGetCallbackByUsername userid cbname
-                    case mapicb of
-                        Just mpc -> do
-                            mb <- xGetMerkleBranch (DT.unpack txid)
-                            ce <- liftIO $ TSH.lookup mrbiCache $ DT.pack $ nodeValue $ last mb
-                            (bhash, bht, txindx) <- case ce of
-                                Just et -> do
-                                    let flags = L.map (isLeftNode) mb
-                                    return (fst et, snd et, calcMerkleTreeTxIndex flags) -- TODO: calculate Tx index with left/right flags
-                                Nothing -> do
-                                    let toStr = "SELECT block_info FROM xoken.transactions WHERE tx_id=?"
-                                        toQStr = toStr :: Q.QueryString Q.R (Identity DT.Text) (Identity (DT.Text, Int32, Int32))
-                                        par = getSimpleQueryParam (Identity txid)
-                                    queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare toQStr))
-                                    res1 <- liftIO $ try $ query conn (Q.RqExecute (Q.Execute queryId par))
-                                    -- res1 <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query toQStr par)
-                                    case res1 of
-                                        Right rx -> do
-                                            let (bhash', bht', txindx') = runIdentity $ rx !! 0
-                                            liftIO $ TSH.insert mrbiCache txid (bhash', bht')
-                                            return (bhash', bht', txindx')
-                                        Left (e :: SomeException) -> do
-                                            err lg $ LG.msg $ "Error: get block-info from xoken.transactions : " ++ show e
-                                            throw KeyValueDBLookupException
+                    mklbr <- xGetMerkleBranch (DT.unpack txid)
+                    if L.length mklbr == 0
+                        then return ()
+                        else do
+                            mapicb <- xGetCallbackByUsername (DT.drop 5 userid) cbname
+                            case mapicb of
+                                Just mpc -> do
+                                    ce <- liftIO $ TSH.lookup mrbiCache $ DT.pack $ nodeValue $ last mklbr
 
-                            let cbMerkleBranch =
-                                    if L.length mb > 0
-                                        then Just mb
-                                        else Nothing
+                                    (bhash, bht, txindx) <- case ce of
+                                        Just et -> do
+                                            let flags = L.map (isLeftNode) mklbr
+                                            return (fst et, snd et, calcMerkleTreeTxIndex flags) -- TODO: calculate Tx index with left/right flags
+                                        Nothing -> do
+                                            let toStr = "SELECT block_info FROM xoken.transactions WHERE tx_id=?"
+                                                toQStr = toStr :: Q.QueryString Q.R (Identity DT.Text) (Identity (DT.Text, Int32, Int32))
+                                                par = getSimpleQueryParam (Identity txid)
+                                            res1 <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query toQStr par)
+                                            case res1 of
+                                                Right rx -> do
+                                                    let (bhash', bht', txindx') = runIdentity $ rx !! 0
+                                                    liftIO $ TSH.insert mrbiCache txid (bhash', bht')
+                                                    return (bhash', bht', txindx')
+                                                Left (e :: SomeException) -> do
+                                                    err lg $ LG.msg $ "Error: get block-info from xoken.transactions : " ++ show e
+                                                    throw KeyValueDBLookupException
 
-                            if MerkleProofComposite `elem` (mcEvents mpc)
-                                then do
-                                    let cbState = fromJust $ A.decode $ C.pack $ DT.unpack state
-                                    liftIO $ TSH.insert compProofs txid ((bhash, bht, txindx), (cbname, cbMerkleBranch, cbState))
-                                else do
-                                    cbTimestamp <- liftIO getCurrentTime
-                                    let token = BC.pack $ DT.unpack $ mcAuthKey mpc
-                                        url = DT.unpack $ mcCallbackUrl mpc
-                                        req' = buildRequest url token $ BC.pack "POST"
-                                        cbApiVersion = "1.0"
-                                        cbMinerID = NC.minerID $ nodeConfig bp2pEnv
-                                        cbBlockHash = DT.unpack bhash
-                                        cbBlockHeight = fromIntegral bht
-                                        cbTxid = DT.unpack txid
-                                        cbCallBackType = MerkleProofSingle
-                                        cbMerkleRoot = "" -- TODO
-                                        cbTxIndex = fromIntegral txindx
-                                        cbState = fromJust $ A.decode $ C.pack $ DT.unpack state
-                                        mpr =
-                                            CallbackSingleMerkleProof
-                                                cbApiVersion
-                                                cbTimestamp
-                                                cbMinerID
-                                                cbBlockHash
-                                                cbBlockHeight
-                                                cbTxid
-                                                cbCallBackType
-                                                cbMerkleRoot
-                                                cbTxIndex
-                                                cbState
-                                                cbMerkleBranch
-
-                                        req = setRequestBodyJSON (mpr) req'
-                                    response <- httpLBS req
-                                    let status = getResponseStatusCode response
-                                    if status == 200
+                                    if MerkleProofComposite `elem` (mcEvents mpc)
                                         then do
-                                            return ()
-                                        else do return ()
+                                            let cbState = fromJust $ A.decode $ C.pack $ DT.unpack state
+                                            liftIO $ TSH.insert compProofs txid ((bhash, bht, txindx), (cbname, mklbr, cbState))
+                                        else do
+                                            cbTimestamp <- liftIO getCurrentTime
+                                            let token = [BC.pack $ (DT.unpack $ mcAuthType mpc) ++ " " ++ (DT.unpack $ mcAuthKey mpc)]
+                                                url = DT.unpack $ mcCallbackUrl mpc
+                                            let req' = buildRequest url token $ BC.pack "POST"
+                                            let cbApiVersion = "1.0"
+                                                cbMinerID = NC.minerID $ nodeConfig bp2pEnv
+                                                cbBlockHash = DT.unpack bhash
+                                                cbBlockHeight = fromIntegral bht
+                                                cbTxid = DT.unpack txid
+                                                cbCallBackType = MerkleProofSingle
+                                                cbMerkleRoot = "" -- TODO
+                                                cbTxIndex = fromIntegral txindx
+                                                cbState = fromJust $ A.decode $ C.pack $ DT.unpack state
+                                                mpr =
+                                                    CallbackSingleMerkleProof
+                                                        cbApiVersion
+                                                        cbTimestamp
+                                                        cbMinerID
+                                                        cbBlockHash
+                                                        cbBlockHeight
+                                                        cbTxid
+                                                        cbCallBackType
+                                                        cbMerkleRoot
+                                                        cbTxIndex
+                                                        cbState
+                                                        mklbr
 
-                    let str = "DELETE FROM xoken.callback_registrations WHERE user_id = ? AND txid = ?  "
-                        qstr = str :: Q.QueryString Q.W (DT.Text, DT.Text) ()
-                        par = getSimpleQueryParam (userid, txid)
-                    queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstr))
-                    res <- liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryId par))
-                    -- res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr par)
-                    case res of
-                        Right _ -> return ()
-                        Left (e :: SomeException) -> do
-                            err lg $ LG.msg $ "Error: deleting from callback_registrations for user_id: " ++ (show userid) ++ ", txid: " ++ (show txid) ++ show e
-                            throw e
+                                                req = setRequestBodyJSON (mpr) req'
+                                            response <- LE.try $ httpLBS req
+                                            case response of
+                                                Right resp -> do
+                                                    let status = getResponseStatusCode resp
+                                                    if status == 200
+                                                        then return ()
+                                                        else return ()
+                                                Left (e :: SomeException) -> do
+                                                    err lg $ LG.msg $ "Error while single callbacks: " ++ show e
+
+                            let str = "DELETE FROM xoken.callback_registrations WHERE user_id = ? AND txid = ?  "
+                                qstr = str :: Q.QueryString Q.W (DT.Text, DT.Text) ()
+                                par = getSimpleQueryParam (userid, txid)
+                            res <- liftIO $ try $ write conn (Q.RqQuery $ Q.Query qstr par)
+                            case res of
+                                Right _ -> return ()
+                                Left (e :: SomeException) -> do
+                                    err lg $ LG.msg $ "Error: deleting from callback_registrations for user_id: " ++ (show userid) ++ ", txid: " ++ (show txid) ++ show e
+                                    throw e
                 )
                 mb
-            if L.length mb < 100
+            if (L.length mb) < 1000
                 then return ()
-                else do
-                    processCallbacks userid cursor mrbiCache compProofs
+                else processCallbacks userid cursor mrbiCache compProofs
         Left (e :: SomeException) -> do
-            err lg $ LG.msg $ "Error: getTxIDByProtocol: " ++ show e
+            err lg $ LG.msg $ "Error: processCallbacks: " ++ show e
             throw KeyValueDBLookupException
 
-buildRequest :: String -> BC.ByteString -> BC.ByteString -> HS.Request
+buildRequest :: String -> [BC.ByteString] -> BC.ByteString -> HS.Request
 buildRequest url token method =
     setRequestMethod method $
-        setRequestHeader "token" [token] $
-            setRequestSecure True $
-                setRequestPort 443 $
-                    parseRequest_ (url)
+        setRequestHeader "Authorization" token $
+            parseRequest_ (url)

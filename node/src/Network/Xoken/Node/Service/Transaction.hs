@@ -26,7 +26,7 @@ import Conduit hiding (runResourceT)
 import Control.Applicative
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (AsyncCancelled, mapConcurrently, mapConcurrently_, race_)
-import qualified Control.Concurrent.Async.Lifted as LA (async, concurrently, mapConcurrently, wait)
+import qualified Control.Concurrent.Async.Lifted as LA (async, concurrently, mapConcurrently, wait, race)
 import Control.Concurrent.MVar
 import Control.Concurrent.STM
 import Control.Concurrent.STM.TVar
@@ -624,43 +624,52 @@ xSubmitTx rawTx userId callbackName = do
 
                     -- unless (L.null spentInputs) $ throw $ DoubleSpendException spentInputs
                     debug lg $ LG.msg $ " fee required :" ++ (show feeReq)
-                    ingestRes <- LE.try $ processUnconfTransaction tx (fromIntegral feeReq)
-                    case ingestRes of
-                        Left (e :: SomeException) -> do
-                            err lg $
-                                LG.msg $ "[ERROR] While processing parent(s) of unconfirmed transaction: " <> (show e)
-                            throw $ ParentProcessingException (show e)
-                        Right () -> do
-                            let qstr :: Q.QueryString Q.W (DT.Text, DT.Text, DT.Text, Int32) ()
-                                qstr = "INSERT INTO xoken.callback_registrations (txid, user_id, callback_name, flags_bitmask) VALUES (?,?,?,?)"
-                                par = getSimpleQueryParam (txId, userId, callbackName, 0)
-                            queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstr))
-                            resReg <- liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryId par))
-                            case resReg of
-                                Right _ -> return ()
+                    -- ingestRes <- LE.try $ processUnconfTransaction tx (fromIntegral feeReq)
+                    ores <-
+                        LA.race
+                            (liftIO $ threadDelay (30000000)) -- 30 secs
+                            (LE.try $ processUnconfTransaction tx (fromIntegral feeReq))
+                    case ores of
+                        Right (ingestRes) -> do
+                            case ingestRes of
                                 Left (e :: SomeException) -> do
-                                    err lg $ LG.msg $ "Error: INSERTing into 'script_output_protocol: " ++ show e
-                                    throw KeyValueDBInsertException
+                                    err lg $
+                                        LG.msg $ "[ERROR] While processing parent(s) of unconfirmed transaction: " <> (show e)
+                                    throw $ ParentProcessingException (show e)
+                                Right () -> do
+                                    let qstr :: Q.QueryString Q.W (DT.Text, DT.Text, DT.Text, Int32) ()
+                                        qstr = "INSERT INTO xoken.callback_registrations (txid, user_id, callback_name, flags_bitmask) VALUES (?,?,?,?)"
+                                        par = getSimpleQueryParam (txId, userId, callbackName, 0)
+                                    queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstr))
+                                    resReg <- liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryId par))
+                                    case resReg of
+                                        Right _ -> return ()
+                                        Left (e :: SomeException) -> do
+                                            err lg $ LG.msg $ "Error: INSERTing into 'script_output_protocol: " ++ show e
+                                            throw KeyValueDBInsertException
 
-                            broadcastResult <-
-                                mapM
-                                    ( \(_, peer) -> do
-                                        res <- LE.try $ sendRequestMessages peer (MTx (fromJust $ fst res))
-                                        case res of
-                                            Left (e :: SomeException) -> return (peer, Left (show e))
-                                            Right () -> return (peer, Right ())
-                                    )
-                                    connPeers
-                            debug lg $ LG.msg $ "Broadcast result for " <> (DT.unpack txId) <> ": " <> (show broadcastResult)
-                            if all (DE.isLeft) (snd <$> broadcastResult)
-                                then return () -- throw RelayFailureException -- TODO temporarily commenting out
-                                else return ()
-                            eres <- LE.try $ handleIfAllegoryTx tx False False -- MUST be False
-                            case eres of
-                                Right (flg) -> return $ Just txId
-                                Left (e :: SomeException) -> do
-                                    err lg $ LG.msg $ "[ERROR] Failed to process Allegory metadata: " <> (show e)
-                                    return Nothing
+                                    broadcastResult <-
+                                        mapM
+                                            ( \(_, peer) -> do
+                                                res <- LE.try $ sendRequestMessages peer (MTx (fromJust $ fst res))
+                                                case res of
+                                                    Left (e :: SomeException) -> return (peer, Left (show e))
+                                                    Right () -> return (peer, Right ())
+                                            )
+                                            connPeers
+                                    debug lg $ LG.msg $ "Broadcast result for " <> (DT.unpack txId) <> ": " <> (show broadcastResult)
+                                    if all (DE.isLeft) (snd <$> broadcastResult)
+                                        then return () -- throw RelayFailureException -- TODO temporarily commenting out
+                                        else return ()
+                                    eres <- LE.try $ handleIfAllegoryTx tx False False -- MUST be False
+                                    case eres of
+                                        Right (flg) -> return $ Just txId
+                                        Left (e :: SomeException) -> do
+                                            err lg $ LG.msg $ "[ERROR] Failed to process Allegory metadata: " <> (show e)
+                                            return Nothing
+                        Left () -> do
+                            LG.err lg $ LG.msg $ LG.val "Error: submitTx timed-out "
+                            throw $ ParentProcessingException (show "")
                 Nothing -> do
                     err lg $ LG.msg $ val $ "error decoding rawTx (2)"
                     return Nothing

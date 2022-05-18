@@ -459,12 +459,12 @@ fetchBlockCacheQueue gdSize = do
 commitBlockCacheQueue :: (HasXokenNodeEnv env m, HasLogger m, MonadIO m) => m ()
 commitBlockCacheQueue =
     forever $ do
-        liftIO $ threadDelay (1000000) -- 1 sec
+        liftIO $ threadDelay (100000) -- 0.1 sec
         lg <- getLogger
         bp2pEnv <- getBitcoinP2P
         dbe <- getDB
         !tm <- liftIO $ getCurrentTime
-        debug lg $ LG.msg $ val "commitBlockCacheQueue loop..."
+        trace lg $ LG.msg $ val "commitBlockCacheQueue loop..."
         let nc = nodeConfig bp2pEnv
             net = bitcoinNetwork $ nc
             conn = xCqlClientState dbe
@@ -507,7 +507,7 @@ commitBlockCacheQueue =
         trace lg $ LG.msg $ ("blockSyncStatusMap (list): " ++ (show syt))
         syncList <- liftIO $ TSH.toList (blockSyncStatusMap bp2pEnv)
         let sortedList = L.sortOn (snd . snd) syncList
-        debug lg $ LG.msg $ ("sorted blockSyncStatusMap (list): " ++ (show sortedList))
+        trace lg $ LG.msg $ ("sorted blockSyncStatusMap (list): " ++ (show sortedList))
         let compl = L.takeWhile (\x -> (fst $ snd x) == BlockProcessingComplete) sortedList
         if not $ L.null compl
             then do
@@ -1111,8 +1111,6 @@ processConfTransaction' bis tx bhash blkht txind = do
     --
     debug lg $ LG.msg $ "Processing confirmed transaction <end> :" ++ show txhs
 
-
-
 getSatsValueFromOutpoint ::
     XCqlClientState ->
     TSH.TSHashTable (TxHash, DependentTxStatus) (MVar ()) -> -- EV.Event
@@ -1338,7 +1336,7 @@ checkOutputDataExists (txid, outputIndex) = do
     res <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query queryStr queryPar)
     case res of
         Left (e :: SomeException) -> do
-            err lg $ LG.msg $ C.pack $ "[ERROR] Querying database while checking if output exists(output_index): " <> (show (txid, outputIndex))<>", err: " <> (show e)
+            err lg $ LG.msg $ C.pack $ "[ERROR] Querying database while checking if output exists(output_index): " <> (show (txid, outputIndex)) <> ", err: " <> (show e)
             throw KeyValueDBLookupException
         Right res -> return $ not . L.null $ res
 

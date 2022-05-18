@@ -960,7 +960,7 @@ data CallbackSingleMerkleProof = CallbackSingleMerkleProof
     , cbMerkleRoot :: String
     , cbTxIndex :: Int
     , cbState :: AState
-    , cbMerkleBranch :: Maybe [MerkleBranchNode']
+    , cbMerkleBranch :: [MerkleBranchNode']
     }
     deriving (Generic, Show, Hashable, Eq, Serialise)
 
@@ -984,7 +984,7 @@ data CallbackMerkleBranches = CallbackMerkleBranches
     { cbTxid :: String
     , cbTxIndex :: Int
     , cbState :: AState
-    , cbMerkleBranch :: Maybe [MerkleBranchNode']
+    , cbMerkleBranch :: [MerkleBranchNode']
     }
     deriving (Generic, Show, Hashable, Eq, Serialise)
 
