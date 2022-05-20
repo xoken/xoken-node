@@ -238,7 +238,7 @@ triggerCallbacks = do
             err lg $ LG.msg $ "Error while triggerCallbacks: " ++ show e
             throw e
 type MerkleRootBlockInfoCache = (TSH.TSHashTable DT.Text (DT.Text, Int32))
-type CompositeProofs = (TSH.TSHashTable DT.Text ((DT.Text, Int32, Int32), (DT.Text, [MerkleBranchNode'], AState)))
+type CompositeProofs = (TSH.TSHashTable DT.Text ((DT.Text, Int32, Int32), (DT.Text, [MerkleBranchNode'], Maybe DT.Text)))
 
 postCompositeMerkleCallbacks :: (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> MerkleRootBlockInfoCache -> CompositeProofs -> m ()
 postCompositeMerkleCallbacks userid mrbiCache compProofs = do
@@ -248,6 +248,7 @@ postCompositeMerkleCallbacks userid mrbiCache compProofs = do
     cpList <- liftIO $ TSH.toList $ compProofs
     let cbname = fst3 $ snd $ snd $ head cpList
     let callbacksGroups = L.groupBy (\a b -> (fst3 $ fst $ snd a) == (fst3 $ fst $ snd b)) cpList
+    debug lg $ LG.msg $ "postComposite: userid: " ++ (show userid)
     mapM_
         ( \cpSubL -> do
             branches <-
@@ -281,6 +282,7 @@ postCompositeMerkleCallbacks userid mrbiCache compProofs = do
                         cbMerkleBranches
 
                 req = setRequestBodyJSON (mpr) req'
+            debug lg $ LG.msg $ "postComposite: REQ : " ++ (show req)
             response <- LE.try $ httpLBS req
             case response of
                 Right resp -> do
@@ -302,7 +304,7 @@ processCallbacks userid txid mrbiCache compProofs = do
     let conn = xCqlClientState dbe
         net = NC.bitcoinNetwork $ nodeConfig bp2pEnv
         str = "SELECT user_id, txid, block_hash, block_height, callback_name, flags_bitmask, state FROM xoken.callback_registrations WHERE user_id=? LIMIT 1000 "
-        qstr = str :: Q.QueryString Q.R (Identity DT.Text) (DT.Text, DT.Text, Maybe DT.Text, Maybe Int32, DT.Text, Int32, DT.Text)
+        qstr = str :: Q.QueryString Q.R (Identity DT.Text) (DT.Text, DT.Text, Maybe DT.Text, Maybe Int32, DT.Text, Int32, Maybe DT.Text)
         uqstr = getSimpleQueryParam $ (Identity userid)
     eResp <- liftIO $ LE.try $ query conn (Q.RqQuery $ Q.Query qstr uqstr)
     case eResp of
@@ -339,8 +341,7 @@ processCallbacks userid txid mrbiCache compProofs = do
 
                                     if MerkleProofComposite `elem` (mcEvents mpc)
                                         then do
-                                            let cbState = fromJust $ A.decode $ C.pack $ DT.unpack state
-                                            liftIO $ TSH.insert compProofs txid ((bhash, bht, txindx), (cbname, mklbr, cbState))
+                                            liftIO $ TSH.insert compProofs txid ((bhash, bht, txindx), (cbname, mklbr, state))
                                         else do
                                             cbTimestamp <- liftIO getCurrentTime
                                             let token = [BC.pack $ (DT.unpack $ mcAuthType mpc) ++ " " ++ (DT.unpack $ mcAuthKey mpc)]
@@ -354,7 +355,8 @@ processCallbacks userid txid mrbiCache compProofs = do
                                                 cbCallBackType = MerkleProofSingle
                                                 cbMerkleRoot = "" -- TODO
                                                 cbTxIndex = fromIntegral txindx
-                                                cbState = fromJust $ A.decode $ C.pack $ DT.unpack state
+                                                cbState = state
+
                                                 mpr =
                                                     CallbackSingleMerkleProof
                                                         cbApiVersion

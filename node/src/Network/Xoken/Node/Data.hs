@@ -927,10 +927,10 @@ instance FromJSON PolicyFees where
     parseJSON (Object o) =
         (PolicyFees <$> o .: "data" <*> o .: "opcodes")
 
-data AVal = I Int | S String
-    deriving (Generic, Show, Hashable, Eq, Serialise)
-instance ToJSON AVal
-instance FromJSON AVal
+-- data AVal = I Int | S String
+--    deriving (Generic, Show, Hashable, Eq, Serialise)
+-- instance ToJSON AVal
+-- instance FromJSON AVal
 
 -- data ArbitraryState
 --     = AMapString (H.HashMap String String)
@@ -938,16 +938,16 @@ instance FromJSON AVal
 --     | AListString [String]
 --     | AListInt [Int]
 
-data AState
-    = AMap (H.HashMap String AState)
-    | AList [AVal]
-    | AString String
-    | AInt Int
-    deriving (Generic, Show, Hashable, Eq, Serialise)
+-- data AState
+--    = AMap (H.HashMap String AState)
+--    | AList [AVal]
+--    | AString String
+--    | AInt Int
+--    deriving (Generic, Show, Hashable, Eq, Serialise)
 
-instance ToJSON AState
+--instance ToJSON AState
 
-instance FromJSON AState
+--instance FromJSON AState
 
 data CallbackSingleMerkleProof = CallbackSingleMerkleProof
     { cbApiVersion :: String
@@ -959,7 +959,7 @@ data CallbackSingleMerkleProof = CallbackSingleMerkleProof
     , cbCallBackType :: CallbackEvent
     , cbMerkleRoot :: String
     , cbTxIndex :: Int
-    , cbState :: AState
+    , cbState :: Maybe T.Text
     , cbMerkleBranch :: [MerkleBranchNode']
     }
     deriving (Generic, Show, Hashable, Eq, Serialise)
@@ -983,7 +983,7 @@ instance ToJSON CallbackSingleMerkleProof where
 data CallbackMerkleBranches = CallbackMerkleBranches
     { cbTxid :: String
     , cbTxIndex :: Int
-    , cbState :: AState
+    , cbState :: Maybe T.Text
     , cbMerkleBranch :: [MerkleBranchNode']
     }
     deriving (Generic, Show, Hashable, Eq, Serialise)

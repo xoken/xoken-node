@@ -112,7 +112,7 @@ CREATE TABLE xoken.policies (
     policy_name text,
     created_time timestamp,
     policy_expiry_time timestamp,
-    value frozen<tuple<boolean, int, bigint, text>>,
+    value text,
     PRIMARY KEY ((context, policy_name))
 );
 
