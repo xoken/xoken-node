@@ -257,6 +257,7 @@ data RPCReqParams'
     | SubmitTx
         { sRawTx :: ByteString
         , sCallbackName :: String
+        , sState :: Maybe T.Text -- AState
         }
     | SubscribeTx
         { subTxId :: String
@@ -343,7 +344,7 @@ instance FromJSON RPCReqParams' where
                 )
             <|> ( AddMapiCallback <$> o .: "callbackName" <*> o .: "callbackUrl" <*> o .: "callbackAuth" <*> o .: "events"
                 )
-            <|> ( SubmitTx . B64.decodeLenient . T.encodeUtf8 <$> o .: "submitTx" <*> o .: "callbackName"
+            <|> ( SubmitTx . B64.decodeLenient . T.encodeUtf8 <$> o .: "submitTx" <*> o .: "callbackName" <*> o .:? "state"
                 )
             <|> ( SubscribeTx <$> o .: "subscribeTxId" <*> o .: "callbackName" <*> o .:? "state"
                 )
@@ -957,7 +958,7 @@ data CallbackSingleMerkleProof = CallbackSingleMerkleProof
     , cbBlockHeight :: Int
     , cbTxid :: String
     , cbCallBackType :: CallbackEvent
-    , cbMerkleRoot :: String
+    , cbBlockHeader :: BlockHeader'
     , cbTxIndex :: Int
     , cbState :: Maybe T.Text
     , cbMerkleBranch :: [MerkleBranchNode']
@@ -974,7 +975,7 @@ instance ToJSON CallbackSingleMerkleProof where
             , "txId" .= tx
             , "blockHash" .= hs
             , "blockHeight" .= ht
-            , "merkleRoot" .= mr
+            , "blockHeader" .= mr
             , "txIndex" .= dx
             , "state" .= st
             , "merkleBranch" .= mb
@@ -1004,7 +1005,7 @@ data CallbackCompositeMerkleProof = CallbackCompositeMerkleProof
     , cbBlockHash :: String
     , cbBlockHeight :: Int
     , cbCallBackType :: CallbackEvent
-    , cbMerkleRoot :: String
+    , cbBlockHeader :: BlockHeader'
     , cbmerkleBranches :: [CallbackMerkleBranches]
     }
     deriving (Generic, Show, Hashable, Eq, Serialise)
@@ -1018,7 +1019,7 @@ instance ToJSON CallbackCompositeMerkleProof where
             , "callBackType" .= bt
             , "blockHash" .= hs
             , "blockHeight" .= ht
-            , "merkleRoot" .= mr
+            , "blockHeader" .= mr
             , "merkleBranches" .= mb
             ]
 

@@ -90,6 +90,7 @@ import Network.Xoken.Node.GraphDB
 import Network.Xoken.Node.P2P.BlockSync
 import Network.Xoken.Node.P2P.Common
 import Network.Xoken.Node.P2P.Types
+import Network.Xoken.Node.Service.Block
 import Network.Xoken.Node.Service.Transaction
 import Network.Xoken.Util (bsToInteger, integerToBS)
 import Numeric (showHex)
@@ -237,7 +238,7 @@ triggerCallbacks = do
         Left (e :: SomeException) -> do
             err lg $ LG.msg $ "Error while triggerCallbacks: " ++ show e
             throw e
-type MerkleRootBlockInfoCache = (TSH.TSHashTable DT.Text (DT.Text, Int32))
+type MerkleRootBlockInfoCache = (TSH.TSHashTable DT.Text (DT.Text, Int32, BlockHeader'))
 type CompositeProofs = (TSH.TSHashTable DT.Text ((DT.Text, Int32, Int32), (DT.Text, [MerkleBranchNode'], Maybe DT.Text)))
 
 postCompositeMerkleCallbacks :: (HasXokenNodeEnv env m, MonadIO m) => DT.Text -> MerkleRootBlockInfoCache -> CompositeProofs -> m ()
@@ -268,8 +269,9 @@ postCompositeMerkleCallbacks userid mrbiCache compProofs = do
                 cbBlockHash = DT.unpack $ fst3 $ fst $ snd $ head $ cpSubL
                 cbBlockHeight = fromIntegral $ snd3 $ fst $ snd $ head $ cpSubL
                 cbCallBackType = MerkleProofComposite
-                cbMerkleRoot = "" -- TODO
-                cbMerkleBranches = branches
+            mbhdr <- xGetBlockHash $ DT.pack cbBlockHash
+            let cbMerkleBranches = branches
+                cbBlockHeader = rbHeader $ fromJust $ mbhdr
                 mpr =
                     CallbackCompositeMerkleProof
                         cbApiVersion
@@ -278,7 +280,7 @@ postCompositeMerkleCallbacks userid mrbiCache compProofs = do
                         cbBlockHash
                         cbBlockHeight
                         cbCallBackType
-                        cbMerkleRoot
+                        cbBlockHeader
                         cbMerkleBranches
 
                 req = setRequestBodyJSON (mpr) req'
@@ -321,10 +323,10 @@ processCallbacks userid txid mrbiCache compProofs = do
                                 Just mpc -> do
                                     ce <- liftIO $ TSH.lookup mrbiCache $ DT.pack $ nodeValue $ last mklbr
 
-                                    (bhash, bht, txindx) <- case ce of
+                                    (bhash, bht, bhdr, txindx) <- case ce of
                                         Just et -> do
                                             let flags = L.map (isLeftNode) mklbr
-                                            return (fst et, snd et, calcMerkleTreeTxIndex flags) -- TODO: calculate Tx index with left/right flags
+                                            return (fst3 et, snd3 et, thd3 et, calcMerkleTreeTxIndex flags) -- TODO: calculate Tx index with left/right flags
                                         Nothing -> do
                                             let toStr = "SELECT block_info FROM xoken.transactions WHERE tx_id=?"
                                                 toQStr = toStr :: Q.QueryString Q.R (Identity DT.Text) (Identity (DT.Text, Int32, Int32))
@@ -333,8 +335,14 @@ processCallbacks userid txid mrbiCache compProofs = do
                                             case res1 of
                                                 Right rx -> do
                                                     let (bhash', bht', txindx') = runIdentity $ rx !! 0
-                                                    liftIO $ TSH.insert mrbiCache txid (bhash', bht')
-                                                    return (bhash', bht', txindx')
+                                                    mbhdr <- xGetBlockHash bhash'
+                                                    case mbhdr of
+                                                        Just mb -> do
+                                                            liftIO $ TSH.insert mrbiCache (DT.pack $ nodeValue $ last mklbr) (bhash', bht', rbHeader mb)
+                                                            return (bhash', bht', rbHeader mb, txindx')
+                                                        Nothing -> do
+                                                            err lg $ LG.msg $ "Error: block header couldn't be fetched " ++ (show 0)
+                                                            throw KeyValueDBLookupException
                                                 Left (e :: SomeException) -> do
                                                     err lg $ LG.msg $ "Error: get block-info from xoken.transactions : " ++ show e
                                                     throw KeyValueDBLookupException
@@ -353,7 +361,7 @@ processCallbacks userid txid mrbiCache compProofs = do
                                                 cbBlockHeight = fromIntegral bht
                                                 cbTxid = DT.unpack txid
                                                 cbCallBackType = MerkleProofSingle
-                                                cbMerkleRoot = "" -- TODO
+                                                cbBlockHeader = bhdr
                                                 cbTxIndex = fromIntegral txindx
                                                 cbState = state
 
@@ -366,7 +374,7 @@ processCallbacks userid txid mrbiCache compProofs = do
                                                         cbBlockHeight
                                                         cbTxid
                                                         cbCallBackType
-                                                        cbMerkleRoot
+                                                        cbBlockHeader
                                                         cbTxIndex
                                                         cbState
                                                         mklbr

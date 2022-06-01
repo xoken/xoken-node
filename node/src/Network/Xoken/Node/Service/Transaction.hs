@@ -530,8 +530,8 @@ xRelayTx rawTx = do
                     err lg $ LG.msg $ val $ "error decoding rawTx (2)"
                     return $ False
 
-xSubmitTx :: (HasXokenNodeEnv env m, MonadIO m) => BC.ByteString -> DT.Text -> DT.Text -> m (Maybe DT.Text)
-xSubmitTx rawTx userId callbackName = do
+xSubmitTx :: (HasXokenNodeEnv env m, MonadIO m) => BC.ByteString -> DT.Text -> DT.Text -> Maybe DT.Text -> m (Maybe DT.Text)
+xSubmitTx rawTx userId callbackName state = do
     dbe <- getDB
     lg <- getLogger
     bp2pEnv <- getBitcoinP2P
@@ -637,9 +637,9 @@ xSubmitTx rawTx userId callbackName = do
                                         LG.msg $ "[ERROR] While processing parent(s) of unconfirmed transaction: " <> (show e)
                                     throw $ ParentProcessingException (show e)
                                 Right () -> do
-                                    let qstr :: Q.QueryString Q.W (DT.Text, DT.Text, DT.Text, Int32) ()
-                                        qstr = "INSERT INTO xoken.callback_registrations (txid, user_id, callback_name, flags_bitmask) VALUES (?,?,?,?)"
-                                        par = getSimpleQueryParam (txId, userId, callbackName, 0)
+                                    let qstr :: Q.QueryString Q.W (DT.Text, DT.Text, DT.Text, Int32, Maybe DT.Text) ()
+                                        qstr = "INSERT INTO xoken.callback_registrations (txid, user_id, callback_name, flags_bitmask, state) VALUES (?,?,?,?,?)"
+                                        par = getSimpleQueryParam (txId, userId, callbackName, 0, state)
                                     queryId <- liftIO $ queryPrepared conn (Q.RqPrepare (Q.Prepare qstr))
                                     resReg <- liftIO $ try $ write conn (Q.RqExecute (Q.Execute queryId par))
                                     case resReg of

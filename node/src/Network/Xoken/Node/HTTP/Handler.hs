@@ -522,7 +522,7 @@ submitTx SubmitTx{..} = do
             modifyResponse $ setResponseStatus 500 "Internal Server Error"
             writeBS "INTERNAL_SERVER_ERROR"
         Right (Just user) -> do
-            res <- LE.try $ xSubmitTx (sRawTx) (DT.pack $ "USER/" ++ uUsername user) (DT.pack sCallbackName)
+            res <- LE.try $ xSubmitTx (sRawTx) (DT.pack $ "USER/" ++ uUsername user) (DT.pack sCallbackName) (sState)
             case res of
                 Left (e :: BlockSyncException) -> do
                     case e of
