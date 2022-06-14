@@ -681,7 +681,7 @@ loadCallbacksCache = do
                     let eventsT = L.map (\ev -> read (T.unpack ev) :: CallbackEvent) (Q.fromSet events)
                     let cb = MapiCallback ctx (T.pack "mAPI") cbname cburl authtype authkey eventsT cts
                     debug lg $ LG.msg $ "loading callback into cache: " ++ show cbname
-                    liftIO $ TSH.insert cbDataCache ctx cb --TODO: need to split context to get username??
+                    liftIO $ TSH.insert cbDataCache (T.append cbname ctx) cb 
                 )
                 recs
         Left (e :: SomeException) -> do

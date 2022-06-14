@@ -112,7 +112,7 @@ xGetCallbackByUsername name cbName = do
     let conn = xCqlClientState dbe
         context = DT.append (DT.pack "USER/") name
         key = DT.append cbName context
-    cachedCallback <- liftIO $ TSH.lookup (callbacksDataCache bp2pEnv) (context)
+    cachedCallback <- liftIO $ TSH.lookup (callbacksDataCache bp2pEnv) (key)
     case cachedCallback of
         Just cp -> do
             debug lg $ LG.msg $ "xGetCallbackByUsername: __ " ++ show cp
