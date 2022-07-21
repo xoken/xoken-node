@@ -469,8 +469,8 @@ updateMerkleSubTrees dbe tmtState lg hashComp newhash left right ht ind final on
 -- else block --
 
 resilientRead ::
-    (HasLogger m, MonadBaseControl IO m, MonadIO m) => Socket -> BlockIngestState -> m (([Tx], LC.ByteString), Int64)
-resilientRead sock !blin = do
+    (HasLogger m, MonadBaseControl IO m, MonadIO m) => Socket -> BlockIngestState -> Int64 -> m (([Tx], LC.ByteString), Int64)
+resilientRead sock !blin maxChunkSize = do
     lg <- getLogger
     let !unspentBytesLen = LC.length $ binUnspentBytes blin
     let chunkSize = 5 * 1000 * 1000 -- 5MB
@@ -506,7 +506,7 @@ resilientRead sock !blin = do
             case runGetLazyState (getConfirmedTxBatch) txbyt2 of
                 Left e -> do
                     trace lg $ msg $ "3rd attempt|" ++ show e
-                    let chunkSizeXXB = 100 * 1000 * 1000 -- 100 MB
+                    let chunkSizeXXB = maxChunkSize -- 100 * 1000 * 1000 -- 100 MB
                         dltXXNew =
                             if binTxPayloadLeft blin > chunkSizeXXB
                                 then chunkSizeXXB - txbytLen2
@@ -939,7 +939,7 @@ readNextMessage net sock ingss = do
     case ingss of
         Just iss -> do
             let blin = issBlockIngest iss
-            ((txns, unused), txbytLen) <- resilientRead sock blin
+            ((txns, unused), txbytLen) <- resilientRead sock blin (maxChunkSize $ nodeConfig p2pEnv) 
             debug lg $ msg ("Confirmed-Tx: " ++ (show (L.length txns)) ++ " unused: " ++ show (LC.length unused))
             mqe <-
                 case (issBlockInfo iss) of

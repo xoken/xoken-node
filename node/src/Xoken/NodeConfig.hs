@@ -66,6 +66,7 @@ data NodeConfig =
         , staticPeerList :: [String]
         , mAPICallbacksEnable :: Bool
         , minerID :: String
+        , maxChunkSize :: Int64
         }
     deriving (Show, Generic)
 
